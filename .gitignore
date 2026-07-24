@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Docusaurus local build
+.docusaurus/
+docs/build/
+
+# graphify — regenerable and expensive; never commit
+graphify-out/
+.graphify_*
+
+# Env / secrets
+.env
+.env.*
+*.local
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,12 @@
+# Normalize all text to LF in the repo and on checkout.
+# Cross-platform project: the docs build on Linux (Docker), development is on Windows —
+# pinning LF stops the CRLF/LF churn git warns about.
+* text=auto eol=lf
+
+# Explicit binary types (future-proofing; keep git from touching them)
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
