@@ -6,7 +6,8 @@
 > **Why this is its own document (N13).** The hosting, accounts, billing, cloud sync,
 > analytics, multiplayer and white-label material was mixed into the engine
 > specification. Bolting a SaaS platform onto an engine with no code yet is the exact
-> scope-creep the simulation kind's own risk register (`games/01-vision.md` §6.1)
+> scope-creep the simulation kind's own
+> [risk register §6.1](https://gameoflife.subzerodev.com/docs/games/vision#61-scope-creep)
 > warns against. The engine is a pure library first; this layer is deferred until it
 > is proven. Everything here is recorded intent, not a build target.
 
@@ -54,8 +55,9 @@ appears, not before.
 **Content-pack merge rules.** Once packs layer —
 `base campaign → expansion → localization → culture pack → community pack → user mod` —
 the engine needs defined answers to: override or merge? priority order? conflict
-resolution? a dependency graph? The simulation kind's `ContentPackManifest` (docs/04
-§4.2) already carries `dependencies`, but **no merge or override semantics are
+resolution? a dependency graph? The simulation kind's
+[`ContentPackManifest` §4.2](https://gameoflife.subzerodev.com/docs/games/engine-specification#42-content-pack-manifest)
+already carries `dependencies`, but **no merge or override semantics are
 specified.** That is the gap.
 
 **Community modding.** Untrusted third-party packs raise validation, sandboxing, and
