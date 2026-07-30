@@ -6,13 +6,13 @@ import type * as Preset from '@docusaurus/preset-classic';
  * directory is copied over /template (see ./Dockerfile). Content lives in
  * ./docs; the sidebar is ./sidebar.ts.
  *
- * Placeholder title/url/tagline — edit to taste. Broken-link checks are 'warn'
- * (not 'throw') to keep authoring frictionless; flip to 'throw' to gate builds.
+ * Broken-link checks are 'warn' (not 'throw') to keep authoring frictionless;
+ * flip to 'throw' to gate builds.
  */
 const config: Config = {
   title: 'NEaaS Platform',
   tagline: 'Hosting, accounts, and SaaS layer for the Narrative Engine — deferred',
-  url: 'https://docs.example.com',
+  url: 'https://platform.subzerodev.com',
   baseUrl: '/',
 
   onBrokenLinks: 'warn',
