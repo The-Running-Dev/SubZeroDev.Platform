@@ -39,6 +39,14 @@ Above the pure engine:
 - AI-assisted authoring as a hosted creator tool (the boundary of §9 still applies —
   AI authors campaign data, the engine validates it).
 - Multiplayer sessions (far future).
+- **A real MCP transport** — stdio and/or HTTP, using `@modelcontextprotocol/sdk`, a
+  real server process, this layer's own deploy. The engine repo's `McpTools` (W17) is
+  designed to be that server's entire tool-layer implementation — nine handlers already
+  matching the documented tool table, already tested end to end against the real
+  session store. This layer would wrap it in a transport, not reimplement it. Not
+  adopting `SubZeroDev.Blog`'s `tools/blog-mcp` wholesale as a template, since it's
+  shaped for a different product, but its pattern (tools grouped and registered against
+  a real `McpServer`) is a reasonable starting point when this layer is built.
 
 ## Creator workflow
 
