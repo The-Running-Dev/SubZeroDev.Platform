@@ -39,6 +39,8 @@ Above the pure engine:
 - AI-assisted authoring as a hosted creator tool (the boundary of §9 still applies —
   AI authors campaign data, the engine validates it).
 - Multiplayer sessions (far future).
+- **A live MCP transport**, making the tool contract (`mcp-tool-contract.md`) reachable
+  by a real AI client rather than only called directly by tests.
 
 ## Creator workflow
 
