@@ -112,11 +112,16 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
   [implementation plan](docs/docs/implementation-plan.md)'s stated ordering constraints.
 - **Non-goals are binding.** Anything listed as a non-goal in the brief is out of scope even if it looks trivial, even if you are already touching that file.
 - **One slice at a time.** Do not start slice N+1 because you noticed something while doing slice N. Write it to `design/90-decisions.md` under `## Open` instead.
-- **Prefer an existing package to hand-rolled infrastructure.** Hand-rolling is what needs
-  justifying, not taking a dependency — check NuGet before writing anything a maintained library
-  already provides. What [ADR-004](docs/docs/adr/ADR-004-framework-build-not-adopt.md) rejects is
-  adopting a whole *application framework*, not using *libraries*; do not read it as licence to
-  build everything.
+- **Prefer an existing package or service to hand-rolled infrastructure.** Hand-rolling is what
+  needs justifying, not taking a dependency — check NuGet, and check whether a product or managed
+  service already is the capability, before writing anything. What
+  [ADR-004](docs/docs/adr/ADR-004-framework-build-not-adopt.md) rejects is adopting a whole
+  *application framework*, not using *libraries* or *services*; do not read it as licence to build
+  everything. **Build only what is genuinely ours.**
+- **Depend on the protocol, not the vendor**, and check the deployment modes before taking a
+  service. Self-hosted and homelab installations cannot reach a vendor's SaaS tenant, so a
+  SaaS-only dependency needs a self-hostable path or must be optional. OIDC over a named identity
+  provider; an S3-compatible API over one vendor's SDK.
 - **No new dependencies** without a decision-log entry naming the alternatives rejected and why.
   This is not in tension with the rule above: the bar was never "avoid dependencies", it is "choose
   them deliberately and say why". Record the reason when you take one **and** when you pass one over

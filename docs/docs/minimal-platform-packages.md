@@ -159,6 +159,150 @@ first is how Core stops being testable without infrastructure.
 
 ---
 
+## 3a. What the Gaps Actually Need — a First Evaluation
+
+[ADR-004](adr/ADR-004-framework-build-not-adopt.md) §4 requires each gap to be checked against
+existing packages before anything is written, and requires the reason to be recorded either way.
+This is that check. **Licences verified against each project; capability claims are from project
+documentation and have not been tested against these requirements.**
+
+### The outbox — do not decide yet
+
+| Candidate | Licence | Finding |
+|---|---|---|
+| MassTransit | v8 MIT; **v9 commercial** (Q1 2026), v8 maintenance ends after 2026 | **Disqualified.** A dependency chosen for a years-long lifespan cannot be one whose free line stops being maintained |
+| DotNetCore.CAP | MIT | Real outbox, EF Core, PostgreSQL. **But every listed transport is a broker** — RabbitMQ, Kafka, Azure Service Bus, SQS, NATS, Redis, Pulsar |
+| Wolverine | MIT, paid support only | Plausible fit; the outbox claim was **not confirmed** from the repository page and needs checking before it is relied on |
+
+**CAP's mismatch is the useful finding.** The specification calls for an *in-process* event bus
+with a durable outbox, with distributed transports as future providers, and deployment mode 1 is
+local developer execution. Adopting CAP now would put a message broker into local development to
+serve a transport decision that is explicitly **not yet taken**.
+
+**And that reframes the difficulty.** The outbox is hard when it spans a real broker — dedup,
+ordering, redelivery across transports. Against an in-process bus it is a table, a hosted-service
+dispatcher, and idempotent handlers. Bounded work.
+
+**Recommendation: defer.** Take no outbox dependency until the transport is chosen. Revisit
+Wolverine and CAP at that point, when the requirement is real.
+
+### Tenant isolation — built-in now, a package later
+
+**Finbuckle.MultiTenant** (Apache 2.0) is a direct fit: tenant resolution, EF Core data isolation
+with query filters, per-tenant options and authentication.
+
+It is also more than the near-term requirement, which is only *carry a tenant column from the
+first schema, defaulted to a single implicit tenant*. **EF Core global query filters are built in**,
+and a column is a column — so the near-term need costs no dependency at all.
+
+**Recommendation: EF Core query filters now; adopt Finbuckle when tenancy becomes a feature.** What
+Finbuckle earns its place for is per-request tenant *resolution* from host, header or claim, and
+that is D5 work. Nothing is retrofitted by waiting, because the column — the part that is genuinely
+expensive later — ships regardless.
+
+### Module registration — probably not a gap
+
+Nothing mainstream packages "modules with declared dependencies and startup validation" outside the
+full application frameworks, and ABP's own version exists because ABP-scale applications compose
+dozens of modules with real interdependencies.
+
+At two or three products, the .NET convention — `IServiceCollection` extension methods, composed
+explicitly in `Program.cs` — is sufficient, needs no package, and needs no Platform code.
+
+**Recommendation: no package and no abstraction until a product has enough modules to hurt.**
+
+### Adjacent categories considered, and why they land differently
+
+Three further candidates were raised. They are not the same kind of thing, and sorting them by
+category is most of the answer.
+
+**Messaging, same category as above — `NServiceBus`.** **Commercial: free for development, licence
+required for production.** The tiers are endpoint-capped (Community is three logical endpoints,
+forum support only) and **the Ultimate tier is the one required for ISVs** — which is what an
+open-core product distributed per installation is. Disqualified on the same durability ground as
+MassTransit, and more sharply: the licensing model works against distributing software to others.
+
+**Actor framework — `Akka.NET`. Apache 2.0, held by the .NET Foundation**, and the licence is
+*durable* in exactly the sense this evaluation now requires. The 2022 move of **JVM** Akka to the
+Business Source License does **not** apply to it; Petabridge stated Akka.NET continues as open
+source, and its `LICENSE` is Apache 2.0 to ".NET Foundation and Contributors".
+
+But it is **the wrong layer for these gaps**. It solves concurrency, clustering, supervision and
+event-sourced persistence — none of which is hosting, configuration, telemetry or an outbox. Where
+it becomes genuinely interesting is the **Automator's** execution model: leases, heartbeats,
+supervision and orphan detection are the actor model's home ground.
+
+> **One hard boundary, worth stating before anyone is tempted.** Akka.NET must stay away from the
+> Game Engine's deterministic core. Actor scheduling is nondeterministic by design, and the
+> engine's central guarantee is byte-identical replay from a seed and an action log. Actors are
+> defensible at an orchestration layer that claims no determinism; inside the engine they would
+> destroy the property everything else depends on.
+
+**Backend-as-a-service — `Supabase` (Apache 2.0, self-hostable) and `PocketBase` (MIT, single
+binary, embedded SQLite).** These are **not dependencies at all — they are workloads**, which puts
+them under [`engine-hosting-contract.md`](engine-hosting-contract.md) §2 rather than under
+ADR-004's framework question.
+
+That makes them the most interesting of the three, because they do not touch D3 — they attack
+**D5**. Auth, storage, and per-user data are Identity and Storage on the candidate list, and
+adopting either means Platform never builds those.
+
+| | Supabase | PocketBase |
+|---|---|---|
+| Licence | Apache 2.0 | MIT |
+| Stack | Postgres, GoTrue, PostgREST, Realtime, Storage, Studio | One Go binary, embedded SQLite |
+| Fits | The chosen PostgreSQL persistence baseline | Local and single-server deployment, superbly |
+| Costs | A substantial operational surface to self-host | SQLite-only; a second runtime; scale ceiling |
+
+**Recommendation: record both as live options for D5, decide neither now.** They are irrelevant to
+the near-term gaps, and committing to an auth and storage substrate before there is a product with
+users would be the same mistake as adopting a framework before there is a consumer. What this entry
+buys is that nobody builds Identity or Storage from scratch later without first asking whether one
+of these already is it.
+
+### Mediator libraries — Platform should not have an opinion
+
+**`MediatR` v13 and later is commercial** (Lucky Penny Software, July 2025), with a free Community
+edition for organisations under USD 5M revenue; earlier versions remain MIT. `AutoMapper` moved at
+the same time, and MassTransit followed. **Three foundational libraries in the same corner of .NET
+pivoting inside one year is a pattern, not a coincidence**, and it is the clearest possible support
+for the durability qualifier in [ADR-004](adr/ADR-004-framework-build-not-adopt.md) §4.
+
+Free alternatives exist — `martinothamar/Mediator` (source-generated, AOT-friendly) is the most
+established, alongside a crop of newer entrants. But they carry the *opposite* durability risk:
+young projects with small maintainer counts, where the failure mode is abandonment rather than a
+licence change.
+
+**The more useful answer is that this is not Platform's decision.** A mediator is an in-process
+dispatch pattern — a *product's* architecture choice, in the same way [ADR-004](adr/ADR-004-framework-build-not-adopt.md)
+made the host framework a per-product choice. Platform's packages expose services; they have no
+request/response pipeline to mediate. Nothing in the six needs one, and mandating one would push an
+architectural opinion onto products through infrastructure, which is precisely the coupling the
+boundary test exists to prevent.
+
+**Recommendation: Platform neither supplies nor requires a mediator.** A product that wants one
+chooses it, and records the choice in its own decision log. Worth noting for whoever does: the
+pattern's core — an interface, a handler, and DI resolution — is small, and the pipeline behaviours
+that make MediatR worth having have native equivalents in ASP.NET Core middleware, filters, and
+decorators over the unit of work.
+
+### What this leaves
+
+| Concern | Answer |
+|---|---|
+| Hosting, DI, configuration, health, readiness, migrations, background work, telemetry | **.NET already ships it** |
+| Outbox | Deferred with the transport decision |
+| Tenant isolation | Built-in query filters; a package later |
+| Module conventions | Not a gap at this scale |
+
+**So the near-term set is plausibly one or two thin packages, not six** — something that wires the
+.NET defaults consistently (telemetry, health, problem details, correlation) and, if a shared
+contract type is genuinely needed, an abstractions package beneath it.
+
+That is a scope proposal, not a decision: it belongs in `design/00-brief.md`.
+
+---
+
 ## 4. What Is Deliberately Not Here
 
 Configuration, Events, Identity, Authorization, Organizations, Tenancy, Notifications,
