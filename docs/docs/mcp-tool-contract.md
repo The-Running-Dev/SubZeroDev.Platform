@@ -1,9 +1,15 @@
+---
+sidebar_position: 5
+sidebar_label: MCP Tool Contract
+---
+
 # The MCP Tool Contract
 
-**Document status:** Current, not vision. Unlike `neaas-platform-vision.md`, this
-describes something already built and tested — moved here from the engine repo's own
-specs (`04-core.md` §13, `09-clients.md` §7) because the tool table is a hosting-facing
-contract, not core engine material, even though nothing about it is deferred.
+**Document status:** Current, not vision. Unlike
+[`game-engine-as-a-service.md`](game-engine-as-a-service.md), this describes something
+already built and tested — moved here from the engine repo's own specs (`04-core.md` §13,
+`09-clients.md` §7) because the tool table is a hosting-facing contract, not core engine
+material, even though nothing about it is deferred.
 
 > **Where the implementation lives.** `McpTools`
 > ([`src/engine/src/mcp/server.ts`](https://github.com/The-Running-Dev/SubZeroDev.GameEngine/blob/main/src/engine/src/mcp/server.ts))
@@ -12,7 +18,9 @@ contract, not core engine material, even though nothing about it is deferred.
 > (`TODO.md` W17). This document is the contract; the engine repo is where it's proven.
 > The *real* transport (stdio/HTTP, `@modelcontextprotocol/sdk`, a running process) that
 > would eventually serve these tools over the wire is separate, deferred work — see
-> `neaas-platform-vision.md`, "What the hosted layer would add."
+> [`engine-hosting-contract.md`](engine-hosting-contract.md), which specifies that transport
+> boundary, and [`game-engine-as-a-service.md`](game-engine-as-a-service.md), "What the
+> hosted layer would add."
 
 ## The tool table
 

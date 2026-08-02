@@ -2,8 +2,16 @@
 node_modules/
 
 # Build output
+#
+# NOT `build/`. That directory holds committed scripts here — the documentation
+# gate and the homepage generator, installed by Invoke-SetupDocs and run by
+# .github/workflows/docs-ci.yml. Ignoring it made both invisible to git: present
+# locally, green locally, absent in CI, with nothing saying why. Name the output
+# directories instead, and never re-add a bare `build/`.
 dist/
-build/
+artifacts/
+bin/
+obj/
 *.tsbuildinfo
 
 # Docusaurus local build
