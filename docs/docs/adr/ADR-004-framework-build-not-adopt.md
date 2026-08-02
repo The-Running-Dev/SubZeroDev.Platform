@@ -81,6 +81,38 @@ Three parts, and the second and third are what keep the first from being a mista
    dependency-graph validation, its outbox, and its tenancy query filters are the three worth
    reading closely before the thin equivalents are written. Reading for architecture carries no
    licence obligation; **no ABP source is copied into this repository.**
+4. **What is rejected is adopting a whole application framework — not using libraries.** Reuse an
+   existing, well-scoped NuGet package wherever one exists and fits. **The burden of proof runs the
+   other way from the usual instinct: hand-rolling is what needs justifying, not taking a
+   dependency.**
+
+### On reuse, because this decision is easy to misread as "build everything"
+
+It is not. "Build in-house" here means *Platform owns its own composition and conventions*; it does
+not mean writing infrastructure that a maintained library already provides. A framework asks you to
+adopt its architecture wholesale — which is what §"The finding that decided it" rejected. A library
+does one thing behind an interface you chose, and swapping it later is a contained change.
+
+The narrow gaps this ADR identifies should each be checked against existing packages **before** any
+is written. Candidates worth evaluating — named as starting points to assess, not endorsements, and
+none verified against these requirements yet:
+
+| Gap | Where to look first |
+|---|---|
+| Transactional outbox | The messaging libraries that already ship one, rather than a bespoke implementation |
+| Tenant resolution and query filtering | EF Core global query filters directly; the established multi-tenancy libraries above that |
+| Health and readiness | The ASP.NET Core health-check ecosystem |
+| Telemetry | The official OpenTelemetry .NET packages — this is not a place to invent |
+| Validation, resilience, configuration | The `Microsoft.Extensions.*` family and the mainstream libraries around it |
+
+The outbox is the sharpest case. This ADR's own consequences call it "well-understood but not
+trivial, and getting it wrong is the kind of defect that surfaces only under failure" — which is
+precisely the argument for taking a proven one rather than writing it.
+
+**This does not weaken the dependency rule in `AGENTS.md`.** Every new dependency still gets a
+decision-log entry naming what was rejected and why. The rule was never "avoid dependencies"; it is
+"choose them deliberately and say why". What changes here is the default: reach for a package
+first, and record the reason when you do not.
 
 ## Consequences
 
@@ -99,9 +131,14 @@ Three parts, and the second and third are what keep the first from being a mista
 - **Revisit when** a second .NET product exists and both want the same infrastructure. Two real
   consumers is the extraction guard's own condition, and it is also the point at which adopting a
   framework wholesale could be judged on evidence rather than on anticipation.
-- **A cost accepted honestly:** building even the narrow gaps means writing an outbox, which is
+- **A cost accepted honestly:** building even the narrow gaps means owning an outbox, which is
   well-understood but not trivial, and getting it wrong is the kind of defect that surfaces only
-  under failure. ABP's implementation is the reference for exactly this reason.
+  under failure. ABP's implementation is the reference for exactly this reason — and under §4 the
+  first question is whether it needs writing at all rather than taking a proven library.
+- **The reuse rule inverts the usual default and should be applied visibly.** If a package exists
+  and fits, the decision-log entry records why it was taken; if one exists and was passed over, the
+  entry records why hand-rolling won. An empty log next to hand-written infrastructure is the
+  signal that this clause was skipped.
 
 ## Alternatives considered
 
