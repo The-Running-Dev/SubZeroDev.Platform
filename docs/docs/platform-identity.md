@@ -42,36 +42,13 @@ or to the Game Engine is a build failure, not a review comment.
 ## 2. Why This Needed Stating
 
 Two different things were called `SubZeroDev.Platform`, and both had written
-specifications.
+specifications: this repository described a game-hosting product, while the ecosystem
+staging tree described a reusable application framework and named *this repository* as its
+home. Neither knew the other existed.
 
-| | This repository, as it stood | The ecosystem specification set |
-|---|---|---|
-| Described as | NEaaS — hosting for narrative games | A reusable application framework, "comparable in purpose to ABP" |
-| Position | A product on top of an engine | Infrastructure *underneath* products |
-| Artifacts | Docs only | Six near-term packages, phased roadmap |
-
-The ecosystem set's own repository-layout table lists `SubZeroDev.Platform` as *"The
-reusable application framework. Exists."* — pointing here. It did not exist here; this
-repository held the game-hosting vision instead.
-
-The confirming check: **the ecosystem specification set contains no mention** of the game
-work — not "narrative", not "GameEngine", not "GameOfLife", not "SunTrap", not the word
-"game". The two bodies of work were written without knowledge of each other.
-
-> **This was predicted.** The ecosystem's own root-naming decision argued that *"'Platform'
-> is a category, not a name … it becomes ambiguous the moment a second thing could be
-> called one"*, considered renaming, and kept the name while accepting "occasional
-> conversational ambiguity". What actually materialized was a repository collision rather
-> than a conversational one. The decision to keep the name still stands — it is the
-> ambiguity that is now resolved, by assigning the name deliberately rather than by
-> letting two sets of documents each assume it.
-
-**Why the framework keeps the name.** Every accepted decision in the ecosystem set, the
-phase roadmap, the repository-layout table, the package-identifier reservations, and the
-`Platform → Automator → Plugins` dependency rule all assume it. Game Engine as a Service is
-a product, and under the ecosystem's own boundary test — *a concern belongs in Platform when
-a non-automation product would want it unchanged* — a product is not Platform however much
-infrastructure it needs.
+**The full context, the decision, its costs and the three rejected alternatives are
+[ADR-001](adr/ADR-001-platform-identity.md).** That is the decision's one home; this
+document is orientation and does not restate it.
 
 ---
 
@@ -134,9 +111,10 @@ product wanting it twice.
 - **The game-hosting vision is demoted from "what this repository is" to "one workload it
   hosts".** Its content survives intact — see
   [`game-engine-as-a-service.md`](game-engine-as-a-service.md).
-- **Platform's technology is a decision this repository owns**, and it is open. See
-  [`technology-decision.md`](technology-decision.md). The engine-hosting contract is written
-  to survive either answer, deliberately.
+- **Platform's technology was a decision this repository owned**, and it is taken:
+  [ADR-002](adr/ADR-002-implementation-technology.md) — .NET, with the boundary between
+  Platform and a product it hosts stated explicitly as a process boundary. The
+  engine-hosting contract was written to survive either answer and needed no revision.
 - **The Game Engine is a product, not a plugin.** The plugin contract is stateless command
   invocation returning a result envelope; the engine holds sessions. Nothing should attempt
   to express it as a `plugin.yaml`. Stated in
@@ -148,18 +126,22 @@ product wanting it twice.
 
 Named so they are decisions rather than drift.
 
-- **The remaining ecosystem Platform specifications should move here, and their originals
-  deleted.** Four documents were brought in with this change — the platform specification,
-  events and notifications, tenancy/billing/licensing, and observability. The ecosystem
-  set's own rule is *move, do not copy*, and its staging directory is explicitly "not their
-  permanent home". The originals are **still in place** and are now duplicates; deleting
-  them is a separate, confirmed step, because that staging tree is not version-controlled.
-- **The package-identifier scopes disagree.** The ecosystem naming decision fixes the npm
-  scope as `@subzerodev`; the Game Engine publishes as `@the-running-dev/game-engine`, and
-  the GitHub organization is `The-Running-Dev` while the namespace brand is `SubZeroDev`.
-  Nothing has published on the `@subzerodev` scope, so this is still free to settle, and
-  the naming decision's own argument — reservation is free before first publish and never
-  again — applies with full force.
+- **The ecosystem Platform specifications have moved here** — the platform specification,
+  events and notifications, tenancy/billing/licensing, and observability — and the staging
+  originals are deleted, per *move, never copy*. The staging tree's other directories belong
+  to other repositories and are untouched.
+- **The package-scope conflict is settled**, and it was not drift:
+  [ADR-003](adr/ADR-003-package-scopes-and-registries.md) records that scope is a property of
+  the registry. GitHub Packages requires the npm scope to match the organization, which is
+  what forces the engine's `@the-running-dev` coordinate. **The brand identifiers still need
+  reserving**, and that is a human action requiring registry credentials — free now, and not
+  free after anything publishes.
 - **The architecture repository does not yet exist.** The ecosystem set assigns
-  cross-cutting specifications and ADRs to one. Until it does, this document is where the
+  cross-cutting specifications and ADRs to one. Until it does, `docs/docs/adr/` is where the
   Platform-side half of that reasoning lives.
+- **Two decision-recording mechanisms are now in play**, and only one should survive. The
+  inherited ecosystem convention is *a decision gets an ADR*; this repository's own
+  `AGENTS.md` says decisions go in `design/90-decisions.md`. ADRs are used here because the
+  moved-in specifications cite ADRs by number across repositories and need a stable target.
+  The decision log indexes them rather than repeating them — but the overlap is real and
+  should be collapsed deliberately.

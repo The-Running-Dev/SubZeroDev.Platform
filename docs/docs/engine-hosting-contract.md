@@ -19,8 +19,10 @@ this makes concrete.
 > never had to.
 >
 > It specifies **no technology.** That is
-> [`technology-decision.md`](technology-decision.md), and this document is deliberately
-> written so that it does not depend on the answer.
+> [ADR-002](adr/ADR-002-implementation-technology.md), and this document was written before
+> it was taken, so that it does not depend on the answer. It still does not: ADR-002 chose
+> .NET *and* a process boundary, which is the shape §2 had already argued for on its own
+> grounds.
 
 ---
 

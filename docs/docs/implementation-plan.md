@@ -68,9 +68,15 @@ owns what; two surfaces never merged; and the four questions a hosted deployment
 that an in-process one never had to.
 → [`engine-hosting-contract.md`](engine-hosting-contract.md)
 
-**P2 — The technology decision, opened.** Three options with costs, and a recommendation.
-Explicitly **not blocking**, because P1 was written to survive any answer.
-→ [`technology-decision.md`](technology-decision.md)
+**P2 — The technology decision, taken.** .NET, with the boundary between Platform and a
+product it hosts stated as a process boundary rather than left as an accident. P1 was
+written to survive any answer and needed no revision when it landed.
+→ [ADR-002](adr/ADR-002-implementation-technology.md)
+
+**Also settled:** the repository-identity decision itself
+([ADR-001](adr/ADR-001-platform-identity.md)) and the package-scope conflict
+([ADR-003](adr/ADR-003-package-scopes-and-registries.md)) — scopes are per-registry, and the
+engine's `@the-running-dev` coordinate is forced by GitHub Packages rather than drifted.
 
 ---
 
@@ -82,8 +88,10 @@ Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
 [`minimal-platform-packages.md`](minimal-platform-packages.md).
 
-**Blocked on:** [`technology-decision.md`](technology-decision.md). This is the first stage
-that is, which is why that document exists now rather than later.
+**Was blocked on** the technology decision — the only stage that was, which is why it was
+taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settles it: .NET, so the
+package names above stand and the persistence baseline is EF Core. **P3 is unblocked and
+unstarted.**
 
 **Done when** every package's stated done-criteria are met, and — the one that matters most —
 **a product runs on Platform with health, readiness, correlation ids, migrations and

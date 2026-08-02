@@ -14,9 +14,10 @@ argument; it draws the boundaries **between** the six and says what "done" means
 > **Scope of this document**
 >
 > The six near-term packages, what each owns and refuses, and how each is verified. Package
-> *names* here follow the ecosystem naming convention; if
-> [`technology-decision.md`](technology-decision.md) resolves against .NET, the names
-> change and the boundaries do not.
+> *names* follow the ecosystem naming convention, which
+> [ADR-002](adr/ADR-002-implementation-technology.md) confirmed by settling on .NET. The
+> boundaries below were written to be technology-neutral and did not change when it was
+> taken.
 
 ---
 

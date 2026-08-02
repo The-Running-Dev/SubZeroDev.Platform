@@ -32,10 +32,10 @@ Design documents. No packages yet.
 | [`game-engine-as-a-service.md`](docs/docs/game-engine-as-a-service.md) | The hosted game product — vision |
 | [`engine-hosting-contract.md`](docs/docs/engine-hosting-contract.md) | What "Platform hosts the engine" means: the workload boundary, ownership, and the four questions hosting introduces |
 | [`mcp-tool-contract.md`](docs/docs/mcp-tool-contract.md) | The engine's MCP tool table — current, built and tested |
-| [`technology-decision.md`](docs/docs/technology-decision.md) | **Open.** What Platform is implemented in |
 | [`minimal-platform-packages.md`](docs/docs/minimal-platform-packages.md) | The six near-term packages — boundaries and done-criteria |
 | [`second-consumer-packages.md`](docs/docs/second-consumer-packages.md) | Identity, Tenancy, Billing, Mcp — justified by a second consumer |
 | [`implementation-plan.md`](docs/docs/implementation-plan.md) | The ordered plan, both tracks |
+| [`adr/`](docs/docs/adr/) | The decisions: [identity](docs/docs/adr/ADR-001-platform-identity.md), [technology](docs/docs/adr/ADR-002-implementation-technology.md), [package scopes](docs/docs/adr/ADR-003-package-scopes-and-registries.md) |
 | [`events-and-notifications.md`](docs/docs/events-and-notifications.md) · [`tenancy-billing-licensing.md`](docs/docs/tenancy-billing-licensing.md) · [`observability.md`](docs/docs/observability.md) | Supporting specifications |
 
 It renders as a [Docusaurus](https://docusaurus.io) site (requires Docker Desktop):
