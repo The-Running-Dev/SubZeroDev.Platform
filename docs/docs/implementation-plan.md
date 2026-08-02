@@ -273,13 +273,23 @@ So the range is genuinely wide: **six packages, three, or nearly none.** The hon
 an evaluation of candidate packages against the gaps, and the answer belongs in
 `design/00-brief.md` as scope and non-goals.
 
-### 8.2 What proves Platform works
+### 8.2 What proves Platform works — **decided: a sample**
 
-Platform's stated done-criterion is *"a product runs on Platform with health, readiness,
-correlation ids, migrations and telemetry configured by nothing but the standard registration
-call"* — and neither product exists.
+**A sample in `samples/`, run in CI, is the definition of done for D3.** The scope collapse settled
+this: one or two thin packages wiring .NET defaults — telemetry, health, correlation, problem
+details — do not need a real product to demonstrate, and the earlier argument for the G1 edge was
+made when D3 was six packages including Persistence and Testing.
 
-The options were weighed and not chosen:
+It also keeps Track A genuinely parallel: no cross-repository coupling, and D3 does not wait on G1.
+
+**The known weakness, stated rather than hidden:** a sample is written by the framework's authors,
+so it confirms rather than challenges. The mitigation is to derive its requirements from what the
+G1 edge will actually need, so a real consumer shapes it. When the edge does arrive, it becomes the
+first genuine validation — and any API change it forces is expected, and cheap while Platform is
+still `0.x`.
+
+<details>
+<summary>The options as they were weighed, kept for the reasoning</summary>
 
 | Instrument | Proves well | Proves badly |
 |---|---|---|
@@ -287,25 +297,32 @@ The options were weighed and not chosen:
 | The G1 .NET edge | Hosting, and a *real* distributed trace to a Node workload | Persistence and Testing — a thin proxy has little durable state |
 | A widened edge | Everything | It is G3 pulled into G1, losing G1's virtue as the cheapest informative failure |
 
-They are not exclusive, and the packages do not all need the same instrument. **Whatever is
-chosen, it belongs in the definition of done** — a package whose proof is only its own unit tests
-reaches a committed public API with no consumer, which is what the extraction guard exists to
-prevent.
+</details>
 
-### 8.3 The contract between hosted things
+> **The rule the choice has to satisfy**, whichever instrument is used: a package whose only proof
+> is its own unit tests reaches a committed public API with no consumer, which is exactly what the
+> extraction guard exists to prevent. The sample is the consumer until the edge is.
 
-[ADR-002](adr/ADR-002-implementation-technology.md) fixed that the product boundary is a *process*
-boundary. It did not say what crosses it. With .NET products and a Node engine, the contract is
-the only shared artifact, which argues for a real versionable IDL rather than a convention.
+### 8.3 The contract between hosted things — **decided: ADR-005**
 
-Candidates: **protobuf**, giving codegen on both sides; **OpenAPI**, weaker-typed but matching
-Platform's existing API conventions and needing no toolchain; or **MCP**, which the ecosystem's own
-MCP decision already fixes as *a transport projected from a contract* — so using it as the
-substrate would conflate the AI-facing surface with internal contracts rather than layering them.
+Settled by [ADR-005](adr/ADR-005-service-contract.md): boundary contracts are **projected from
+their source of truth, never authored alongside it**, and they live in `SubZeroDev.ServiceContract`
+— its own public repository, depended on by products, depending on nothing.
 
-Whatever is chosen wants the same shape as `SubZeroDev.PluginContract`: depended on by everything,
-depending on nothing, in its own repository.
+protobuf was evaluated and **declined for now**. It would create a second, hand-maintained
+definition of types the engine already owns, in a codebase whose recurring defect is two copies
+disagreeing. Revisited when a boundary needs streaming or payloads where JSON's size is measurable
+— and generated rather than authored when it is. JSON over HTTP with version-pathed schema URLs is
+the first wire. MCP stays a projection, per the ecosystem's own MCP decision.
 
-> **8.2 and 8.3 interact.** If G1 is Platform's proving instrument, G1 splits into a .NET edge and
-> a Node workload — and the contract between them is 8.3, needed immediately rather than later.
-> Choosing a sample instead defers 8.3 until a second product exists.
+**Outstanding from that decision**, each with a named cost rather than left implicit:
+
+- **The repository does not exist yet.** Creating it is the next concrete step.
+- **`mcp-tool-contract.md` is its natural first content**, and moving it means updating the engine's
+  `09-clients.md`, which links to it by URL. ADR-005 deliberately does not move it.
+- **A generated schema needs a generator.** Rule 2 is cheap to state and not cheap to honour; a
+  hand-written schema "just for now" is how it gets lost.
+
+> **8.2 and 8.3 no longer interact.** Choosing the sample for 8.2 means the contract is not needed
+> to prove Platform — so the repository can be created and populated on its own schedule, driven by
+> the first real boundary rather than by D3's definition of done.

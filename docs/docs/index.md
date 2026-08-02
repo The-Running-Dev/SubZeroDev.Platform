@@ -35,6 +35,7 @@ elsewhere:
 - [ADR-002 — Platform is .NET, and the product boundary is a process boundary](adr/ADR-002-implementation-technology.md)
 - [ADR-003 — Scopes are per-registry, not one global name](adr/ADR-003-package-scopes-and-registries.md)
 - [ADR-004 — Platform is built in-house, with ABP as an architecture reference](adr/ADR-004-framework-build-not-adopt.md)
+- [ADR-005 — Boundary contracts are projected, not authored](adr/ADR-005-service-contract.md)
 
 ## The one rule underneath all of it
 
