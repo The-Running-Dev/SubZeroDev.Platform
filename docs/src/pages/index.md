@@ -1,3 +1,8 @@
+---
+title: 'SubZeroDev.Platform'
+description: 'The reusable application framework and hosting layer for SubZeroDev products.'
+---
+
 # SubZeroDev.Platform
 
 The **reusable application framework and hosting layer** for SubZeroDev products: hosting,
@@ -51,3 +56,5 @@ Check it before pushing:
 ---
 
 Private, work in progress. Design stage — no packages have been built.
+
+[View the documentation](/docs/)

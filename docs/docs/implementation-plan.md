@@ -13,8 +13,16 @@ sidebar_label: Implementation Plan
 > that were written independently: the ecosystem phase roadmap, and the Game Engine's own
 > post-MVP programme.
 >
-> **Phase numbers below refer to the ecosystem roadmap.** This document does not maintain a
-> second numbering — that rule exists because "Phase One" once meant three different things.
+> **"Phase N" always means the ecosystem roadmap's phase, and nothing else.** This document
+> does not maintain a second phase numbering — that rule exists because "Phase One" once
+> meant three different things across the specification set.
+>
+> **`D` and `G` are stage labels, not phases.** `D0–D5` are this repository's design and
+> build stages; `G1–G4` are the Game Engine hosting stages. They are deliberately *not*
+> numbered `P0–P5`, which is how they read at first and which caused a real misreading: `D3`
+> was taken for ecosystem Phase 3. It is not — **`D3` is ecosystem Phase 2.** Each stage below
+> names its phase explicitly where one applies, and where a stage has no ecosystem phase, it
+> has none because Track B is this repository's own work.
 
 ---
 
@@ -42,7 +50,7 @@ Platform and Game Engine hosting are **not one sequence**, and treating them as 
 main scheduling error available here.
 
 ```text
-Track A — Platform     P3 → P4 → P5      (Phase 2, then Phase 5, then Phase 8)
+Track A — Platform     D3 → D4 → D5      (Phase 2, then Phase 5, then Phase 8)
 Track B — GEaaS        G1 → G2 → G3 → G4  (blocked on the engine, not on Platform)
 ```
 
@@ -58,18 +66,18 @@ product first, extract when a second consumer proves the shape.
 
 ## 3. Completed by This Change
 
-**P0 — Repository identity.** Platform is the reusable framework and hosting layer; Game
+**D0 — Repository identity.** Platform is the reusable framework and hosting layer; Game
 Engine as a Service is one hosted workload. The four ecosystem Platform specifications are
 brought in. The engine is renamed from "Narrative Engine" to "Game Engine" throughout.
 → [Platform Identity](platform-identity.md)
 
-**P1 — The engine hosting contract.** Workload hosting rather than in-process ports; who
+**D1 — The engine hosting contract.** Workload hosting rather than in-process ports; who
 owns what; two surfaces never merged; and the four questions a hosted deployment must answer
 that an in-process one never had to.
 → [`engine-hosting-contract.md`](engine-hosting-contract.md)
 
-**P2 — The technology decision, taken.** .NET, with the boundary between Platform and a
-product it hosts stated as a process boundary rather than left as an accident. P1 was
+**D2 — The technology decision, taken.** .NET, with the boundary between Platform and a
+product it hosts stated as a process boundary rather than left as an accident. D1 was
 written to survive any answer and needed no revision when it landed.
 → [ADR-002](adr/ADR-002-implementation-technology.md)
 
@@ -82,7 +90,7 @@ engine's `@the-running-dev` coordinate is forced by GitHub Packages rather than 
 
 ## 4. Track A — Platform
 
-### P3 — The minimal package set *(ecosystem Phase 2)*
+### D3 — The minimal package set *(ecosystem Phase 2)*
 
 Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
@@ -90,7 +98,7 @@ done-criteria are specified in
 
 **Was blocked on** the technology decision — the only stage that was, which is why it was
 taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settles it: .NET, so the
-package names above stand and the persistence baseline is EF Core. **P3 is unblocked and
+package names above stand and the persistence baseline is EF Core. **D3 is unblocked and
 unstarted.**
 
 **Done when** every package's stated done-criteria are met, and — the one that matters most —
@@ -98,7 +106,7 @@ unstarted.**
 telemetry configured by nothing but the standard registration call.** A framework whose first
 consumer needs bespoke wiring has not proven anything.
 
-### P4 — Extraction, on evidence *(ecosystem Phase 5)*
+### D4 — Extraction, on evidence *(ecosystem Phase 5)*
 
 Configuration, Events, Notifications, Storage, BackgroundJobs, Scheduling, Api — extracted
 from the Automator once a second consumer exists.
@@ -106,7 +114,7 @@ from the Automator once a second consumer exists.
 **Done when** each extracted package has **two** named consumers in the repository, not one
 and a plan. The guard is only worth having if it is applied at the moment it is inconvenient.
 
-### P5 — Commercial *(ecosystem Phase 8)*
+### D5 — Commercial *(ecosystem Phase 8)*
 
 Identity, Authorization, Organizations, Tenancy, Billing, Licensing, Audit, shared web UI.
 Shapes are specified in
@@ -116,7 +124,7 @@ Shapes are specified in
 particularly: tenancy models deliberately shared resources explicitly, and `Platform.Mcp`
 accepts tool definitions from a producer other than manifest projection.
 
-> **The tenant column does not wait for this stage.** It ships with Persistence in P3.
+> **The tenant column does not wait for this stage.** It ships with Persistence in D3.
 
 ---
 
@@ -170,7 +178,7 @@ appears here, separate from the game surface (§5).
 undecorated one, a session id belonging to another principal returns a refusal rather than
 data, and no hosted endpoint returns engine state.
 
-**Adopts Platform's Identity** if P5 has landed; otherwise implements it locally and becomes
+**Adopts Platform's Identity** if D5 has landed; otherwise implements it locally and becomes
 the second-consumer evidence that promotes it. Either order is fine — that is the guard
 working.
 
@@ -197,7 +205,7 @@ The things that genuinely cannot be reordered:
 |---|---|
 | Engine packaging **→** G1 | Nothing can consume the engine until it packs and installs |
 | G1 **→** G2 | The byte-identity proof must exist before persistence can be checked against it |
-| Technology decision **→** P3 | Package identifiers and the module contract depend on it |
+| Technology decision **→** D3 | Package identifiers and the module contract depend on it |
 | Persistence **→** everything with a tenant | The column ships in the first schema or it is a migration on every table |
 | G2 **→** engine's composition-root question | The second implementation is what makes the question answerable |
 
@@ -217,5 +225,5 @@ Recorded so the assumptions are visible rather than implied.
   and Identity, Tenancy, Billing and Mcp go back to being speculative. They should then not
   be built.
 - **If the Automator ships first and grows its own identity and tenancy**, that is the guard
-  working as designed, not a failure — extraction follows the second consumer, and P4 is
+  working as designed, not a failure — extraction follows the second consumer, and D4 is
   where it lands.

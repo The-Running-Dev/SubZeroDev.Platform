@@ -42,32 +42,27 @@ and preferences belong in `AGENTS.md`.
 
 ## Documentation site
 
-- **The site root is missing because of *when* the overlay happens, not because of the
-  installer.** `baseUrl` is `/`, `routeBasePath` is `docs`, so nothing serves `/` while the
-  navbar brand links there from every page — 16 broken links under `onBrokenLinks: 'throw'`,
-  all of them `/`. Dropping `docs/src/pages/index.md` in does not survive: it reaches the
-  image and is deleted before compilation.
-  **The cause is now read, not guessed.** The strip is in `/PSModule/Scripts/docs-build.ps1`
-  and guards against the *base image* leaking its own `src/pages`, which would take the site
-  root with it. Its own comment says it is "checked before the overlay rather than after, so
-  a consumer supplying their own `docs/src/pages` is not mistaken for the leak." That
-  precondition does not hold here: `docs/Dockerfile` does `COPY . .` into `/template` at
-  **image-build** time, so by the time `Invoke-DocsBuild` runs inside the derived image the
-  consumer's file is already in the directory being checked, and is indistinguishable from
-  the leak it is looking for.
-  **An earlier note in this file blamed installer registration (`build/`, `.config/`). That
-  was wrong** — the script never looks at either. Corrected after reading it; the
-  installer-versus-not difference between this repository and `SubZeroDev.GameEngine` is real
-  but is not what drives this.
-  **Still unverified:** whether the engine repository's root actually renders, and whether
-  running the installer changes the invocation shape enough to avoid the guard. Check those
-  before attempting a fix. What is ruled out is a `routeBasePath` migration being *necessary*.
-- **A hand-written `docs.ps1` is a sign the installer never ran.** In the sibling repos the
-  installed one is generated and deliberately *not* committed; a committed copy predates the
-  template. This repository has one, tracked — which also means **`./docs.ps1` is available
-  here**; do not report it missing. (It was once reported missing from a shell whose working
-  directory was still `docs/`. Check `git rev-parse --show-toplevel` before concluding a
-  repository-root file is absent.)
+- **Build the docs the way CI does, or you will diagnose a bug that isn't there.**
+  `Invoke-DocsBuild -SourceDocs ./docs` with the repository mounted, against the **clean**
+  base image. Do **not** `docker build` `docs/` and then run the build inside the derived
+  image: `docs/Dockerfile` does `COPY . .` into `/template`, so `src/pages` is already
+  populated when `docs-build.ps1` checks it for a base-image leak, and the generated site
+  root is deleted as that leak. The guard is correct; the invocation was not.
+  **This cost two wrong conclusions before the third was right** — first "the step strips
+  `src/pages` unconditionally", then "it is keyed on installer registration (`build/`,
+  `.config/`)". Both were written confidently, one of them after reading the script. The
+  actual fix was to run `Invoke-SetupDocs`, which generates `docs/src/pages/index.md` from
+  `README.md`. The site root now resolves and `onBrokenLinks` is `'throw'`.
+  **Lesson beyond the docs site:** when a tool deletes something you just created, suspect
+  how you invoked it before concluding it cannot be done.
+- **The README becomes the site root, so it must contain no repository-relative `.md`
+  links.** They are correct on the code host and dead on the homepage. `build/Test-Documentation.ps1`
+  catches it — 15 errors, first run. Either use absolute URLs with `SiteUrl` set in
+  `.config/DocumentationRules.psd1`, or keep the index in `docs/docs/index.md` and let the
+  README point at it, which is what this repository does.
+- **`docs.ps1` is present and tracked here**; do not report it missing. It was once reported
+  missing from a shell whose working directory was still `docs/`. Check
+  `git rev-parse --show-toplevel` before concluding a repository-root file is absent.
 
 ## Verification
 
@@ -100,6 +95,15 @@ and preferences belong in `AGENTS.md`.
 - **A broad `git add` has already nearly cost real work** in a sibling repo: an ignore pattern
   would have made generated scripts invisible to `git add -A` — present locally, green
   locally, missing in CI, with nothing saying why.
+- **That near-miss then happened here, for real.** `.gitignore` carried a bare `build/` under
+  "Build output". `Invoke-SetupDocs` installs `build/Test-Documentation.ps1` and
+  `build/ConvertTo-DocumentationHomepage.ps1` there, and `.github/workflows/docs-ci.yml` runs
+  the first — so both were invisible to git, the gate passed locally, and CI would have failed
+  on a missing file. Caught by running `git check-ignore -v` on the installed paths rather
+  than trusting `git status`, which simply does not list them. **`build/` is a scripts
+  directory here, not output**; the ignore now names `dist/`, `artifacts/`, `bin/`, `obj/`.
+  **After any installer or scaffold run, `git check-ignore -v` the files it reported
+  creating.** An ignored new file looks identical to one that was never created.
 - **After a squash merge, `git branch -d` reports the branch unmerged** because the squash
   commit shares no history with it. Confirm with `git diff <branch> main` returning empty,
   then delete.
@@ -121,6 +125,14 @@ and preferences belong in `AGENTS.md`.
   "NEaaS — Narrative Engine as a Service" was renamed to Game Engine as a Service because the
   engine ships three kinds and only one is narrative. A theme word in a name smuggles in a
   decision.
+- **A label that can be misread as a shared term will be.** The design stages were `P0–P5`
+  alongside the ecosystem's `Phase 0–8`. `P` reads as "Phase", and it cost a real
+  misunderstanding — `D3`, which is ecosystem *Phase 2*, was read as Phase 3, and the question
+  asked was whether Phase 0 was finished when Phase 0 is a different repository's work
+  entirely. Renamed to `D0–D5`. **The ecosystem roadmap already forbade this** — it holds the
+  phase vocabulary precisely because "Phase One" once meant three different things — so the
+  rule existed and was still walked into. When inventing a sequence, check it against the
+  vocabulary the surrounding documents already own.
 - **When a document starts describing how something *works* rather than what it *contains*,
   stop and check the contract it depends on.** A sibling repo's eight-document draft
   accidentally wrote a parallel engine — its own state envelope, its own API, its own status

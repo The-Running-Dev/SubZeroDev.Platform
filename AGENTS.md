@@ -105,7 +105,7 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 - **This repository is design-stage, and that is the current constraint** — not deferral. The
   near-term package set is unstarted. Technology is settled
   ([ADR-002](docs/docs/adr/ADR-002-implementation-technology.md): .NET, with the product
-  boundary a process boundary), so P3 is unblocked but unstarted. Do not build Platform
+  boundary a process boundary), so D3 is unblocked but unstarted. Do not build Platform
   packages or hosted game features ahead of the
   [implementation plan](docs/docs/implementation-plan.md)'s stated ordering constraints.
 - **Non-goals are binding.** Anything listed as a non-goal in the brief is out of scope even if it looks trivial, even if you are already touching that file.
@@ -120,6 +120,13 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 - **The extraction guard governs what may be added.** A candidate becomes a Platform package
   when a **second** consumer needs it, not when the first one does. Record premature ideas as
   intent, not as a build target.
+- **"Phase N" is the ecosystem roadmap's, and no document here defines a second one.** That
+  roadmap holds the phase vocabulary for the whole ecosystem; this repository references a
+  phase, never renumbers one. Local sequences use a distinct prefix and must not be readable
+  as a phase — `D0–D5` for the design and build stages, `G1–G4` for Game Engine hosting.
+  They were `P0–P5`, which read as "Phase", and `D3` (ecosystem Phase 2) was taken for
+  Phase 3. If you add a sequence, pick a letter that cannot be misread and say which phase
+  each stage maps to.
 - **Reference, never restate.** A rule that lives in another document is linked, not copied. Two copies of a rule is a promise they will diverge and a guarantee nobody notices which is stale.
 - **Move, never copy.** A rule has exactly one home. When it belongs somewhere else, move it and leave a reference behind.
 - If a document genuinely must repeat something to stand on its own, name the canonical copy in the text and change both in the same commit. Naming a canonical copy is what makes the others checkable.

@@ -6,20 +6,18 @@ import type * as Preset from '@docusaurus/preset-classic';
  * directory is copied over /template (see ./Dockerfile). Content lives in
  * ./docs; the sidebar is ./sidebar.ts.
  *
- * Broken-link checks stay 'warn', and cannot currently be 'throw'. Nothing serves
- * the site root: baseUrl is '/' while routeBasePath is 'docs', so the navbar brand
- * links to '/' from every page and each reports a broken link. Verified by building
- * with 'throw': 16 broken links, all of them '/', nothing else.
+ * Broken-link checks are 'throw'. They were 'warn' while nothing served the site
+ * root — baseUrl '/' with routeBasePath 'docs' left the navbar brand linking to '/'
+ * from every page, 16 broken links, all of them '/'. Invoke-SetupDocs generates
+ * src/pages/index.md from README.md and fixes it; the sanctioned build now reports
+ * zero broken links, so the check can gate.
  *
- * Authoring src/pages/index.md does not fix it. docs-build.ps1 in the base image
- * strips src/pages to stop the *image* leaking its own routes, and is checked before
- * that script's overlay so a consumer's own copy is not mistaken for the leak — but
- * ./Dockerfile does `COPY . .` into /template at image-build time, so the file is
- * already there when the check runs and is deleted anyway.
- *
- * Do not re-attempt that fix, and do not migrate routeBasePath to '/' for it — that
- * moves every page URL. See agent.md, *Documentation site*, for what is still
- * unverified.
+ * Build it the way CI does — `Invoke-DocsBuild -SourceDocs ./docs` against the clean
+ * base image, repository mounted. Do NOT `docker build` this directory and then run
+ * the build inside the derived image: ./Dockerfile does `COPY . .` into /template, so
+ * src/pages is already populated when docs-build.ps1 checks it for a base-image leak,
+ * and the generated site root is deleted as that leak. That diagnosis cost two wrong
+ * conclusions; see agent.md, *Documentation site*.
  */
 const config: Config = {
   title: 'SubZeroDev.Platform',
@@ -27,11 +25,11 @@ const config: Config = {
   url: 'https://platform.subzerodev.com',
   baseUrl: '/',
 
-  onBrokenLinks: 'warn',
+  onBrokenLinks: 'throw',
 
   markdown: {
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 

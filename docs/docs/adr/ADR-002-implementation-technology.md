@@ -73,7 +73,7 @@ Three reasons:
   written to be technology-neutral, and `minimal-platform-packages.md` needs no revision
   beyond package naming.
 - **Package identifiers are now decidable**, which unblocks
-  [ADR-003](ADR-003-package-scopes-and-registries.md) and the P3 stage of the implementation
+  [ADR-003](ADR-003-package-scopes-and-registries.md) and the D3 stage of the implementation
   plan.
 
 ## Alternatives considered
@@ -85,7 +85,7 @@ logic — the Automator is specified against .NET and is the consumer that exist
 ecosystem specification set would stop transferring verbatim, and the prize it buys is an
 in-process integration the hosting contract already declined on determinism grounds.
 
-**Defer the decision further.** Tempting, since nothing in P0–P2 was blocked by it. Rejected
+**Defer the decision further.** Tempting, since nothing in D0–D2 was blocked by it. Rejected
 for the reason the naming ADR gives about identifiers: deferring moves a decision to the
-moment it becomes expensive. P3 cannot start without it, and the reservations in
+moment it becomes expensive. D3 cannot start without it, and the reservations in
 [ADR-003](ADR-003-package-scopes-and-registries.md) are free now and never again.
