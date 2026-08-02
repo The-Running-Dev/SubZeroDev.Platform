@@ -19,6 +19,21 @@ argument; it draws the boundaries **between** the six and says what "done" means
 > boundaries below were written to be technology-neutral and did not change when it was
 > taken.
 
+:::caution The count is no longer settled
+
+[ADR-004](adr/ADR-004-framework-build-not-adopt.md) decided that Platform is built in-house
+rather than adopting a framework — and in reaching that, established that modern .NET already
+ships much of what these six describe: hosting, DI, typed and validated configuration, health
+and readiness endpoints, OpenTelemetry integration, EF Core migrations, `IHostedService`.
+
+Measured against that, the genuine gaps are narrow — a transactional outbox, tenant column and
+query filtering, and module registration conventions. **Whether the near-term set is six
+packages or three is an open scope decision for the brief**, not something this document
+settles. The *boundaries* below stand however the count lands; what is provisional is how many
+of them need a package of their own.
+
+:::
+
 ---
 
 ## 1. Why These Six

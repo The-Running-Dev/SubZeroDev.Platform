@@ -32,11 +32,23 @@ Measured, not assumed.
 
 | | State |
 |---|---|
-| Game Engine | **Past MVP.** Every box in its definition of done is checked against a named test. Two further kinds and four campaign arcs have followed. Currently packaging itself for external consumption |
-| Platform | **Documents only.** No packages, no code. The six near-term packages are unstarted |
+| Game Engine | **Past MVP, and now consumable.** `@the-running-dev/game-engine` **0.4.0 is published** to GitHub Packages with a 26-entry public surface. Two further kinds and four campaign arcs beyond the MVP |
+| Platform | **Documents only.** No packages, no code. Scope is open — see the caution below |
 | Automator | Specified, unstarted |
-| Plugin contract | Specified, schemas written and validated, unpublished |
-| This repository | Identity reconciled by this change; previously described itself as the game-hosting product |
+| Plugin contract | **Its own repository**, [SubZeroDev.PluginContract](https://github.com/The-Running-Dev/SubZeroDev.PluginContract), public, tagged `v0.1.0`. Schemas written and validated; not yet published at version-pathed URLs |
+| Architecture specs | **Version-controlled**, [SubZeroDev.Architecture](https://github.com/The-Running-Dev/SubZeroDev.Architecture), private |
+| This repository | Identity settled ([ADR-001](adr/ADR-001-platform-identity.md)); framework question settled ([ADR-004](adr/ADR-004-framework-build-not-adopt.md)) |
+
+:::caution Platform's scope is smaller than this document was written against
+
+Two decisions narrowed it after the fact, and neither is reflected in the D3 stage below.
+[ADR-004](adr/ADR-004-framework-build-not-adopt.md) established that .NET already ships most of
+what the six packages describe, leaving narrow gaps — outbox, tenant filtering, module
+conventions — and then that those gaps should be checked against existing NuGet packages before
+anything is written. **D3 may be three packages, or fewer.** Treat the six below as the boundary
+catalogue it is, not as a build list.
+
+:::
 
 The gate that used to block hosting work — *"not before the engine MVP is done"* — **is
 satisfied.** The engine's own order of operations puts the unified API and MCP surface as
@@ -51,13 +63,13 @@ main scheduling error available here.
 
 ```text
 Track A — Platform     D3 → D4 → D5      (Phase 2, then Phase 5, then Phase 8)
-Track B — GEaaS        G1 → G2 → G3 → G4  (blocked on the engine, not on Platform)
+Track B — GEaaS        G1 → G2 → G3 → G4  (unblocked — the engine package is published)
 ```
 
 Track A sits **off the ecosystem critical path** and can proceed in parallel with plugin and
-Automator work. Track B blocks on the engine's packaging, not on Platform — which means the
-first hosted increment can be built and proven **before** Platform has anything to offer it,
-and adopt Platform later.
+Automator work. Track B used to block on the engine's packaging; **it no longer does** — 0.4.0 is
+published, so G1 can start whenever it is wanted, independently of Platform, and adopt Platform
+later.
 
 That is deliberate, and it is the same reasoning the extraction guard applies: build the
 product first, extract when a second consumer proves the shape.
@@ -95,6 +107,12 @@ engine's `@the-running-dev` coordinate is forced by GitHub Packages rather than 
 Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
 [`minimal-platform-packages.md`](minimal-platform-packages.md).
+
+> **The count is provisional.** [ADR-004](adr/ADR-004-framework-build-not-adopt.md) settled that
+> Platform builds its own rather than adopting ABP, and in doing so established that .NET already
+> provides much of what these six describe. The remaining gaps are narrow — outbox, tenant
+> filtering, module conventions — so this stage may be three packages rather than six. The scope
+> belongs to the brief; the boundaries do not change either way.
 
 **Was blocked on** the technology decision — the only stage that was, which is why it was
 taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settles it: .NET, so the
@@ -136,8 +154,14 @@ A single service consuming the published engine package, composing the in-memory
 exposing the tool surface over a **real MCP transport**. No database, no accounts, no
 billing, no tenancy.
 
-**Blocked on:** the engine's consumer-boundary work being merged and a version published.
-Nothing else.
+**Unblocked.** This stage waited on the engine's consumer-boundary work; that is merged and
+`@the-running-dev/game-engine` **0.4.0 is published**. Nothing else gates it.
+
+> **One thing G1 must decide that this stage did not anticipate.** Platform is .NET
+> ([ADR-002](adr/ADR-002-implementation-technology.md)) and the engine is Node, so a G1 written
+> as a single Node service consumes the engine but **not Platform**. If G1 is also meant to be
+> Platform's first consumer, it splits: a .NET edge on Platform in front of the Node engine
+> workload. That is a materially different G1, and it is one of the open decisions in §8.
 
 **Done when** — and this is the criterion worth having, because the engine already knows how
 to write it:
@@ -201,15 +225,18 @@ answered.
 
 The things that genuinely cannot be reordered:
 
-| Constraint | Why |
-|---|---|
-| Engine packaging **→** G1 | Nothing can consume the engine until it packs and installs |
-| G1 **→** G2 | The byte-identity proof must exist before persistence can be checked against it |
-| Technology decision **→** D3 | Package identifiers and the module contract depend on it |
-| Persistence **→** everything with a tenant | The column ships in the first schema or it is a migration on every table |
-| G2 **→** engine's composition-root question | The second implementation is what makes the question answerable |
+| Constraint | Why | State |
+|---|---|---|
+| Engine packaging **→** G1 | Nothing can consume the engine until it packs and installs | **Satisfied** — 0.4.0 published |
+| Technology decision **→** D3 | Package identifiers and the module contract depend on it | **Satisfied** — ADR-002, ADR-004 |
+| G1 **→** G2 | The byte-identity proof must exist before persistence can be checked against it | Open |
+| Persistence **→** everything with a tenant | The column ships in the first schema or it is a migration on every table | Open |
+| G2 **→** engine's composition-root question | The second implementation is what makes the question answerable | Open |
 
 Everything else is genuinely parallel, including the whole of Track A against Track B.
+
+**Both blocking constraints are now satisfied**, so neither track is externally gated. What gates
+them is §8.
 
 ---
 
@@ -227,3 +254,58 @@ Recorded so the assumptions are visible rather than implied.
 - **If the Automator ships first and grows its own identity and tenancy**, that is the guard
   working as designed, not a failure — extraction follows the second consumer, and D4 is
   where it lands.
+
+---
+
+## 8. Open Decisions
+
+Nothing external gates either track now. These three do, and each surfaced during design without
+being settled — recorded here so they are decisions rather than things that quietly get assumed.
+
+### 8.1 How much of D3 is actually built
+
+[ADR-004](adr/ADR-004-framework-build-not-adopt.md) narrowed this twice: .NET already ships most
+of what the six packages describe, and the narrow gaps that remain — transactional outbox, tenant
+column and query filtering, module registration conventions — must each be checked against
+existing NuGet packages before anything is written.
+
+So the range is genuinely wide: **six packages, three, or nearly none.** The honest next step is
+an evaluation of candidate packages against the gaps, and the answer belongs in
+`design/00-brief.md` as scope and non-goals.
+
+### 8.2 What proves Platform works
+
+Platform's stated done-criterion is *"a product runs on Platform with health, readiness,
+correlation ids, migrations and telemetry configured by nothing but the standard registration
+call"* — and neither product exists.
+
+The options were weighed and not chosen:
+
+| Instrument | Proves well | Proves badly |
+|---|---|---|
+| A sample in `samples/` | Persistence and Testing — a kill test mid-outbox is controllable | Written by the framework's authors, so it confirms rather than challenges |
+| The G1 .NET edge | Hosting, and a *real* distributed trace to a Node workload | Persistence and Testing — a thin proxy has little durable state |
+| A widened edge | Everything | It is G3 pulled into G1, losing G1's virtue as the cheapest informative failure |
+
+They are not exclusive, and the packages do not all need the same instrument. **Whatever is
+chosen, it belongs in the definition of done** — a package whose proof is only its own unit tests
+reaches a committed public API with no consumer, which is what the extraction guard exists to
+prevent.
+
+### 8.3 The contract between hosted things
+
+[ADR-002](adr/ADR-002-implementation-technology.md) fixed that the product boundary is a *process*
+boundary. It did not say what crosses it. With .NET products and a Node engine, the contract is
+the only shared artifact, which argues for a real versionable IDL rather than a convention.
+
+Candidates: **protobuf**, giving codegen on both sides; **OpenAPI**, weaker-typed but matching
+Platform's existing API conventions and needing no toolchain; or **MCP**, which the ecosystem's own
+MCP decision already fixes as *a transport projected from a contract* — so using it as the
+substrate would conflate the AI-facing surface with internal contracts rather than layering them.
+
+Whatever is chosen wants the same shape as `SubZeroDev.PluginContract`: depended on by everything,
+depending on nothing, in its own repository.
+
+> **8.2 and 8.3 interact.** If G1 is Platform's proving instrument, G1 splits into a .NET edge and
+> a Node workload — and the contract between them is 8.3, needed immediately rather than later.
+> Choosing a sample instead defers 8.3 until a second product exists.

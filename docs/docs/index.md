@@ -34,6 +34,7 @@ elsewhere:
 - [ADR-001 — `SubZeroDev.Platform` is the framework, not the game product](adr/ADR-001-platform-identity.md)
 - [ADR-002 — Platform is .NET, and the product boundary is a process boundary](adr/ADR-002-implementation-technology.md)
 - [ADR-003 — Scopes are per-registry, not one global name](adr/ADR-003-package-scopes-and-registries.md)
+- [ADR-004 — Platform is built in-house, with ABP as an architecture reference](adr/ADR-004-framework-build-not-adopt.md)
 
 ## The one rule underneath all of it
 
