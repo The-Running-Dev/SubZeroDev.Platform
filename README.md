@@ -50,4 +50,4 @@ Check it before pushing:
 
 ---
 
-Private, work in progress. Design stage — no packages have been built.
+Public, work in progress. Design stage — no packages have been built.
