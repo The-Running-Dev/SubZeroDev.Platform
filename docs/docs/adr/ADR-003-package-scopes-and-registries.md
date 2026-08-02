@@ -67,8 +67,13 @@ one part of this that expires.
   Node package, not Platform.
 - **The org-versus-brand mismatch is recorded rather than resolved**, and it is the thing to
   revisit if the coordinates ever become genuinely confusing.
-- **Nothing has published on `@subzerodev`**, so the reservation window is still open. That
-  will not remain true indefinitely.
+- **Nothing has published on `@subzerodev`**, so the reservation window is *probably* still
+  open. Stated with that hedge deliberately: a read-only check of the public registries found
+  no published packages under the npm scope, the NuGet prefix or the PowerShell Gallery
+  prefix — but *not published* is not *not owned*, an npm organisation can be held without
+  publishing, and the container namespace needs authentication to check at all. Only signing
+  in settles it. The operational state and the four actions are tracked in
+  `design/90-decisions.md`.
 
 ## Alternatives considered
 
