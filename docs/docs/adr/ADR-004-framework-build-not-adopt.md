@@ -114,6 +114,20 @@ decision-log entry naming what was rejected and why. The rule was never "avoid d
 "choose them deliberately and say why". What changes here is the default: reach for a package
 first, and record the reason when you do not.
 
+### One qualifier the first evaluation forced
+
+**Check the licence's durability, not just its current text.** The .NET ecosystem saw several
+foundational libraries move to commercial licensing during 2025 — MassTransit v9 is the case that
+disqualified it here, with v8 remaining MIT but its maintenance ending after 2026.
+
+A dependency taken under this ADR is being taken for a codebase whose stated lifespan is *years,
+with the public API as a commitment*. So "it is MIT today" is not sufficient on its own. Prefer
+projects under a foundation or with a long stable licensing history, and treat a recent commercial
+pivot in a project's neighbourhood as a reason to look harder rather than a coincidence.
+
+This does not argue for hand-rolling — a library that goes commercial can be replaced behind the
+interface that wrapped it, which is exactly why §4 asks for the interface to be ours.
+
 ## Consequences
 
 - **Platform stops being a framework every product must use**, and becomes conventions plus the

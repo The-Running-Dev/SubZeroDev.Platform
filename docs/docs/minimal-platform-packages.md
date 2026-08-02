@@ -159,6 +159,75 @@ first is how Core stops being testable without infrastructure.
 
 ---
 
+## 3a. What the Gaps Actually Need — a First Evaluation
+
+[ADR-004](adr/ADR-004-framework-build-not-adopt.md) §4 requires each gap to be checked against
+existing packages before anything is written, and requires the reason to be recorded either way.
+This is that check. **Licences verified against each project; capability claims are from project
+documentation and have not been tested against these requirements.**
+
+### The outbox — do not decide yet
+
+| Candidate | Licence | Finding |
+|---|---|---|
+| MassTransit | v8 MIT; **v9 commercial** (Q1 2026), v8 maintenance ends after 2026 | **Disqualified.** A dependency chosen for a years-long lifespan cannot be one whose free line stops being maintained |
+| DotNetCore.CAP | MIT | Real outbox, EF Core, PostgreSQL. **But every listed transport is a broker** — RabbitMQ, Kafka, Azure Service Bus, SQS, NATS, Redis, Pulsar |
+| Wolverine | MIT, paid support only | Plausible fit; the outbox claim was **not confirmed** from the repository page and needs checking before it is relied on |
+
+**CAP's mismatch is the useful finding.** The specification calls for an *in-process* event bus
+with a durable outbox, with distributed transports as future providers, and deployment mode 1 is
+local developer execution. Adopting CAP now would put a message broker into local development to
+serve a transport decision that is explicitly **not yet taken**.
+
+**And that reframes the difficulty.** The outbox is hard when it spans a real broker — dedup,
+ordering, redelivery across transports. Against an in-process bus it is a table, a hosted-service
+dispatcher, and idempotent handlers. Bounded work.
+
+**Recommendation: defer.** Take no outbox dependency until the transport is chosen. Revisit
+Wolverine and CAP at that point, when the requirement is real.
+
+### Tenant isolation — built-in now, a package later
+
+**Finbuckle.MultiTenant** (Apache 2.0) is a direct fit: tenant resolution, EF Core data isolation
+with query filters, per-tenant options and authentication.
+
+It is also more than the near-term requirement, which is only *carry a tenant column from the
+first schema, defaulted to a single implicit tenant*. **EF Core global query filters are built in**,
+and a column is a column — so the near-term need costs no dependency at all.
+
+**Recommendation: EF Core query filters now; adopt Finbuckle when tenancy becomes a feature.** What
+Finbuckle earns its place for is per-request tenant *resolution* from host, header or claim, and
+that is D5 work. Nothing is retrofitted by waiting, because the column — the part that is genuinely
+expensive later — ships regardless.
+
+### Module registration — probably not a gap
+
+Nothing mainstream packages "modules with declared dependencies and startup validation" outside the
+full application frameworks, and ABP's own version exists because ABP-scale applications compose
+dozens of modules with real interdependencies.
+
+At two or three products, the .NET convention — `IServiceCollection` extension methods, composed
+explicitly in `Program.cs` — is sufficient, needs no package, and needs no Platform code.
+
+**Recommendation: no package and no abstraction until a product has enough modules to hurt.**
+
+### What this leaves
+
+| Concern | Answer |
+|---|---|
+| Hosting, DI, configuration, health, readiness, migrations, background work, telemetry | **.NET already ships it** |
+| Outbox | Deferred with the transport decision |
+| Tenant isolation | Built-in query filters; a package later |
+| Module conventions | Not a gap at this scale |
+
+**So the near-term set is plausibly one or two thin packages, not six** — something that wires the
+.NET defaults consistently (telemetry, health, problem details, correlation) and, if a shared
+contract type is genuinely needed, an abstractions package beneath it.
+
+That is a scope proposal, not a decision: it belongs in `design/00-brief.md`.
+
+---
+
 ## 4. What Is Deliberately Not Here
 
 Configuration, Events, Identity, Authorization, Organizations, Tenancy, Notifications,
