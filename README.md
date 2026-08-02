@@ -1,19 +1,42 @@
 # SubZeroDev.Platform
 
-The **NEaaS — Narrative Engine as a Service** layer: hosting, accounts, billing, cloud
-sync, analytics, multiplayer, white-label. **Deferred** — vision only, not a v1
-requirement, explicitly out of scope until the engine is proven.
+The **reusable application framework and hosting layer** for SubZeroDev products: hosting,
+configuration, identity, authorization, tenancy, billing, notifications, storage, events,
+observability, and API/MCP conventions — implemented once and reused.
 
-> The **engine** (source + specs) lives in
-> [SubZeroDev.GameEngine](https://github.com/The-Running-Dev/SubZeroDev.GameEngine); the
-> flagship **game** lives in
-> [SubZeroDev.GameOfLife](https://github.com/The-Running-Dev/SubZeroDev.GameOfLife). This
-> repo is only the hosting / business layer that would sit on top.
+```text
+              SubZeroDev.Platform
+                 ↓            ↓
+        SubZeroDev.Automator   Game Engine as a Service
+                 ↓
+      Plugins / Workflows / Products
+```
+
+**Platform never depends on a product, and never on a plugin.** The dependency direction is
+the whole of the rule, and it is enforced by the build rather than by intent.
+
+> **Game Engine as a Service (GEaaS)** — hosting for the
+> [Game Engine](https://github.com/The-Running-Dev/SubZeroDev.GameEngine) — is one *workload*
+> Platform hosts, in the same relationship the Automator has. It is not what this repository
+> is. It was previously called NEaaS (Narrative Engine as a Service); the engine ships three
+> kinds and only one of them is narrative.
 
 ## What's here
 
-- [`docs/docs/neaas-platform-vision.md`](docs/docs/neaas-platform-vision.md) — the
-  hosting / SaaS platform vision.
+Design documents. No packages yet.
+
+| Document | Holds |
+|---|---|
+| [`platform-identity.md`](docs/docs/platform-identity.md) | **Start here.** What this repository is, and the naming collision it settles |
+| [`platform-specification.md`](docs/docs/platform-specification.md) | The framework specification — packages, modules, hosting, persistence, identity, billing |
+| [`game-engine-as-a-service.md`](docs/docs/game-engine-as-a-service.md) | The hosted game product — vision |
+| [`engine-hosting-contract.md`](docs/docs/engine-hosting-contract.md) | What "Platform hosts the engine" means: the workload boundary, ownership, and the four questions hosting introduces |
+| [`mcp-tool-contract.md`](docs/docs/mcp-tool-contract.md) | The engine's MCP tool table — current, built and tested |
+| [`technology-decision.md`](docs/docs/technology-decision.md) | **Open.** What Platform is implemented in |
+| [`minimal-platform-packages.md`](docs/docs/minimal-platform-packages.md) | The six near-term packages — boundaries and done-criteria |
+| [`second-consumer-packages.md`](docs/docs/second-consumer-packages.md) | Identity, Tenancy, Billing, Mcp — justified by a second consumer |
+| [`implementation-plan.md`](docs/docs/implementation-plan.md) | The ordered plan, both tracks |
+| [`events-and-notifications.md`](docs/docs/events-and-notifications.md) · [`tenancy-billing-licensing.md`](docs/docs/tenancy-billing-licensing.md) · [`observability.md`](docs/docs/observability.md) | Supporting specifications |
 
 It renders as a [Docusaurus](https://docusaurus.io) site (requires Docker Desktop):
 
@@ -25,4 +48,4 @@ It renders as a [Docusaurus](https://docusaurus.io) site (requires Docker Deskto
 
 ---
 
-Private, work in progress. Deferred until the engine is proven.
+Private, work in progress. Design stage — no packages have been built.

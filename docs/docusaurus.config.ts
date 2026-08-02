@@ -10,8 +10,8 @@ import type * as Preset from '@docusaurus/preset-classic';
  * flip to 'throw' to gate builds.
  */
 const config: Config = {
-  title: 'NEaaS Platform',
-  tagline: 'Hosting, accounts, and SaaS layer for the Narrative Engine — deferred',
+  title: 'SubZeroDev.Platform',
+  tagline: 'The reusable application framework and hosting layer',
   url: 'https://platform.subzerodev.com',
   baseUrl: '/',
 
@@ -40,7 +40,7 @@ const config: Config = {
 
   themeConfig: {
     navbar: {
-      title: 'NEaaS Platform',
+      title: 'SubZeroDev.Platform',
       items: [
         {type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs'},
       ],
