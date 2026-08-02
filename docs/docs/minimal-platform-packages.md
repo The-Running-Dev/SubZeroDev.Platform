@@ -211,6 +211,81 @@ explicitly in `Program.cs` — is sufficient, needs no package, and needs no Pla
 
 **Recommendation: no package and no abstraction until a product has enough modules to hurt.**
 
+### Adjacent categories considered, and why they land differently
+
+Three further candidates were raised. They are not the same kind of thing, and sorting them by
+category is most of the answer.
+
+**Messaging, same category as above — `NServiceBus`.** **Commercial: free for development, licence
+required for production.** The tiers are endpoint-capped (Community is three logical endpoints,
+forum support only) and **the Ultimate tier is the one required for ISVs** — which is what an
+open-core product distributed per installation is. Disqualified on the same durability ground as
+MassTransit, and more sharply: the licensing model works against distributing software to others.
+
+**Actor framework — `Akka.NET`. Apache 2.0, held by the .NET Foundation**, and the licence is
+*durable* in exactly the sense this evaluation now requires. The 2022 move of **JVM** Akka to the
+Business Source License does **not** apply to it; Petabridge stated Akka.NET continues as open
+source, and its `LICENSE` is Apache 2.0 to ".NET Foundation and Contributors".
+
+But it is **the wrong layer for these gaps**. It solves concurrency, clustering, supervision and
+event-sourced persistence — none of which is hosting, configuration, telemetry or an outbox. Where
+it becomes genuinely interesting is the **Automator's** execution model: leases, heartbeats,
+supervision and orphan detection are the actor model's home ground.
+
+> **One hard boundary, worth stating before anyone is tempted.** Akka.NET must stay away from the
+> Game Engine's deterministic core. Actor scheduling is nondeterministic by design, and the
+> engine's central guarantee is byte-identical replay from a seed and an action log. Actors are
+> defensible at an orchestration layer that claims no determinism; inside the engine they would
+> destroy the property everything else depends on.
+
+**Backend-as-a-service — `Supabase` (Apache 2.0, self-hostable) and `PocketBase` (MIT, single
+binary, embedded SQLite).** These are **not dependencies at all — they are workloads**, which puts
+them under [`engine-hosting-contract.md`](engine-hosting-contract.md) §2 rather than under
+ADR-004's framework question.
+
+That makes them the most interesting of the three, because they do not touch D3 — they attack
+**D5**. Auth, storage, and per-user data are Identity and Storage on the candidate list, and
+adopting either means Platform never builds those.
+
+| | Supabase | PocketBase |
+|---|---|---|
+| Licence | Apache 2.0 | MIT |
+| Stack | Postgres, GoTrue, PostgREST, Realtime, Storage, Studio | One Go binary, embedded SQLite |
+| Fits | The chosen PostgreSQL persistence baseline | Local and single-server deployment, superbly |
+| Costs | A substantial operational surface to self-host | SQLite-only; a second runtime; scale ceiling |
+
+**Recommendation: record both as live options for D5, decide neither now.** They are irrelevant to
+the near-term gaps, and committing to an auth and storage substrate before there is a product with
+users would be the same mistake as adopting a framework before there is a consumer. What this entry
+buys is that nobody builds Identity or Storage from scratch later without first asking whether one
+of these already is it.
+
+### Mediator libraries — Platform should not have an opinion
+
+**`MediatR` v13 and later is commercial** (Lucky Penny Software, July 2025), with a free Community
+edition for organisations under USD 5M revenue; earlier versions remain MIT. `AutoMapper` moved at
+the same time, and MassTransit followed. **Three foundational libraries in the same corner of .NET
+pivoting inside one year is a pattern, not a coincidence**, and it is the clearest possible support
+for the durability qualifier in [ADR-004](adr/ADR-004-framework-build-not-adopt.md) §4.
+
+Free alternatives exist — `martinothamar/Mediator` (source-generated, AOT-friendly) is the most
+established, alongside a crop of newer entrants. But they carry the *opposite* durability risk:
+young projects with small maintainer counts, where the failure mode is abandonment rather than a
+licence change.
+
+**The more useful answer is that this is not Platform's decision.** A mediator is an in-process
+dispatch pattern — a *product's* architecture choice, in the same way [ADR-004](adr/ADR-004-framework-build-not-adopt.md)
+made the host framework a per-product choice. Platform's packages expose services; they have no
+request/response pipeline to mediate. Nothing in the six needs one, and mandating one would push an
+architectural opinion onto products through infrastructure, which is precisely the coupling the
+boundary test exists to prevent.
+
+**Recommendation: Platform neither supplies nor requires a mediator.** A product that wants one
+chooses it, and records the choice in its own decision log. Worth noting for whoever does: the
+pattern's core — an interface, a handler, and DI resolution — is small, and the pipeline behaviours
+that make MediatR worth having have native equivalents in ASP.NET Core middleware, filters, and
+decorators over the unit of work.
+
 ### What this leaves
 
 | Concern | Answer |
