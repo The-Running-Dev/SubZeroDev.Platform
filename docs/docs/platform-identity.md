@@ -136,9 +136,13 @@ Named so they are decisions rather than drift.
   what forces the engine's `@the-running-dev` coordinate. **The brand identifiers still need
   reserving**, and that is a human action requiring registry credentials — free now, and not
   free after anything publishes.
-- **The architecture repository does not yet exist.** The ecosystem set assigns
-  cross-cutting specifications and ADRs to one. Until it does, `docs/docs/adr/` is where the
-  Platform-side half of that reasoning lives.
+- **The architecture repository now exists** —
+  [SubZeroDev.Architecture](https://github.com/The-Running-Dev/SubZeroDev.Architecture),
+  private, holding the cross-cutting specifications and ADRs the ecosystem set assigns to it.
+  It was an unversioned directory until this change, which is how its own table came to
+  describe a `SubZeroDev.Platform/` that had moved. `docs/docs/adr/` remains the home for
+  ADRs about *this* repository; ADR numbering is per-repository, so its ADR-001 and this
+  one's are different decisions and are meant to be.
 - **Where a decision is recorded is settled**, and the boundary is *does anyone outside this
   repository need to cite it?* Yes, or it touches a published contract, means a numbered ADR
   here; no, meaning this repository's own working arrangement, means the decision log. The

@@ -35,10 +35,12 @@ A reference from Platform to a product is a build failure, not a review comment.
 - **Game** — [SubZeroDev.GameOfLife](https://github.com/The-Running-Dev/SubZeroDev.GameOfLife)
   (Life in the Fast Lane) and
   [SubZeroDev.SunTrap](https://github.com/The-Running-Dev/SubZeroDev.SunTrap).
-- **Ecosystem specifications** — staged at `D:\Dropbox\Projects\SubZeroDev\Specs`, split by
-  destination repository. The `SubZeroDev.Platform/` documents have been **moved** here and
-  the originals deleted, per *Move, never copy* under **Single ownership** below. The other
-  directories there belong to other repositories and are not this one's to touch.
+- **Architecture** — [SubZeroDev.Architecture](https://github.com/The-Running-Dev/SubZeroDev.Architecture)
+  (private; working copy at `D:\Dropbox\Projects\SubZeroDev\Specs`): cross-cutting
+  specifications and ADRs, plus specifications staged for repositories that do not exist yet.
+  The `SubZeroDev.Platform/` documents have been **moved** here and the originals deleted, per
+  *Move, never copy* under **Single ownership** below. The other directories there belong to
+  other repositories and are not this one's to touch.
 
 The docs render as a Docusaurus site via `docs.ps1`. The shared docs-site / graphify /
 claude-mem tooling notes live in the engine repo's `CLAUDE.md` and apply identically here.
