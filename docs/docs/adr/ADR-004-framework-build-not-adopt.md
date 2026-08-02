@@ -81,10 +81,12 @@ Three parts, and the second and third are what keep the first from being a mista
    dependency-graph validation, its outbox, and its tenancy query filters are the three worth
    reading closely before the thin equivalents are written. Reading for architecture carries no
    licence obligation; **no ABP source is copied into this repository.**
-4. **What is rejected is adopting a whole application framework — not using libraries.** Reuse an
-   existing, well-scoped NuGet package wherever one exists and fits. **The burden of proof runs the
-   other way from the usual instinct: hand-rolling is what needs justifying, not taking a
-   dependency.**
+4. **What is rejected is adopting a whole application framework — not using libraries, and not
+   using services.** Reuse an existing, well-scoped NuGet package **or an existing product or
+   managed service** wherever one exists and fits. **The burden of proof runs the other way from
+   the usual instinct: hand-rolling is what needs justifying, not taking a dependency.** Build only
+   what is genuinely SubZeroDev's — the conventions, the contract, and the commercial layer nobody
+   else supplies.
 
 ### On reuse, because this decision is easy to misread as "build everything"
 
@@ -113,6 +115,27 @@ precisely the argument for taking a proven one rather than writing it.
 decision-log entry naming what was rejected and why. The rule was never "avoid dependencies"; it is
 "choose them deliberately and say why". What changes here is the default: reach for a package
 first, and record the reason when you do not.
+
+### Services count, and the deployment modes bound which ones
+
+"Reuse" extends past NuGet. Identity, storage, and per-user data are all available as products or
+managed services — Auth0, Keycloak, Zitadel, Supabase — and buying one means Platform never builds
+that capability. That is the intent, and it applies with full force to the D5 candidate list.
+
+**But this repository's own deployment modes constrain the choice, and the constraint is sharp.**
+Local developer execution, homelab and single-server self-hosting are in scope, and the licence
+model is *per installation*. A customer running the product on their own hardware cannot depend on
+a vendor's SaaS tenant. So:
+
+> **Depend on the protocol, not the vendor.** Integrate **OIDC/OAuth 2.0**, which ASP.NET Core
+> already supports natively, and treat Auth0, Entra, Keycloak, Zitadel and Supabase Auth as
+> interchangeable providers behind it. A SaaS-only dependency is acceptable **only** where a
+> self-hostable path exists for the deployment modes that need one.
+
+Read that way, identity mostly stops being something Platform builds *or* buys: it becomes
+configuration over a standard the runtime already implements. The same test applies to storage — an
+S3-compatible API rather than one vendor's SDK — and it is why the evaluation prefers
+self-hostable products where a service is genuinely wanted.
 
 ### One qualifier the first evaluation forced
 
