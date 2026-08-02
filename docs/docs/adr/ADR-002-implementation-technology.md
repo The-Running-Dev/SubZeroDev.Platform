@@ -11,6 +11,13 @@ Accepted
 
 > Supersedes the open `technology-decision.md` draft, which is deleted rather than kept
 > alongside — a decision has one home.
+>
+> **Settles the runtime, not the framework.** This ADR chose .NET. Whether Platform *adopts* an
+> application framework or *implements* its own is a separate question it did not ask, and
+> [ADR-004](ADR-004-framework-build-not-adopt.md) answers it: built in-house, with ABP as an
+> architecture reference and the host framework left to each product. ADR-004 also confirms this
+> ADR's central claim from the other side — a per-product framework choice is only safe because
+> the boundary here is a process boundary.
 
 ## Context
 

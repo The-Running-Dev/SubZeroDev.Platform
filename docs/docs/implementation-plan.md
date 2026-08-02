@@ -96,6 +96,12 @@ Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
 [`minimal-platform-packages.md`](minimal-platform-packages.md).
 
+> **The count is provisional.** [ADR-004](adr/ADR-004-framework-build-not-adopt.md) settled that
+> Platform builds its own rather than adopting ABP, and in doing so established that .NET already
+> provides much of what these six describe. The remaining gaps are narrow — outbox, tenant
+> filtering, module conventions — so this stage may be three packages rather than six. The scope
+> belongs to the brief; the boundaries do not change either way.
+
 **Was blocked on** the technology decision — the only stage that was, which is why it was
 taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settles it: .NET, so the
 package names above stand and the persistence baseline is EF Core. **D3 is unblocked and
