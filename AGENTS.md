@@ -155,7 +155,14 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 
 ## Decision logging
 
-Any choice a future reader would ask "why?" about goes in `design/90-decisions.md` as:
+Two homes, one boundary. **Does anyone outside this repository need to cite it?**
+
+- **Yes, or it affects a published contract** → an ADR in `docs/docs/adr/`, numbered. The moved-in ecosystem specifications cite ADRs by number across repositories, so those numbers are stable targets and must stay resolvable. Status is exactly one of `Proposed`, `Accepted`, `Superseded`, `Deprecated`, under a `## Status` heading. An accepted ADR states its context, the decision, the consequences **including the costs**, and the alternatives it rejected and why. "Accepted in existing practice" is not a status — ratifying current practice is a note in the context.
+- **No — it is this repository's own working arrangement** → `design/90-decisions.md`, in the format below.
+
+An ADR gets a **one-line index entry** in `design/90-decisions.md` and nothing more. Never restate an ADR's reasoning in the log; that is the second copy that drifts.
+
+Any choice a future reader would ask "why?" about, and that stays inside this repository, goes in `design/90-decisions.md` as:
 
 ```
 ### YYYY-MM-DD — <decision>

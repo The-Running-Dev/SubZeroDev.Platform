@@ -139,9 +139,8 @@ Named so they are decisions rather than drift.
 - **The architecture repository does not yet exist.** The ecosystem set assigns
   cross-cutting specifications and ADRs to one. Until it does, `docs/docs/adr/` is where the
   Platform-side half of that reasoning lives.
-- **Two decision-recording mechanisms are now in play**, and only one should survive. The
-  inherited ecosystem convention is *a decision gets an ADR*; this repository's own
-  `AGENTS.md` says decisions go in `design/90-decisions.md`. ADRs are used here because the
-  moved-in specifications cite ADRs by number across repositories and need a stable target.
-  The decision log indexes them rather than repeating them — but the overlap is real and
-  should be collapsed deliberately.
+- **Where a decision is recorded is settled**, and the boundary is *does anyone outside this
+  repository need to cite it?* Yes, or it touches a published contract, means a numbered ADR
+  here; no, meaning this repository's own working arrangement, means the decision log. The
+  rule and the entry format live in `AGENTS.md`, *Decision logging* — this is a pointer, not
+  a second copy.

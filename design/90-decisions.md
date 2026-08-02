@@ -2,42 +2,27 @@
 
 Append-only. Newest at the top. The rejected alternatives are the point — without them, every future session relitigates the same choice.
 
+**This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
+
 ## Open
-- **Two decision-recording mechanisms.** This log versus `docs/docs/adr/`. `AGENTS.md` names this file; the ecosystem convention inherited with the moved-in specifications is *a decision gets an ADR*, and those specifications cite ADRs by number across repositories, so they need a stable target. ADRs are used as the home and this log indexes them. Only one should survive — collapse it deliberately rather than letting both accumulate.
 - **Brand identifier reservation is unperformed.** NuGet `SubZeroDev.*`, npm `@subzerodev`, container `subzerodev-*`, PowerShell Gallery `SubZeroDev.*`. Free now, not free after anything publishes. Requires registry credentials, so it is the repository owner's action.
-- **The docs site has no root page, and this repository cannot author one.** `baseUrl` is `/` and `routeBasePath` is `docs`, so nothing serves `/` while the navbar brand links there from every page. Attempted the obvious fix — `docs/src/pages/index.md` — and it does not work: the base image's pre-build step strips everything under `src/pages`, reporting them as "routes this project did not author". The file reaches the image and is deleted before compilation. Verified by building with `onBrokenLinks: 'throw'`: 16 broken links, all of them `/`, nothing else. So the link check cannot be hardened until this is fixed, and fixing it needs either a `docs-template` change or `routeBasePath: '/'`, which moves every page URL and is an information-architecture decision to take deliberately. Worth checking whether `SubZeroDev.GameEngine` has the same problem silently — its `CLAUDE.md` describes `docs/src/pages/index.md` as load-bearing there.
+- **The docs site has no root page.** `baseUrl` is `/` and `routeBasePath` is `docs`, so nothing serves `/` while the navbar brand links there from every page. Verified by building with `onBrokenLinks: 'throw'`: 16 broken links, all of them `/`, nothing else — so the link check cannot be hardened until this is fixed. **Cause now read rather than guessed**, and it is not installer registration as this entry previously recorded: the strip is in the base image's `/PSModule/Scripts/docs-build.ps1`, guarding against the *image* leaking its own `src/pages`, and it is checked before the overlay precisely so a consumer's own `docs/src/pages` is not mistaken for that leak. `docs/Dockerfile` does `COPY . .` into `/template` at image-build time, so that precondition is violated here and the consumer file is stripped. Remaining unknowns and what to check before attempting a fix: `agent.md`, *Documentation site*.
 
 ---
 
-### 2026-08-02 — Package scope is per-registry, not one global name
-Context: The ecosystem naming ADR fixes the npm scope as `@subzerodev`; the Game Engine publishes `@the-running-dev/game-engine`. This looked like drift and is not — GitHub Packages requires the npm scope to match the repository owner, and the owner is the `The-Running-Dev` organization. Underneath sits a mismatch neither ADR names: the GitHub organization is `The-Running-Dev` while the brand namespace is `SubZeroDev`.
-Chosen: Scope follows the registry — `@the-running-dev` on GitHub Packages, `@subzerodev` reserved for public npm, `SubZeroDev.*` on NuGet and PowerShell Gallery, `subzerodev-*` for containers. The engine does not rename. Recorded as `docs/docs/adr/ADR-003-package-scopes-and-registries.md`.
-Rejected: **Rename the engine to `@subzerodev/game-engine`** — does not work on GitHub Packages under this organization, so it forces either public publication of a private package or a move off that registry, a delivery decision taken for a cosmetic reason. **Rename the GitHub organization** — the only option that fixes the root rather than routing around it, but it redirects every URL, remote, coordinate and CI reference for consistency rather than capability; reconsider before anything publishes publicly, not after. **Standardise on `@the-running-dev`** — abandons the brand identity for an artifact of which account happens to hold the repositories.
-Reversibility: cheap now, expensive after first publish
+## Index — decisions whose home is elsewhere
 
-### 2026-08-02 — Platform is .NET, and the product boundary is a process boundary
-Context: The ecosystem specifications assume .NET without ever recording it as a decision — it is visible only in their own examples. The identity decision below added a second consumer on a different runtime (the Game Engine is TypeScript with a byte-level determinism guarantee), so the assumption needed testing rather than inheriting.
-Chosen: .NET, with polyglot products as an accepted consequence rather than an accident nobody decided. Products meet Platform over a process and image boundary, exactly as the Automator's plugins already do. Recorded as `docs/docs/adr/ADR-002-implementation-technology.md`.
-Rejected: **TypeScript/Node to match the engine** — optimises Platform for its second consumer at the expense of its first, inverting the extraction guard's own logic, and buys mainly an in-process integration the hosting contract had already declined on determinism grounds. **Defer further** — nothing in P0–P2 was blocked, but P3 cannot start without it and identifier reservation stops being free; deferring moves the decision to the moment it becomes expensive.
-Reversibility: expensive once packages publish; cheap today
+Reasoning, consequences and rejected alternatives live in the linked document, never here — *Single ownership* in `AGENTS.md`.
 
-### 2026-08-02 — Hosting is a workload boundary, not in-process port supply
-Context: "Platform hosts the Game Engine" admits two readings — Platform implements the engine's `SessionStore`, `Emitter` and `Clock` ports directly, or the engine runs as a self-contained service with Platform supplying identity, persistence, telemetry and routing around it. The choice had to be made before Platform's technology was settled.
-Chosen: Workload hosting. Recorded in `docs/docs/engine-hosting-contract.md` §2.
-Rejected: **In-process ports** — forces Platform's runtime to match the engine's, which is a technology decision written where it cannot be reviewed; and spanning the engine's byte-level determinism guarantee across a language boundary means trusting two runtimes to agree byte-for-byte indefinitely, for no gain the workload shape does not also offer.
-Reversibility: expensive
+| Decision | Home |
+|---|---|
+| Package scope is per-registry, not one global name | [ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md) |
+| Platform is .NET, and the product boundary is a process boundary | [ADR-002](../docs/docs/adr/ADR-002-implementation-technology.md) |
+| `SubZeroDev.Platform` is the framework, not the game product | [ADR-001](../docs/docs/adr/ADR-001-platform-identity.md) |
+| "Narrative Engine" renamed to "Game Engine" | [ADR-001](../docs/docs/adr/ADR-001-platform-identity.md), consequences |
+| Hosting is a workload boundary, not in-process port supply | [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §2 |
 
-### 2026-08-02 — "Narrative Engine" renamed to "Game Engine"
-Context: The engine ships three kinds — `story-graph`, `simulation`, `world-graph`. A weekly-budget life simulation and a resort-management sim are not narratives, and the engine repository already calls itself the Game Engine.
-Chosen: Game Engine throughout, so NEaaS becomes GEaaS. Folded into ADR-001's consequences.
-Rejected: **Keep "Narrative Engine"** — a theme word in a name smuggles in a decision, and this one had already stopped being true.
-Reversibility: cheap
-
-### 2026-08-02 — `SubZeroDev.Platform` is the framework, not the game product
-Context: Two document sets each defined a `SubZeroDev.Platform` — a game-hosting product in this repository, a reusable application framework in the ecosystem staging tree, whose repository-layout table names this repository as its home and marks it "Exists." It did not. The staging tree contains no mention of the game work at all: not "narrative", not "GameEngine", not "SunTrap", not the word "game". Neither set knew the other existed.
-Chosen: The framework. Game Engine as a Service becomes one hosted workload, a sibling of the Automator. Recorded as `docs/docs/adr/ADR-001-platform-identity.md`.
-Rejected: **Rename the framework and keep the game product here** — reopens a settled naming ADR whose reasoning still holds, and relocates the side with fifteen repositories and a roadmap depending on it in favour of the side with two documents. **Both keep the name, disambiguated by context** — breaks the naming ADR's own answer to ambiguity, that "Platform" is unqualified only inside its own repository. **Merge them into one product** — the reusable half acquires game-shaped assumptions (a storage abstraction that knows what a save is), which is precisely the failure the platform/automator split exists to prevent.
-Reversibility: expensive
+---
 
 ### 2026-08-02 — Design docs live at `design/`, not `docs/design/`
 Context: Installing the agent kit. The kit ships its five design documents at `docs/design/`. In this repository `docs/` is the Docker build context for the documentation site — `docs.ps1` builds from it and `docs/Dockerfile` does `COPY . .` onto `/template`. A `docs/design/` directory would therefore be baked into the published image at `/template/design/`. It would not render as pages (the autogenerated sidebar's `dirName: '.'` resolves to the content root `/template/docs`), but internal design documents would ship inside a distributed artifact.

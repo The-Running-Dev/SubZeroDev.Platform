@@ -8,13 +8,18 @@ import type * as Preset from '@docusaurus/preset-classic';
  *
  * Broken-link checks stay 'warn', and cannot currently be 'throw'. Nothing serves
  * the site root: baseUrl is '/' while routeBasePath is 'docs', so the navbar brand
- * links to '/' from every page and each reports a broken link. Authoring
- * src/pages/index.md does not fix it — the base image's pre-build step strips
- * everything under src/pages, treating it as base-image content this project did
- * not author. Verified by building with 'throw': the only broken link is '/'.
+ * links to '/' from every page and each reports a broken link. Verified by building
+ * with 'throw': 16 broken links, all of them '/', nothing else.
  *
- * Fixing it needs either a docs-template change, or routeBasePath: '/' — an
- * information-architecture change that moves every page's URL, so not taken here.
+ * Authoring src/pages/index.md does not fix it. docs-build.ps1 in the base image
+ * strips src/pages to stop the *image* leaking its own routes, and is checked before
+ * that script's overlay so a consumer's own copy is not mistaken for the leak — but
+ * ./Dockerfile does `COPY . .` into /template at image-build time, so the file is
+ * already there when the check runs and is deleted anyway.
+ *
+ * Do not re-attempt that fix, and do not migrate routeBasePath to '/' for it — that
+ * moves every page URL. See agent.md, *Documentation site*, for what is still
+ * unverified.
  */
 const config: Config = {
   title: 'SubZeroDev.Platform',
