@@ -3,6 +3,21 @@ sidebar_position: 2
 sidebar_label: Platform Specification
 ---
 
+:::caution Partly superseded — read with ADR-004
+
+This document compares Platform to ABP Framework and specifies six near-term packages. Since it
+was written, [ADR-004](adr/ADR-004-framework-build-not-adopt.md) evaluated ABP and ASP.NET
+Boilerplate properly and decided: **no application framework is adopted**, the host framework is
+a per-product choice, and existing NuGet packages are preferred over hand-rolled infrastructure.
+It also established that .NET already provides much of what the six describe.
+
+The **principles, boundaries and package shapes below stand.** What is superseded is the implied
+build list: the near-term count is an open scope question, not the six as stated here. The text
+is otherwise unchanged, because it is a moved specification and this repository does not fork
+what it moves.
+
+:::
+
 > **Moved from the ecosystem specification staging tree**
 > (`SubZeroDev/Specs/SubZeroDev.Platform/02-platform-specification.md`), which names this repository as its
 > destination. Content is unchanged; only this provenance note and the front matter

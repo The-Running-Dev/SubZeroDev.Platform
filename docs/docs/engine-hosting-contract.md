@@ -253,7 +253,7 @@ This contract is not independently buildable. What it waits on, and why:
 
 | Depends on | State | Consequence |
 |---|---|---|
-| The engine published as a consumable package | In flight — the consumer-boundary unit is planned and not merged | Nothing can consume the engine until it packs and installs cleanly |
+| The engine published as a consumable package | **Done** — `@the-running-dev/game-engine` 0.4.0 published to GitHub Packages, 26-entry public surface | No longer a blocker; G1 can start |
 | Content-pack resolution implemented in code | Specified, not built | The catalogue and publishing phases block on it |
 | `ExperimentSource` declared in the engine's composition types | Specified, not declared | Needed before experiment-gated content |
 | `previewAction` and the tenth operation | Specified, arriving with `world-graph` | The transport must treat the operation set as data |
