@@ -195,6 +195,66 @@ owns. That was false: a poisoned row is never processed, so a recurring poison s
 bug, one malformed payload shape — accumulated rows forever under the single-window rule. The second
 window is what makes the original claim true.
 
+### Event Type names, and the payload's canonical form
+
+Two things the *Type* and *Payload* rows above depend on and neither states. Both were surfaced by
+deriving the contract, which could not write a signature over either.
+
+**The stable Type name is supplied by an explicit registration call that binds three things at once:
+the name, the CLR event type, and its handler.** Not an attribute, not a member on the event.
+
+The deciding constraint is one the rules above imply without saying: **dispatch must get from a
+stored string to a CLR type in order to deserialize, and it has no instance to ask.** An instance
+member cannot answer that question, because the instance is what deserialization produces. Every
+candidate mechanism therefore ends up building a name-to-type map at registration; what differs is
+only where the literal lives and how a forgotten one fails.
+
+Binding all three in one call is what makes the checks single rather than plural. Registration is
+already the place one-handler-per-Type is enforced, so name uniqueness and handler uniqueness become
+one verdict instead of two that can disagree. **Enqueuing an event type that was never registered is
+a named throw at enqueue**, the same class as the missing transaction and the missing scope — the
+name is stamped onto the row, so there is nothing to write without it. On the dispatch side an
+unregistered name is already covered: it is the deferral path, which exists for exactly the upgrade
+window where a name is legitimately unknown here and known elsewhere.
+
+Renaming the CLR class does not touch the literal at the registration site, which is the property
+the Type row demands. **A breaking payload change is a new CLR type registered under a new name, with
+the old registration retained until the old rows drain** — so the registry legitimately holds two
+names for two types that mean successive versions of one event, which is the shape the additive rule
+already assumed without saying where it lived.
+
+**An attribute stays available as later sugar** — an attribute that supplies the name *to* a
+registration call is additive and breaks nothing. The reverse is not, which is why this is the
+direction to take at 0.x.
+
+**The serialiser is `System.Text.Json`, with a Platform-pinned options instance that is not
+injectable.** [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4's check: the
+runtime already ships it and it covers the gap whole, so a serialisation dependency would fill
+nothing.
+
+**Not injectable, because the serialiser is part of the durable format rather than a preference.** A
+dependency-injection registration is not a setting, so the settings fingerprint cannot see two hosts
+of one installation disagreeing about it — and this design routes every silent condition through
+readiness precisely because a condition nobody can observe is worse than one that fails loudly.
+Pinning removes the condition instead of reporting it. A product that swapped the serialiser after
+rows existed would mass-poison its own backlog with no operational signal at all.
+
+Four properties are pinned because they *are* the format:
+
+- **Unmapped members are ignored, in both directions.** The two-process overlap means an old worker
+  reads rows a new web host wrote as well as the reverse, so tolerant-reader has to work both ways
+  or the additive-only rule is half a rule.
+- **Enums serialize as strings.** A numeric enum breaks additivity the moment a member is inserted.
+- **Property naming and null handling are fixed by Platform**, not derived from a product's own
+  serializer configuration.
+- **Number handling is fixed**, so a value written by one host reads identically on the other.
+
+**The one extension point is converters for a product's own types.** A converter changes bytes only
+for types the product also owns the handler for — which is exactly the blast radius the additive
+payload rule already governs, rather than a new one. Nothing else about the format is reachable.
+
+Deserialization failure is unchanged: it is the deferral path, not the failure path.
+
 ### Outbox row states, by predicate
 
 Three consumers read this row's state — readiness, the prune pass, and redrive — and an earlier
@@ -485,6 +545,52 @@ diverge lives.
 **The provider abstraction is real, not notional.** Two production providers is what forces it; §2's
 contract tests are what verify it. A single-provider design with an abstraction "for later" would
 have the abstraction shaped entirely by one provider's semantics.
+
+### Where the provider abstraction cuts
+
+Named here because the sentence above committed to a real abstraction and then left its shape to
+whoever wrote the first line of it — the third thing deriving the contract could not write a
+signature over.
+
+**The seam is one store per Platform-owned table — outbox, lease, host registration — with a single
+implementation of each, parameterised by a provider-capability contract.** Not one implementation
+per provider.
+
+**Stores, and not a general data-access abstraction**, because §2 has Persistence *refuse* to impose
+a repository pattern: a product uses the data-access layer directly for its own tables. These three
+are the tables Platform both defines and stores, and the seam covers those and nothing else.
+
+**One implementation and not two**, because the policy is where the correctness lives — which row to
+claim, what to stamp, whether a failure consumes an attempt, when a row is poisoned rather than
+deferred. Two copies of that is the same objection this document already raised against a
+dialect-specific claim: *two implementations of "claim exactly once" is one more than the number
+that can be trusted*, and it applies with more force to the surrounding policy than to the statement.
+
+**The membership rule for the capability contract, so its growth is checkable rather than a matter
+of taste: a member belongs in the capability when the two providers must do something *different* to
+produce the same observable result.** Anything the providers do identically stays in the store.
+That rule admits exactly the differences this document has already named, and it is what stops the
+capability accreting policy:
+
+- the instant formatter — one formatter serving both the column and the bound comparand;
+- the identifier encoder — RFC network byte order on SQLite;
+- the claim statement, portable by default, with PostgreSQL free to use its locking read underneath;
+- the bounded delete statement, which the two dialects express differently;
+- transaction-begin mode, immediate where the transaction will write;
+- the startup preconditions — WAL, and the busy-wait bound;
+- the migration history table's name per module.
+
+**Transaction intent becomes a parameter, and that is a consequence worth stating rather than
+discovering.** "A transaction that will write begins immediate" is only actionable if something
+tells the boundary which kind it is opening, and no implementation can infer it before the first
+write. The unit of work therefore takes the intent from its caller. The alternative — treating every
+transaction as a writer — is safe and costs read concurrency; it is rejected because it makes the
+rule unfalsifiable and hides the one case the rule exists for.
+
+**The contract tests target the stores and the capability together.** The stores are what
+"interchangeable" means, and the capability is the only place a difference is permitted to live —
+so a deliberately broken capability is what the suite must go red against, and a suite that only
+exercised one provider's store would prove nothing about either.
 
 ### Dependency direction
 
@@ -1187,6 +1293,16 @@ byte order), owners named for readers but not for writers (the operation scope, 
 across the outbox), and rules the design relied on without writing down (additive schema change,
 WAL, one handler per Type). Each is dispositioned where it belongs; **nothing from that review is
 parked here**, which is the same discipline the third review's findings were held to.
+
+**Deriving the contract then found three things this document had not determined**, all of them
+undetectable by review because each was a gap rather than a contradiction — nothing here said
+anything wrong about them, and nothing here said anything at all. What supplies an event's stable
+Type name, what serializes a payload, and where the provider abstraction cuts were each named as a
+requirement and left without a mechanism. All three are settled on 2026-08-03 and written into the
+sections they govern — *Data model* for the first two, *Module boundaries* for the third. **That a
+fourth adversarial review missed all three is the useful finding**: red-teaming a document tests
+what it claims, and these were absences. Writing signatures is what found them, which is an argument
+for deriving the contract early rather than a criticism of the reviews.
 
 That is a claim worth being suspicious of rather than pleased about, so it is qualified:
 

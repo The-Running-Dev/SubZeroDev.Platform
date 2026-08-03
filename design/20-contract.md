@@ -10,8 +10,10 @@ rather than namespace declaration — package naming belongs to
 
 **Re-derived in full** from the design as it stands after its fourth adversarial review, not patched
 from the previous derivation, per the decision of 2026-08-03 in
-[`90-decisions.md`](90-decisions.md). Anything the design did not determine is in
-**[Unresolved](#unresolved)** rather than invented. Three of those entries block implementation.
+[`90-decisions.md`](90-decisions.md), and then amended for the three gaps that re-derivation
+exposed — the event Type name's supplier, the payload's canonical form, and where the provider
+abstraction cuts — each settled in the design first. Anything the design still does not determine is
+in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocks implementation.**
 
 ---
 
@@ -109,8 +111,9 @@ public sealed class PlatformContractViolationException : Exception
 places an exception is correct: it is a defect in the caller, not a runtime condition.
 
 **`PlatformContractViolationException` is the other**, and it exists because the design requires
-enqueue to *throw* a named error when there is no ambient transaction or no ambient operation scope.
-It carries a `PlatformError` so the code is stable and enumerable rather than a message string.
+enqueue to *throw* a named error when there is no ambient transaction, no ambient operation scope,
+or no registration binding the event type to a stable name. It carries a `PlatformError` so the code
+is stable and enumerable rather than a message string.
 
 ### Abstractions — ambient operation context
 
@@ -213,16 +216,18 @@ public interface IPlatformModule
 ### Abstractions — event and handler contracts
 
 ```csharp
-public interface IIntegrationEvent
-{
-    EventTypeName TypeName { get; }
-}
+public interface IIntegrationEvent;
 
 public interface IIntegrationEventHandler<in TEvent> where TEvent : IIntegrationEvent
 {
     Task<Result<HandlerError>> HandleAsync(TEvent @event, CancellationToken cancellationToken);
 }
 ```
+
+**`IIntegrationEvent` is a marker and carries no `TypeName`.** The stable name is supplied by an
+explicit registration call, because dispatch must get from a stored string to a CLR type in order to
+deserialize and has no instance to ask — the instance is what deserialization produces. An instance
+member could not answer the question that matters.
 
 **A handler returns a result rather than throwing.** The dispatcher distinguishes a handled failure
 from a defect, and only the former participates in the attempt-and-backoff cycle. An exception that
@@ -761,13 +766,17 @@ include the host's role, which for the web host is the registration heartbeat al
 ### Persistence
 
 ```csharp
+public enum TransactionIntent { ReadOnly, Write }
+
 public interface IUnitOfWork
 {
     Task<Result<TransactionError>> ExecuteAsync(
+        TransactionIntent intent,
         Func<CancellationToken, Task> work,
         CancellationToken cancellationToken);
 
     Task<Result<T, TransactionError>> ExecuteAsync<T>(
+        TransactionIntent intent,
         Func<CancellationToken, Task<T>> work,
         CancellationToken cancellationToken);
 }
@@ -777,11 +786,22 @@ public interface IOutboxWriter
     OutboxMessageId Enqueue<TEvent>(TEvent @event) where TEvent : IIntegrationEvent;
 }
 
+public sealed record EventHandlerRegistration(
+    EventTypeName Type,
+    Type EventType,
+    Type HandlerType);
+
 public interface IEventHandlerRegistry
 {
-    Result<EventHandlerRegistrationError> Register<TEvent>(
-        EventTypeName type)
-        where TEvent : IIntegrationEvent;
+    Result<EventHandlerRegistrationError> Register<TEvent, THandler>(EventTypeName type)
+        where TEvent : IIntegrationEvent
+        where THandler : IIntegrationEventHandler<TEvent>;
+
+    bool TryResolve(EventTypeName type, out EventHandlerRegistration registration);
+
+    bool TryResolve(Type eventType, out EventHandlerRegistration registration);
+
+    IReadOnlyList<EventHandlerRegistration> Registered { get; }
 
     void Freeze();
 }
@@ -838,18 +858,184 @@ public interface IMigrationRunner
 
     Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken);
 }
+
+public static class PlatformPayloadExtensions
+{
+    public static IServiceCollection AddPlatformPayloadConverter<TConverter>(
+        this IServiceCollection services)
+        where TConverter : JsonConverter, new();
+}
 ```
 
-**`Enqueue` returns the id and is synchronous** because it does not write — it mints a version-7
-UUID from the clock, enlists in the caller's transaction, and the write happens on commit. The id is
-loggable and returnable before the insert, which is what makes it a usable dedupe key.
+**A converter for a product's own types is the whole payload extension point.** The serialiser is
+`System.Text.Json` with Platform-pinned options and is not injectable — it is part of the durable
+format, and a dependency-injection registration is not a setting, so the settings fingerprint could
+not see two hosts of one installation disagreeing about it. Pinning removes that condition rather
+than reporting it.
 
-**`Enqueue` throws `PlatformContractViolationException` when there is no ambient transaction or no
-ambient operation scope**, and the provider contract tests assert both throws. The alternatives are
-worse than a throw: a nullable trace context admits rows whose correlation appears nowhere upstream,
-and an implicitly minted scope fabricates a traceparent that dispatch will faithfully rebuild — a
-fiction indistinguishable at read time from a real origin. A call site that genuinely has only the
-enqueue opens a transaction around it, one explicit line that states the intent.
+**Four properties are the format, not preferences**, and none is reachable: unmapped members are
+ignored in both directions, enums serialize as strings, property naming and null handling are
+Platform's, and number handling is fixed. A converter changes bytes only for types the registering
+product also owns the handler for — the blast radius the additive-payload rule already governs.
+
+### Persistence — the provider seam
+
+```csharp
+public enum PruneTarget { ProcessedOutboxRows, PoisonedOutboxRows, DeadHostRegistrations }
+
+public interface IProviderCapability
+{
+    PersistenceProvider Provider { get; }
+
+    string FormatInstant(DateTimeOffset instant);
+    bool TryParseInstant(string stored, out DateTimeOffset instant);
+
+    byte[] EncodeIdentifier(Guid value);
+    bool TryDecodeIdentifier(ReadOnlySpan<byte> encoded, out Guid value);
+
+    string MigrationHistoryTable(ModuleName module);
+
+    Task<Result<TransactionError>> BeginAsync(
+        TransactionIntent intent,
+        CancellationToken cancellationToken);
+
+    Task<Result<OutboxMessageId?, TransactionError>> StampClaimAsync(
+        InstanceId holder,
+        DateTimeOffset now,
+        TimeSpan claimWindow,
+        CancellationToken cancellationToken);
+
+    Task<Result<int, TransactionError>> DeleteBoundedAsync(
+        PruneTarget target,
+        DateTimeOffset olderThan,
+        int batchSize,
+        CancellationToken cancellationToken);
+
+    Task<Result<ConfigurationError>> AssertStartupPreconditionsAsync(
+        CancellationToken cancellationToken);
+}
+```
+
+**The membership rule, so the capability's growth is checkable rather than a matter of taste: a
+member belongs here when the two providers must do something *different* to produce the same
+observable result.** Everything the providers do identically belongs in a store. That admits the
+instant formatter, the identifier encoder, the claim and bounded-delete statements, transaction-begin
+mode, the migration history name and the startup preconditions — WAL and the busy-wait bound — and
+nothing else. `StampClaimAsync` is the statement only; which row to dispatch and what to do with the
+outcome is policy and stays in the store.
+
+```csharp
+public interface IOutboxStore
+{
+    Task<Result<TransactionError>> InsertAsync(
+        OutboxMessage message, CancellationToken cancellationToken);
+
+    Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
+        InstanceId holder, CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> MarkProcessedAsync(
+        OutboxMessageId id, CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> RecordFailureAsync(
+        OutboxMessageId id, string error, DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> PoisonAsync(
+        OutboxMessageId id, string error, CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> DeferAsync(
+        OutboxMessageId id, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> ReleaseClaimAsync(
+        OutboxMessageId id, CancellationToken cancellationToken);
+
+    Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken);
+
+    Task<Result<int, TransactionError>> RedriveByTypeAsync(
+        EventTypeName type, CancellationToken cancellationToken);
+
+    Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string reason,
+        CancellationToken cancellationToken);
+
+    Task<Result<int, TransactionError>> DiscardByTypeAsync(
+        EventTypeName type, string reason, CancellationToken cancellationToken);
+
+    Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
+        int limit, CancellationToken cancellationToken);
+
+    Task<Result<DateTimeOffset?, TransactionError>> OldestPendingOccurredAtAsync(
+        CancellationToken cancellationToken);
+
+    Task<Result<int, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken);
+
+    Task<Result<int, TransactionError>> PruneAsync(
+        PruneTarget target, DateTimeOffset olderThan, int batchSize,
+        CancellationToken cancellationToken);
+}
+
+public interface ILeaseStore
+{
+    Task<Result<bool, TransactionError>> TryAcquireAsync(
+        BackgroundWorkName name, InstanceId holder, DateTimeOffset expiresAt,
+        CancellationToken cancellationToken);
+
+    Task<Result<bool, TransactionError>> TryRenewAsync(
+        BackgroundWorkName name, InstanceId holder, DateTimeOffset expiresAt,
+        CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> ReleaseAsync(
+        BackgroundWorkName name, InstanceId holder, CancellationToken cancellationToken);
+}
+
+public interface IHostRegistrationStore
+{
+    Task<Result<TransactionError>> UpsertAsync(
+        HostRegistration registration, CancellationToken cancellationToken);
+
+    Task<Result<IReadOnlyList<HostRegistration>, TransactionError>> ListLiveAsync(
+        DateTimeOffset heartbeatSince, CancellationToken cancellationToken);
+
+    Task<Result<TransactionError>> DeleteAsync(
+        HostRole role, InstanceId instance, CancellationToken cancellationToken);
+}
+```
+
+**One store per Platform-owned table, and one implementation of each** — parameterised by
+`IProviderCapability`, not written twice. §2 has Persistence refuse to impose a repository pattern,
+so these cover the three tables Platform both defines and stores and never product data.
+
+**The policy is what is not duplicated.** Which row to claim, whether a failure consumes an attempt,
+when a row is poisoned rather than deferred — two copies of that is the objection this design
+already raised against a dialect-specific claim, applied to the surrounding logic rather than the
+statement.
+
+**`OldestPendingOccurredAtAsync` and `PoisonedCountAsync` exist because readiness needs them and the
+predicate table decides what they count.** Pending excludes poisoned rows; the poison count excludes
+discarded ones.
+
+**Every store method self-guards on an absent schema**, returning `TransactionError.Unavailable`
+rather than throwing, so a first production run reports degraded with the schema named instead of
+turning a known condition into an unhealthy-by-exception.
+
+**`TransactionIntent` is a parameter because no implementation can infer it.** "A transaction that
+will write begins immediate" is only actionable if the caller says which kind it is opening, and the
+deferred-then-upgrade shape is the one case the rule exists to prevent. Treating every transaction
+as a writer would be safe and would make the rule unfalsifiable.
+
+**`Enqueue` returns the id and is synchronous** because it does not write — it looks up the stable
+`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, enlists in the caller's
+transaction, and the write happens on commit. The id is loggable and returnable before the insert,
+which is what makes it a usable dedupe key.
+
+**`Enqueue` throws `PlatformContractViolationException` on three conditions**: no ambient
+transaction, no ambient operation scope, and an event type that was never registered. The provider
+contract tests assert all three. The alternatives to the first two are worse than a throw: a nullable
+trace context admits rows whose correlation appears nowhere upstream, and an implicitly minted scope
+fabricates a traceparent that dispatch will faithfully rebuild — a fiction indistinguishable at read
+time from a real origin. A call site that genuinely has only the enqueue opens a transaction around
+it, one explicit line that states the intent. The third has nothing to write without the name.
 
 **Per-id redrive and discard return an outcome per id, not a count.** Racing the prune pass yields
 `NotFound` and a row someone already discarded yields `NotPoisoned`, both distinguishable from
@@ -982,9 +1168,11 @@ individually. Their invocation surface is [Unresolved](#unresolved); what they a
 | `Id` is unique across a drain, prune-to-empty, insert cycle | SQLite rowid reuse, which is why the sequence is not the identity |
 | `Enqueue` throws without an ambient transaction | An outbox row committing apart from its domain write |
 | `Enqueue` throws without an ambient operation scope | A row whose correlation appears nowhere upstream |
+| `Enqueue` throws for an event type no registration bound to a name | A row stamped with a name nothing can resolve back to a type |
 | No foreign key crosses a module boundary | The either-order migration guarantee, which nothing else enforces |
 | A claim is granted to exactly one of two concurrent claimants | The portable conditional-update claim, on both providers |
-| The suite goes red against a deliberately broken provider | A suite that has never failed is not evidence |
+| A payload written under one provider deserializes under the other | The format is the serialiser's, not the provider's |
+| The suite goes red against a deliberately broken `IProviderCapability` | A suite that has never failed is not evidence, and the capability is the only place a difference is permitted to live |
 
 ---
 
@@ -1002,6 +1190,7 @@ Carried by `PlatformContractViolationException`. Never returned.
 |---|---|---|---|
 | `NoAmbientTransaction` | `Enqueue` is called outside a unit of work | No | Fix the call site — open a transaction around the enqueue |
 | `NoAmbientOperationScope` | `Enqueue`, or an ambient accessor, is reached with no scope open | No | Fix the call site — a seeder or migrate-mode utility opens a scope explicitly |
+| `UnregisteredEventType` | `Enqueue` is called with an event type no registration bound to a stable name | No | Fix the call site — register the type. There is nothing to stamp on the row without the name |
 | `ResultAccessedIncorrectly` | `Value` read on a failure, or `Error` on a success | No | Fix the call site |
 
 ### Core — `ModuleGraphError`
@@ -1164,79 +1353,65 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 15 | Every background write is bounded — one row per claim and per mark, `PruneBatchSize` rows per prune statement | Persistence |
 | 16 | A transaction that will write begins immediate; the SQLite file is in WAL mode or the host does not start | Persistence |
 | 17 | Every persistence readiness check self-guards on an absent schema, reporting degraded with the schema named rather than throwing | Persistence |
-| 18 | Exactly one handler is registered per `EventTypeName` | Persistence |
-| 19 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
-| 20 | The health, background-work and handler registries accept no registration after `Freeze` | Core |
-| 21 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
-| 22 | Both retention settings and the connection string are present, or the host does not start | Core |
-| 23 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
-| 24 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
-| 25 | Liveness never evaluates an external dependency | Hosting |
-| 26 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
-| 27 | Every host writes its registration to the store it is using, and deletes its own row on graceful shutdown | Hosting |
-| 28 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
-| 29 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
-| 30 | A malformed inbound `traceparent` never fails the request | Hosting |
-| 31 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
-| 32 | The worker probe binds loopback unless explicitly configured otherwise | Hosting |
-| 33 | The probe body is `Full` only on loopback or in the development environment, and the status is identical at either detail level | Hosting |
-| 34 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
-| 35 | Peer absence is informational in the development environment, and degrades elsewhere only after the startup grace has elapsed | Hosting |
-| 36 | Telemetry export never propagates a failure to a caller | Observability |
-| 37 | No secret appears in any exported log, span attribute or metric label | Observability |
-| 38 | No metric is labelled with an unbounded value | Observability |
+| 18 | Exactly one handler is registered per `EventTypeName`, and exactly one `EventTypeName` is registered per CLR event type | Persistence |
+| 19 | A stored `type` resolves to a CLR type through the registry alone — never through a runtime type name | Persistence |
+| 20 | Payload serialisation ignores unmapped members in both directions, writes enums as strings, and is reachable for extension only through a registered converter | Persistence |
+| 21 | A provider difference appears only in `IProviderCapability`; no store method branches on `PersistenceProvider` | Persistence |
+| 22 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
+| 23 | The health, background-work and handler registries accept no registration after `Freeze` | Core |
+| 24 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
+| 25 | Both retention settings and the connection string are present, or the host does not start | Core |
+| 26 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
+| 27 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
+| 28 | Liveness never evaluates an external dependency | Hosting |
+| 29 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
+| 30 | Every host writes its registration to the store it is using, and deletes its own row on graceful shutdown | Hosting |
+| 31 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
+| 32 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
+| 33 | A malformed inbound `traceparent` never fails the request | Hosting |
+| 34 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
+| 35 | The worker probe binds loopback unless explicitly configured otherwise | Hosting |
+| 36 | The probe body is `Full` only on loopback or in the development environment, and the status is identical at either detail level | Hosting |
+| 37 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
+| 38 | Peer absence is informational in the development environment, and degrades elsewhere only after the startup grace has elapsed | Hosting |
+| 39 | Telemetry export never propagates a failure to a caller | Observability |
+| 40 | No secret appears in any exported log, span attribute or metric label | Observability |
+| 41 | No metric is labelled with an unbounded value | Observability |
 
 ---
 
 ## Unresolved
 
-The design does not determine these. **The first three block implementation**; the rest have safe
-provisional readings but no stated value.
+The design does not determine these. **None of them blocks implementation** — the three that did
+were settled on 2026-08-03 and are now in the design, and each of the seven below has a safe
+provisional reading with no stated value. Each still needs a decision-log entry when someone picks
+one, because each sets a value a future reader would ask "why?" about.
 
-1. **How an event declares its stable `EventTypeName`.** The design requires the persisted `type` to
-   survive a class rename and forbids it being a runtime type name, but does not say what supplies
-   it. An attribute, a registration-time mapping and an interface member are all viable and fail
-   differently when a name collides or is forgotten. `IIntegrationEvent.TypeName` above is the
-   *shape* the design implies; **what populates it is undetermined**, and a wrong choice orphans rows
-   permanently.
-
-2. **The payload serialisation contract.** `Payload` is `string` because the design says json and
-   nothing further. Whether the serialiser is injectable, and what canonical form a payload takes,
-   are undetermined. *What has been resolved:* an undeserializable payload is
-   `DispatchError.PayloadUndeserializable` and takes the deferral path without consuming an attempt.
-   The serialiser's identity is what remains.
-
-3. **The provider abstraction's surface.** The design commits to a real provider abstraction verified
-   by contract tests and names none of its members. Everything provider-specific — instant
-   formatting, identifier encoding, the claim statement, immediate transactions, prune batching,
-   journal-mode assertion — passes through it, so its shape decides whether the two providers are
-   genuinely interchangeable or merely both present.
-
-4. **The settings fingerprint's canonical form and hash algorithm.** Membership is now determined —
+1. **The settings fingerprint's canonical form and hash algorithm.** Membership is now determined —
    the `[Fingerprinted]` marker and the rule behind it. The canonical serialisation of those values
    and the digest over it are not, and two hosts computing them differently would report a permanent
    false mismatch.
 
-5. **Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.** The design makes both
+2. **Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.** The design makes both
    correctness-adjacent on SQLite and requires them validated; only the lower bound (`>= 1`) follows
    from what it says. What value is too large to hold the single write lock for is not stated.
 
-6. **The wire format of the error envelope and the probe body.** Determined: the envelope's two
+3. **The wire format of the error envelope and the probe body.** Determined: the envelope's two
    fields, that the probe body narrows by detail level, and that neither carries exception text or
    payload content. Undetermined: media type, member names, and whether the envelope reuses an
    existing problem-details shape.
 
-7. **The per-check default timeout, and the probe endpoint's overall timeout.** The design sizes the
+4. **The per-check default timeout, and the probe endpoint's overall timeout.** The design sizes the
    SQLite busy-wait bound as "shorter than a probe timeout" without stating that timeout.
 
-8. **How `InstanceId` is derived.** Two hosts of the same role on one machine must differ, and a
+5. **How `InstanceId` is derived.** Two hosts of the same role on one machine must differ, and a
    restart must produce a new value or a dead row would be indistinguishable from its replacement.
    The design names the concept and not its construction.
 
-9. **The naming convention for a module's migration history table.** One history per module is
+6. **The naming convention for a module's migration history table.** One history per module is
    determined; what each is called, and therefore whether two modules can collide, is not.
 
-10. **The provider contract tests' invocation surface.** What they must assert is determined and
-    listed above. Whether they are an abstract base class, a shared suite parameterised by a provider
-    factory, or something else, is not — and it decides how a third party runs them against a
-    provider of their own.
+7. **The provider contract tests' invocation surface.** What they must assert is determined and
+   listed above. Whether they are an abstract base class, a shared suite parameterised by a provider
+   factory, or something else, is not — and it decides how a third party runs them against a
+   provider of their own.
