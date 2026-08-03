@@ -1,6 +1,8 @@
+using System.Data.Common;
 using Microsoft.Extensions.DependencyInjection;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,9 +12,19 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IPlatformModule, CatalogueModule>();
 builder.Services.AddSingleton<IPlatformModule, OrdersModule>();
 
-// The only Platform call. Health, readiness and correlation come with it — a second mandatory call
-// would be the bespoke wiring the brief's definition of done names as failure.
+// Migrate mode is a one-shot command, not a third host role — it exits before AddPlatformWebHost
+// ever runs, and never serves HTTP or probes.
+if (args is ["migrate"])
+{
+    return await builder.RunPlatformMigrateModeAsync(CancellationToken.None);
+}
+
+// The only mandatory Platform call. Health, readiness and correlation come with it.
 builder.AddPlatformWebHost();
+
+// Persistence is optional and wires itself in — Hosting does not reference this package, so a host
+// composed without this call is a supported shape with a smaller readiness surface.
+builder.Services.AddPlatformPersistence();
 
 var app = builder.Build();
 
@@ -27,4 +39,78 @@ app.MapGet("/", (ICurrentCorrelation correlation, ICurrentTenant tenant) => new
 app.MapGet("/boom", void () => throw new InvalidOperationException(
     "Sample failure with detail that must not reach the wire."));
 
+// Writes to both modules' tables in one transaction over one connection — Orders enlists through a
+// raw DbCommand against the ambient transaction rather than opening a connection of its own, which
+// is what makes the two rows commit or roll back together.
+app.MapPost("/orders", async (
+    CreateOrderRequest request,
+    IUnitOfWork unitOfWork,
+    IAmbientTransactionAccessor ambient,
+    IProviderCapability capability,
+    IClock clock,
+    ICurrentTenant tenant,
+    ICurrentPrincipal principal,
+    CancellationToken cancellationToken) =>
+{
+    var result = await unitOfWork.ExecuteAsync(
+        TransactionIntent.Write,
+        async token =>
+        {
+            var current = ambient.Current!;
+            var now = capability.FormatInstant(clock.UtcNow);
+            var tenantValue = tenant.Current.ToString();
+            var createdBy = principal.Current?.Identity?.Name;
+
+            var itemId = Guid.NewGuid().ToString();
+            await using (var insertItem = current.Connection.CreateCommand())
+            {
+                insertItem.Transaction = current.Transaction;
+                insertItem.CommandText =
+                    "INSERT INTO catalogue_items (id, name, tenant, created_at, created_by) "
+                    + "VALUES (@id, @name, @tenant, @createdAt, @createdBy);";
+                AddParameter(insertItem, "@id", itemId);
+                AddParameter(insertItem, "@name", request.Name);
+                AddParameter(insertItem, "@tenant", tenantValue);
+                AddParameter(insertItem, "@createdAt", now);
+                AddParameter(insertItem, "@createdBy", createdBy);
+                await insertItem.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+
+            var orderId = Guid.NewGuid().ToString();
+            await using (var insertOrder = current.Connection.CreateCommand())
+            {
+                insertOrder.Transaction = current.Transaction;
+                insertOrder.CommandText =
+                    "INSERT INTO orders (id, catalogue_item_id, quantity, tenant, created_at, created_by) "
+                    + "VALUES (@id, @itemId, @quantity, @tenant, @createdAt, @createdBy);";
+                AddParameter(insertOrder, "@id", orderId);
+                AddParameter(insertOrder, "@itemId", itemId);
+                AddParameter(insertOrder, "@quantity", request.Quantity);
+                AddParameter(insertOrder, "@tenant", tenantValue);
+                AddParameter(insertOrder, "@createdAt", now);
+                AddParameter(insertOrder, "@createdBy", createdBy);
+                await insertOrder.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+
+            return new CreateOrderResponse(itemId, orderId);
+        },
+        cancellationToken).ConfigureAwait(false);
+
+    return result.IsSuccess ? Results.Ok(result.Value) : Results.Problem(result.Error.Detail);
+});
+
 app.Run();
+
+return 0;
+
+static void AddParameter(DbCommand command, string name, object? value)
+{
+    var parameter = command.CreateParameter();
+    parameter.ParameterName = name;
+    parameter.Value = value ?? DBNull.Value;
+    command.Parameters.Add(parameter);
+}
+
+internal sealed record CreateOrderRequest(string Name, int Quantity);
+
+internal sealed record CreateOrderResponse(string CatalogueItemId, string OrderId);

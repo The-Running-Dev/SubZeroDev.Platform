@@ -40,6 +40,14 @@ jobs:
           # defaults to the working directory. `exec` replaces the subshell, so $! is the host.
           root=$PWD
 
+          # Migrate mode creates each role's store and puts its SQLite file in WAL — a host that
+          # finds a file still in the default journal mode aborts startup, per the contract, and a
+          # store with no schema has nothing for the standard call's checks to be healthy against.
+          ( cd "$root/samples/SubZeroDev.Platform.Sample.Web/bin/Release/net10.0" \
+            && ./SubZeroDev.Platform.Sample.Web migrate )
+          ( cd "$root/samples/SubZeroDev.Platform.Sample.Worker/bin/Release/net10.0" \
+            && ./SubZeroDev.Platform.Sample.Worker migrate )
+
           ( cd "$root/samples/SubZeroDev.Platform.Sample.Web/bin/Release/net10.0" \
             && ASPNETCORE_URLS=http://127.0.0.1:5199 exec ./SubZeroDev.Platform.Sample.Web \
           ) > web.log 2>&1 &

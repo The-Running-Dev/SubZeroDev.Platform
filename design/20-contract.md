@@ -1006,6 +1006,20 @@ public interface ILeaseHandle : IAsyncDisposable
     Task<Result<LeaseError>> RenewAsync(CancellationToken cancellationToken);
 }
 
+public interface IModuleMigration
+{
+    string Name { get; }
+
+    Task ApplyAsync(DbConnection connection, DbTransaction transaction, CancellationToken cancellationToken);
+}
+
+public interface IModuleMigrationSource
+{
+    ModuleName Module { get; }
+
+    IReadOnlyList<IModuleMigration> Migrations { get; }
+}
+
 public interface IMigrationRunner
 {
     Task<Result<IReadOnlyList<ModuleMigrationStatus>, MigrationError>> GetStatusAsync(
@@ -1014,6 +1028,19 @@ public interface IMigrationRunner
     Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken);
 }
 ```
+
+**A module's migrations reach the runner by the same route background work and health checks
+do** — plain dependency-injection registration, collected as `IEnumerable<IModuleMigrationSource>`.
+Neither `IMigrationRunner.ApplyAsync` nor `RunPlatformMigrateModeAsync` takes a migration list as a
+parameter, so without a discoverable contribution point a module would have no way to state what its
+history contains; `IPlatformModule` itself carries no migration member, the same way it carries no
+health-check or background-work member; the check and work contracts already solved this exact
+problem, and this is that solution applied a third time. **`Name` is the ordering key within one
+module's history** — applied in ordinal string order, which is what makes "either order across
+modules, one order within a module" a property of the mechanism rather than of discipline. A module
+registers one `IModuleMigrationSource` naming every migration it owns; `ApplyAsync` receives the
+connection and transaction the runner already opened, because the runner — not the migration —
+owns the migration-history bookkeeping and the provider-native lock.
 
 **The registration is declarative, and each role validates the half it runs.** Both hosts register
 the triple — the web host must, in order to enqueue — but a registration is a statement, not a
@@ -1078,14 +1105,30 @@ on exactly the run competing deploy scripts are most likely to race — and a le
 stalled migrator is unfenced while its DDL still lands. The native lock is connection-scoped, which
 closes both holes at once: no table, so no bootstrap ordering; released by the provider when the
 holding process dies, so no expiry window. A second concurrent invocation **fails fast** with
-`MigrationError.Locked`.
+`MigrationError.Locked` — on SQLite that means at the busy-wait bound rather than instantly, because
+`Microsoft.Data.Sqlite` reads a zero timeout as *wait forever* rather than as SQLite's own *fail
+immediately*, so the shortest honoured bound is what "fast" can mean there.
+
+**One run is one transaction, so a failure rolls the whole run back.** This is a consequence of the
+lock rather than a separate choice: on SQLite the exclusion *is* the transaction, so committing each
+migration as it applied would release the lock between migrations and let a second invocation
+interleave — the race the lock exists to prevent. PostgreSQL could commit per migration and does not,
+because two migrate-mode behaviours that differ by provider is the duplication this seam exists to
+refuse. The operator-visible consequence is stated rather than discovered: **a failed run leaves the
+store exactly as it found it**, and a partially-migrated database is not a state migrate mode can
+produce. A migration is applied within a savepoint so its own failure is isolated for reporting; the
+savepoint never survives the run's rollback.
 
 ### Persistence — the provider seam
 
 ```csharp
 public enum PruneTarget { ProcessedOutboxRows, PoisonedOutboxRows, DeadHostRegistrations }
 
-public interface IMigrationLock : IAsyncDisposable;
+public interface IMigrationLock : IAsyncDisposable
+{
+    DbConnection Connection { get; }
+    DbTransaction Transaction { get; }
+}
 
 public interface IProviderCapability
 {
@@ -1099,9 +1142,11 @@ public interface IProviderCapability
 
     string MigrationHistoryTable(ModuleName module);
 
-    Task<Result<TransactionError>> BeginAsync(
+    Task<Result<IAmbientTransaction, TransactionError>> BeginAsync(
         TransactionIntent intent,
         CancellationToken cancellationToken);
+
+    TransactionError Classify(Exception exception);
 
     Task<Result<OutboxMessageId?, TransactionError>> StampClaimAsync(
         InstanceId holder,
@@ -1127,11 +1172,23 @@ public interface IProviderCapability
 member belongs here when the two providers must do something *different* to produce the same
 observable result.** Everything the providers do identically belongs in a store. That admits the
 instant formatter, the identifier encoder, the claim and bounded-delete statements, transaction-begin
-mode, the migration history name, **the migration exclusive lock** — an advisory lock on PostgreSQL,
-an exclusive transaction on SQLite — and the startup preconditions — WAL and the busy-wait bound —
+mode, the migration history name, **the migration lock** — an advisory lock on PostgreSQL,
+an immediate transaction on SQLite — and the startup preconditions — WAL and the busy-wait bound —
 and nothing else. `StampClaimAsync` is the statement only, portable by default with PostgreSQL free
 to use its locking read underneath; which row to dispatch and what to do with the outcome is policy
-and stays in the store.
+and stays in the store. **`Classify` is admitted by the same rule**: what counts as busy, as a
+concurrency conflict, or as unreachable is a different exception type and code on each provider,
+while what the unit of work does with each is identical.
+
+**`BeginAsync` returns the pair it opened, and `IMigrationLock` exposes the pair it holds.** Both
+were previously write-only — success or failure, with no way to read the connection and transaction
+back — which made the capability implementable only from inside Persistence, where the internal
+casts that recovered them live. That contradicts the seam's stated purpose: this log priced the
+capability as expensive precisely because *a third party implementing a provider of their own
+compiles against it*, and an extension point that type-checks and then fails at the first cast is
+not one. The unit of work owns the returned pair's lifetime and is what makes it **ambient**; the
+capability only opens it, which is why `IAmbientTransaction` serves as the return type rather than a
+second interface of identical shape.
 
 ```csharp
 public enum ClaimedWriteOutcome { Applied, ClaimLost }
@@ -1253,6 +1310,35 @@ demanding has been made.
 rather than throwing, so a first production run reports degraded with the schema named instead of
 turning a known condition into an unhealthy-by-exception.
 
+### Persistence — registration and startup failure
+
+```csharp
+public static class PlatformPersistenceExtensions
+{
+    public static IServiceCollection AddPlatformPersistence(this IServiceCollection services);
+}
+
+public sealed class PersistenceStartupException : Exception
+{
+    public PlatformError Error { get; }
+}
+```
+
+**Persistence registers itself, and Hosting does not do it.** The dependency graph has no
+Hosting → Persistence edge and a host composed without Persistence is a supported shape, so a
+product that wants a store makes this call alongside the standard registration call. It is the same
+arrangement `AddPlatformObservability` has, minus Hosting also invoking it: one explicit line, not
+the bespoke wiring the brief forbids, because nothing about health, readiness, correlation or
+migrations requires the consumer to configure anything beyond naming the package it wants.
+
+**`PersistenceStartupException` is a fourth exception, and the graph is why.** Every "aborts startup
+with a named error" elsewhere means `PlatformStartupException` — which lives in Hosting, a package
+Persistence may not reference. Persistence has its own startup abort to raise (a SQLite file in any
+journal mode but WAL), so it needs a type it is allowed to throw. It carries a `PlatformError` on
+the same terms as the other three, so the code stays stable and enumerable. A consumer catching
+startup failures by type catches both; that cost is the price of the acyclic graph, and it is
+cheaper than the edge.
+
 ### Hosting
 
 ```csharp
@@ -1292,6 +1378,15 @@ setting rather than falling back silently.
 
 **`RunPlatformMigrateModeAsync` returns a process exit status.** It is a one-shot command, not a
 third host role.
+
+**It is grouped under this heading and does not ship in Hosting.** Migrate mode needs the migration
+runner, which is Persistence's, and Hosting has no edge to Persistence — so the method is declared in
+the Persistence package, in a static class of its own, sharing this namespace. That is the same idiom
+`Microsoft.EntityFrameworkCore` uses for `AddDbContext`, which extends
+`Microsoft.Extensions.DependencyInjection`'s type from a different assembly than the one declaring
+it. The call site is unchanged and the grouping above is by capability rather than by assembly, which
+is what this document's own preamble says package grouping means. A reader diffing types to files
+should expect this one to move.
 
 ### Observability
 
@@ -1528,7 +1623,7 @@ attempt instead of poisoning instantly.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `Failed` | A migration failed to apply | No | Stops, and does not continue to the next module. Both providers apply a migration atomically, so the database is left at a known point |
+| `Failed` | A migration failed to apply | No | Stops, and does not continue to the next module. **The whole run rolls back** — every migration that run had applied, across every module — so the database is left exactly as the run found it |
 | `Locked` | Another invocation holds the provider-native migration lock | **Yes**, once the other run finishes | **Fails fast**, exiting non-zero without applying anything. The lock is connection-scoped: it exists on a fresh store and dies with its holder, so there is no expiry window and no bootstrap ordering |
 | `Unavailable` | The database cannot be reached | **Yes** | Exits non-zero; the operator retries |
 
@@ -1625,6 +1720,10 @@ The design does not determine these. **None of them blocks implementation** — 
 provisional reading with no stated value. Each still needs a decision-log entry when someone picks
 one, because each sets a value a future reader would ask "why?" about.
 
+**Resolved items keep their number and are struck through rather than removed**, because
+[`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) both cite these by number and
+renumbering would silently break every reference.
+
 1. **The settings fingerprint's canonical form and hash algorithm.** Membership is determined — the
    `[Fingerprinted]` marker and the rule behind it. The canonical serialisation of those values and
    the digest over it are not, and two hosts computing them differently would report a permanent
@@ -1639,16 +1738,19 @@ one, because each sets a value a future reader would ask "why?" about.
    neither carries exception text or payload content. Undetermined: media type, member names, and
    whether the envelope reuses an existing problem-details shape.
 
-4. **The per-check default timeout, and the probe endpoint's overall timeout.** The design sizes the
-   SQLite busy-wait bound as "shorter than a probe timeout" without stating that timeout.
+4. ~~**The per-check default timeout, and the probe endpoint's overall timeout.**~~ **Resolved.** The
+   endpoint's overall timeout was set in S1 at 15 s; the per-check timeouts were set in S2, with the
+   first two checks that needed them — `Database` at 5 s, `PendingMigrations` at 10 s. Both are in
+   [`90-decisions.md`](90-decisions.md).
 
 5. **How `InstanceId` is derived.** Two hosts of the same role on one machine must differ, and a
    restart must produce a new value or a dead row would be indistinguishable from its replacement.
    The design names the concept and not its construction.
 
-6. **The naming convention for a module's migration history table.** One history per module is
-   determined and the capability supplies the name; what convention it follows, and therefore
-   whether two modules can collide, is not.
+6. ~~**The naming convention for a module's migration history table.**~~ **Resolved in S2:**
+   `platform_migrations_{module}`, the module name in lower snake case. Two modules collide exactly
+   when their names collide, which the module registry already rejects. See
+   [`90-decisions.md`](90-decisions.md).
 
 7. **The provider contract tests' invocation surface.** What they must assert is determined and
    listed above. Whether they are an abstract base class, a shared suite parameterised by a provider

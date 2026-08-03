@@ -66,6 +66,24 @@ and preferences belong in `AGENTS.md`.
 
 ## Verification
 
+- **Three green runs is not evidence a race is fixed.** An intermittent SQLite contract-test
+  failure went away when test-assembly parallelism was disabled — three consecutive clean runs
+  — and came back on the fourth. That "fix" lowered the odds of the collision without touching
+  its cause, and had it shipped, the store would have carried a real stale-read hazard in
+  production rather than only in tests. The actual cause was found by a tight single-threaded
+  scratch loop that reproduced it on iteration zero: **`Microsoft.Data.Sqlite` pools connections
+  per connection string, and a pooled connection's schema snapshot can predate a DDL change a
+  different pooled connection to the same file just committed.** `Pooling=false` on every
+  connection string the store builds. **Cost: a wrong diagnosis that looked right, plus the
+  repro loop to overturn it.** When a fix is "it stopped failing", suspect the odds changed
+  rather than the cause.
+- **A test that proves a safety net works needs inputs wide enough to trip it.** The
+  "goes red against a broken identifier encoder" test first minted 100 ids one millisecond
+  apart and **passed against the deliberately broken encoder** — the platform's native `Guid`
+  byte layout only visibly scrambles ordering across the low timestamp byte's ~256 ms
+  wraparound, and a 100 ms span never reaches it. Cost: would have shipped a red-team test
+  incapable of catching the regression it is named for, which is worse than no test because it
+  reads as coverage.
 - **Check documentation against the tree, not against other documentation.** A page in a
   sibling repo described a file that had never existed in git history; it had been checked
   against neighbouring docs, which agreed with it.
@@ -107,6 +125,16 @@ and preferences belong in `AGENTS.md`.
 - **After a squash merge, `git branch -d` reports the branch unmerged** because the squash
   commit shares no history with it. Confirm with `git diff <branch> main` returning empty,
   then delete.
+
+## Libraries that mean the opposite of what they look like
+
+- **`Microsoft.Data.Sqlite` reads `DefaultTimeout=0` as *wait forever*, not as *fail
+  immediately*.** Raw SQLite's `busy_timeout(0)` means the latter, so a "fail fast" migration
+  lock written against that intuition silently became "never fails". **Cost: a hung process
+  that had to be killed**, and the shortest bound that actually fails fast turned out to be one
+  second — which is now what the SQLite migration lock's "fails fast" means, stated in the
+  contract rather than assumed. A zero-means-unbounded convention is common enough in .NET
+  connection strings to check for it rather than infer it.
 
 ## Rendering and encoding
 

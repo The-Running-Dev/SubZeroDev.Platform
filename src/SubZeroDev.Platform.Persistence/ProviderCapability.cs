@@ -1,0 +1,96 @@
+using System.Data.Common;
+using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
+
+namespace SubZeroDev.Platform.Persistence;
+
+/// <summary>Holds the provider-native migration exclusion — an advisory lock on PostgreSQL, an
+/// immediate transaction on SQLite. Connection-scoped: releasing it is a disposal, not an
+/// expiring lease, so a stalled migrator cannot leave it fenced open.</summary>
+/// <remarks>The connection and transaction are exposed for the same reason
+/// <see cref="IAmbientTransaction"/> exposes them: a module's migration runs against them, and the
+/// runner cannot hand over what it cannot read. On SQLite they are the exclusion itself — the lock
+/// <em>is</em> the transaction — which is what makes one migrate-mode run atomic as a whole.</remarks>
+public interface IMigrationLock : IAsyncDisposable
+{
+    /// <summary>The connection the lock is held on, and migrations apply through.</summary>
+    DbConnection Connection { get; }
+
+    /// <summary>The transaction migrations apply within. Committed by the runner on success and
+    /// rolled back whole on any failure; a migration never completes it itself.</summary>
+    DbTransaction Transaction { get; }
+}
+
+/// <summary>Everything the two providers must do differently to produce the same observable
+/// result. A member belongs here on that test alone; everything identical between providers
+/// belongs in a store instead.</summary>
+public interface IProviderCapability
+{
+    /// <summary>Which provider this is.</summary>
+    PersistenceProvider Provider { get; }
+
+    /// <summary>Formats an instant for storage. On SQLite, fixed-width ISO-8601 UTC text,
+    /// <c>Z</c>-suffixed, exactly seven fractional digits, never trimmed — the same formatter binds
+    /// every comparand compared against the column.</summary>
+    /// <param name="instant">The instant, with <c>Offset == TimeSpan.Zero</c>.</param>
+    /// <returns>The stored form.</returns>
+    string FormatInstant(DateTimeOffset instant);
+
+    /// <summary>Parses a stored instant back, returning <see langword="false"/> rather than
+    /// throwing.</summary>
+    /// <param name="stored">The stored form.</param>
+    /// <param name="instant">The parsed instant, or <see langword="default"/> when parsing failed.</param>
+    /// <returns><see langword="true"/> when <paramref name="stored"/> parsed.</returns>
+    bool TryParseInstant(string stored, out DateTimeOffset instant);
+
+    /// <summary>Encodes an identifier for storage. On SQLite, a 16-byte blob in RFC 4122 network
+    /// byte order, so bytewise blob order equals mint order.</summary>
+    /// <param name="value">The identifier.</param>
+    /// <returns>The stored form.</returns>
+    byte[] EncodeIdentifier(Guid value);
+
+    /// <summary>Decodes a stored identifier back, returning <see langword="false"/> rather than
+    /// throwing.</summary>
+    /// <param name="encoded">The stored form.</param>
+    /// <param name="value">The decoded identifier, or <see langword="default"/> when decoding failed.</param>
+    /// <returns><see langword="true"/> when <paramref name="encoded"/> decoded.</returns>
+    bool TryDecodeIdentifier(ReadOnlySpan<byte> encoded, out Guid value);
+
+    /// <summary>The migration history table's name for one module. One history per module, never
+    /// shared, so two modules' migrations apply in either order.</summary>
+    /// <param name="module">The module.</param>
+    /// <returns>The table name.</returns>
+    string MigrationHistoryTable(ModuleName module);
+
+    /// <summary>Opens a connection and begins a transaction of the stated intent. A transaction
+    /// that will write begins immediate, never deferred.</summary>
+    /// <param name="intent">Whether the transaction will only read, or will write.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The connection and transaction opened, or why they could not be.</returns>
+    /// <remarks>Returns the pair rather than reporting success alone, because the caller owns the
+    /// lifetime and cannot commit, roll back or dispose what it cannot read. The unit of work is
+    /// what makes the returned pair <em>ambient</em>; the capability only opens it.</remarks>
+    Task<Result<IAmbientTransaction, TransactionError>> BeginAsync(
+        TransactionIntent intent,
+        CancellationToken cancellationToken);
+
+    /// <summary>Classifies an exception raised while a transaction was open. A capability member
+    /// because it is the definition of a provider difference: what counts as busy, as a
+    /// concurrency conflict, or as unreachable is a different exception type and code on each
+    /// provider, while the unit of work's response to each is identical.</summary>
+    /// <param name="exception">The exception raised.</param>
+    /// <returns>The error the caller surfaces.</returns>
+    TransactionError Classify(Exception exception);
+
+    /// <summary>Acquires the provider-native migration lock. A second concurrent invocation fails
+    /// fast rather than waiting.</summary>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The lock, or why it could not be acquired.</returns>
+    Task<Result<IMigrationLock, MigrationError>> AcquireMigrationLockAsync(CancellationToken cancellationToken);
+
+    /// <summary>Asserts the preconditions startup depends on — WAL mode and the busy-wait bound on
+    /// SQLite, reachability on both.</summary>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>Success, or the named configuration defect.</returns>
+    Task<Result<ConfigurationError>> AssertStartupPreconditionsAsync(CancellationToken cancellationToken);
+}

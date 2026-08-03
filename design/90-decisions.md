@@ -58,6 +58,125 @@ Reasoning, consequences and rejected alternatives live in the linked document, n
 
 ---
 
+### 2026-08-03 — A signature S2 could not proceed without: how a module's migrations reach the runner
+Context: `IMigrationRunner.ApplyAsync` and `RunPlatformMigrateModeAsync` both take no migration list —
+by design, since the contract fixes both signatures already — so migrations must be discoverable from
+dependency injection alone. Nothing in the contract named the contribution point: `IPlatformModule`
+carries no migration member, and neither `IHealthCheck` nor `IBackgroundWork`'s registration route
+had an equivalent stated for migrations. Found before any Persistence code was written, on the same
+stop-and-ask rule S1's three absences were found under.
+Chosen: **`IModuleMigration` and `IModuleMigrationSource`**, collected as
+`IEnumerable<IModuleMigrationSource>` the same way checks and background work are collected. A module
+registers one source naming every migration it owns; `IModuleMigration.Name` orders migrations within
+one module's history, ordinally; `ApplyAsync` receives the connection and transaction the runner
+already holds, so bookkeeping and the provider-native lock stay the runner's alone.
+Rejected: **A parameter on `ApplyAsync`** — changes a contract signature already fixed for a reason
+unrelated to this gap, and pushes migration discovery onto every caller of migrate mode instead of
+onto module registration, where checks and work already put it. **Assembly-scanning modules for a
+migration type** — no new member, and §2 permits scanning but forbids it as the only route, the same
+objection S1 raised against scanning for `IPlatformModule` itself. **A method on `IPlatformModule`
+returning migrations** — couples every module to Persistence even when it defines none, where the
+DI-collection route lets a module with no migrations register nothing.
+Reversibility: cheap — no Persistence code exists yet, and this is the moment the contract is
+cheapest to change. Expensive once a provider or a product module compiles against it.
+
+### 2026-08-03 — Persistence wires itself in; Hosting keeps zero reference to it
+Context: `IUnitOfWork`, `IProviderCapability` and the `Database`/`PendingMigrations` health checks need
+to reach a host's container somehow, and the contract states plainly that "Hosting does not
+reference Persistence; a host composed without Persistence is a supported shape." `RunPlatformMigrateModeAsync`
+is nonetheless listed beside `AddPlatformWebHost` under the same `PlatformHostExtensions` heading,
+which only looks like a contradiction if a C# namespace is assumed to map one-to-one onto an assembly.
+Chosen: **Persistence registers itself.** It exposes its own `IServiceCollection` extension, called
+once by the product alongside `AddPlatformWebHost()` — the same shape `AddPlatformObservability`
+already has as a standalone call, just without Hosting also calling it automatically.
+`RunPlatformMigrateModeAsync` is implemented *inside the Persistence project*, as a static class in
+the `SubZeroDev.Platform.Hosting` namespace — the idiom `Microsoft.EntityFrameworkCore`'s
+`AddDbContext` already uses to extend `Microsoft.Extensions.DependencyInjection.IServiceCollection`
+from a different assembly than the one that declares it. The call site stays
+`builder.RunPlatformMigrateModeAsync(ct)`; `Hosting.csproj` gains no `ProjectReference`.
+Rejected: **Hosting takes a project reference to Persistence** — one fewer line in a product's
+`Program.cs`, and it contradicts the contract's own sentence, makes Hosting unbuildable without
+Persistence existing, and quietly turns "a host composed without Persistence is a supported shape"
+false the day Hosting's own composition path starts touching Persistence types unconditionally.
+Reversibility: cheap now; expensive once a product's `Program.cs` is written against either shape.
+
+### 2026-08-03 — Reconciling S2: the capability seam was not implementable, and four values it set
+Context: `/reconcile` against the working tree after S2. The largest finding is one no reading of the
+contract would have caught, because the contract was self-consistent and the code was too: building
+the *second* provider is what exposed it. `IProviderCapability.BeginAsync` returned
+`Result<TransactionError>` — success or failure and nothing else — and `IMigrationLock` was a bare
+`IAsyncDisposable`, so neither handed back the `DbConnection` and `DbTransaction` it had just opened.
+The unit of work and the migration runner recovered them by casting to `internal` seam interfaces, so
+a third party's own capability would compile and then throw `InvalidCastException` at first use. That
+contradicts the entry below that prices this seam as expensive *precisely because* a third party
+implementing a provider compiles against it.
+Chosen: **(1) `BeginAsync` returns `Result<IAmbientTransaction, TransactionError>`** — the existing
+public triple (intent, connection, transaction) rather than a second interface of identical shape;
+the unit of work is what makes the pair *ambient*, the capability only opens it. **(2)
+`IMigrationLock` gains `Connection` and `Transaction`.** **(3) `Classify(Exception)` joins the
+capability**, admitted by the membership rule verbatim — what counts as busy, as a conflict, or as
+unreachable is a different exception type and code per provider, while the response to each is
+identical. Both internal seam interfaces are deleted, and the capability becomes stateless, so one
+instance now serves every overlapping unit of work instead of one being constructed per transaction.
+**(4) Migrate mode is atomic per run, not per migration** — the contract's failure table implied
+earlier migrations survive a later failure; they do not, and this is a consequence rather than a
+preference: on SQLite the lock *is* the transaction, so committing per migration would release the
+exclusion mid-run and let a second invocation interleave. PostgreSQL could differ and deliberately
+does not. **(5) The SQLite lock is an *immediate* transaction, not the *exclusive* one both design
+documents specified** — `Microsoft.Data.Sqlite` exposes only deferred and immediate, a raw
+`BEGIN EXCLUSIVE` yields no `DbTransaction` for `IModuleMigration.ApplyAsync` to receive, and under
+the WAL this design mandates exclusive's extra property is blocking readers, which WAL exists to
+avoid. **(6) Instants and identifiers store as text and blob on *both* providers**, not native
+`timestamptz`/`uuid` on PostgreSQL. **(7) The migration history table is
+`platform_migrations_{module}`** in lower snake case, resolving Unresolved #6. **(8) Health-check
+timeouts**: `Database` 5 s, `PendingMigrations` 10 s, resolving the rest of Unresolved #4. **(9)
+`IProviderCapability` is registered as a singleton** so product code writing its own tables formats
+instants and encodes identifiers exactly as Platform's columns do. **(10)
+`PersistenceStartupException`**, because Persistence must abort startup on a non-WAL file and may not
+reference Hosting's `PlatformStartupException` across an edge the graph forbids.
+Rejected: **(1) Retracting the third-party claim** instead of fixing the seam — no signature churn,
+and it shrinks the capability's justification to "we did not want two copies of the dispatch policy",
+which is true but is a smaller claim than the log makes; declined because an extension point that
+type-checks and then fails at the first cast is not one, and this is the cheapest moment to fix it —
+S4 to S7 add five more store methods on top of this shape. **(1) A new `IProviderTransaction`
+interface** — clearer about ownership, and identical in shape to `IAmbientTransaction`, which is the
+duplication this log has objected to before. **(4) Committing per migration** to match the contract
+as written — avoids a large rollback on a long run, and needs a SQLite lock that is not the applying
+transaction, which is a design change to the lock mechanism rather than a code fix. **(5) Issuing raw
+`BEGIN EXCLUSIVE`** — matches the documents literally and leaves migrations with no transaction
+object to enlist against. **(6) Native PostgreSQL column types** — smaller rows, native indexing, and
+real type-safety, and the contract offers no bind-side member that would let a store bind a
+`timestamptz` or `uuid` parameter; taking it would mean a new public capability member. **The cost is
+named rather than hidden: PostgreSQL gets no native indexing or type-safety on instant and identifier
+columns, and larger rows.** Available later additively, which is why it was not forced now.
+Reversibility: **(1) through (3) are expensive once a third party ships a provider** — they are the
+seam's shape. (4) and (5) are cheap in code and expensive in expectation once an operator relies on
+what a failed run leaves behind. (6) is **expensive the moment product tables have rows**, which is
+the argument for stating its cost here rather than discovering it at D4.
+
+### 2026-08-03 — SQLite connections disable pooling, found by an intermittent contract-test failure
+Context: `No foreign key crosses a module boundary` failed intermittently — reading a just-committed
+table's foreign keys back through a brand-new `SqliteConnection` occasionally returned zero rows,
+never reproducible when that one test class ran alone. Disabling the test assembly's parallelism
+first appeared to fix it (three straight green runs), and then it failed again on a fourth — the
+wrong diagnosis, caught by not stopping at three. A tight 200-iteration single-threaded scratch loop
+reproduced the mismatch on iteration zero, with a locked file the next iteration's cleanup could not
+delete: Microsoft.Data.Sqlite pools connections per connection string by default, and a pooled
+connection's schema snapshot can predate a DDL change a *different* pooled connection to the same
+file just committed. 50/50 iterations passed clean the moment pooling was turned off.
+Chosen: every connection string `SqliteProviderCapability` builds sets `Pooling=false`, including the
+migration lock's and the ordinary transaction path's. The test project's own verification
+connections and the test host builder's WAL pre-seeding step do the same, since they are reading
+back what the store just wrote through a separate pooled (or non-pooled) handle.
+Rejected: **Serialising the test assembly** (`CollectionBehavior(DisableTestParallelization = true)`)
+— tried first, looked like it worked, and was wrong: it lowers the odds of two pooled connections
+colliding without removing the cause, which is why it passed three times and then didn't. Left in
+place it would have shipped a store with a real, if rare, stale-read hazard in production — not just
+in tests. **Retrying the read on a transient empty result** — treats the symptom, and a product
+query hitting the same staleness would have no such retry.
+Reversibility: cheap. Connection pooling is a performance detail with no public surface; the fix is
+one property on a connection string builder.
+
 ### 2026-08-03 — xUnit is the test framework, and nothing else was added
 Context: [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4 and `AGENTS.md` both require a decision-log entry naming the alternatives whenever a dependency is taken. S1 takes exactly one that is not in the shared framework.
 Chosen: **xUnit**, with `Microsoft.NET.Test.Sdk` and the Visual Studio runner. It is the .NET SDK template default, it needs no attribute ceremony for a plain fact, and its licence is durable — Apache 2.0 under the .NET Foundation, which is the qualifier ADR-004 §4 added after three foundational libraries in this corner of .NET changed licence inside one year.

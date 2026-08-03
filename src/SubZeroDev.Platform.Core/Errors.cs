@@ -68,6 +68,16 @@ public sealed record ConfigurationError : PlatformError
     /// <returns>The error.</returns>
     public static ConfigurationError InconsistentSettings(string first, string second, string constraint) =>
         new(nameof(InconsistentSettings), $"Settings '{first}' and '{second}' are jointly invalid: {constraint}.");
+
+    /// <summary>The SQLite file is open in any mode other than WAL. The contention analysis this
+    /// design rests on is false outside WAL, so this aborts startup rather than degrading.</summary>
+    /// <param name="path">The SQLite file.</param>
+    /// <param name="actualMode">The journal mode the file was found in.</param>
+    /// <returns>The error.</returns>
+    public static ConfigurationError UnsupportedJournalMode(string path, string actualMode) =>
+        new(
+            nameof(UnsupportedJournalMode),
+            $"SQLite file '{path}' is in journal mode '{actualMode}'; it must be 'wal'.");
 }
 
 /// <summary>A rejected health check registration.</summary>

@@ -3,17 +3,18 @@
   <ItemGroup>
     <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
     <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
-    <ProjectReference Include="..\SubZeroDev.Platform.Observability\SubZeroDev.Platform.Observability.csproj" />
-    <ProjectReference Include="..\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
-    <ProjectReference Include="..\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.1" />
   </ItemGroup>
 

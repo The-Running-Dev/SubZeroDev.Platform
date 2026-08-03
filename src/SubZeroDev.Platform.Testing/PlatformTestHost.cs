@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.Testing;
 
@@ -34,6 +36,14 @@ public interface IPlatformTestHostBuilder
     /// <param name="value">The value.</param>
     /// <returns>The same builder, so calls chain.</returns>
     IPlatformTestHostBuilder WithSetting(string key, string value);
+
+    /// <summary>Selects the persistence provider and wires Persistence in — the unit of work, the
+    /// migration runner, and the <c>Database</c>/<c>PendingMigrations</c> readiness checks. Sqlite's
+    /// default connection string is a fresh WAL-mode temp file, unique to this host; Postgres needs
+    /// <see cref="WithSetting"/> to supply <c>Persistence:ConnectionString</c>.</summary>
+    /// <param name="provider">The provider.</param>
+    /// <returns>The same builder, so calls chain.</returns>
+    IPlatformTestHostBuilder WithProvider(PersistenceProvider provider);
 
     /// <summary>Contributes modules, health checks and background work through the same plain
     /// registration the real host collects them by, so a test exercises the production path.</summary>
@@ -75,7 +85,9 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
 {
     private readonly Dictionary<string, string?> _settings = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Action<IServiceCollection>> _services = [];
+    private readonly string _sqliteFile = Path.Combine(Path.GetTempPath(), $"platform-test-{Guid.NewGuid():N}.db");
     private HostRole _role = HostRole.Web;
+    private bool _persistenceRequested;
 
     public IPlatformTestHostBuilder WithRole(HostRole role)
     {
@@ -94,6 +106,13 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
     {
         ArgumentNullException.ThrowIfNull(configure);
         _services.Add(configure);
+        return this;
+    }
+
+    public IPlatformTestHostBuilder WithProvider(PersistenceProvider provider)
+    {
+        _settings["Platform:Persistence:Provider"] = provider.ToString();
+        _persistenceRequested = true;
         return this;
     }
 
@@ -118,6 +137,27 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
         var clock = new FakeClock();
         builder.Services.AddSingleton<IClock>(clock);
 
+        if (_persistenceRequested)
+        {
+            builder.Services.AddPlatformPersistence();
+
+            var resolvedProvider = _settings.TryGetValue("Platform:Persistence:Provider", out var raw)
+                && Enum.TryParse<PersistenceProvider>(raw, out var parsed)
+                ? parsed
+                : PersistenceProvider.Sqlite;
+
+            if (resolvedProvider == PersistenceProvider.Sqlite)
+            {
+                // The effective connection string, honouring an explicit override the same way
+                // configuration precedence does — a test pointing this at its own file (or at a
+                // deliberately unreachable path) must be pre-seeded on that file, not the builder's
+                // own default.
+                var effective = _settings.GetValueOrDefault("Platform:Persistence:ConnectionString")
+                    ?? $"Data Source={_sqliteFile}";
+                EnsureWalModeFile(effective);
+            }
+        }
+
         if (_role == HostRole.Web)
         {
             builder.AddPlatformWebHost();
@@ -132,19 +172,44 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
         var host = builder.Build();
         await host.StartAsync(cancellationToken).ConfigureAwait(false);
 
-        return new StartedTestHost(host, clock);
+        return new StartedTestHost(host, clock, _sqliteFile);
     }
 
     /// <summary>Every required setting, so a test needs none of them, and a probe port that cannot
-    /// collide with a parallel test's.</summary>
+    /// collide with a parallel test's. The Sqlite connection string is a fresh file unique to this
+    /// host — WAL requires a real file, and a brand new one starts in <c>delete</c> mode until
+    /// something sets it, which <see cref="EnsureWalModeFile"/> does before startup when persistence
+    /// is requested.</summary>
     private Dictionary<string, string?> Defaults() => new()
     {
         ["Platform:Persistence:Provider"] = nameof(PersistenceProvider.Sqlite),
-        ["Platform:Persistence:ConnectionString"] = "Data Source=:memory:",
+        ["Platform:Persistence:ConnectionString"] = $"Data Source={_sqliteFile}",
         ["Platform:Outbox:ProcessedRetention"] = "1.00:00:00",
         ["Platform:Outbox:PoisonedRetention"] = "7.00:00:00",
         ["Platform:Hosting:WorkerProbePort"] = FreePort().ToString(),
     };
+
+    /// <summary>Creates the file if absent and switches it to WAL — which, once set, persists in the
+    /// file itself, so nothing needs to repeat this on a later open. Best-effort: a deliberately
+    /// unreachable connection string (a test proving readiness degrades against one) fails here the
+    /// same way it fails for the host itself, and that failure is exactly what the test wants to
+    /// observe at runtime rather than at setup.</summary>
+    private static void EnsureWalModeFile(string connectionString)
+    {
+        try
+        {
+            var nonPooled = new SqliteConnectionStringBuilder(connectionString) { Pooling = false }.ConnectionString;
+            using var connection = new SqliteConnection(nonPooled);
+            connection.Open();
+            using var pragma = connection.CreateCommand();
+            pragma.CommandText = "PRAGMA journal_mode=WAL;";
+            pragma.ExecuteNonQuery();
+        }
+        catch
+        {
+            // Left for AssertStartupPreconditionsAsync and readiness to report at their own layer.
+        }
+    }
 
     /// <summary>Hosting owns the timers, and a running timer would make a single-tick assertion
     /// flaky. Removing the loop is what leaves <c>RunBackgroundWorkOnceAsync</c> the only caller of
@@ -173,7 +238,7 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
     }
 }
 
-internal sealed class StartedTestHost(IHost host, FakeClock clock) : IPlatformTestHost
+internal sealed class StartedTestHost(IHost host, FakeClock clock, string? sqliteFile = null) : IPlatformTestHost
 {
     public IServiceProvider Services => host.Services;
 
@@ -195,5 +260,25 @@ internal sealed class StartedTestHost(IHost host, FakeClock clock) : IPlatformTe
     {
         await host.StopAsync(CancellationToken.None).ConfigureAwait(false);
         host.Dispose();
+
+        if (sqliteFile is not null)
+        {
+            TryDeleteSqliteFile(sqliteFile);
+        }
+    }
+
+    private static void TryDeleteSqliteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            File.Delete(path + "-wal");
+            File.Delete(path + "-shm");
+        }
+        catch (IOException)
+        {
+            // Best-effort cleanup: a lingering handle leaves an orphaned temp file, not a test
+            // failure.
+        }
     }
 }
