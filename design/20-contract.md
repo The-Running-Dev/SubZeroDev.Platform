@@ -935,6 +935,44 @@ structure concurrent readers are walking.
 **`ForRole` is how Hosting starts work it cannot name.** It returns the registrations whose `Roles`
 include the host's role, which for the web host is the registration heartbeat alone.
 
+**`ISettingsFingerprint.Compute` is specified to the byte, because agreement between two processes
+is the whole of its value.** A prose description that two implementations could follow differently
+would reintroduce exactly the permanent false mismatch it exists to prevent, and this interface is
+public surface a third party may reimplement.
+
+Input to the digest, in order:
+
+1. The literal ASCII bytes `szdfp1`, the format version. It is inside the hashed input, so a future
+   change to this encoding is a visible break rather than a silent one.
+2. Every `[Fingerprinted]` property reachable from `PlatformOptions`, as an entry, **ordered by
+   ordinal comparison of the path's UTF-8 bytes** — never by reflection order, which
+   `Type.GetProperties()` does not guarantee.
+
+Each entry is exactly:
+
+```text
+uint32BE(byteLength(pathUtf8)) ‖ pathUtf8 ‖ presenceTag ‖ [ uint32BE(byteLength(valueUtf8)) ‖ valueUtf8 ]
+```
+
+- `path` is the **configuration path** — `Outbox:ProcessedRetention` — the same string a startup
+  error names, so a fingerprint and an error message speak one language.
+- `presenceTag` is one byte: `0x00` for a null value, after which **no length and no value follow**;
+  `0x01` for a present value, after which both do. This is what keeps null distinguishable from the
+  empty string, which a length of zero alone would not.
+- Lengths are **byte counts of the UTF-8 encoding**, not character counts, as unsigned 32-bit
+  big-endian.
+- Values render culture-invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, integers in decimal with
+  no separators or sign for non-negative values, `bool` as `true` or `false`, an enum as its declared
+  name with its declared casing, a string as itself.
+
+The digest is **SHA-256** over that byte sequence, rendered as **64 lowercase hex characters**. The
+length prefixes are what make the encoding injective: without them `a=1,b=23` and `a=12,b=3` could
+hash identically, and a fingerprint that can collide on distinct settings silently reports agreement
+that does not exist.
+
+Why it is stated here rather than left to the implementation is in
+[`90-decisions.md`](90-decisions.md), with the three traps it is built to defeat.
+
 ### Persistence — transaction boundary
 
 ```csharp
@@ -1785,36 +1823,55 @@ Each is written to be assertable, with the module responsible for maintaining it
 
 ## Unresolved
 
-The design does not determine these. **None of them blocks implementation** — each has a safe
-provisional reading with no stated value. Each still needs a decision-log entry when someone picks
-one, because each sets a value a future reader would ask "why?" about.
+Values the design did not determine, each of which sets something a future reader would ask "why?"
+about. **All seven are now resolved** — 2, 3 and 4 in S1, 6 and 7 in S2, and 1 and 5 ahead of S3, so
+that slice implements against a contract with nothing left to invent. Every one has its reasoning,
+its rejected alternatives and its cost in [`90-decisions.md`](90-decisions.md); none of it is
+restated here.
+
+**A new entry belongs here whenever the design names a concept without naming its construction.**
+The section is not finished because it is currently empty of open items — it is the place that
+question goes, and an empty list is what it looks like between them.
 
 **Resolved items keep their number and are struck through rather than removed**, because
 [`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) both cite these by number and
 renumbering would silently break every reference.
 
-1. **The settings fingerprint's canonical form and hash algorithm.** Membership is determined — the
-   `[Fingerprinted]` marker and the rule behind it. The canonical serialisation of those values and
-   the digest over it are not, and two hosts computing them differently would report a permanent
-   false mismatch.
+1. ~~**The settings fingerprint's canonical form and hash algorithm.**~~ **Resolved ahead of S3:** each
+   `[Fingerprinted]` value is keyed by its **configuration path** — the same string an error message
+   names, so the two speak one language — then the pairs are **ordinal-sorted by path**, each path
+   and value **length-prefixed** so no two different inputs can concatenate to the same bytes, the
+   whole preceded by a format version, hashed with **SHA-256** and rendered as lowercase hex.
+   Values format invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, enums by name, and a null
+   distinctly from an empty string. Sorting by path rather than by reflection order is the load-
+   bearing part — `Type.GetProperties()` guarantees no order. **The byte-exact encoding is specified
+   beside `ISettingsFingerprint` itself**, which is what an implementer reads; this entry summarises
+   the decision and is not the normative form. See [`90-decisions.md`](90-decisions.md).
 
-2. **Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.** The design makes both
-   correctness-adjacent on SQLite and requires them validated; only the lower bound (`>= 1`) follows
-   from what it says. What value is too large to hold the single write lock for is not stated.
+2. ~~**Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.**~~ **Resolved in S1:**
+   `DispatchTickBudget` at 1 000 and `PruneBatchSize` at 5 000, each an order above its default. The
+   prune bound is the one that matters — a prune delete is a single statement holding SQLite's write
+   lock, where a tick's budget is only serial duration. Both are enforced by the hand-written binder.
+   See [`90-decisions.md`](90-decisions.md).
 
-3. **The wire format of the error envelope and the probe body.** Determined: the envelope's two
-   fields, that the probe body narrows by detail level and enumerates registered checks, and that
-   neither carries exception text or payload content. Undetermined: media type, member names, and
-   whether the envelope reuses an existing problem-details shape.
+3. ~~**The wire format of the error envelope and the probe body.**~~ **Resolved in S1:** plain
+   `application/json`, camel-cased member names, enums as their string names, nulls omitted. The
+   envelope is `{code, correlation}` and nothing else, and does **not** reuse problem details. The
+   probe body is
+   `{status, checks[]}` with each entry `{name, status, detail?, data?}`, the last two present only
+   at full detail. See [`90-decisions.md`](90-decisions.md).
 
 4. ~~**The per-check default timeout, and the probe endpoint's overall timeout.**~~ **Resolved.** The
    endpoint's overall timeout was set in S1 at 15 s; the per-check timeouts were set in S2, with the
    first two checks that needed them — `Database` at 5 s, `PendingMigrations` at 10 s. Both are in
    [`90-decisions.md`](90-decisions.md).
 
-5. **How `InstanceId` is derived.** Two hosts of the same role on one machine must differ, and a
-   restart must produce a new value or a dead row would be indistinguishable from its replacement.
-   The design names the concept and not its construction.
+5. ~~**How `InstanceId` is derived.**~~ **Resolved ahead of S3:** `Environment.MachineName`, a slash, and
+   eight hex characters from `RandomNumberGenerator`, minted once at startup — `homelab-01/7f3a9c2e`.
+   Uniqueness and restart-freshness come from the random suffix alone, so neither process-id reuse
+   nor a clock adjustment can break either. The role is deliberately **not** encoded:
+   `HostRegistration` carries a `role` column, and two homes for one fact is two things that can
+   disagree. See [`90-decisions.md`](90-decisions.md).
 
 6. ~~**The naming convention for a module's migration history table.**~~ **Resolved in S2:**
    `platform_migrations_{module}`, the module name in lower snake case. **Two distinct modules can
