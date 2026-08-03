@@ -133,8 +133,8 @@ Touches:
   `EncodeIdentifier`, `TryDecodeIdentifier`, `MigrationHistoryTable`, `BeginAsync`,
   `AcquireMigrationLockAsync`, `AssertStartupPreconditionsAsync`), `IMigrationLock`, `IUnitOfWork`,
   `IAmbientTransaction`, `IAmbientTransactionAccessor`, `TransactionIntent`, `IMigrationRunner`,
-  `ModuleMigrationStatus`, `ITenantOwned`, `IAuditable`, `ISoftDeletable`, `PersistenceProvider`,
-  `TransactionError`, `MigrationError`, the `Database` and `PendingMigrations` readiness checks
+  `ModuleMigrationStatus`, `ITenantOwned`, `IAuditable`, `ISoftDeletable`, `TransactionError`,
+  `MigrationError`, the `Database` and `PendingMigrations` readiness checks
 - **Core** — `ConfigurationError.UnsupportedJournalMode`
 - **Hosting** — `RunPlatformMigrateModeAsync`
 - **Testing** — `IPlatformTestHostBuilder.WithProvider`, and the provider contract-test suite

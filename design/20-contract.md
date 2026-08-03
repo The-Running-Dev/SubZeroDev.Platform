@@ -538,12 +538,6 @@ public interface ISoftDeletable
 **`ITenantOwned` is not optional; `ISoftDeletable` is opt-in per table.** A soft delete nobody asked
 for silently changes the meaning of every query against that table.
 
-### Persistence — provider selection
-
-```csharp
-public enum PersistenceProvider { PostgreSql, Sqlite }
-```
-
 ### Core — configuration root
 
 ```csharp
@@ -571,7 +565,15 @@ derived from the host — a service must not be able to declare itself productio
 shipped from a developer's machine — and the role is fixed by which form of the registration call
 the host made.
 
+**`PersistenceProvider` is Core's, because `PlatformOptions` is Core's.** It names which provider a
+host is configured for, which makes it a setting rather than part of the provider abstraction.
+Persistence depends on Core, so `IProviderCapability.Provider` and `WithProvider` reach it freely;
+grouping it under Persistence would have put a required member of a Core record in a package Core
+may not reference, and Core → Persistence is an edge the dependency graph forbids.
+
 ```csharp
+public enum PersistenceProvider { PostgreSql, Sqlite }
+
 public sealed record PersistenceOptions
 {
     public required PersistenceProvider Provider { get; init; }
