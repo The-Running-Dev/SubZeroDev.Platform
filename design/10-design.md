@@ -669,12 +669,30 @@ dependency pointing the wrong way that every future check-contributing package w
 
 | Package | Owns | Depends on | Exposes |
 |---|---|---|---|
-| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract** | Nothing but the BCL | Interfaces and value types only |
+| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces and value types only |
 | **Core** | Default implementations, module registration, ordering, startup validation, typed configuration binding, **background-work registration, ordering and role scoping** | Abstractions | Registration surface, module graph |
 | **Observability** | Telemetry wiring, correlation identity derivation and propagation, **the trace-context contract's implementation**, instrumentation, sampling policy | Abstractions | Configuration surface, correlation derivation and propagation |
 | **Persistence** | Transaction boundary, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message scope reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **redrive and discard**, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher, prune and the registration heartbeat registered as background work** |
 | **Hosting** | Host bootstrap for **both host roles**, DI wiring, middleware order, graceful shutdown, health and readiness **endpoints**, request/principal/correlation/tenant scope establishment, **running registered background work in the role each registration declares** | Abstractions, Core, Observability | The standard registration call, in web and worker forms |
 | **Testing** | Test host for both roles, fake clock, fake principal and tenant, capture, deterministic background work, **provider contract tests** | All five | Test host builder |
+
+**Abstractions is BCL-only in every member but one, and the exception is named rather than
+finessed.** The module contract's registration delegate takes an `IServiceCollection`, which lives
+in the dependency-injection abstractions package rather than in the BCL — so a literal "nothing but
+the BCL" was false the moment the module contract was written down, and the two ways to make it true
+are both worse. Dropping the parameter leaves a module contract that cannot register anything, which
+is the only thing a module does. Moving the contract to Core costs a product the ability to declare
+a module against Abstractions alone, which is the property that makes Abstractions a separate
+package at all.
+
+**What the rule was protecting survives intact**, which is why widening it is not a concession:
+[`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §2 states the criterion
+as **no dependency on any other Platform package**, and a consumer compiling against Abstractions
+alone. Both still hold. §2's reason — that Abstractions is the one package a product may depend on
+without inheriting a runtime choice — holds too: the dependency-injection *abstractions* are
+container-agnostic by construction and supply no container. An implementation package here would
+break the rule; this does not. Nothing else in Abstractions reaches outside the BCL, and anything
+that later wants to is a design change rather than a precedent.
 
 **Two host roles, one package.** The worker is not a second Hosting package — it is the same
 bootstrap with the product HTTP surface omitted and background work enabled: no product endpoints,
@@ -750,7 +768,7 @@ exercised one provider's store would prove nothing about either.
 ### Dependency direction
 
 ```text
-Abstractions ──► (BCL only)
+Abstractions ──► (BCL + DI abstractions)
      ▲   ▲   ▲
      │   │   └────── Observability ──►┐
      │   └────────── Core ──►┬────────┴──► Hosting
@@ -760,7 +778,7 @@ Testing ──► all five          (test-only; never a dependency of anything s
 sample ──► Hosting, Persistence, …
 ```
 
-**Acyclic.** Abstractions has no outbound edge; Core depends only on it; Observability only on it;
+**Acyclic.** Abstractions has no outbound edge to another Platform package; Core depends only on it; Observability only on it;
 Persistence on Abstractions and Core; Hosting on those plus Observability; Testing is a sink nothing
 references. No package appears on both sides of any edge.
 
