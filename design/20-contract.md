@@ -43,8 +43,10 @@ public readonly record struct TraceContext(string TraceParent, string? TraceStat
     public static bool TryParse(string traceParent, string? traceState, out TraceContext result);
 }
 
-public readonly record struct CultureTag(string Value)
+public readonly record struct CultureTag
 {
+    public CultureTag(string value);
+    public string Value { get; }
     public static CultureTag Invariant { get; }
     public static bool TryParse(string candidate, out CultureTag result);
 }
@@ -68,11 +70,14 @@ carried one; the design requires both to travel with the row so the sampling dec
 sampler state cross the boundary. `ModuleName`, `EventTypeName`, `HealthCheckName` and
 `BackgroundWorkName` are non-empty, trimmed, and case-sensitively unique within their registry.
 
-**`CultureTag.Invariant` is the empty tag, so `default(CultureTag)` is already invariant.** That is
-deliberate rather than incidental: it is what lets culture join the scope as an optional parameter
-without every existing call site changing, and it means no code path can hold a `CultureTag` that
-means nothing. A non-empty value is a BCP-47 language tag, and `TryParse` accepts exactly what
-`CultureInfo.GetCultureInfo` will later resolve — Platform stores the tag and never the
+**`CultureTag` is deliberately non-positional so its all-zero representation can be invariant.**
+The default representation has no backing string, but `Value` projects it as `string.Empty` and
+never returns null; `Invariant` returns that same representation, and constructing from
+`string.Empty` normalizes to it. Therefore `default(CultureTag) == CultureTag.Invariant`, rather
+than merely meaning the same thing by convention. That is what lets culture join the scope as an
+optional parameter without every existing call site changing, and it means no code path can hold a
+`CultureTag` that means nothing. A non-empty value is a BCP-47 language tag, and `TryParse` accepts
+exactly what `CultureInfo.GetCultureInfo` will later resolve — Platform stores the tag and never the
 `CultureInfo`, because the tag is what a column can hold and what survives a process boundary.
 
 **`TraceContext` exposes its own `TraceId` and no `Correlation` member.** The previous derivation
@@ -787,6 +792,7 @@ side moves the defect to the other side of the comparison.
 | `trace_parent` | text | no | Complete `traceparent` including trace flags |
 | `trace_state` | text | yes | W3C `tracestate` when the origin carried one |
 | `correlation` | text | no | The origin's trace-id at any depth; stamped from the ambient correlation at enqueue |
+| `culture` | text | no | The originating BCP-47 tag; empty is invariant; stamped from the ambient culture at enqueue |
 | `attempts` | integer | no | Default 0, `>= 0` |
 | `next_attempt_at` | instant | yes | Null means due at `occurred_at` |
 | `first_deferred_at` | instant | yes | Stamped on first deferral; the deferral age measures from it |
@@ -1111,10 +1117,10 @@ installation is exactly the silent format divergence pinning exists to remove. A
 `System.Text.Json` handles natively under the pinned options, or it is a different payload.
 
 **`Enqueue` returns the id and is synchronous** because it does not write — it looks up the stable
-`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, stamps tenant, trace context
-and correlation from the ambient scope, enlists in the ambient transaction, and the write happens on
-commit. The id is loggable and returnable before the insert, which is what makes it a usable dedupe
-key.
+`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, stamps tenant, trace context,
+correlation and culture from the ambient scope, enlists in the ambient transaction, and the write
+happens on commit. The id is loggable and returnable before the insert, which is what makes it a
+usable dedupe key.
 
 **`Enqueue` throws `PlatformContractViolationException` on three conditions**: no ambient
 transaction, no ambient operation scope, and an event type that was never registered. The provider
@@ -1735,9 +1741,9 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 9 | A participant enlists against the ambient transaction and never commits, rolls back or disposes it; commit and rollback happen exactly once, in `ExecuteAsync` | Persistence |
 | 10 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
 | 11 | No foreign key crosses a module boundary | Persistence |
-| 12 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant from the row, principal null — never inherited from the worker | Persistence |
+| 12 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant and culture from the row, principal null — never inherited from the worker | Persistence |
 | 13 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
-| 14 | The correlation column is stamped from the ambient correlation at enqueue and propagates unchanged through derived events at any depth | Persistence |
+| 14 | The correlation and culture columns are stamped from their ambient values at enqueue and each propagates unchanged through derived events at any depth | Persistence |
 | 15 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
 | 16 | `attempts` never decreases except through an explicit redrive | Persistence |
 | 17 | Every dispatch-state write — mark processed, record failure, defer, poison, release — applies only while the writer holds the live claim; a write that lost its claim returns `ClaimLost`, changes nothing, and is counted as duplicate-delivery evidence rather than escalated | Persistence |
