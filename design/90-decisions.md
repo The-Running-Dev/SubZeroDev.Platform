@@ -30,6 +30,9 @@ Reasoning, consequences and rejected alternatives live in the linked document, n
 
 | Decision | Home |
 |---|---|
+| Platform is a framework plus optional application modules, and no framework package may reference one | [`application-modules.md`](../docs/docs/application-modules.md) §1 |
+| Catalogue and Ordering are admitted with one consumer, against the boundary test, with the objection retained | [`application-modules.md`](../docs/docs/application-modules.md) §4 |
+| BarStrad is a third consumer; Notifications, channels, localized content and the command surface clear the guard | [`application-modules.md`](../docs/docs/application-modules.md) §2 |
 | Near-term scope is six packages; the outbox is in scope; both a sample and the G1 edge prove D3 | [`00-brief.md`](00-brief.md) |
 | The tenant column is a non-null `uuid` with an all-zero sentinel, not a nullable column or a slug | [`10-design.md`](10-design.md), *Alternatives* |
 | Correlation ids belong to Observability, health endpoints to Hosting, the health check contract to Abstractions | [`10-design.md`](10-design.md), *Module boundaries* |

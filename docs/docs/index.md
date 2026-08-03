@@ -19,7 +19,8 @@ Read in this order. Each document says what it owns; decisions live in their own
 | 5 | [MCP Tool Contract](mcp-tool-contract.md) | The engine's tool table — current, built and tested |
 | 7 | [The Minimal Package Set](minimal-platform-packages.md) | The six near-term packages: boundaries and done-criteria |
 | 8 | [Second-Consumer Packages](second-consumer-packages.md) | Identity, Tenancy, Billing, Mcp — justified, not scheduled |
-| 9 | [Implementation Plan](implementation-plan.md) | The ordered plan, both tracks, with ordering constraints |
+| 9 | [Application Modules](application-modules.md) | The framework/module split, a third consumer, and the two modules admitted by decision |
+| 10 | [Implementation Plan](implementation-plan.md) | The ordered plan, both tracks, with ordering constraints |
 
 Supporting specifications, moved from the ecosystem staging tree:
 [Events and Notifications](events-and-notifications.md) ·
