@@ -116,13 +116,24 @@ public sealed class PlatformContractViolationException : Exception
 }
 ```
 
-**Accessing `Value` on a failure, or `Error` on a success, throws.** That is one of exactly two
+**Accessing `Value` on a failure, or `Error` on a success, throws.** That is one of exactly three
 places an exception is correct: it is a defect in the caller, not a runtime condition.
 
-**`PlatformContractViolationException` is the other**, and it exists because the design requires
+**`PlatformContractViolationException` is the second**, and it exists because the design requires
 enqueue to *throw* a named error when there is no ambient transaction, no ambient operation scope,
 or no registration binding the event type to a stable name. It carries a `PlatformError` so the code
 is stable and enumerable rather than a message string.
+
+**`PlatformStartupException` is the third, and it is a different kind of thing from the other two.**
+Both of those are defects at a call site; this one is a fatal condition at host build time. The
+design says "aborts startup with a named error" of nine separate conditions — a missing setting, an
+inconsistent pair, a cyclic module graph, an external dependency in a liveness check, background
+work declaring no role, a probe port already bound — and every one of them produces a
+`PlatformError` value. A value is not throwable, so until this existed there was nothing for a host
+to abort *with*, and the brief's second CI assertion asserts exactly that abort. Startup is the one
+place a `Result` cannot serve: `AddPlatformWebHost` returns the builder, the failure surfaces at
+build or start, and the runtime's own contract there is an exception. See *Hosting — startup
+failure*.
 
 ### Abstractions — ambient operation context
 
@@ -672,6 +683,21 @@ public sealed record ModuleDescriptor(
     IReadOnlyCollection<ModuleName> DependsOn,
     IPlatformModule Module);
 ```
+
+### Hosting — startup failure
+
+```csharp
+public sealed class PlatformStartupException : Exception
+{
+    public PlatformError Error { get; }
+}
+```
+
+**Every "aborts startup with a named error" in this contract means this exception carrying that
+error.** It is thrown at host build or start, never from a request. `HostStartupError` wraps the
+cause — a `ConfigurationError`, a `ModuleGraphError`, a registry's rejection — so the inner error's
+name and constraint survive to the operator, which is the property that makes a startup message a
+feature rather than a nicety for the brief's stated audience.
 
 ### Hosting — error envelope
 
@@ -1313,11 +1339,17 @@ public interface IEventCapture
     void Clear();
 }
 
+public static class PlatformTestHost
+{
+    public static IPlatformTestHostBuilder CreateBuilder();
+}
+
 public interface IPlatformTestHostBuilder
 {
     IPlatformTestHostBuilder WithRole(HostRole role);
     IPlatformTestHostBuilder WithProvider(PersistenceProvider provider);
     IPlatformTestHostBuilder WithSetting(string key, string value);
+    IPlatformTestHostBuilder WithServices(Action<IServiceCollection> configure);
     Task<IPlatformTestHost> StartAsync(CancellationToken cancellationToken);
 }
 
@@ -1331,6 +1363,18 @@ public interface IPlatformTestHost : IAsyncDisposable
     Task RunBackgroundWorkOnceAsync(BackgroundWorkName name, CancellationToken cancellationToken);
 }
 ```
+
+**`WithServices` is how a test contributes a module, a health check or a background work**, through
+the same plain dependency-injection registration the real host collects them by — so a test
+exercises the production collection path rather than a parallel one built for tests. Without it the
+test host could only run what Platform itself registers, and every criterion needing a
+test-owned check or loop would have to abandon `IPlatformTestHost` for a hand-built host — losing
+`Clock` and `RunBackgroundWorkOnceAsync`, which are the two members that make those criteria
+checkable at all.
+
+**`PlatformTestHost.CreateBuilder` exists because nothing else produced a builder.** A test cannot
+`new` an interface, and leaving the entry point unstated would have each test assembly inventing its
+own.
 
 **`RunBackgroundWorkOnceAsync` invokes one tick, which is what makes background work deterministic
 in tests.** The tick-shaped contract is what makes this possible: the test host owns the schedule,

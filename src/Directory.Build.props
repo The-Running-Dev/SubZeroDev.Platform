@@ -1,0 +1,16 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!-- The brief gates the release on a generated API reference for every public type. Producing
+         the XML now, with CS1591 an error through TreatWarningsAsErrors, keeps S9 a packaging
+         change rather than a retrofit across every file. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <Authors>SubZeroDev</Authors>
+    <Product>SubZeroDev.Platform</Product>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+</Project>

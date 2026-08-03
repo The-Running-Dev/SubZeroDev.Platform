@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Observability\SubZeroDev.Platform.Observability.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

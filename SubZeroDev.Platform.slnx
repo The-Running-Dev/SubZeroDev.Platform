@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/SubZeroDev.Platform.Sample.Web/SubZeroDev.Platform.Sample.Web.csproj" />
+    <Project Path="samples/SubZeroDev.Platform.Sample.Worker/SubZeroDev.Platform.Sample.Worker.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/SubZeroDev.Platform.Abstractions/SubZeroDev.Platform.Abstractions.csproj" />
+    <Project Path="src/SubZeroDev.Platform.Core/SubZeroDev.Platform.Core.csproj" />
+    <Project Path="src/SubZeroDev.Platform.Hosting/SubZeroDev.Platform.Hosting.csproj" />
+    <Project Path="src/SubZeroDev.Platform.Observability/SubZeroDev.Platform.Observability.csproj" />
+    <Project Path="src/SubZeroDev.Platform.Testing/SubZeroDev.Platform.Testing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SubZeroDev.Platform.Tests/SubZeroDev.Platform.Tests.csproj" />
+  </Folder>
+</Solution>
