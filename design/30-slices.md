@@ -249,13 +249,21 @@ refuses traffic over a missing peer.
 Delivers: a product writes a domain row and enqueues an integration event in one transaction, and
 the row is committed with the domain write or with neither.
 
+**Culture arrives here rather than in S1**, under this document's own rule that a member is declared
+in the slice that exercises it. The outbox column is culture's only consumer in D3 — S1 has none, S2
+and S3 have none — so declaring the accessor earlier would land it unexercised, which is the
+half-wired state this document forbids. S1 shipped without it and its criteria are unchanged.
+
 Touches:
-- **Abstractions** — `IIntegrationEvent`, `IIntegrationEventHandler<TEvent>`, `EventTypeName`
+- **Abstractions** — `IIntegrationEvent`, `IIntegrationEventHandler<TEvent>`, `EventTypeName`,
+  `CultureTag`, `ICurrentCulture`, and `IOperationScope.Culture`
+- **Core** — the culture argument on both `IOperationScopeFactory.Begin` overloads, the scope's
+  fifth member, and the `ICurrentCulture` accessor
 - **Persistence** — the `platform_outbox` migration with its indexes and check constraints,
   `OutboxMessage`, `OutboxMessageId`, `OutboxMessageState`, `DueAt`, `IOutboxWriter`,
   `EventHandlerRegistration`, `IEventHandlerRegistry`, `IOutboxStore.InsertAsync`, the pinned
   `System.Text.Json` options, `EventHandlerRegistrationError`
-- **Testing** — `CapturedEvent` and `IEventCapture.Enqueued`
+- **Testing** — `CapturedEvent`, `IEventCapture.Enqueued`, and `FakeCurrentCulture`
 - **samples/** — an event, its handler, its registration, and an endpoint that enqueues
 
 Depends on: S2.
@@ -272,7 +280,24 @@ Acceptance:
 - The stored row carries: `type` equal to the registered literal and unchanged after the CLR class
   is renamed; `tenant` from the ambient scope; `trace_parent` the complete traceparent **including
   trace flags**; `trace_state` when the origin carried one and null otherwise; `correlation` equal
-  to `ICurrentCorrelation.Current.TraceId`; `attempts` 0; and every dispatch-state column null.
+  to `ICurrentCorrelation.Current.TraceId`; `culture` equal to `ICurrentCulture.Current`; `attempts`
+  0; and every dispatch-state column null.
+- An event enqueued inside a scope opened with culture `bg` stores `bg`, and a handler dispatching it
+  in a **worker process started under a different operating-system culture** observes `bg` from
+  `ICurrentCulture.Current`. The assertion goes red when the dispatcher reads the ambient
+  `CultureInfo.CurrentCulture` instead of the row — which is the defect the column exists to prevent
+  and is invisible whenever the two happen to agree.
+- A follow-up event enqueued by that handler stores `bg` unchanged, at any depth — culture propagates
+  like `correlation`, not like `trace_parent`.
+- Inside a request, `ICurrentCulture.Current` equals `CultureTag.Invariant` **even when the request
+  carries an `Accept-Language` header** — nothing in D3 resolves culture, and a test sending one
+  proves the absence rather than assuming it. Outside any scope it throws
+  `PlatformContractViolationException` carrying `NoAmbientOperationScope`, as the other three
+  accessors do.
+- A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new CultureTag("bg"))`
+  yields `ICurrentCulture.Current` of `bg`, and the same call omitting the argument yields
+  `CultureTag.Invariant` — the invariant being the empty tag is what makes the omitted case correct
+  rather than merely convenient.
 - The check constraints hold: `claimed_by` and `claimed_at` are null together, `attempts >= 0`, and
   `poisoned_at` set implies `last_error` non-null. **No constraint makes `processed_at` and
   `poisoned_at` mutually exclusive** — all four combinations are legal and each names a state.

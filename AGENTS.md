@@ -24,7 +24,7 @@ A reference from Platform to a product is a build failure, not a review comment.
   this repository is, and the collision it settles. Everything else depends on it.
 - The reading order is the sidebar order: identity → platform specification → Game Engine as
   a Service → engine hosting contract → MCP tool contract → packages → second-consumer
-  packages → implementation plan → ADRs.
+  packages → application modules → implementation plan → ADRs.
 - **Game Engine as a Service (GEaaS)** is one *hosted workload*, not what this repository is.
   Formerly "NEaaS — Narrative Engine as a Service"; renamed because the engine ships three
   kinds and only one of them is narrative.
@@ -161,6 +161,8 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
   When a suggestion is declined, record it in the affected document as a known-and-retained
   issue rather than dropping it silently.
 - Surface real forks as a question with a recommendation, recommended option first. I routinely pick the more rigorous non-recommended option — so ask, do not assume.
+- **A reconciliation ends in a decision, not a report.** Any time you compare two things and find they disagree — `/reconcile`, `/install`, `/track` drift, or any time I say "reconcile" — the work is not finished at the findings. Close by asking, one divergence at a time, each with a recommendation and what the alternatives cost. **A report I have to turn into questions myself is half the job.** Recommend the *resolution*: what changes, in which file, and what reversing it costs. If nothing diverged, say so plainly rather than manufacturing a fork.
+- `/redteam` is the one exception, and only partly: it must not propose fixes, since naming a fix frames the problem. It still recommends a **classification** — defect, accepted risk, brief conflict, or not sustained.
 - Ask before any choice that sets policy or a public contract: licensing, compatibility promises, a major information-architecture change.
 - Call out assumptions, unverified claims, and known risks plainly. Explain the concrete evidence behind a recommendation.
 

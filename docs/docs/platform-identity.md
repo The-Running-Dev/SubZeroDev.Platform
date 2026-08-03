@@ -66,35 +66,69 @@ look — they are product concepts wearing infrastructure clothes.
 needs it, not when the first one does. Until then it lives inside the product that wants
 it, where it is cheap to move.
 
-| Belongs in Platform | Belongs in a product |
-|---|---|
-| Hosting, configuration, DI, startup validation | Workflow state, session state |
-| Persistence and transaction boundaries | Schema for executions or game saves |
-| Observability wiring | What a specific event means |
-| Identity, authorization, tenancy | Who may run *this* plugin, or own *that* save |
-| Billing primitives — plans, entitlements, metering | Which dimensions a product meters |
-| MCP transport, auth, consent, tool registration | Which tools exist, and where they come from |
+**Admission has two doors, and the test above governs only one of them.**
+[ADR-006](adr/ADR-006-application-modules.md) splits Platform into a **framework** — which no
+consumer can decline and still be hosted — and a library of optional **application modules**, which
+no framework package may reference. The boundary test decides what enters the framework. A module
+may be admitted by decision with one consumer, recorded as such and reversible. So the question is
+no longer *does this belong in Platform* but *which tier does it belong to*, and a "yes" at the
+module door is a much weaker claim than a "yes" at the framework door.
+
+| Concern | Tier | Belongs in a product |
+|---|---|---|
+| Hosting, configuration, DI, startup validation | Framework | Workflow state, session state |
+| Persistence and transaction boundaries | Framework | Schema for executions or game saves |
+| Observability wiring | Framework | What a specific event means |
+| Ambient operation context — tenant, correlation, culture | Framework | What a culture means to a product's own content |
+| Identity, authorization, tenancy | Undecided | Who may run *this* plugin, or own *that* save |
+| Billing primitives — plans, entitlements, metering | Undecided | Which dimensions a product meters |
+| MCP transport, auth, consent, tool registration | Undecided | Which tools exist, and where they come from |
+| Notifications — channels, templates, deduplication, retry | Undecided | Which events deserve to notify a person |
+| Catalogue; ordering | Application module | A menu, a price, a table, a seat |
+
+**"Undecided" is a real state, not a gap to fill in passing.** The four rows carrying it are the
+D4 and D5 candidates: each has its consumers established and its tier unestablished, and ADR-006
+rule 3 is what settles a tier at the point the package is actually designed. Guessing one here
+would be the speculative-package habit the guard exists to break, arriving as a table cell.
 
 ---
 
-## 4. The Extraction Guard Now Has Its Second Consumer
+## 4. The Extraction Guard Has Its Second Consumer, and Now a Third
 
 The guard exists because the original draft specified twenty-four Platform packages before
 a single one had a consumer. It was written with only the Automator in view. **Game Engine
-as a Service is now a second, genuinely unrelated consumer**, and it lands on four deferred
-candidates at once:
+as a Service was the second, genuinely unrelated consumer**, landing on four deferred candidates at
+once. **BarStrad is the third** — a running Discord-and-web bar ordering product, bilingual, and
+unrelated to both of the others. It adds two candidates that previously had one consumer between
+them.
 
-| Candidate package | Consumer 1 — Automator | Consumer 2 — Game Engine as a Service |
-|---|---|---|
-| Identity | users, API keys, service accounts | player accounts |
-| Organizations / Tenancy | teams | studios, white-label, custom domains |
-| Billing | open-core; agents as the paid dimension | Free / Creator / Studio tiers |
-| Mcp | brokered plugin tools | the game tool surface |
-| Storage | execution artifacts | saves, campaign assets |
+**This table is the canonical count of which candidate has which consumer.** The capability table in
+[`application-modules.md`](application-modules.md) §2 is a view of it from BarStrad's side, adding a
+standing column and the framework rows; where the two disagree, this one is right and the other is
+stale.
+
+| Candidate package | Consumer 1 — Automator | Consumer 2 — Game Engine as a Service | Consumer 3 — BarStrad |
+|---|---|---|---|
+| Identity | users, API keys, service accounts | player accounts | a table, established by QR link and never an account |
+| Organizations / Tenancy | teams | studios, white-label, custom domains | a venue |
+| Billing | open-core; agents as the paid dimension | Free / Creator / Studio tiers | undecided — see below |
+| Mcp | brokered plugin tools | the game tool surface | chat commands |
+| Storage | execution artifacts | saves, campaign assets | item photography |
+| Notifications | execution alerts | session and publication events | orders reaching a staff channel |
+| Configuration — localized content | — | campaign, localization and culture packs | a bilingual menu |
 
 This is the guard being **satisfied**, not bypassed. Two unrelated products wanting the same
 concern is exactly the evidence the guard asks for, and it is stronger evidence than one
-product wanting it twice.
+product wanting it twice. A third is stronger again, and it is the one that moved Notifications
+past [`implementation-plan.md`](implementation-plan.md) §D4's stated condition — *two named
+consumers, not one and a plan* — with one of them in production.
+
+**BarStrad's own status carries two caveats**, stated because a consumer that does not hold up
+weakens every row it appears in. It does not run on Platform today, so it is evidence rather than a
+deployed dependent — the diagram in §1 is unchanged deliberately. And its commercial model is
+unsettled, which is why its billing cell is empty rather than guessed: self-hosted and licensed per
+installation contradicts nothing, and a service operated for venues contradicts two binding
+statements in the D3 brief.
 
 **It does not promote these packages on its own.** It moves them from "speculative" to
 "justified", which is the precondition for building them — see

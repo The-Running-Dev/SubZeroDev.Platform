@@ -43,6 +43,14 @@ public readonly record struct TraceContext(string TraceParent, string? TraceStat
     public static bool TryParse(string traceParent, string? traceState, out TraceContext result);
 }
 
+public readonly record struct CultureTag
+{
+    public CultureTag(string value);
+    public string Value { get; }
+    public static CultureTag Invariant { get; }
+    public static bool TryParse(string candidate, out CultureTag result);
+}
+
 public readonly record struct InstanceId(string Value);
 
 public readonly record struct ModuleName(string Value);
@@ -61,6 +69,16 @@ which `Sampled` and `TraceId` are read, and `TraceState` is the W3C `tracestate`
 carried one; the design requires both to travel with the row so the sampling decision and any vendor
 sampler state cross the boundary. `ModuleName`, `EventTypeName`, `HealthCheckName` and
 `BackgroundWorkName` are non-empty, trimmed, and case-sensitively unique within their registry.
+
+**`CultureTag` is deliberately non-positional so its all-zero representation can be invariant.**
+The default representation has no backing string, but `Value` projects it as `string.Empty` and
+never returns null; `Invariant` returns that same representation, and constructing from
+`string.Empty` normalizes to it. Therefore `default(CultureTag) == CultureTag.Invariant`, rather
+than merely meaning the same thing by convention. That is what lets culture join the scope as an
+optional parameter without every existing call site changing, and it means no code path can hold a
+`CultureTag` that means nothing. A non-empty value is a BCP-47 language tag, and `TryParse` accepts
+exactly what `CultureInfo.GetCultureInfo` will later resolve — Platform stores the tag and never the
+`CultureInfo`, because the tag is what a column can hold and what survives a process boundary.
 
 **`TraceContext` exposes its own `TraceId` and no `Correlation` member.** The previous derivation
 derived the correlation from the stored trace context, and the design has since falsified that: it
@@ -149,17 +167,22 @@ public interface IOperationScope : IDisposable
     TenantId Tenant { get; }
     ClaimsPrincipal? Principal { get; }
     TraceContext Trace { get; }
+    CultureTag Culture { get; }
 }
 
 public interface IOperationScopeFactory
 {
-    IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal);
+    IOperationScope Begin(
+        TenantId tenant,
+        ClaimsPrincipal? principal,
+        CultureTag culture = default);
 
     IOperationScope Begin(
         TraceContext established,
         CorrelationId correlation,
         TenantId tenant,
-        ClaimsPrincipal? principal);
+        ClaimsPrincipal? principal,
+        CultureTag culture = default);
 }
 
 public interface IOperationScopeAccessor
@@ -181,9 +204,14 @@ public interface ICurrentCorrelation
 {
     CorrelationId Current { get; }
 }
+
+public interface ICurrentCulture
+{
+    CultureTag Current { get; }
+}
 ```
 
-**The scope carries four members, and trace context is the fourth.** The row demands a traceparent,
+**The scope carries five members, and trace context is the fourth.** The row demands a traceparent,
 and the sanctioned explicit-scope path — a seeder or migrate-mode utility opening its scope in one
 line — had no stated source for one until the design made the scope primitive establish it.
 
@@ -198,7 +226,7 @@ permitted to differ. What stays rejected is the *implicit* version: a scope nobo
 minting an origin nobody chose.
 
 **`IOperationScopeAccessor.Current` is the only member that can be null**, and it is what makes
-"there is no ambient scope" detectable. The three accessors are meaningful only inside a scope:
+"there is no ambient scope" detectable. The four accessors are meaningful only inside a scope:
 outside one they throw `PlatformContractViolationException` with `NoAmbientOperationScope`, which is
 what keeps "correlation is always present, tenant is always present" true as written rather than
 quietly returning a default.
@@ -214,6 +242,22 @@ the column has a supplier, not so tenancy can be turned on.
 
 **`ICurrentPrincipal.Current` is nullable and frequently null.** Identity is D5; a worker dispatching
 a message has no principal and must not be given a fabricated anonymous one.
+
+**`ICurrentCulture.Current` is non-nullable and defaults to `CultureTag.Invariant`, and in D3
+Platform never resolves it.** Nothing reads `Accept-Language`, a header, a claim or a stored
+preference — that is D4's, with Notifications. The interface exists so the outbox column has a
+supplier, exactly as `ICurrentTenant` exists so the tenant column has one. **The difference from
+tenancy, and the reason this is worth carrying now rather than later:** a product *may* set culture
+explicitly when it opens a scope, whereas the tenant is pinned to `TenantId.Implicit` by a binding
+non-goal. So the value is useful the day a consumer has two languages, without D3 having built
+localization.
+
+**Why culture is a scope member at all, when the runtime already has `CultureInfo.CurrentCulture`.**
+That ambient is a thread and async-flow property, and dispatch crosses neither — the row is written
+in the web host and dispatched by the worker, in a different process, minutes later, under whatever
+culture that process was started with. A value that has to survive that boundary has to be *on the
+row*, and a value on the row needs a supplier at enqueue that is not a thread static. The runtime's
+ambient stays the right thing to *render* with; it is the wrong thing to *carry* with.
 
 **`IClock.UtcNow` always has `Offset == TimeSpan.Zero`.** Every persisted instant originates here,
 and so does every instant bound as a SQL comparand, so a fake clock controls every timestamp in the
@@ -428,6 +472,7 @@ public sealed record OutboxMessage
     public required TenantId Tenant { get; init; }
     public required TraceContext TraceContext { get; init; }
     public required CorrelationId Correlation { get; init; }
+    public required CultureTag Culture { get; init; }
     public required int Attempts { get; init; }
     public DateTimeOffset? NextAttemptAt { get; init; }
     public DateTimeOffset? FirstDeferredAt { get; init; }
@@ -454,6 +499,16 @@ the dispatch's new linked trace — so the follow-up row's stored traceparent ca
 trace-id, not the origin's. The column is stamped from the ambient correlation at enqueue and
 propagates unchanged through any depth of derived events, while the stored trace context keeps the
 one job it can still do: the link.
+
+**`Culture` is a column for the same reason `Correlation` is, and propagates the same way.** It is
+stamped from the ambient scope at enqueue and travels unchanged through any depth of derived events —
+a follow-up raised by a handler still knows which language the originating actor was using, because
+that fact is not recoverable anywhere else once the request is over. **It is the originating culture,
+never the recipient's.** A recipient's preferred language is a preference lookup at render time and
+belongs to Notifications in D4; the two are different values and collapsing them loses the case that
+forced the column, which is a recipient with no user record at all — a shared inbox, an operations
+channel, a printer. `CultureTag.Invariant` is a legal and common value and means "the actor expressed
+no preference", not "unknown".
 
 **`Sequence` is claim order and nothing else.** It is provider-allocated, and on SQLite its values
 are reused after a drain and prune. Nothing downstream may treat it as durable or as an identity;
@@ -737,6 +792,7 @@ side moves the defect to the other side of the comparison.
 | `trace_parent` | text | no | Complete `traceparent` including trace flags |
 | `trace_state` | text | yes | W3C `tracestate` when the origin carried one |
 | `correlation` | text | no | The origin's trace-id at any depth; stamped from the ambient correlation at enqueue |
+| `culture` | text | no | The originating BCP-47 tag; empty is invariant; stamped from the ambient culture at enqueue |
 | `attempts` | integer | no | Default 0, `>= 0` |
 | `next_attempt_at` | instant | yes | Null means due at `occurred_at` |
 | `first_deferred_at` | instant | yes | Stamped on first deferral; the deferral age measures from it |
@@ -1061,10 +1117,10 @@ installation is exactly the silent format divergence pinning exists to remove. A
 `System.Text.Json` handles natively under the pinned options, or it is a different payload.
 
 **`Enqueue` returns the id and is synchronous** because it does not write — it looks up the stable
-`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, stamps tenant, trace context
-and correlation from the ambient scope, enlists in the ambient transaction, and the write happens on
-commit. The id is loggable and returnable before the insert, which is what makes it a usable dedupe
-key.
+`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, stamps tenant, trace context,
+correlation and culture from the ambient scope, enlists in the ambient transaction, and the write
+happens on commit. The id is loggable and returnable before the insert, which is what makes it a
+usable dedupe key.
 
 **`Enqueue` throws `PlatformContractViolationException` on three conditions**: no ambient
 transaction, no ambient operation scope, and an event type that was never registered. The provider
@@ -1421,11 +1477,17 @@ public sealed class FakeCurrentPrincipal : ICurrentPrincipal
     public ClaimsPrincipal? Current { get; set; }
 }
 
+public sealed class FakeCurrentCulture : ICurrentCulture
+{
+    public CultureTag Current { get; set; }
+}
+
 public sealed record CapturedEvent(
     OutboxMessageId Id,
     EventTypeName Type,
     TenantId Tenant,
     CorrelationId Correlation,
+    CultureTag Culture,
     DateTimeOffset At);
 
 public interface IEventCapture
@@ -1679,9 +1741,9 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 9 | A participant enlists against the ambient transaction and never commits, rolls back or disposes it; commit and rollback happen exactly once, in `ExecuteAsync` | Persistence |
 | 10 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
 | 11 | No foreign key crosses a module boundary | Persistence |
-| 12 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant from the row, principal null — never inherited from the worker | Persistence |
+| 12 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant and culture from the row, principal null — never inherited from the worker | Persistence |
 | 13 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
-| 14 | The correlation column is stamped from the ambient correlation at enqueue and propagates unchanged through derived events at any depth | Persistence |
+| 14 | The correlation and culture columns are stamped from their ambient values at enqueue and each propagates unchanged through derived events at any depth | Persistence |
 | 15 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
 | 16 | `attempts` never decreases except through an explicit redrive | Persistence |
 | 17 | Every dispatch-state write — mark processed, record failure, defer, poison, release — applies only while the writer holds the live claim; a write that lost its claim returns `ClaimLost`, changes nothing, and is counted as duplicate-delivery evidence rather than escalated | Persistence |

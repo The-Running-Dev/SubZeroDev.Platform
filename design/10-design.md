@@ -95,6 +95,7 @@ The entity Platform both defines and stores.
 | Trace context | text | the ambient trace at enqueue | The **full traceparent including trace flags**, not the trace-id alone — the sampling decision travels with it |
 | Trace state | text, null | the ambient trace at enqueue | The W3C tracestate when present, so vendor and sampler state crosses the boundary with the traceparent |
 | Correlation | text | the ambient correlation at enqueue | The origin's trace-id at any depth — a column because the traceparent stops carrying it after one hop; see below |
+| Culture | text | the ambient culture at enqueue | The originating BCP-47 tag; empty means invariant, and the value propagates unchanged through derived events |
 | Attempts | integer | dispatch | |
 | Next attempt at | instant, null | dispatch | Null means eligible now |
 | First deferred at | instant, null | dispatch | Stamped on first deferral — unresolvable type or undeserializable payload; the deferral age measures from it |
@@ -115,9 +116,10 @@ intent. What an ambient transaction *is* mechanically — one connection every p
 in — is pinned in *Where the provider abstraction cuts*, because with per-module contexts the
 phrase otherwise admits two connections, which is two transactions and no atomicity at all.
 
-**The scope requirement is the same move for the same reason.** Trace context, correlation and
-tenant are all stamped from the ambient scope, and the paths that have no scope are real rather than
-hypothetical: a seeder, a migrate-mode utility, anything Hosting's request pipeline never touched.
+**The scope requirement is the same move for the same reason.** Trace context, correlation, tenant
+and culture are all stamped from the ambient scope, and the paths that have no scope are real rather
+than hypothetical: a seeder, a migrate-mode utility, anything Hosting's request pipeline never
+touched.
 The two permissive alternatives are both worse than a throw. A nullable trace context admits rows
 whose correlation identity appears nowhere upstream, so the value quoted in a bug report leads
 nowhere. An implicitly minted scope is worse still — it fabricates a traceparent that dispatch will
@@ -147,6 +149,13 @@ column is stamped from the ambient correlation at enqueue — on the request pat
 dispatched handler the origin's value the scope was rebuilt with — so it propagates unchanged
 through any depth of derived events, while the stored traceparent keeps the one job it can still
 do: the link.
+
+**Culture is a column because the process boundary makes the runtime ambient unrecoverable.** The
+web host writes the row and the worker dispatches it later under its own operating-system culture,
+so the originating culture is stamped from the ambient scope at enqueue and rebuilt from the row at
+dispatch. It propagates unchanged through derived events exactly as correlation does. The value is
+the origin's culture, never a recipient preference resolved later by Notifications; an empty tag is
+the invariant culture and means the originating actor expressed no preference.
 
 **Identity is the id — a version-7 UUID minted app-side at enqueue, its timestamp drawn from the
 clock abstraction** so a fake clock controls it, the same rule occurred-at already follows. The
@@ -515,15 +524,17 @@ done-criterion.
 
 Correlation identity (always present), tenant (always present, and in D3 **always the implicit
 tenant** — nothing resolves it from host, header or claim, per the brief's non-goal), principal
-(nullable), and the trace context the scope established. Scoped to one operation. **Correlation identity is the originating trace-id, not a
-second value beside it** — two ids mean two propagation paths and two chances to disagree, and the
-one that disagrees is the one quoted in a bug report. On the request path it and the current
-trace-id are one value. They part company in exactly one place — outbox dispatch starts a new linked
-trace while the correlation stays the origin's, see *Control flow* — so a single value stays
-greppable end to end even where the trace changes.
+(nullable), the trace context the scope established, and culture (always present, defaulting to the
+invariant tag; D3 resolves it from no header, claim or preference). Scoped to one operation.
+**Correlation identity is the originating trace-id, not a second value beside it** — two ids mean
+two propagation paths and two chances to disagree, and the one that disagrees is the one quoted in
+a bug report. On the request path it and the current trace-id are one value. They part company in
+exactly one place — outbox dispatch starts a new linked trace while the correlation stays the
+origin's, see *Control flow* — so a single value stays greppable end to end even where the trace
+changes.
 
 **It is established as well as read, and both operations have the same owner.** The scope-opening
-primitive is a contract in Abstractions alongside the three accessors, because there are two
+primitive is a contract in Abstractions alongside the four accessors, because there are two
 establishers rather than one — Hosting on an inbound request, Persistence on each dispatched message
 — and an unowned write path gets invented twice. See *Module boundaries*.
 
@@ -597,7 +608,7 @@ here.
 
 **Overlap 1 — correlation ids sit under both Hosting and Observability.** Resolved in three parts,
 because two are not enough: **the ambient correlation accessor is a contract in Abstractions**, next
-to current-principal and current-tenant, which are the other two members of the same operation
+to current-principal, current-tenant and current-culture, the other accessors over the same operation
 context; **Observability owns the identity's derivation, its propagation across process boundaries,
 and sampling**, because those *are* trace context; **Hosting owns establishing it on an inbound
 request**.
@@ -611,9 +622,11 @@ a silent relocation by the first implementer.
 operation on it — something must *establish* it, and there are two establishers rather than one:
 Hosting on an inbound request, and Persistence on each dispatched message. **The operation-scope
 contract therefore lives in Abstractions beside the accessors** — one primitive that opens a scope
-carrying correlation, tenant, principal and trace context, and closes it. Trace context is the
-fourth member for the reason recorded with the enqueue rule: the row demands a traceparent, and the
-explicit-scope path had no source for one. Left unowned, the second establisher
+carrying correlation, tenant, principal, trace context and culture, and closes it. Trace context is
+the fourth member for the reason recorded with the enqueue rule: the row demands a traceparent, and
+the explicit-scope path had no source for one. Culture is the fifth: it defaults to invariant in D3,
+may be supplied explicitly by a product, and has to cross the same row boundary. Left unowned, the
+second establisher
 invents its own write path, which is the silent relocation this overlap was resolved to prevent,
 one layer further down and harder to see.
 
@@ -669,12 +682,12 @@ dependency pointing the wrong way that every future check-contributing package w
 
 | Package | Owns | Depends on | Exposes |
 |---|---|---|---|
-| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces and value types only |
+| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **current culture**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces and value types only |
 | **Core** | Default implementations, module registration, ordering, startup validation, typed configuration binding, **background-work registration, ordering and role scoping** | Abstractions | Registration surface, module graph |
 | **Observability** | Telemetry wiring, correlation identity derivation and propagation, **the trace-context contract's implementation**, instrumentation, sampling policy | Abstractions | Configuration surface, correlation derivation and propagation |
 | **Persistence** | Transaction boundary, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message scope reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **redrive and discard**, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher, prune and the registration heartbeat registered as background work** |
-| **Hosting** | Host bootstrap for **both host roles**, DI wiring, middleware order, graceful shutdown, health and readiness **endpoints**, request/principal/correlation/tenant scope establishment, **running registered background work in the role each registration declares** | Abstractions, Core, Observability | The standard registration call, in web and worker forms |
-| **Testing** | Test host for both roles, fake clock, fake principal and tenant, capture, deterministic background work, **provider contract tests** | All five | Test host builder |
+| **Hosting** | Host bootstrap for **both host roles**, DI wiring, middleware order, graceful shutdown, health and readiness **endpoints**, request/principal/correlation/tenant/culture scope establishment, **running registered background work in the role each registration declares** | Abstractions, Core, Observability | The standard registration call, in web and worker forms |
+| **Testing** | Test host for both roles, fake clock, fake principal, tenant and culture, capture, deterministic background work, **provider contract tests** | All five | Test host builder |
 
 **Abstractions is BCL-only in every member but one, and the exception is named rather than
 finessed.** The module contract's registration delegate takes an `IServiceCollection`, which lives
@@ -831,8 +844,8 @@ races itself.
 ### 2. Inbound request — triggered by an HTTP request, web role only
 
 Correlation adopted from inbound trace context or minted → ambient context populated, tenant set to
-the implicit tenant → span opened → product handler runs → **the transaction commits
-the domain write and any outbox rows atomically** → response.
+the implicit tenant and culture to invariant → span opened → product handler runs → **the
+transaction commits the domain write and any outbox rows atomically** → response.
 
 On unhandled failure the transaction rolls back, taking the outbox rows with it; the failure maps to
 an error envelope carrying the correlation identity; the span records the error.
@@ -875,8 +888,8 @@ from the worker.** The dispatcher opens a fresh dependency scope per message, re
 handler for the row's Type through the event-handler contract — one per Type, per *Data model* — and
 opens an ambient operation scope populated from the row itself: correlation from the row's
 correlation column — the origin's value at any depth, where the stored traceparent by the second
-hop carries only the previous link's trace — tenant from the row's tenant column, principal null —
-the worker has no principal and must not invent one.
+hop carries only the previous link's trace — tenant from the row's tenant column, culture from the
+row's culture column, principal null — the worker has no principal and must not invent one.
 
 **Dispatch starts a new trace and links it to the stored one; it does not continue it.** An earlier
 draft said the opposite, and the design's own worker-down scenario is what breaks it: a backlog can
@@ -903,7 +916,8 @@ is the ordinary case, and the new row is stamped from the ambient context. If th
 worker's default rather than the originating row's, every derived event would carry the implicit
 tenant regardless of where it came from — invisible today, when the implicit tenant is the only
 value, and a cross-tenant write the moment D5 makes tenants real, against data written years
-earlier. That is precisely the cost class the tenant column was pulled into D3 to avoid.
+earlier. Culture would likewise fall back to the worker's default and lose the origin's language at
+the first hop. That is precisely the cost class these columns were pulled into D3 to avoid.
 
 ---
 
@@ -1266,8 +1280,8 @@ brief puts a worker alongside the web host permanently, not only during restarts
 
 **Requests are concurrent**, and that concurrency belongs to the runtime. Platform holds no shared
 mutable per-request state: the ambient context is scoped and flows with the operation, so no two
-requests can observe each other's tenant, principal or correlation identity. Enforced structurally —
-there is no static mutable state to race on.
+requests can observe each other's tenant, principal, culture or correlation identity. Enforced
+structurally — there is no static mutable state to race on.
 
 **The health registry and module graph freeze when the host is built.** Registration after that
 throws rather than mutating a structure concurrent readers are walking, which is what makes lock-free
