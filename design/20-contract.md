@@ -891,6 +891,15 @@ Platform's stores alike — enlists through `IAmbientTransactionAccessor` agains
 connection**. The outbox store never opens its own. Enqueue's required ambient transaction is this
 pair, and nothing else satisfies it.
 
+**The unit of work owns the lifetime; a participant borrows it.** `Connection` and `Transaction` are
+exposed because §2 has Persistence refuse to impose a repository pattern — a product using Dapper or
+raw ADO for its own tables cannot join the ambient transaction without both in hand, and
+encapsulating enlistment would quietly restrict transactional product writes to one data-access
+library. What that exposure costs is a live handle a participant could commit, roll back or dispose,
+so the rule is stated rather than assumed: **a participant enlists and does nothing else with the
+lifetime.** Commit and rollback happen exactly once, in `ExecuteAsync`, which is what makes the
+domain write and its outbox rows atomic.
+
 **`TransactionIntent` is a parameter because no implementation can infer it.** "A transaction that
 will write begins immediate" is only actionable if the caller says which kind it is opening, and the
 deferred-then-upgrade shape is the one case the rule exists to prevent. Treating every transaction
@@ -1097,6 +1106,8 @@ to use its locking read underneath; which row to dispatch and what to do with th
 and stays in the store.
 
 ```csharp
+public enum ClaimedWriteOutcome { Applied, ClaimLost }
+
 public interface IOutboxStore
 {
     Task<Result<TransactionError>> InsertAsync(
@@ -1105,21 +1116,21 @@ public interface IOutboxStore
     Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
         InstanceId holder, CancellationToken cancellationToken);
 
-    Task<Result<bool, TransactionError>> MarkProcessedAsync(
+    Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
 
-    Task<Result<bool, TransactionError>> RecordFailureAsync(
+    Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
         OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt,
         CancellationToken cancellationToken);
 
-    Task<Result<bool, TransactionError>> PoisonAsync(
+    Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
         OutboxMessageId id, InstanceId holder, string error, CancellationToken cancellationToken);
 
-    Task<Result<bool, TransactionError>> DeferAsync(
+    Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
         OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
         CancellationToken cancellationToken);
 
-    Task<Result<bool, TransactionError>> ReleaseClaimAsync(
+    Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
 
     Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
@@ -1187,13 +1198,21 @@ already raised against a dialect-specific claim, applied to the surrounding logi
 statement.
 
 **Every dispatch-state write is conditional on the live claim, which is why each takes the holder
-and returns `bool`.** `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`, `DeferAsync` and
-`ReleaseClaimAsync` apply only while `holder` still holds an unexpired claim on the row; `false`
-means the claim was lost and the write was a **no-op** — counted as evidence of duplicate delivery,
-never escalated, because losing a claim mid-flight is the at-least-once window working as priced.
-Without this, a stalled dispatcher completing after a reclaim-and-poison manufactures the both-set
-state — an operator disposition nobody made. Discard alone produces that state. `DeferAsync`
-additionally stamps `first_deferred_at` when it is unset.
+and returns `ClaimedWriteOutcome`.** `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`,
+`DeferAsync` and `ReleaseClaimAsync` apply only while `holder` still holds an unexpired claim on the
+row. `ClaimLost` means the write was a **no-op** — counted as evidence of duplicate delivery, never
+escalated, because losing a claim mid-flight is the at-least-once window working as priced. Without
+this, a stalled dispatcher completing after a reclaim-and-poison manufactures the both-set state —
+an operator disposition nobody made. Discard alone produces that state. `DeferAsync` additionally
+stamps `first_deferred_at` when it is unset.
+
+**The outcome is a named type rather than a boolean, for the reason this log already gave once.**
+Folding a correctness property into a bool puts it on a value a caller can get wrong instead of on
+the type the dispatcher switches over, and the obvious misreading here — *the row wasn't there* —
+turns a lost claim into an apparent success and stops the duplicate-delivery evidence being counted.
+Two variants are exhaustive: a claimed row is always pending, and pending rows are never pruned, so
+the row cannot vanish underneath its writer. This mirrors `OutboxAdministrationOutcome`, which
+already names this class of result — a well-formed operation that did not apply.
 
 **`OldestPendingDueAsync`, `PendingCountAsync` and `PoisonedCountAsync` exist because readiness
 needs them and the predicate table decides what they count.** The oldest-due query considers pending
@@ -1329,7 +1348,8 @@ individually. Their invocation surface is [Unresolved](#unresolved); what they a
 | `Enqueue` throws for an event type no registration bound to a name | A row stamped with a name nothing can resolve back to a type |
 | No foreign key crosses a module boundary, in the applied schema, on both providers | The either-order migration guarantee, which nothing else enforces |
 | A claim is granted to exactly one of two concurrent claimants | The portable conditional-update claim, on both providers |
-| A dispatch-state write whose claim has been lost is a no-op | The race that would otherwise manufacture the discarded state without an operator |
+| A dispatch-state write whose claim has been lost returns `ClaimLost` and changes no column | The race that would otherwise manufacture the discarded state without an operator |
+| A product write and its outbox rows commit and roll back together when the product enlists against the ambient transaction rather than opening its own connection | The partial write the outbox exists to prevent, reintroduced by the seam between per-module contexts |
 | A payload written under one provider deserializes under the other | The format is the serialiser's, not the provider's |
 | The suite goes red against a deliberately broken `IProviderCapability` | A suite that has never failed is not evidence, and the capability is the only place a difference is permitted to live |
 
@@ -1423,7 +1443,7 @@ that waiting cannot resolve, because no amount of waiting makes its read snapsho
 
 **Per-row dispositions are outcomes, not errors.** `NotFound` and `NotPoisoned` are returned per id
 in `OutboxAdministrationResult`, because "one of the forty rows you named was pruned" is a result, not
-a failure of the operation. A lost claim on a dispatch-state write is likewise an outcome — `false` —
+a failure of the operation. A lost claim on a dispatch-state write is likewise an outcome — `ClaimLost` —
 counted as duplicate-delivery evidence, never escalated.
 
 ### Persistence — `HandlerError`
@@ -1508,47 +1528,48 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 6 | `poisoned_at` set implies `last_error` non-null | Persistence |
 | 7 | An outbox row is inserted only inside an ambient transaction that also carries its domain write, and only inside an ambient operation scope | Persistence |
 | 8 | The ambient transaction is one connection owned by the unit of work; every participant enlists against it, and the outbox store never opens its own | Persistence |
-| 9 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
-| 10 | No foreign key crosses a module boundary | Persistence |
-| 11 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant from the row, principal null — never inherited from the worker | Persistence |
-| 12 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
-| 13 | The correlation column is stamped from the ambient correlation at enqueue and propagates unchanged through derived events at any depth | Persistence |
-| 14 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
-| 15 | `attempts` never decreases except through an explicit redrive | Persistence |
-| 16 | Every dispatch-state write — mark processed, record failure, defer, poison, release — applies only while the writer holds the live claim; a write that lost its claim is a no-op, counted as duplicate-delivery evidence and never escalated | Persistence |
-| 17 | Discard alone produces the both-marks-set state | Persistence |
-| 18 | Redrive applies only in the poisoned state; it clears the poison mark, `attempts`, `first_deferred_at` and the claim columns, and sets `next_attempt_at` to now | Persistence |
-| 19 | A claim covers exactly one row, and is granted to exactly one of any two concurrent claimants | Persistence |
-| 20 | The dispatcher claims nothing while this host has unapplied migrations | Persistence |
-| 21 | A pending row is never pruned; processed rows prune on the processed window, poisoned and discarded rows on the poison window | Persistence |
-| 22 | Every background write is bounded — one row per claim and per mark, `PruneBatchSize` rows per prune statement | Persistence |
-| 23 | A transaction that will write begins immediate; the SQLite file is in WAL mode or the host does not start | Persistence |
-| 24 | Every persistence readiness check self-guards on an absent schema, reporting degraded with the schema named rather than throwing | Persistence |
-| 25 | Exactly one handler is registered per `EventTypeName`, and exactly one `EventTypeName` per CLR event type; handler constructor graphs validate only in the dispatching role, and the registry accepts no registration after `Freeze` | Persistence |
-| 26 | A stored `type` resolves to a CLR type through the registry alone — never through a runtime type name | Persistence |
-| 27 | Payload serialisation is the pinned `System.Text.Json` options — unmapped members ignored in both directions, enums as strings, fixed naming, null and number handling — with no reachable extension point | Persistence |
-| 28 | Backlog age measures pending rows only and time past due only; the pending count counts pending rows only; the poison count excludes discarded rows | Persistence |
-| 29 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
-| 30 | The health and background-work registries and the module graph accept no registration after `Freeze` | Core |
-| 31 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
-| 32 | Both retention settings and the connection string are present, or the host does not start | Core |
-| 33 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
-| 34 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
-| 35 | Liveness never evaluates an external dependency | Hosting |
-| 36 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
-| 37 | Every host writes its registration to the store it is using; the first successful heartbeat is the registration, and the host deletes its own row on graceful shutdown | Hosting |
-| 38 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
-| 39 | Hosting owns every background-work timer; a registration exposes a tick and no schedule of its own | Hosting |
-| 40 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
-| 41 | A malformed inbound `traceparent` never fails the request | Hosting |
-| 42 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
-| 43 | The worker probe binds loopback unless explicitly configured otherwise, and a port collision fails startup naming the setting | Hosting |
-| 44 | The probe body is `Full` only on loopback or in the development environment; the status is identical at either detail level, and the body enumerates every registered check | Hosting |
-| 45 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
-| 46 | Peer absence is informational in the development environment; elsewhere it degrades only once it has persisted for the rolling grace window, measured on the observing host's clock from the absence first being seen | Hosting |
-| 47 | Telemetry export never propagates a failure to a caller | Observability |
-| 48 | No secret appears in any exported log, span attribute or metric label | Observability |
-| 49 | No metric is labelled with an unbounded value | Observability |
+| 9 | A participant enlists against the ambient transaction and never commits, rolls back or disposes it; commit and rollback happen exactly once, in `ExecuteAsync` | Persistence |
+| 10 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
+| 11 | No foreign key crosses a module boundary | Persistence |
+| 12 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant from the row, principal null — never inherited from the worker | Persistence |
+| 13 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
+| 14 | The correlation column is stamped from the ambient correlation at enqueue and propagates unchanged through derived events at any depth | Persistence |
+| 15 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
+| 16 | `attempts` never decreases except through an explicit redrive | Persistence |
+| 17 | Every dispatch-state write — mark processed, record failure, defer, poison, release — applies only while the writer holds the live claim; a write that lost its claim returns `ClaimLost`, changes nothing, and is counted as duplicate-delivery evidence rather than escalated | Persistence |
+| 18 | Discard alone produces the both-marks-set state | Persistence |
+| 19 | Redrive applies only in the poisoned state; it clears the poison mark, `attempts`, `first_deferred_at` and the claim columns, and sets `next_attempt_at` to now | Persistence |
+| 20 | A claim covers exactly one row, and is granted to exactly one of any two concurrent claimants | Persistence |
+| 21 | The dispatcher claims nothing while this host has unapplied migrations | Persistence |
+| 22 | A pending row is never pruned; processed rows prune on the processed window, poisoned and discarded rows on the poison window | Persistence |
+| 23 | Every background write is bounded — one row per claim and per mark, `PruneBatchSize` rows per prune statement | Persistence |
+| 24 | A transaction that will write begins immediate; the SQLite file is in WAL mode or the host does not start | Persistence |
+| 25 | Every persistence readiness check self-guards on an absent schema, reporting degraded with the schema named rather than throwing | Persistence |
+| 26 | Exactly one handler is registered per `EventTypeName`, and exactly one `EventTypeName` per CLR event type; handler constructor graphs validate only in the dispatching role, and the registry accepts no registration after `Freeze` | Persistence |
+| 27 | A stored `type` resolves to a CLR type through the registry alone — never through a runtime type name | Persistence |
+| 28 | Payload serialisation is the pinned `System.Text.Json` options — unmapped members ignored in both directions, enums as strings, fixed naming, null and number handling — with no reachable extension point | Persistence |
+| 29 | Backlog age measures pending rows only and time past due only; the pending count counts pending rows only; the poison count excludes discarded rows | Persistence |
+| 30 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
+| 31 | The health and background-work registries and the module graph accept no registration after `Freeze` | Core |
+| 32 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
+| 33 | Both retention settings and the connection string are present, or the host does not start | Core |
+| 34 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
+| 35 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
+| 36 | Liveness never evaluates an external dependency | Hosting |
+| 37 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
+| 38 | Every host writes its registration to the store it is using; the first successful heartbeat is the registration, and the host deletes its own row on graceful shutdown | Hosting |
+| 39 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
+| 40 | Hosting owns every background-work timer; a registration exposes a tick and no schedule of its own | Hosting |
+| 41 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
+| 42 | A malformed inbound `traceparent` never fails the request | Hosting |
+| 43 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
+| 44 | The worker probe binds loopback unless explicitly configured otherwise, and a port collision fails startup naming the setting | Hosting |
+| 45 | The probe body is `Full` only on loopback or in the development environment; the status is identical at either detail level, and the body enumerates every registered check | Hosting |
+| 46 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
+| 47 | Peer absence is informational in the development environment; elsewhere it degrades only once it has persisted for the rolling grace window, measured on the observing host's clock from the absence first being seen | Hosting |
+| 48 | Telemetry export never propagates a failure to a caller | Observability |
+| 49 | No secret appears in any exported log, span attribute or metric label | Observability |
+| 50 | No metric is labelled with an unbounded value | Observability |
 
 ---
 
