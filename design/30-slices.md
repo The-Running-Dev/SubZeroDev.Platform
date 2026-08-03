@@ -43,10 +43,9 @@ handler throws, and abort startup with a named error on a bad setting.
 
 Touches:
 - **Abstractions** — the value types (`TenantId`, `CorrelationId`, `TraceContext`, `InstanceId`,
-  `ModuleName`, `HealthCheckName`, `BackgroundWorkName`, `CultureTag`), `PlatformError`, `Result<…>`,
+  `ModuleName`, `HealthCheckName`, `BackgroundWorkName`), `PlatformError`, `Result<…>`,
   `PlatformContractViolationException`, `IClock`, `IOperationScope`, `IOperationScopeFactory`,
   `IOperationScopeAccessor`, `ICurrentTenant`, `ICurrentPrincipal`, `ICurrentCorrelation`,
-  `ICurrentCulture`,
   `ITraceContextCodec`, `ITraceHandle`, `IPlatformModule`, the health contract, the background-work
   contract, `HostRole`, `HostRoles`, `PlatformHealthChecks`, `PlatformBackgroundWork`,
   `FingerprintedAttribute`
@@ -59,7 +58,7 @@ Touches:
 - **Hosting** — `PlatformHostExtensions` web and worker forms, `MapPlatformProbes`, the probe
   endpoints and their wire mapping, request scope establishment, `ErrorEnvelope`, the
   background-work timers, graceful shutdown, `HostStartupError`
-- **Testing** — `FakeClock`, `FakeCurrentTenant`, `FakeCurrentPrincipal`, `FakeCurrentCulture`,
+- **Testing** — `FakeClock`, `FakeCurrentTenant`, `FakeCurrentPrincipal`,
   `IPlatformTestHostBuilder` and `IPlatformTestHost` less `WithProvider` and `Events`
 - **samples/** — a web project with one endpoint and a worker project, both in CI
 
@@ -92,14 +91,9 @@ Acceptance:
 - An endpoint that throws returns `ErrorEnvelope` with a stable code and the request's correlation,
   and no exception text, stack trace or payload content anywhere in the response.
 - Inside a request, `ICurrentCorrelation.Current.TraceId` equals the trace-id of the request's
-  established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`,
-  `ICurrentPrincipal.Current` is null, and `ICurrentCulture.Current` equals `CultureTag.Invariant`
-  **even when the request carries an `Accept-Language` header** — nothing in D3 resolves culture, and
-  a test sending one proves the absence rather than assuming it. Outside any scope all four throw
+  established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`, and
+  `ICurrentPrincipal.Current` is null. Outside any scope all three throw
   `PlatformContractViolationException` carrying `NoAmbientOperationScope`.
-- A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new CultureTag("bg"))`
-  yields `ICurrentCulture.Current` of `bg`, and the same call omitting the argument yields
-  `CultureTag.Invariant`.
 - A request carrying a well-formed `traceparent` adopts its trace-id as the correlation. A request
   carrying `traceparent: not-a-traceparent` returns 200 with a fresh root trace, never 400.
 - `IOperationScopeFactory.Begin(TenantId.Implicit, null)` outside any request opens a root trace
@@ -255,13 +249,21 @@ refuses traffic over a missing peer.
 Delivers: a product writes a domain row and enqueues an integration event in one transaction, and
 the row is committed with the domain write or with neither.
 
+**Culture arrives here rather than in S1**, under this document's own rule that a member is declared
+in the slice that exercises it. The outbox column is culture's only consumer in D3 — S1 has none, S2
+and S3 have none — so declaring the accessor earlier would land it unexercised, which is the
+half-wired state this document forbids. S1 shipped without it and its criteria are unchanged.
+
 Touches:
-- **Abstractions** — `IIntegrationEvent`, `IIntegrationEventHandler<TEvent>`, `EventTypeName`
+- **Abstractions** — `IIntegrationEvent`, `IIntegrationEventHandler<TEvent>`, `EventTypeName`,
+  `CultureTag`, `ICurrentCulture`, and `IOperationScope.Culture`
+- **Core** — the culture argument on both `IOperationScopeFactory.Begin` overloads, the scope's
+  fifth member, and the `ICurrentCulture` accessor
 - **Persistence** — the `platform_outbox` migration with its indexes and check constraints,
   `OutboxMessage`, `OutboxMessageId`, `OutboxMessageState`, `DueAt`, `IOutboxWriter`,
   `EventHandlerRegistration`, `IEventHandlerRegistry`, `IOutboxStore.InsertAsync`, the pinned
   `System.Text.Json` options, `EventHandlerRegistrationError`
-- **Testing** — `CapturedEvent` and `IEventCapture.Enqueued`
+- **Testing** — `CapturedEvent`, `IEventCapture.Enqueued`, and `FakeCurrentCulture`
 - **samples/** — an event, its handler, its registration, and an endpoint that enqueues
 
 Depends on: S2.
@@ -287,6 +289,15 @@ Acceptance:
   and is invisible whenever the two happen to agree.
 - A follow-up event enqueued by that handler stores `bg` unchanged, at any depth — culture propagates
   like `correlation`, not like `trace_parent`.
+- Inside a request, `ICurrentCulture.Current` equals `CultureTag.Invariant` **even when the request
+  carries an `Accept-Language` header** — nothing in D3 resolves culture, and a test sending one
+  proves the absence rather than assuming it. Outside any scope it throws
+  `PlatformContractViolationException` carrying `NoAmbientOperationScope`, as the other three
+  accessors do.
+- A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new CultureTag("bg"))`
+  yields `ICurrentCulture.Current` of `bg`, and the same call omitting the argument yields
+  `CultureTag.Invariant` — the invariant being the empty tag is what makes the omitted case correct
+  rather than merely convenient.
 - The check constraints hold: `claimed_by` and `claimed_at` are null together, `attempts >= 0`, and
   `poisoned_at` set implies `last_error` non-null. **No constraint makes `processed_at` and
   `poisoned_at` mutually exclusive** — all four combinations are legal and each names a state.
