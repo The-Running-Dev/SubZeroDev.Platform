@@ -119,6 +119,57 @@ public sealed class ProbeTests
             throw new InvalidOperationException("secret detail that must not reach the body");
     }
 
+    [Fact]
+    public async Task Exhausting_the_endpoint_budget_still_returns_a_report_rather_than_throwing()
+    {
+        // Each check's own timeout exceeds the endpoint budget, so the budget is what cancels them.
+        // Before this was guarded on the caller's token rather than the budget, the cancellation
+        // escaped both catch clauses and the probe threw — answering a readiness request with a 500
+        // and no report, while draining the host it was asked about.
+        await using var host = await StartWithChecks(
+            new SlowCheck("slow-one"),
+            new SlowCheck("slow-two"));
+
+        var report = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
+
+        Assert.Equal(["slow-one", "slow-two"], report.Entries.Select(entry => entry.Name.Value));
+        Assert.All(report.Entries, entry => Assert.Equal(HealthStatus.Unhealthy, entry.Status));
+    }
+
+    [Fact]
+    public async Task A_disconnected_caller_stops_the_probe_rather_than_degrading_every_entry()
+    {
+        // The one cancellation that should still propagate: nobody is left to read the report.
+        await using var host = await StartWithChecks(new SlowCheck("slow"));
+
+        using var caller = new CancellationTokenSource();
+        await caller.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => host.ProbeAsync(HealthCheckKind.Readiness, caller.Token));
+    }
+
+    /// <summary>Hangs past the endpoint budget, with a per-check timeout deliberately longer than
+    /// it, so the budget is the deadline that fires.</summary>
+    private sealed class SlowCheck(string name) : IHealthCheck
+    {
+        public HealthCheckName Name { get; } = new(name);
+
+        public HealthCheckKind Kind => HealthCheckKind.Readiness;
+
+        public HealthCheckCriticality Criticality => HealthCheckCriticality.Required;
+
+        public TimeSpan Timeout => TimeSpan.FromMinutes(10);
+
+        public bool TouchesExternalDependency => false;
+
+        public async Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(5), cancellationToken);
+            return new HealthCheckResult(HealthStatus.Healthy, null, new Dictionary<string, string>());
+        }
+    }
+
     private sealed class HangingCheck : IHealthCheck
     {
         public HealthCheckName Name { get; } = new("hanging");

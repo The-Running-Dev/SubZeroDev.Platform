@@ -102,6 +102,8 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 
 **Division of control.** I set the session model. You set subagent models and scale your own reasoning depth. You cannot change your own session model — if a task warrants a different tier, say so rather than silently over- or under-spending.
 
+**Never use `max` effort unless I ask for it by name.** **`xhigh` is for one question, not one phase** — running a whole design pass at `xhigh` is not rigour, it is a substitute for asking a precise question. `/track` is mechanical sync work: Sonnet, medium, escalating only to judge whether a drifted slice is a design change.
+
 ## Hard rules
 
 - **This repository is design-stage, and that is the current constraint** — not deferral. The
@@ -171,9 +173,30 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 - Run `git diff --check` before committing. Never use trailing double-spaces for a line break; it rejects them.
 - If a pushed commit needs changing, add a follow-up commit.
 - **Push every commit before announcing a PR is ready.** Announcing invites an immediate merge, and a commit pushed after that lands on a branch nobody merges.
-- External writes need my authorization: creating a remote repository, changing visibility, pushing, opening pull requests, changing a domain, deploying. **Discussing a decision does not authorize it.**
+- External writes need my authorization: creating a remote repository, changing visibility, pushing, opening pull requests, changing a domain, deploying. **Discussing a decision does not authorize it.** One carve-out — see **Tracking work**, below.
 - Do not delete files, branches, or history without explicit authorization.
 - Check review **threads**, not just requested reviewers — an automated reviewer can leave blocking conversation threads that do not appear in a reviewer listing. Resolve a thread only when a validated fix satisfies it; leave ambiguous findings open and report them.
+
+## Tracking work
+
+**Defer work to the tracker rather than processing it inline.** A finding, a follow-up, or a
+defect noticed in passing goes to a GitHub issue, not into a running list in the conversation
+or a section of a document that will rot.
+
+- `/track` is the only command that writes to GitHub. **Opening and labelling an issue in a
+  repository I own is carved out of the authorization rule above** — cheap and reversible, so
+  it needs no per-instance approval. Closing an issue, editing anyone else's, and creating a
+  milestone or a project all still need my sign-off.
+- It opens one issue per slice in `design/30-slices.md` that lacks one, matching on title
+  across open **and** closed issues so a finished slice is never reopened or duplicated. It
+  opens one issue per bullet under `## Open` in `design/90-decisions.md`, removing the bullet
+  once tracked — that section is a staging area, not a home.
+- If a matching GitHub Project exists (named after this repository), `/track` adds the issues
+  it opens to it. It never creates a project or a milestone.
+- `design/30-slices.md` stays authoritative for what a slice *is*; its issue tracks whether it
+  is *done*. If the two come to disagree, say so rather than editing either.
+- This does not suspend one-at-a-time sign-off. The tracker is where findings I accept go,
+  not a way to skip presenting them.
 
 ## Decision logging
 

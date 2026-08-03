@@ -174,8 +174,12 @@ Acceptance:
 - A SQLite file in `journal_mode=delete` aborts startup with `UnsupportedJournalMode`; the same file
   in WAL starts.
 - Against a store whose schema is absent, readiness reports `Degraded` with `PendingMigrations`
-  naming the absent schema and `Database` citing the same cause — never `Unhealthy`, and no
-  exception escapes a check.
+  naming the absent schema — never `Unhealthy`, and no exception escapes a check. **`Database`
+  answers reachability only and stays healthy here**, because a reachable store with no tables is
+  reachable, and in D3 Platform owns no table of its own until S3 — so there is nothing for
+  `Database` to find missing that `PendingMigrations` does not already report. Corrected during
+  S2's reconcile: the original criterion had `Database` citing the same cause, which would make two
+  checks restate one verdict and is the second source of truth this design rejects elsewhere.
 - Applied migrations the host never registered report `Degraded` naming them as `Surplus`, and the
   host keeps serving.
 - The contract-test suite goes red against a deliberately broken `IProviderCapability` — one whose

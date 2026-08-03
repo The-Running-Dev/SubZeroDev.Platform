@@ -735,8 +735,10 @@ capability accreting policy:
 - the claim statement, portable by default, with PostgreSQL free to use its locking read underneath;
 - the bounded delete statement, which the two dialects express differently;
 - transaction-begin mode, immediate where the transaction will write;
-- the migration exclusive lock — an advisory lock on PostgreSQL, an exclusive transaction on
+- the migration lock — an advisory lock on PostgreSQL, an immediate transaction on
   SQLite; why it is native rather than the lease is recorded in *Failure modes*;
+- the exception classifier — what counts as busy, as a conflict, or as unreachable differs per
+  provider while the response to each does not;
 - the startup preconditions — WAL, and the busy-wait bound;
 - the migration history table's name per module.
 
@@ -976,7 +978,7 @@ design previously said migrations were "applied by an explicit operation" withou
 what that operation *was* — leaving a homelab operator with a documented requirement and no
 documented way to meet it.
 
-**Migrate mode's exclusion is a provider-native lock — an advisory lock on PostgreSQL, an exclusive
+**Migrate mode's exclusion is a provider-native lock — an advisory lock on PostgreSQL, an immediate
 transaction on SQLite — not the lease.** It is the operation with the most destructive potential
 per statement, the ways to invoke it twice at once are entirely ordinary — a unit restarting a run
 that appeared to fail, an operator retrying in a second shell, both hosts' deploy scripts each
@@ -993,6 +995,15 @@ both holes at once: no table, so no bootstrap ordering; released by the provider
 process dies, so no expiry window in which a stalled migrator and a fresh one run concurrently. A
 second invocation fails fast with a named error. The lease keeps its one job, scheduled work, where
 idempotency is required anyway.
+
+**Immediate rather than exclusive, and one run is one transaction.** Immediate takes SQLite's single
+write lock at begin, which is the exclusion this needs; exclusive's additional property is blocking
+readers, and WAL — which this design mandates — exists so readers never block. Because the lock on
+SQLite *is* that transaction, the run is atomic as a whole: a failure rolls back every migration the
+run applied rather than leaving the successful ones behind, since committing per migration would
+release the exclusion between them. **A partially-migrated store is therefore not a state migrate
+mode can produce**, which is a stronger guarantee than the failure-mode table previously implied and
+worth relying on deliberately rather than by accident.
 
 **On SQLite a non-additive migration is a planned outage, and implying otherwise is the error.** A
 table rebuild holds the single write lock for far longer than the busy-wait bound, so the web

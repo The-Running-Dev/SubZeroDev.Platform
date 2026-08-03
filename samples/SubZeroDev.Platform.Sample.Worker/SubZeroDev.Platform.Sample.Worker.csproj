@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

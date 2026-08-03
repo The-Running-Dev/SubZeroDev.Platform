@@ -12,6 +12,7 @@
     <!-- The contract gives Core interfaces, not implementations. Keeping the defaults internal is
          what stops the public surface growing past it; Hosting composes them, Testing observes them. -->
     <InternalsVisibleTo Include="SubZeroDev.Platform.Hosting" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Persistence" />
     <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
     <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
   </ItemGroup>
