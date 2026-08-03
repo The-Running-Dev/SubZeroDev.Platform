@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The contract gives Core interfaces, not implementations. Keeping the defaults internal is
+         what stops the public surface growing past it; Hosting composes them, Testing observes them. -->
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Hosting" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
+  </ItemGroup>
+
+</Project>

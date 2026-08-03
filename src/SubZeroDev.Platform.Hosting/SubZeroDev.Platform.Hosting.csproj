@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Observability\SubZeroDev.Platform.Observability.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared framework already carries the hosting and DI abstractions, so referencing them
+         as packages as well is what NU1510 objects to. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Testing suppresses Hosting's background-work timers so a tick is invoked only by
+         RunBackgroundWorkOnceAsync. That needs the timer service's type, not a public surface. -->
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
+  </ItemGroup>
+
+</Project>

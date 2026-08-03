@@ -1,0 +1,73 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release --verbosity normal
+
+      # The sample runs both roles in a non-development environment, so CI exercises the real
+      # checks rather than the development carve-outs.
+      - name: Run the sample in both roles
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+        run: |
+          set -euo pipefail
+
+          # The built executables rather than `dotnet run`, so the process signalled at the end is
+          # the host itself and its exit status is the host's.
+          ASPNETCORE_URLS=http://127.0.0.1:5199 \
+            ./samples/SubZeroDev.Platform.Sample.Web/bin/Release/net10.0/SubZeroDev.Platform.Sample.Web \
+              > web.log 2>&1 &
+          web=$!
+
+          ./samples/SubZeroDev.Platform.Sample.Worker/bin/Release/net10.0/SubZeroDev.Platform.Sample.Worker \
+            > worker.log 2>&1 &
+          worker=$!
+
+          fail() { echo "::error::$1"; cat web.log worker.log; kill $web $worker 2>/dev/null || true; exit 1; }
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5199/health/ready > /dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:5100/health/ready > /dev/null 2>&1; then
+              break
+            fi
+            kill -0 $web 2>/dev/null || fail "the web host exited before serving"
+            kill -0 $worker 2>/dev/null || fail "the worker host exited before serving"
+            sleep 1
+            [ "$attempt" -lt 30 ] || fail "neither probe answered within 30 seconds"
+          done
+
+          curl -fsS http://127.0.0.1:5199/health/live > /dev/null || fail "web liveness did not answer"
+
+          # The worker probe is loopback-only, and its readiness answered above. Its absence from
+          # the machine's routable address is asserted in the test suite rather than here.
+          echo "Both roles served their probes in $ASPNETCORE_ENVIRONMENT."
+
+          # SIGTERM is the ordinary shutdown signal, and a graceful host exits zero on it.
+          kill -TERM $web $worker
+          for pid in $web $worker; do
+            status=0
+            wait "$pid" || status=$?
+            [ "$status" -eq 0 ] || fail "a sample host exited with status $status"
+          done

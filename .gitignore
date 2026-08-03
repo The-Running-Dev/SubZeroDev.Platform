@@ -27,6 +27,11 @@ graphify-out/
 .env.*
 *.local
 
+# The sample's SQLite file, created on first run
+*.db
+*.db-shm
+*.db-wal
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
