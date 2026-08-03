@@ -35,14 +35,19 @@ jobs:
           set -euo pipefail
 
           # The built executables rather than `dotnet run`, so the process signalled at the end is
-          # the host itself and its exit status is the host's.
-          ASPNETCORE_URLS=http://127.0.0.1:5199 \
-            ./samples/SubZeroDev.Platform.Sample.Web/bin/Release/net10.0/SubZeroDev.Platform.Sample.Web \
-              > web.log 2>&1 &
+          # the host itself and its exit status is the host's. Each runs from its own output
+          # directory, because appsettings.json sits beside the binary and the content root
+          # defaults to the working directory. `exec` replaces the subshell, so $! is the host.
+          root=$PWD
+
+          ( cd "$root/samples/SubZeroDev.Platform.Sample.Web/bin/Release/net10.0" \
+            && ASPNETCORE_URLS=http://127.0.0.1:5199 exec ./SubZeroDev.Platform.Sample.Web \
+          ) > web.log 2>&1 &
           web=$!
 
-          ./samples/SubZeroDev.Platform.Sample.Worker/bin/Release/net10.0/SubZeroDev.Platform.Sample.Worker \
-            > worker.log 2>&1 &
+          ( cd "$root/samples/SubZeroDev.Platform.Sample.Worker/bin/Release/net10.0" \
+            && exec ./SubZeroDev.Platform.Sample.Worker \
+          ) > worker.log 2>&1 &
           worker=$!
 
           fail() { echo "::error::$1"; cat web.log worker.log; kill $web $worker 2>/dev/null || true; exit 1; }
