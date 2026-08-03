@@ -5,6 +5,7 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
 ## Open
+- **Three documents now describe the scope question as still open, and it is not** — the brief settles it. [`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) carries a `:::caution The count is no longer settled` admonition and calls §3a's near-term set "a scope proposal, not a decision"; [`implementation-plan.md`](../docs/docs/implementation-plan.md) §4 marks D3's count provisional and §8.1 is titled as an open decision; [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md)'s consequences say the count "is not settled here". All four passages defer to the brief, and the brief has now answered: **six**. §8.2's chosen instrument also moved, from a sample to a sample *and* the G1 edge. **Not reconciled here** — that is `/reconcile`'s job and a separate change, and doing it while writing the brief is exactly the slice-creep `AGENTS.md` forbids. Nothing is wrong until someone reads one of those passages as still live.
 - **Brand identifier reservation is unperformed**, and it is the repository owner's action — reserving requires authenticating to each registry, so an agent cannot do it. What to reserve and why is [ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md); this is the operational state.
   **Checked 2026-08-02, read-only, against the public registries:** no published packages under npm `@subzerodev` (scope search returned 0), NuGet `SubZeroDev.*` (search returned one fuzzy match, `jonjubnet.identity`, and no SubZeroDev package), or PowerShell Gallery `SubZeroDev*` (0 entries). Consistent with ADR-003's "nothing has published", now with evidence rather than assumption.
   **What that check does not establish**, and should not be read as: *not published* is not *not owned*. An npm organisation can be held without publishing, and `npmjs.com/org/subzerodev` returned HTTP 403 to an unauthenticated request — bot protection, not a signal either way. The GHCR `subzerodev-*` namespace was not checked at all; it needs authentication. So the window is **probably** still open, not verified open.
@@ -25,6 +26,12 @@ Reasoning, consequences and rejected alternatives live in the linked document, n
 
 | Decision | Home |
 |---|---|
+| Near-term scope is six packages; the outbox is in scope; both a sample and the G1 edge prove D3 | [`00-brief.md`](00-brief.md) |
+| The tenant column is a non-null `uuid` with an all-zero sentinel, not a nullable column or a slug | [`10-design.md`](10-design.md), *Alternatives* |
+| Correlation ids belong to Observability, health endpoints to Hosting, the health check contract to Abstractions | [`10-design.md`](10-design.md), *Module boundaries* |
+| Outbox delivery is at-least-once and unordered; rows are claimed by a portable conditional update, not a dialect-specific locking read | [`10-design.md`](10-design.md), *Concurrency and ordering* |
+| The worker is a second host role of one Hosting package, not a separate package | [`10-design.md`](10-design.md), *Alternatives* |
+| A database that is misconfigured fails startup; one that is merely unavailable starts and reports not-ready | [`10-design.md`](10-design.md), *Failure modes* |
 | Boundary contracts are projected, not authored; they get their own repository | [ADR-005](../docs/docs/adr/ADR-005-service-contract.md) |
 | Platform is built in-house, with ABP as an architecture reference | [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) |
 | Package scope is per-registry, not one global name | [ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md) |
@@ -34,6 +41,12 @@ Reasoning, consequences and rejected alternatives live in the linked document, n
 | Hosting is a workload boundary, not in-process port supply | [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §2 |
 
 ---
+
+### 2026-08-03 — The outbox is built against an in-process bus, not adopted
+Context: [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4 inverts the usual default — reach for a package first — and requires that when one exists and is passed over, the log records why hand-rolling won. An empty log next to hand-written infrastructure is the signal the clause was skipped. This is that entry. The evaluation itself was already performed in [`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §3a and is not redone here.
+Chosen: implement the outbox behind Platform's own interface, against an in-process bus. Persistence's done-criterion — surviving a process kill between the domain write and the publish — stands as written, and [`00-brief.md`](00-brief.md) put the outbox in scope over §3a's advice to defer it.
+Rejected: **MassTransit** — disqualified on licence durability, v9 commercial and v8's maintenance ending after 2026, against a codebase whose stated lifespan makes that disqualifying. **DotNetCore.CAP** — a real outbox under MIT, but every supported transport is a broker; adopting it puts a message broker into local developer execution, which is an in-scope deployment mode, to serve a transport decision that has not been taken. **Wolverine** — plausible, but the outbox claim was not confirmed from its documentation and nothing should be relied on unverified. **Deferring entirely**, which is what §3a recommended — overridden by the brief.
+Reversibility: moderate. The mechanism sits behind an interface this repository owns, which is precisely why ADR-004 §4 asks for the interface to be ours — a library can replace it once a transport is chosen.
 
 ### 2026-08-02 — The staging tree became `SubZeroDev.Architecture`, private
 Context: The ecosystem specification set — 96 files, fourteen destinations' worth — sat at `D:\Dropbox\Projects\SubZeroDev\Specs` with no version control. Nothing recorded a change and nothing caught a stale one, which is exactly how its directory table came to list `SubZeroDev.Platform` as "Platform repository (exists)" while pointing at a repository holding a different Platform entirely. Found by reading a directory listing, not by any check.
