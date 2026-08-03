@@ -21,6 +21,10 @@ this continues with a third consumer.
 
 ## 1. Platform Is a Framework Plus a Library, and the Distinction Is Load-Bearing
 
+**The decision, its four rules, its consequences and the alternatives it rejected are
+[ADR-006](adr/ADR-006-application-modules.md).** That is its one home; this section is orientation
+and does not restate it.
+
 Everything in [`minimal-platform-packages.md`](minimal-platform-packages.md) is **framework**: a
 consumer cannot decline it and still be hosted. Hosting, persistence, observability and the
 abstractions beneath them are what "running on Platform" means.
@@ -35,14 +39,9 @@ product — and a catalogue module is not a product. What would break ADR-001 is
 that knows what a price is, and the rule above makes that a build failure rather than a review
 comment, which is the standard ADR-001 already sets for the product direction.
 
-**The costs of the split, stated rather than discovered:**
-
-- Two release cadences. A framework at 0.x with modules on top of it means a module can be broken by
-  its own foundation, and the version matrix is real work at S9's packaging stage.
-- A larger public surface to document and keep doc-commented, which the brief already gates the
-  release on.
-- The guard gets harder to apply, not easier. A module library is a comfortable place to put
-  something that has one consumer, because it feels quarantined. It is not — see §4.
+**What the split costs is stated in ADR-006's consequences**, including the one most likely to be
+paid silently: separate packaging *feels* like quarantine, and only an enforced reference check makes
+it one.
 
 ---
 

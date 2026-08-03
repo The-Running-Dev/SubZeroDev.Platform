@@ -30,7 +30,7 @@ Reasoning, consequences and rejected alternatives live in the linked document, n
 
 | Decision | Home |
 |---|---|
-| Platform is a framework plus optional application modules, and no framework package may reference one | [`application-modules.md`](../docs/docs/application-modules.md) §1 |
+| Platform is a framework plus optional application modules | [ADR-006](../docs/docs/adr/ADR-006-application-modules.md) |
 | Catalogue and Ordering are admitted with one consumer, against the boundary test, with the objection retained | [`application-modules.md`](../docs/docs/application-modules.md) §4 |
 | BarStrad is a third consumer; Notifications, channels, localized content and the command surface clear the guard | [`application-modules.md`](../docs/docs/application-modules.md) §2 |
 | Near-term scope is six packages; the outbox is in scope; both a sample and the G1 edge prove D3 | [`00-brief.md`](00-brief.md) |
