@@ -935,6 +935,44 @@ structure concurrent readers are walking.
 **`ForRole` is how Hosting starts work it cannot name.** It returns the registrations whose `Roles`
 include the host's role, which for the web host is the registration heartbeat alone.
 
+**`ISettingsFingerprint.Compute` is specified to the byte, because agreement between two processes
+is the whole of its value.** A prose description that two implementations could follow differently
+would reintroduce exactly the permanent false mismatch it exists to prevent, and this interface is
+public surface a third party may reimplement.
+
+Input to the digest, in order:
+
+1. The literal ASCII bytes `szdfp1`, the format version. It is inside the hashed input, so a future
+   change to this encoding is a visible break rather than a silent one.
+2. Every `[Fingerprinted]` property reachable from `PlatformOptions`, as an entry, **ordered by
+   ordinal comparison of the path's UTF-8 bytes** — never by reflection order, which
+   `Type.GetProperties()` does not guarantee.
+
+Each entry is exactly:
+
+```text
+uint32BE(byteLength(pathUtf8)) ‖ pathUtf8 ‖ presenceTag ‖ [ uint32BE(byteLength(valueUtf8)) ‖ valueUtf8 ]
+```
+
+- `path` is the **configuration path** — `Outbox:ProcessedRetention` — the same string a startup
+  error names, so a fingerprint and an error message speak one language.
+- `presenceTag` is one byte: `0x00` for a null value, after which **no length and no value follow**;
+  `0x01` for a present value, after which both do. This is what keeps null distinguishable from the
+  empty string, which a length of zero alone would not.
+- Lengths are **byte counts of the UTF-8 encoding**, not character counts, as unsigned 32-bit
+  big-endian.
+- Values render culture-invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, integers in decimal with
+  no separators or sign for non-negative values, `bool` as `true` or `false`, an enum as its declared
+  name with its declared casing, a string as itself.
+
+The digest is **SHA-256** over that byte sequence, rendered as **64 lowercase hex characters**. The
+length prefixes are what make the encoding injective: without them `a=1,b=23` and `a=12,b=3` could
+hash identically, and a fingerprint that can collide on distinct settings silently reports agreement
+that does not exist.
+
+Why it is stated here rather than left to the implementation is in
+[`90-decisions.md`](90-decisions.md), with the three traps it is built to defeat.
+
 ### Persistence — transaction boundary
 
 ```csharp
@@ -1799,14 +1837,16 @@ question goes, and an empty list is what it looks like between them.
 [`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) both cite these by number and
 renumbering would silently break every reference.
 
-1. ~~**The settings fingerprint's canonical form and hash algorithm.**~~ **Resolved in S3:** each
+1. ~~**The settings fingerprint's canonical form and hash algorithm.**~~ **Resolved ahead of S3:** each
    `[Fingerprinted]` value is keyed by its **configuration path** — the same string an error message
    names, so the two speak one language — then the pairs are **ordinal-sorted by path**, each path
    and value **length-prefixed** so no two different inputs can concatenate to the same bytes, the
    whole preceded by a format version, hashed with **SHA-256** and rendered as lowercase hex.
    Values format invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, enums by name, and a null
    distinctly from an empty string. Sorting by path rather than by reflection order is the load-
-   bearing part — `Type.GetProperties()` guarantees no order. See [`90-decisions.md`](90-decisions.md).
+   bearing part — `Type.GetProperties()` guarantees no order. **The byte-exact encoding is specified
+   beside `ISettingsFingerprint` itself**, which is what an implementer reads; this entry summarises
+   the decision and is not the normative form. See [`90-decisions.md`](90-decisions.md).
 
 2. ~~**Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.**~~ **Resolved in S1:**
    `DispatchTickBudget` at 1 000 and `PruneBatchSize` at 5 000, each an order above its default. The
@@ -1826,7 +1866,7 @@ renumbering would silently break every reference.
    first two checks that needed them — `Database` at 5 s, `PendingMigrations` at 10 s. Both are in
    [`90-decisions.md`](90-decisions.md).
 
-5. ~~**How `InstanceId` is derived.**~~ **Resolved in S3:** `Environment.MachineName`, a slash, and
+5. ~~**How `InstanceId` is derived.**~~ **Resolved ahead of S3:** `Environment.MachineName`, a slash, and
    eight hex characters from `RandomNumberGenerator`, minted once at startup — `homelab-01/7f3a9c2e`.
    Uniqueness and restart-freshness come from the random suffix alone, so neither process-id reuse
    nor a clock adjustment can break either. The role is deliberately **not** encoded:

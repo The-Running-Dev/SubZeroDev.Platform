@@ -20,17 +20,22 @@ assertions from S2 onward.
 
 ## Where the contract's unresolved items get decided
 
-Each needs a `90-decisions.md` entry in the slice that first sets a value.
+Each needed a `90-decisions.md` entry from the slice that first set a value. **All seven are now
+settled**, and this table is the record of where each was taken.
 
-| [Unresolved](20-contract.md#unresolved) | Decided in |
+| [Unresolved](20-contract.md#unresolved) | Decided |
 |---|---|
-| 2 — upper bounds for `DispatchTickBudget` and `PruneBatchSize` | S1, with the rest of options validation |
-| 3 — wire format of the error envelope and the probe body | S1 |
-| 4 — per-check default timeout and the probe endpoint timeout | S1 |
-| 6 — migration history table naming convention per module | S2 |
-| 7 — the provider contract tests' invocation surface | S2 |
-| 1 — the settings fingerprint's canonical form and hash | S3 |
-| 5 — how `InstanceId` is derived | S3 |
+| 2 — upper bounds for `DispatchTickBudget` and `PruneBatchSize` | In S1, with the rest of options validation |
+| 3 — wire format of the error envelope and the probe body | In S1 |
+| 4 — per-check default timeout and the probe endpoint timeout | In S1 |
+| 6 — migration history table naming convention per module | In S2 |
+| 7 — the provider contract tests' invocation surface | In S2 |
+| 1 — the settings fingerprint's canonical form and hash | **Ahead of** S3 |
+| 5 — how `InstanceId` is derived | **Ahead of** S3 |
+
+The last two were taken before S3 started rather than during it, deliberately: both are
+architectural, and `AGENTS.md` forbids continuing an implementation while that kind of uncertainty
+is unresolved. S3 transcribes them.
 
 ---
 
