@@ -12,7 +12,8 @@ namespace SubZeroDev.Platform.Persistence;
 public static class PlatformPersistenceExtensions
 {
     /// <summary>Registers the unit of work, the ambient transaction accessor, the migration runner,
-    /// and the <c>Database</c> and <c>PendingMigrations</c> readiness checks.</summary>
+    /// host registration and its heartbeat, and the <c>Database</c>, <c>PendingMigrations</c>,
+    /// <c>PeerHost</c> and <c>SettingsFingerprint</c> readiness checks.</summary>
     /// <param name="services">The host's service collection.</param>
     /// <returns>The same collection, so calls chain.</returns>
     public static IServiceCollection AddPlatformPersistence(this IServiceCollection services)
@@ -32,12 +33,29 @@ public static class PlatformPersistenceExtensions
         services.TryAddSingleton<IUnitOfWork, UnitOfWork>();
         services.TryAddSingleton<IMigrationRunner, MigrationRunner>();
 
+        // Fingerprinting is a Core concept usable without Persistence, and Hosting's own defaults
+        // register it too — TryAdd here means whichever registers first wins, and either is the
+        // same implementation, so Persistence does not silently depend on Hosting's call order.
+        services.TryAddSingleton<ISettingsFingerprint, SettingsFingerprint>();
+
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IModuleMigrationSource, PlatformHostRegistrationMigrationSource>());
+        services.TryAddSingleton<IHostRegistrationStore, HostRegistrationStore>();
+
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, DatabaseHealthCheck>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, PendingMigrationsHealthCheck>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, PeerHostHealthCheck>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, SettingsFingerprintHealthCheck>());
+
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, HostRegistrationHeartbeat>());
 
         if (!services.Any(descriptor => descriptor.ImplementationType == typeof(PersistenceStartupCheck)))
         {
             services.AddHostedService<PersistenceStartupCheck>();
+        }
+
+        if (!services.Any(descriptor => descriptor.ImplementationType == typeof(HostRegistrationShutdownCleanup)))
+        {
+            services.AddHostedService<HostRegistrationShutdownCleanup>();
         }
 
         return services;

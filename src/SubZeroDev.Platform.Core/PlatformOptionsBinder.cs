@@ -88,6 +88,15 @@ internal static class PlatformOptionsBinder
                 "the drain window must be shorter than the claim window that backstops it"));
         }
 
+        if (peerGrace < heartbeat)
+        {
+            return Failure(ConfigurationError.InconsistentSettings(
+                Key("HostRegistration:PeerAbsenceGrace"),
+                Key("HostRegistration:HeartbeatInterval"),
+                "the peer-absence grace must be at least the heartbeat interval, so a fresh host's "
+                + "first heartbeat can land before the grace it would otherwise degrade on elapses"));
+        }
+
         return Result<PlatformOptions, ConfigurationError>.Success(new PlatformOptions
         {
             ServiceName = reader.OptionalString("ServiceName"),

@@ -158,6 +158,30 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Two_distinct_sources_declaring_the_same_module_name_are_refused_before_anything_applies()
+    {
+        // Unlike the case-variant collision above, this is two *different*
+        // IModuleMigrationSource registrations declaring the exact same ModuleName — the shape a
+        // consumer module would take if it accidentally reused "Platform", the name Platform's own
+        // host-registration migration owns. Both resolve to the identical history table by
+        // construction, so this is refused the same way, before anything applies.
+        var first = new TestMigrationSource(
+            "Platform", TestMigration.Sql("0001_create", "CREATE TABLE t_platform_first (id TEXT PRIMARY KEY);"));
+        var second = new TestMigrationSource(
+            "Platform", TestMigration.Sql("0001_create", "CREATE TABLE t_platform_second (id TEXT PRIMARY KEY);"));
+
+        await using var host = await StartAsync(sources: [first, second]);
+
+        var applied = await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None);
+
+        Assert.False(applied.IsSuccess);
+        Assert.Equal(nameof(MigrationError.HistoryTableCollision), applied.Error.Code);
+
+        Assert.Equal(0, await CountTablesAsync(_connectionString, "t_platform_first"));
+        Assert.Equal(0, await CountTablesAsync(_connectionString, "t_platform_second"));
+    }
+
+    [Fact]
     public async Task An_unreachable_store_degrades_rather_than_reporting_a_non_retryable_fault()
     {
         // A database that is merely down is the most retryable condition in the system. A connect
