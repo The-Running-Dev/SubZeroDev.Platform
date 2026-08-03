@@ -40,7 +40,11 @@ jobs:
           # defaults to the working directory. `exec` replaces the subshell, so $! is the host.
           root=$PWD
 
-          # Migrate mode creates each role's store and puts its SQLite file in WAL — a host that
+          # Both roles point at one store, outside either's own output directory — the only way
+          # PeerHost and SettingsFingerprint see anything besides "no peer ever registered here".
+          export Platform__Persistence__ConnectionString="Data Source=$root/shared-sample.db"
+
+          # Migrate mode creates the shared store and puts its SQLite file in WAL — a host that
           # finds a file still in the default journal mode aborts startup, per the contract, and a
           # store with no schema has nothing for the standard call's checks to be healthy against.
           ( cd "$root/samples/SubZeroDev.Platform.Sample.Web/bin/Release/net10.0" \

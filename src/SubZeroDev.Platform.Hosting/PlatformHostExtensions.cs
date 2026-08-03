@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -71,6 +72,14 @@ public static class PlatformHostExtensions
         var options = BindOptions(builder, role);
         builder.Services.AddSingleton(options);
 
+        // Minted once per process, here rather than in Persistence: an installation with no
+        // Persistence still has a stable identity, and the role is deliberately not encoded in it —
+        // HostRegistration carries a role column, and two homes for one fact is two things that can
+        // disagree. The non-generic overload, because InstanceId is a value type and AddSingleton's
+        // generic overloads require a reference type.
+        var instanceId = CreateInstanceId();
+        builder.Services.AddSingleton(typeof(InstanceId), _ => instanceId);
+
         AddCoreDefaults(builder.Services);
         builder.AddPlatformObservability();
 
@@ -131,6 +140,18 @@ public static class PlatformHostExtensions
         services.TryAddSingleton<IModuleRegistry, ModuleRegistry>();
         services.TryAddSingleton<IHealthCheckRegistry, HealthCheckRegistry>();
         services.TryAddSingleton<IBackgroundWorkRegistry, BackgroundWorkRegistry>();
+        services.TryAddSingleton<ISettingsFingerprint, SettingsFingerprint>();
+    }
+
+    /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex
+    /// characters from <see cref="RandomNumberGenerator"/>. Uniqueness and restart-freshness come
+    /// from the random suffix alone, so neither process-id reuse nor a clock adjustment can break
+    /// either. Resolved ahead of S3 — see design/90-decisions.md.</summary>
+    private static InstanceId CreateInstanceId()
+    {
+        Span<byte> suffix = stackalloc byte[4];
+        RandomNumberGenerator.Fill(suffix);
+        return new InstanceId($"{System.Environment.MachineName}/{Convert.ToHexStringLower(suffix)}");
     }
 
     private static void ComposeModules(IServiceCollection services)
