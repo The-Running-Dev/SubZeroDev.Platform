@@ -8,12 +8,15 @@ C# with nullable reference types enabled. Types and signatures only. Package gro
 rather than namespace declaration — package naming belongs to
 [ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md), not here.
 
-**Re-derived in full** from the design as it stands after its fourth adversarial review, not patched
-from the previous derivation, per the decision of 2026-08-03 in
-[`90-decisions.md`](90-decisions.md), and then amended for the three gaps that re-derivation
-exposed — the event Type name's supplier, the payload's canonical form, and where the provider
-abstraction cuts — each settled in the design first. Anything the design still does not determine is
-in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocks implementation.**
+**Re-derived in full** from the design as it stands after its **fifth** adversarial review, not
+patched from the previous derivation, per the standing decision in
+[`90-decisions.md`](90-decisions.md) that a contract is re-derived and diffed rather than patched.
+The previous derivation contradicted that revision in six places the decision log named — the
+correlation column, the redrive semantics, the capability's migration lock, the cut converter
+extension point, the tick-shaped background-work contract, and the operation scope's fourth
+member — and each is corrected here in the section it touches. Anything the design still does not
+determine is in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocks
+implementation.**
 
 ---
 
@@ -35,7 +38,7 @@ public readonly record struct CorrelationId(string TraceId)
 
 public readonly record struct TraceContext(string TraceParent, string? TraceState)
 {
-    public CorrelationId Correlation { get; }
+    public string TraceId { get; }
     public bool Sampled { get; }
     public static bool TryParse(string traceParent, string? traceState, out TraceContext result);
 }
@@ -54,10 +57,16 @@ public readonly record struct BackgroundWorkName(string Value);
 **Invariants carried by these types, not by their callers.** `TenantId.Implicit` is `Guid.Empty` —
 the well-known all-zero sentinel. `CorrelationId.TraceId` is 32 lowercase hex characters and never
 all-zero. `TraceContext.TraceParent` is a complete W3C `traceparent` **including trace flags**, from
-which `Sampled` is read, and `TraceState` is the W3C `tracestate` when the origin carried one; the
-design requires both to travel with the row so the sampling decision and any vendor sampler state
-cross the boundary. `ModuleName`, `EventTypeName`, `HealthCheckName` and `BackgroundWorkName` are
-non-empty, trimmed, and case-sensitively unique within their registry.
+which `Sampled` and `TraceId` are read, and `TraceState` is the W3C `tracestate` when the origin
+carried one; the design requires both to travel with the row so the sampling decision and any vendor
+sampler state cross the boundary. `ModuleName`, `EventTypeName`, `HealthCheckName` and
+`BackgroundWorkName` are non-empty, trimmed, and case-sensitively unique within their registry.
+
+**`TraceContext` exposes its own `TraceId` and no `Correlation` member.** The previous derivation
+derived the correlation from the stored trace context, and the design has since falsified that: it
+is right for exactly one hop, because in a dispatched handler the ambient trace is the new linked
+trace, not the origin's. Correlation is its own persisted value — see the outbox row — and the two
+part company only across outbox dispatch.
 
 ### Abstractions — host role
 
@@ -128,11 +137,18 @@ public interface IOperationScope : IDisposable
     CorrelationId Correlation { get; }
     TenantId Tenant { get; }
     ClaimsPrincipal? Principal { get; }
+    TraceContext Trace { get; }
 }
 
 public interface IOperationScopeFactory
 {
-    IOperationScope Begin(CorrelationId correlation, TenantId tenant, ClaimsPrincipal? principal);
+    IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal);
+
+    IOperationScope Begin(
+        TraceContext established,
+        CorrelationId correlation,
+        TenantId tenant,
+        ClaimsPrincipal? principal);
 }
 
 public interface IOperationScopeAccessor
@@ -156,9 +172,19 @@ public interface ICurrentCorrelation
 }
 ```
 
-**The scope is opened by two establishers and read by three accessors, and all five live here.**
-Hosting opens a scope on an inbound request; Persistence opens one per dispatched message. Left
-unowned, the second establisher invents its own write path.
+**The scope carries four members, and trace context is the fourth.** The row demands a traceparent,
+and the sanctioned explicit-scope path — a seeder or migrate-mode utility opening its scope in one
+line — had no stated source for one until the design made the scope primitive establish it.
+
+**The two `Begin` overloads are the two establishment cases.** The first is **origination**: a scope
+opened with nothing inbound starts a real root trace through the trace-context contract, and the
+correlation *is* that root's trace-id — the true statement that this scope is the origin, the same
+claim an inbound request with no traceparent makes. The second takes both values explicitly, because
+its two callers already hold them: Hosting passes the adopted-or-minted request context with the
+correlation equal to its trace-id, and Persistence's dispatcher passes the **new linked trace** with
+the correlation **from the row's correlation column** — the one boundary where the two values are
+permitted to differ. What stays rejected is the *implicit* version: a scope nobody visibly opened,
+minting an origin nobody chose.
 
 **`IOperationScopeAccessor.Current` is the only member that can be null**, and it is what makes
 "there is no ambient scope" detectable. The three accessors are meaningful only inside a scope:
@@ -168,7 +194,8 @@ quietly returning a default.
 
 **`ICurrentCorrelation.Current` is a `CorrelationId`, not a `TraceContext`.** They are the same value
 everywhere except across outbox dispatch, where the trace changes and the correlation does not — so
-the accessor returns the value that does not change, and the trace is the runtime's.
+the accessor returns the value that does not change, and it propagates unchanged through any depth
+of derived events.
 
 **`ICurrentTenant.Current` is non-nullable and in D3 always returns `TenantId.Implicit`.** Nothing
 resolves a tenant from host, header or claim — the brief's binding non-goal. The interface exists so
@@ -190,14 +217,27 @@ public interface ITraceContextCodec
 
     bool TryParse(string traceParent, string? traceState, out TraceContext result);
 
-    IDisposable StartLinked(TraceContext origin, string activityName);
+    ITraceHandle StartRoot(string activityName);
+
+    ITraceHandle StartLinked(TraceContext origin, string activityName);
+}
+
+public interface ITraceHandle : IDisposable
+{
+    TraceContext Context { get; }
 }
 ```
 
-**Parse, format and link are Observability's operations declared in Abstractions**, because
-Persistence performs all three — stamping the row, reading it back, and starting the linked trace —
-while having no edge to Observability. `StartLinked` starts a **new** trace linked to the stored one
-and honours the origin's sampling flags; it never continues the origin's trace.
+**Parse, format, root-start and link are Observability's operations declared in Abstractions**,
+because two packages with no edge to Observability perform them: Persistence stamps the row, reads
+it back, and starts the linked trace per dispatched message, and the operation-scope primitive's
+origination path starts a root. `StartLinked` starts a **new** trace linked to the stored one and
+honours the origin's sampling flags; it never continues the origin's trace. `StartRoot` is
+origination, not fabrication — the scope that calls it *is* the origin.
+
+**Both handles expose the established `TraceContext`** because the caller needs it: the dispatcher
+populates the scope's fourth member from it, which is what makes a follow-up row's stored
+traceparent the link's — while the correlation column keeps the origin's value.
 
 **`TryParse` never throws and never fails a request.** A malformed inbound header yields `false` and
 a fresh context.
@@ -280,6 +320,11 @@ public sealed record HealthReportEntry(
 liveness rule at registration rather than by convention, and a check cannot be interrogated for this
 after the fact — it has to declare.
 
+**A report enumerates every registered check, at either detail level.** That is what keeps the
+persistence-less host honest: split detection, backlog age, poison visibility and the migration
+comparison are all contributed by Persistence, a host composed without it has none of them, and an
+absent check must read as absent in the body rather than being indistinguishable from a passing one.
+
 **`HealthReportDetail` is the body-narrowing switch, not a status switch.** `Minimal` renders the
 aggregate and each entry's name and status; `Full` adds `Detail` and `Data`. The status is identical
 either way, so nothing consuming the probe programmatically changes behaviour.
@@ -294,9 +339,16 @@ public interface IBackgroundWork
     TimeSpan Interval { get; }
     bool RequiresLease { get; }
 
-    Task RunAsync(CancellationToken cancellationToken);
+    Task TickAsync(CancellationToken cancellationToken);
 }
 ```
+
+**The contract is tick-shaped, and that is what makes Testing's determinism providable.** One
+invocation of `TickAsync` is one tick — a dispatch pass under its budget, one prune batch, one
+heartbeat — and **Hosting owns the timers** that invoke ticks on the declared interval. A loop that
+hid its schedule inside itself would be a loop Hosting could not run in the role it declares, and no
+fake clock drives a real timer — determinism needs the schedule and the clock separated, so the test
+host replaces the one and controls the other.
 
 **`Roles` is what lets Hosting start Persistence's dispatcher without depending on Persistence, and
 lets the web host run Persistence's registration heartbeat through the same channel.** The heartbeat
@@ -321,6 +373,7 @@ public static class PlatformHealthChecks
     public static HealthCheckName PeerHost { get; }
     public static HealthCheckName SettingsFingerprint { get; }
     public static HealthCheckName OutboxBacklogAge { get; }
+    public static HealthCheckName OutboxPendingCount { get; }
     public static HealthCheckName OutboxPoisonCount { get; }
     public static HealthCheckName PendingMigrations { get; }
 }
@@ -329,7 +382,9 @@ public static class PlatformHealthChecks
 **These names are public surface, not implementation detail.** They appear in the probe body an
 operator reads and are the handles `RunBackgroundWorkOnceAsync` takes, so leaving them to the first
 implementer would set them by accident. `Prune` is one registration covering all three retention
-windows — processed rows, poisoned rows and dead host registrations.
+windows — processed rows, poisoned rows and dead host registrations. `OutboxPendingCount` is the
+condition the fifth review added: pending rows are unbounded by decision, and the count on the
+always-on surface is the bound that exists.
 
 ### Abstractions — settings fingerprint marker
 
@@ -361,6 +416,7 @@ public sealed record OutboxMessage
     public required string Payload { get; init; }
     public required TenantId Tenant { get; init; }
     public required TraceContext TraceContext { get; init; }
+    public required CorrelationId Correlation { get; init; }
     public required int Attempts { get; init; }
     public DateTimeOffset? NextAttemptAt { get; init; }
     public DateTimeOffset? FirstDeferredAt { get; init; }
@@ -371,12 +427,22 @@ public sealed record OutboxMessage
     public string? LastError { get; init; }
 
     public OutboxMessageState State { get; }
+    public DateTimeOffset DueAt { get; }
 }
 ```
 
 **`Id` is the identity — a version-7 UUID minted app-side at enqueue from `IClock`.** It exists
 before the insert, survives a database restore, sorts in mint order on both providers, and is the
-dedupe key at-least-once delivery offers handlers.
+dedupe key at-least-once delivery offers handlers. **Mint order means millisecond order, and the tie
+is unspecified** — version 7 carries its time at millisecond resolution, the runtime generator keeps
+no counter within a tick, and anything paging by the id must tolerate ties.
+
+**`Correlation` is a column of its own, because the traceparent stops carrying it after one hop.** A
+handler that enqueues a follow-up event is the ordinary case, and at that moment the ambient trace is
+the dispatch's new linked trace — so the follow-up row's stored traceparent carries the link's
+trace-id, not the origin's. The column is stamped from the ambient correlation at enqueue and
+propagates unchanged through any depth of derived events, while the stored trace context keeps the
+one job it can still do: the link.
 
 **`Sequence` is claim order and nothing else.** It is provider-allocated, and on SQLite its values
 are reused after a drain and prune. Nothing downstream may treat it as durable or as an identity;
@@ -387,14 +453,21 @@ a discriminator column was rejected as a second source of truth:
 
 | State | Predicate | Prunes on | Counts toward |
 |---|---|---|---|
-| `Pending` | `ProcessedAt` null, `PoisonedAt` null | never | backlog age |
+| `Pending` | `ProcessedAt` null, `PoisonedAt` null | never | backlog age, pending count |
 | `Processed` | `ProcessedAt` set, `PoisonedAt` null | processed window | nothing |
 | `Poisoned` | `PoisonedAt` set, `ProcessedAt` null | poison window | poison count |
 | `Discarded` | both set | poison window | nothing |
 
-A row is **eligible** when it is `Pending`, `NextAttemptAt` is null or not in the future, and
-`ClaimedAt` is null or older than the claim window. Expired claims are eligible by that predicate
-alone, which is why there is no separate reclaim pass.
+**`DueAt` is the due predicate made a member**: `NextAttemptAt` when set, `OccurredAt` while it is
+null. A row is **eligible** when it is `Pending`, due, and either unclaimed or holding a claim older
+than the claim window. Expired claims are eligible by that predicate alone, which is why there is no
+separate reclaim pass. The claim query, the deferral re-check and redrive all derive from this one
+statement — the instant-format rules exist to make exactly this comparison correct in SQL.
+
+**Backlog age measures time past due, never time since occurred.** Age-since-occurred manufactures
+"worker down" out of three routine states — a deferred row during an upgrade, a backing-off row
+behind a failing handler, and a bulk-redriven row whose `OccurredAt` is days old. A dispatcher that
+is working keeps its backlog young *by acting on it*; a dead or mispointed one lets due rows age.
 
 ### Persistence — background work lease
 
@@ -532,7 +605,7 @@ public sealed record HostRegistrationOptions
 {
     public TimeSpan HeartbeatInterval { get; init; }
     public TimeSpan RetentionWindow { get; init; }
-    public TimeSpan PeerAbsenceStartupGrace { get; init; }
+    public TimeSpan PeerAbsenceGrace { get; init; }
 
     public TimeSpan PeerLivenessThreshold { get; }
 }
@@ -540,6 +613,7 @@ public sealed record HostRegistrationOptions
 public sealed record HealthOptions
 {
     public TimeSpan BacklogAgeThreshold { get; init; }
+    public long PendingCountThreshold { get; init; }
 }
 
 public sealed record HostingOptions
@@ -570,14 +644,19 @@ a wrong value that degrades gets a default, a missing value that corrupts fails 
 | `Lease.Duration` | 5 min | positive |
 | `HostRegistration.HeartbeatInterval` | 15 s | positive |
 | `HostRegistration.RetentionWindow` | 7 days | positive |
-| `HostRegistration.PeerAbsenceStartupGrace` | 60 s | non-negative |
+| `HostRegistration.PeerAbsenceGrace` | 60 s, **rolling** | non-negative |
 | `HostRegistration.PeerLivenessThreshold` | **derived**, `3 × HeartbeatInterval` | no setter, so the two cannot disagree |
 | `Health.BacklogAgeThreshold` | 5 min | positive |
+| `Health.PendingCountThreshold` | 100 000 | `>= 1` |
 | `Hosting.GracefulShutdownDrainWindow` | 30 s | positive; less than `Outbox.ClaimWindow` |
 | `Hosting.WorkerProbePort` | 5100 | valid port |
 | `Hosting.WorkerProbeLoopbackOnly` | `true` | — |
 | `Persistence.SqliteBusyWaitBound` | 5 s | positive |
 | `Persistence.ConnectionString` | **required, no default** | present; parseable by the selected provider |
+
+**`PeerAbsenceGrace` is a rolling measure on the observing host's clock from the absence first being
+seen, never a startup-scoped exemption.** A startup grace cannot cover the case the setting exists
+for: the surviving web host watching a routine worker restart is long past its own startup.
 
 **SQLite's journal mode is not a setting.** WAL is required and is a property of the file rather
 than of a host, so two hosts cannot disagree on it. Persistence asserts it on open and fails startup
@@ -629,8 +708,9 @@ side moves the defect to the other side of the comparison.
 | `tenant` | tenant | no | Defaults to the all-zero sentinel |
 | `trace_parent` | text | no | Complete `traceparent` including trace flags |
 | `trace_state` | text | yes | W3C `tracestate` when the origin carried one |
+| `correlation` | text | no | The origin's trace-id at any depth; stamped from the ambient correlation at enqueue |
 | `attempts` | integer | no | Default 0, `>= 0` |
-| `next_attempt_at` | instant | yes | Null means eligible now |
+| `next_attempt_at` | instant | yes | Null means due at `occurred_at` |
 | `first_deferred_at` | instant | yes | Stamped on first deferral; the deferral age measures from it |
 | `claimed_by` | text | yes | Null exactly when `claimed_at` is null |
 | `claimed_at` | instant | yes | Null exactly when `claimed_by` is null |
@@ -650,7 +730,9 @@ or set together. `poisoned_at IS NOT NULL` implies `last_error IS NOT NULL`. `at
 There is **no** constraint asserting `processed_at` and `poisoned_at` are mutually exclusive. An
 earlier derivation carried one; it cannot exist, because discard sets both marks by design and the
 constraint would reject the operation the design requires. All four combinations of the two columns
-are legal and each names a state.
+are legal and each names a state — and **discard alone may produce the both-set state**, which is
+what lets it keep meaning an operator decision. The dispatch-state writes that could otherwise race
+their way into it are conditional on the live claim; see *Public signatures*.
 
 **Migration story.** New table, no existing data. Created empty by the Persistence module's first
 migration.
@@ -659,6 +741,11 @@ migration.
 removal or a change of meaning. A breaking change is a new event under a new stable `type`, with the
 old handler retained until the old rows drain. A backlog days deep is this design's normal shape, so
 an upgrade that changes what a `type` means is dispatching against history.
+
+**Pending rows are unbounded, by decision rather than oversight.** No retention window applies —
+pruning an undispatched row is dropping a committed write — and no backpressure applies either:
+enqueue is inside the caller's transaction, so refusing it fails the domain write with it. The bound
+that exists is the operator, acting on the pending count and backlog age readiness conditions.
 
 ### `platform_background_work_lease`
 
@@ -711,7 +798,8 @@ One history per module, not one shared table — a shared one serialises the ord
 permit.
 
 **No foreign key may cross a module boundary.** The either-order guarantee holds only for disjoint
-schemas, nothing in the mechanism enforces it, so the provider contract tests assert it directly.
+schemas, nothing in the mechanism enforces it, so the provider contract tests assert it directly,
+on both providers, against the applied schema.
 
 **Schema change is expand-then-contract.** A column is added, populated and read before anything
 stops writing the one it replaces; a breaking change is two releases rather than one. The
@@ -763,7 +851,7 @@ structure concurrent readers are walking.
 **`ForRole` is how Hosting starts work it cannot name.** It returns the registrations whose `Roles`
 include the host's role, which for the web host is the registration heartbeat alone.
 
-### Persistence
+### Persistence — transaction boundary
 
 ```csharp
 public enum TransactionIntent { ReadOnly, Write }
@@ -781,6 +869,36 @@ public interface IUnitOfWork
         CancellationToken cancellationToken);
 }
 
+public interface IAmbientTransaction
+{
+    TransactionIntent Intent { get; }
+    DbConnection Connection { get; }
+    DbTransaction Transaction { get; }
+}
+
+public interface IAmbientTransactionAccessor
+{
+    IAmbientTransaction? Current { get; }
+}
+```
+
+**The ambient transaction is one connection, mechanically.** Per-module contexts made the phrase
+ambiguous — "the caller's transaction" spans contexts that would each open a connection by default,
+and two connections is two transactions: the domain write and its outbox rows committing separately
+is the partial write the outbox exists to make impossible. The unit of work therefore owns the
+connection and the transaction, and **every participant — the product module's context and
+Platform's stores alike — enlists through `IAmbientTransactionAccessor` against that one
+connection**. The outbox store never opens its own. Enqueue's required ambient transaction is this
+pair, and nothing else satisfies it.
+
+**`TransactionIntent` is a parameter because no implementation can infer it.** "A transaction that
+will write begins immediate" is only actionable if the caller says which kind it is opening, and the
+deferred-then-upgrade shape is the one case the rule exists to prevent. Treating every transaction
+as a writer would be safe and would make the rule unfalsifiable.
+
+### Persistence — outbox
+
+```csharp
 public interface IOutboxWriter
 {
     OutboxMessageId Enqueue<TEvent>(TEvent @event) where TEvent : IIntegrationEvent;
@@ -858,30 +976,79 @@ public interface IMigrationRunner
 
     Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken);
 }
-
-public static class PlatformPayloadExtensions
-{
-    public static IServiceCollection AddPlatformPayloadConverter<TConverter>(
-        this IServiceCollection services)
-        where TConverter : JsonConverter, new();
-}
 ```
 
-**A converter for a product's own types is the whole payload extension point.** The serialiser is
-`System.Text.Json` with Platform-pinned options and is not injectable — it is part of the durable
-format, and a dependency-injection registration is not a setting, so the settings fingerprint could
-not see two hosts of one installation disagreeing about it. Pinning removes that condition rather
-than reporting it.
+**The registration is declarative, and each role validates the half it runs.** Both hosts register
+the triple — the web host must, in order to enqueue — but a registration is a statement, not a
+resolution: the web host records the handler *type* without ever constructing it, and the handler's
+constructor dependencies resolve and validate only in the role that dispatches. Name uniqueness and
+one-handler-per-Type check identically in both roles, off the declaration alone; a handler that
+cannot be constructed is a named **worker** startup failure and no failure at all in the web role.
+The registry legitimately holds two names for two CLR types that mean successive versions of one
+event — the shape the additive-payload rule assumes.
 
-**Four properties are the format, not preferences**, and none is reachable: unmapped members are
-ignored in both directions, enums serialize as strings, property naming and null handling are
-Platform's, and number handling is fixed. A converter changes bytes only for types the registering
-product also owns the handler for — the blast radius the additive-payload rule already governs.
+**The serialiser is `System.Text.Json` with a Platform-pinned options instance that is not
+injectable, and there is no extension point.** Four properties are the durable format, not
+preferences: unmapped members are ignored in both directions, enums serialize as strings, property
+naming and null handling are Platform's, and number handling is fixed. The converter escape hatch an
+earlier derivation carried is **cut** — a converter is a dependency-injection registration the
+settings fingerprint cannot see, so converter drift between the two hosts of a half-upgraded
+installation is exactly the silent format divergence pinning exists to remove. A payload is what
+`System.Text.Json` handles natively under the pinned options, or it is a different payload.
+
+**`Enqueue` returns the id and is synchronous** because it does not write — it looks up the stable
+`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, stamps tenant, trace context
+and correlation from the ambient scope, enlists in the ambient transaction, and the write happens on
+commit. The id is loggable and returnable before the insert, which is what makes it a usable dedupe
+key.
+
+**`Enqueue` throws `PlatformContractViolationException` on three conditions**: no ambient
+transaction, no ambient operation scope, and an event type that was never registered. The provider
+design requires the contract tests to assert the first two, and the third is listed with them
+because the same call site produces it. The alternatives are worse than a throw: a nullable
+trace context admits rows whose correlation appears nowhere upstream, and an implicitly minted scope
+fabricates a traceparent that dispatch will faithfully rebuild — a fiction indistinguishable at read
+time from a real origin. A call site that genuinely has only the enqueue opens a transaction and a
+scope around it, two explicit lines that state the intent. The third condition has nothing to write
+without the name.
+
+**Redrive is a conditional update that resets the dispatch state whole**: it clears the poison mark,
+`attempts`, `first_deferred_at` and the claim columns, **and sets `next_attempt_at` to now** — a
+poisoned row still carries whatever next attempt the final backoff wrote, hours ahead at the cap,
+and a redrive that left it would report success and deliver nothing for hours. Now rather than null
+keeps the redriven row's past-due age measured from the recovery, not from an `occurred_at` days
+old. It applies **only while the row is still in the poisoned state as the predicate table defines
+it** — so racing the prune pass returns `NotFound` rather than silent nothing, and a row someone
+already discarded returns `NotPoisoned` rather than being resurrected into one that can never
+deliver.
+
+**Per-id redrive and discard return an outcome per id, not a count.** "One of the forty rows you
+named was pruned" is a result, not a failure of the operation.
+
+**Both operations exist per row and in bulk by Type**, because a violated payload rule poisons in
+bulk and the recovery must not be a thousand hand-invocations. **No endpoint or console ships in D3
+to invoke them**; the sample demonstrates calling them.
+
+**`ILeaseHandle.RenewAsync` returning a failure obliges the holder to abort.** The lease is an
+optimisation against duplicate work, not a mutual-exclusion primitive: a holder can stall past its
+expiry while its work continues, and nothing fences it. Leased work must be idempotent, and
+non-idempotent work does not belong under a lease at all.
+
+**`ApplyAsync` is migrate mode's operation and its exclusion is the provider-native migration lock,
+never the lease.** An earlier derivation guarded it with the lease, which cannot do this job: the
+lease table is created by the very migration migrate mode is about to apply, so the guard is absent
+on exactly the run competing deploy scripts are most likely to race — and a lease expires, so a
+stalled migrator is unfenced while its DDL still lands. The native lock is connection-scoped, which
+closes both holes at once: no table, so no bootstrap ordering; released by the provider when the
+holding process dies, so no expiry window. A second concurrent invocation **fails fast** with
+`MigrationError.Locked`.
 
 ### Persistence — the provider seam
 
 ```csharp
 public enum PruneTarget { ProcessedOutboxRows, PoisonedOutboxRows, DeadHostRegistrations }
+
+public interface IMigrationLock : IAsyncDisposable;
 
 public interface IProviderCapability
 {
@@ -911,6 +1078,9 @@ public interface IProviderCapability
         int batchSize,
         CancellationToken cancellationToken);
 
+    Task<Result<IMigrationLock, MigrationError>> AcquireMigrationLockAsync(
+        CancellationToken cancellationToken);
+
     Task<Result<ConfigurationError>> AssertStartupPreconditionsAsync(
         CancellationToken cancellationToken);
 }
@@ -920,9 +1090,11 @@ public interface IProviderCapability
 member belongs here when the two providers must do something *different* to produce the same
 observable result.** Everything the providers do identically belongs in a store. That admits the
 instant formatter, the identifier encoder, the claim and bounded-delete statements, transaction-begin
-mode, the migration history name and the startup preconditions — WAL and the busy-wait bound — and
-nothing else. `StampClaimAsync` is the statement only; which row to dispatch and what to do with the
-outcome is policy and stays in the store.
+mode, the migration history name, **the migration exclusive lock** — an advisory lock on PostgreSQL,
+an exclusive transaction on SQLite — and the startup preconditions — WAL and the busy-wait bound —
+and nothing else. `StampClaimAsync` is the statement only, portable by default with PostgreSQL free
+to use its locking read underneath; which row to dispatch and what to do with the outcome is policy
+and stays in the store.
 
 ```csharp
 public interface IOutboxStore
@@ -933,21 +1105,22 @@ public interface IOutboxStore
     Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
         InstanceId holder, CancellationToken cancellationToken);
 
-    Task<Result<TransactionError>> MarkProcessedAsync(
-        OutboxMessageId id, CancellationToken cancellationToken);
+    Task<Result<bool, TransactionError>> MarkProcessedAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
 
-    Task<Result<TransactionError>> RecordFailureAsync(
-        OutboxMessageId id, string error, DateTimeOffset nextAttemptAt,
+    Task<Result<bool, TransactionError>> RecordFailureAsync(
+        OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt,
         CancellationToken cancellationToken);
 
-    Task<Result<TransactionError>> PoisonAsync(
-        OutboxMessageId id, string error, CancellationToken cancellationToken);
+    Task<Result<bool, TransactionError>> PoisonAsync(
+        OutboxMessageId id, InstanceId holder, string error, CancellationToken cancellationToken);
 
-    Task<Result<TransactionError>> DeferAsync(
-        OutboxMessageId id, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken);
+    Task<Result<bool, TransactionError>> DeferAsync(
+        OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken);
 
-    Task<Result<TransactionError>> ReleaseClaimAsync(
-        OutboxMessageId id, CancellationToken cancellationToken);
+    Task<Result<bool, TransactionError>> ReleaseClaimAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
 
     Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
         IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken);
@@ -965,10 +1138,12 @@ public interface IOutboxStore
     Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
         int limit, CancellationToken cancellationToken);
 
-    Task<Result<DateTimeOffset?, TransactionError>> OldestPendingOccurredAtAsync(
+    Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(
         CancellationToken cancellationToken);
 
-    Task<Result<int, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken);
+    Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken);
+
+    Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken);
 
     Task<Result<int, TransactionError>> PruneAsync(
         PruneTarget target, DateTimeOffset olderThan, int batchSize,
@@ -1011,51 +1186,25 @@ when a row is poisoned rather than deferred — two copies of that is the object
 already raised against a dialect-specific claim, applied to the surrounding logic rather than the
 statement.
 
-**`OldestPendingOccurredAtAsync` and `PoisonedCountAsync` exist because readiness needs them and the
-predicate table decides what they count.** Pending excludes poisoned rows; the poison count excludes
-discarded ones.
+**Every dispatch-state write is conditional on the live claim, which is why each takes the holder
+and returns `bool`.** `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`, `DeferAsync` and
+`ReleaseClaimAsync` apply only while `holder` still holds an unexpired claim on the row; `false`
+means the claim was lost and the write was a **no-op** — counted as evidence of duplicate delivery,
+never escalated, because losing a claim mid-flight is the at-least-once window working as priced.
+Without this, a stalled dispatcher completing after a reclaim-and-poison manufactures the both-set
+state — an operator disposition nobody made. Discard alone produces that state. `DeferAsync`
+additionally stamps `first_deferred_at` when it is unset.
+
+**`OldestPendingDueAsync`, `PendingCountAsync` and `PoisonedCountAsync` exist because readiness
+needs them and the predicate table decides what they count.** The oldest-due query considers pending
+rows only and returns the due instant — `next_attempt_at`, or `occurred_at` while it is null — so
+readiness measures **time past due**, never time since occurred; the pending count considers pending
+rows only; the poison count excludes discarded rows, because the decision a discarded row was
+demanding has been made.
 
 **Every store method self-guards on an absent schema**, returning `TransactionError.Unavailable`
 rather than throwing, so a first production run reports degraded with the schema named instead of
 turning a known condition into an unhealthy-by-exception.
-
-**`TransactionIntent` is a parameter because no implementation can infer it.** "A transaction that
-will write begins immediate" is only actionable if the caller says which kind it is opening, and the
-deferred-then-upgrade shape is the one case the rule exists to prevent. Treating every transaction
-as a writer would be safe and would make the rule unfalsifiable.
-
-**`Enqueue` returns the id and is synchronous** because it does not write — it looks up the stable
-`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, enlists in the caller's
-transaction, and the write happens on commit. The id is loggable and returnable before the insert,
-which is what makes it a usable dedupe key.
-
-**`Enqueue` throws `PlatformContractViolationException` on three conditions**: no ambient
-transaction, no ambient operation scope, and an event type that was never registered. The provider
-contract tests assert all three. The alternatives to the first two are worse than a throw: a nullable
-trace context admits rows whose correlation appears nowhere upstream, and an implicitly minted scope
-fabricates a traceparent that dispatch will faithfully rebuild — a fiction indistinguishable at read
-time from a real origin. A call site that genuinely has only the enqueue opens a transaction around
-it, one explicit line that states the intent. The third has nothing to write without the name.
-
-**Per-id redrive and discard return an outcome per id, not a count.** Racing the prune pass yields
-`NotFound` and a row someone already discarded yields `NotPoisoned`, both distinguishable from
-success — the design requires a clear "already pruned" rather than silent nothing, and requires that
-a discarded row is never resurrected into one that can never deliver.
-
-**Both operations exist per row and in bulk by Type**, because a violated payload rule poisons in
-bulk and the recovery must not be a thousand hand-invocations. **No endpoint or console ships in D3
-to invoke them**; the sample demonstrates calling them.
-
-**`ILeaseHandle.RenewAsync` returning a failure obliges the holder to abort.** The lease is an
-optimisation against duplicate work, not a mutual-exclusion primitive: a holder can stall past its
-expiry while its work continues, and nothing fences it. Leased work must be idempotent, and
-non-idempotent work does not belong under a lease at all.
-
-**`ApplyAsync` is migrate mode's operation and takes an exclusive lease before applying**, returning
-`MigrationError.Locked` if one is held. It is the operation with the most destructive potential per
-statement, and the ways to invoke it twice at once are entirely ordinary — a unit restarting a run
-that appeared to fail, an operator retrying in a second shell, both hosts' deploy scripts each
-helpfully migrating. Neither provider serialises this on our behalf.
 
 ### Hosting
 
@@ -1083,9 +1232,16 @@ that must not diverge between the two processes of one installation.
 migrations and telemetry are configured by nothing but the standard registration call; a second
 mandatory call is bespoke wiring by the first consumer.
 
+**Hosting runs registered background work on timers it owns**, invoking each registration's
+`TickAsync` on its declared interval, in the role each registration declares, without knowing what
+any of it is. Hosting does not reference Persistence; a host composed without Persistence is a
+supported shape with a smaller readiness surface, and the probe body's enumeration of registered
+checks is what keeps that scoping visible.
+
 **`MapPlatformProbes` is called by the worker form itself**, on its own loopback port, through the
 same endpoint code as the web role. It exists on the public surface so a web host can place the
-probes within its own route table.
+probes within its own route table. A port collision fails startup with a named bind error citing the
+setting rather than falling back silently.
 
 **`RunPlatformMigrateModeAsync` returns a process exit status.** It is a one-shot command, not a
 third host role.
@@ -1155,22 +1311,25 @@ public interface IPlatformTestHost : IAsyncDisposable
 }
 ```
 
-**`RunBackgroundWorkOnceAsync` is what makes background work deterministic in tests.** A test that
-waits for a timer is flaky by construction.
+**`RunBackgroundWorkOnceAsync` invokes one tick, which is what makes background work deterministic
+in tests.** The tick-shaped contract is what makes this possible: the test host owns the schedule,
+the fake clock supplies the instants the tick compares against, and no timing-dependent test
+contains a wall-clock wait.
 
 **The provider contract tests must assert at least the following**, which the design names
 individually. Their invocation surface is [Unresolved](#unresolved); what they assert is not.
 
 | Assertion | What it catches |
 |---|---|
-| Identifier blob sort order equals mint order, across a run minted in sequence | The SQLite `Guid` byte order scrambling a version-7 UUID's time ordering |
+| Identifier blob sort order equals mint order, across a run minted at **distinct clock instants** — the fake clock advances between mints, and no test asserts order within one millisecond | The SQLite `Guid` byte order scrambling a version-7 UUID's time ordering — without a frozen clock making the assertion false while the encoding is right |
 | Instant comparison is correct across a sub-second boundary, column **and** bound comparand | A trimming or variable-width writer making due messages ineligible |
 | `Id` is unique across a drain, prune-to-empty, insert cycle | SQLite rowid reuse, which is why the sequence is not the identity |
 | `Enqueue` throws without an ambient transaction | An outbox row committing apart from its domain write |
 | `Enqueue` throws without an ambient operation scope | A row whose correlation appears nowhere upstream |
 | `Enqueue` throws for an event type no registration bound to a name | A row stamped with a name nothing can resolve back to a type |
-| No foreign key crosses a module boundary | The either-order migration guarantee, which nothing else enforces |
+| No foreign key crosses a module boundary, in the applied schema, on both providers | The either-order migration guarantee, which nothing else enforces |
 | A claim is granted to exactly one of two concurrent claimants | The portable conditional-update claim, on both providers |
+| A dispatch-state write whose claim has been lost is a no-op | The race that would otherwise manufacture the discarded state without an operator |
 | A payload written under one provider deserializes under the other | The format is the serialiser's, not the provider's |
 | The suite goes red against a deliberately broken `IProviderCapability` | A suite that has never failed is not evidence, and the capability is the only place a difference is permitted to live |
 
@@ -1189,7 +1348,7 @@ Carried by `PlatformContractViolationException`. Never returned.
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
 | `NoAmbientTransaction` | `Enqueue` is called outside a unit of work | No | Fix the call site — open a transaction around the enqueue |
-| `NoAmbientOperationScope` | `Enqueue`, or an ambient accessor, is reached with no scope open | No | Fix the call site — a seeder or migrate-mode utility opens a scope explicitly |
+| `NoAmbientOperationScope` | `Enqueue`, or an ambient accessor, is reached with no scope open | No | Fix the call site — a seeder or migrate-mode utility opens a scope explicitly, which starts a real root trace |
 | `UnregisteredEventType` | `Enqueue` is called with an event type no registration bound to a stable name | No | Fix the call site — register the type. There is nothing to stamp on the row without the name |
 | `ResultAccessedIncorrectly` | `Value` read on a failure, or `Error` on a success | No | Fix the call site |
 
@@ -1231,17 +1390,20 @@ Carried by `PlatformContractViolationException`. Never returned.
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
 | `DuplicateHandlerForType` | A second handler registers for an `EventTypeName` already registered | No | Fails startup, naming the type and both handlers. A product that wants two things to happen writes one handler that does two things |
+| `DuplicateNameForEventType` | A second `EventTypeName` registers for a CLR event type already bound | No | Fails startup — enqueue could not choose which name to stamp |
+| `HandlerNotConstructible` | The handler's constructor dependencies fail to resolve, **checked only in the dispatching role** | No | Fails **worker** startup, naming the handler and the missing dependency. No failure in the web role, whose container never constructs it |
 | `RegistryFrozen` | Registration attempted after the host is built | No | Fails startup |
 
-**Enforcement is at startup only.** Enforcing at dispatch as well is the more rigorous reading — a
-container can be populated directly and bypass the registry — and was declined for one error path
+**Name and handler uniqueness are one verdict, checked identically in both roles off the declaration
+alone.** Enforcement is at startup only. Enforcing at dispatch as well is the more rigorous reading —
+a container can be populated directly and bypass the registry — and was declined for one error path
 rather than two. Revisitable if the bypass ever happens.
 
 ### Persistence — `TransactionError`
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `Unavailable` | The database cannot be reached | **Yes**, by the caller's own policy — never by Platform | Surfaces an error envelope carrying the correlation identity |
+| `Unavailable` | The database cannot be reached, or its schema is absent | **Yes**, by the caller's own policy — never by Platform | Surfaces an error envelope carrying the correlation identity; readiness checks report degraded citing the cause |
 | `Conflict` | A concurrency conflict aborts the transaction | **Yes** | May retry the whole unit of work; outbox rows roll back with the domain write |
 | `Busy` | SQLite's busy-wait bound elapsed without acquiring the write lock | **Yes** | Fails the operation normally; under contention this is the visible symptom |
 | `Faulted` | Any other failure inside the transaction | No | Surfaces; the rollback is complete |
@@ -1261,7 +1423,8 @@ that waiting cannot resolve, because no amount of waiting makes its read snapsho
 
 **Per-row dispositions are outcomes, not errors.** `NotFound` and `NotPoisoned` are returned per id
 in `OutboxAdministrationResult`, because "one of the forty rows you named was pruned" is a result, not
-a failure of the operation.
+a failure of the operation. A lost claim on a dispatch-state write is likewise an outcome — `false` —
+counted as duplicate-delivery evidence, never escalated.
 
 ### Persistence — `HandlerError`
 
@@ -1300,7 +1463,7 @@ attempt instead of poisoning instantly.
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
 | `Failed` | A migration failed to apply | No | Stops, and does not continue to the next module. Both providers apply a migration atomically, so the database is left at a known point |
-| `Locked` | Migrate mode found an exclusive lease held | **Yes**, once the other run finishes | Exits non-zero without applying anything |
+| `Locked` | Another invocation holds the provider-native migration lock | **Yes**, once the other run finishes | **Fails fast**, exiting non-zero without applying anything. The lock is connection-scoped: it exists on a fresh store and dies with its holder, so there is no expiry window and no bootstrap ordering |
 | `Unavailable` | The database cannot be reached | **Yes** | Exits non-zero; the operator retries |
 
 ### Hosting — `HostStartupError`
@@ -1310,6 +1473,7 @@ attempt instead of poisoning instantly.
 | `Configuration` | A `ConfigurationError` was raised during binding or validation | No | Aborts startup, surfacing the inner error's name and constraint |
 | `ModuleGraph` | A `ModuleGraphError` was raised during resolution | No | Aborts startup, surfacing the inner error |
 | `Registration` | Any registry rejected a registration | No | Aborts startup, surfacing the inner error |
+| `ProbeBindFailed` | The worker probe port cannot be bound | No | Aborts startup, **naming the setting** — the design's own environment puts two products on one server, and a silent fallback port would make the probe surface unfindable |
 
 **Startup aborts; it never degrades.** *Unavailability* with valid configuration is the opposite
 case and is not an error here at all — the host starts and reports not ready, because on a
@@ -1338,58 +1502,65 @@ Each is written to be assertable, with the module responsible for maintaining it
 |---|---|---|
 | 1 | Every persisted instant has `Offset == TimeSpan.Zero` and originates from `IClock`; no eligibility, claim-expiry or lease-expiry comparison reads a database clock | Persistence |
 | 2 | A persisted instant's SQLite text form is fixed-width, `Z`-suffixed, seven fractional digits, never trimmed — and every instant bound as a SQL parameter uses the same formatter as the column | Persistence |
-| 3 | An identifier's SQLite blob encoding is RFC 4122 network byte order, so bytewise blob order equals mint order | Persistence |
+| 3 | An identifier's SQLite blob encoding is RFC 4122 network byte order, so bytewise blob order equals mint order at millisecond resolution, the tie unspecified | Persistence |
 | 4 | Every outbox row is in exactly one of the four states, and every consumer — readiness, prune, redrive — derives its state from the predicate table rather than from a column of its own | Persistence |
 | 5 | `claimed_by` is null if and only if `claimed_at` is null | Persistence |
 | 6 | `poisoned_at` set implies `last_error` non-null | Persistence |
-| 7 | An outbox row is inserted only inside a transaction that also carries its domain write, and only inside an ambient operation scope | Persistence |
-| 8 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
-| 9 | No foreign key crosses a module boundary | Persistence |
-| 10 | A dispatched message's ambient context is reconstructed from its row — correlation from the stored traceparent's trace-id, tenant from the row, principal null — never inherited from the worker | Persistence |
-| 11 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
-| 12 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
-| 13 | `attempts` never decreases except through an explicit redrive | Persistence |
-| 14 | A claim covers exactly one row, and is granted to exactly one of any two concurrent claimants | Persistence |
-| 15 | Every background write is bounded — one row per claim and per mark, `PruneBatchSize` rows per prune statement | Persistence |
-| 16 | A transaction that will write begins immediate; the SQLite file is in WAL mode or the host does not start | Persistence |
-| 17 | Every persistence readiness check self-guards on an absent schema, reporting degraded with the schema named rather than throwing | Persistence |
-| 18 | Exactly one handler is registered per `EventTypeName`, and exactly one `EventTypeName` is registered per CLR event type | Persistence |
-| 19 | A stored `type` resolves to a CLR type through the registry alone — never through a runtime type name | Persistence |
-| 20 | Payload serialisation ignores unmapped members in both directions, writes enums as strings, and is reachable for extension only through a registered converter | Persistence |
-| 21 | A provider difference appears only in `IProviderCapability`; no store method branches on `PersistenceProvider` | Persistence |
-| 22 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
-| 23 | The health, background-work and handler registries accept no registration after `Freeze` | Core |
-| 24 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
-| 25 | Both retention settings and the connection string are present, or the host does not start | Core |
-| 26 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
-| 27 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
-| 28 | Liveness never evaluates an external dependency | Hosting |
-| 29 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
-| 30 | Every host writes its registration to the store it is using, and deletes its own row on graceful shutdown | Hosting |
-| 31 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
-| 32 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
-| 33 | A malformed inbound `traceparent` never fails the request | Hosting |
-| 34 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
-| 35 | The worker probe binds loopback unless explicitly configured otherwise | Hosting |
-| 36 | The probe body is `Full` only on loopback or in the development environment, and the status is identical at either detail level | Hosting |
-| 37 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
-| 38 | Peer absence is informational in the development environment, and degrades elsewhere only after the startup grace has elapsed | Hosting |
-| 39 | Telemetry export never propagates a failure to a caller | Observability |
-| 40 | No secret appears in any exported log, span attribute or metric label | Observability |
-| 41 | No metric is labelled with an unbounded value | Observability |
+| 7 | An outbox row is inserted only inside an ambient transaction that also carries its domain write, and only inside an ambient operation scope | Persistence |
+| 8 | The ambient transaction is one connection owned by the unit of work; every participant enlists against it, and the outbox store never opens its own | Persistence |
+| 9 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
+| 10 | No foreign key crosses a module boundary | Persistence |
+| 11 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant from the row, principal null — never inherited from the worker | Persistence |
+| 12 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
+| 13 | The correlation column is stamped from the ambient correlation at enqueue and propagates unchanged through derived events at any depth | Persistence |
+| 14 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
+| 15 | `attempts` never decreases except through an explicit redrive | Persistence |
+| 16 | Every dispatch-state write — mark processed, record failure, defer, poison, release — applies only while the writer holds the live claim; a write that lost its claim is a no-op, counted as duplicate-delivery evidence and never escalated | Persistence |
+| 17 | Discard alone produces the both-marks-set state | Persistence |
+| 18 | Redrive applies only in the poisoned state; it clears the poison mark, `attempts`, `first_deferred_at` and the claim columns, and sets `next_attempt_at` to now | Persistence |
+| 19 | A claim covers exactly one row, and is granted to exactly one of any two concurrent claimants | Persistence |
+| 20 | The dispatcher claims nothing while this host has unapplied migrations | Persistence |
+| 21 | A pending row is never pruned; processed rows prune on the processed window, poisoned and discarded rows on the poison window | Persistence |
+| 22 | Every background write is bounded — one row per claim and per mark, `PruneBatchSize` rows per prune statement | Persistence |
+| 23 | A transaction that will write begins immediate; the SQLite file is in WAL mode or the host does not start | Persistence |
+| 24 | Every persistence readiness check self-guards on an absent schema, reporting degraded with the schema named rather than throwing | Persistence |
+| 25 | Exactly one handler is registered per `EventTypeName`, and exactly one `EventTypeName` per CLR event type; handler constructor graphs validate only in the dispatching role, and the registry accepts no registration after `Freeze` | Persistence |
+| 26 | A stored `type` resolves to a CLR type through the registry alone — never through a runtime type name | Persistence |
+| 27 | Payload serialisation is the pinned `System.Text.Json` options — unmapped members ignored in both directions, enums as strings, fixed naming, null and number handling — with no reachable extension point | Persistence |
+| 28 | Backlog age measures pending rows only and time past due only; the pending count counts pending rows only; the poison count excludes discarded rows | Persistence |
+| 29 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
+| 30 | The health and background-work registries and the module graph accept no registration after `Freeze` | Core |
+| 31 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
+| 32 | Both retention settings and the connection string are present, or the host does not start | Core |
+| 33 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
+| 34 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
+| 35 | Liveness never evaluates an external dependency | Hosting |
+| 36 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
+| 37 | Every host writes its registration to the store it is using; the first successful heartbeat is the registration, and the host deletes its own row on graceful shutdown | Hosting |
+| 38 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
+| 39 | Hosting owns every background-work timer; a registration exposes a tick and no schedule of its own | Hosting |
+| 40 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
+| 41 | A malformed inbound `traceparent` never fails the request | Hosting |
+| 42 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
+| 43 | The worker probe binds loopback unless explicitly configured otherwise, and a port collision fails startup naming the setting | Hosting |
+| 44 | The probe body is `Full` only on loopback or in the development environment; the status is identical at either detail level, and the body enumerates every registered check | Hosting |
+| 45 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
+| 46 | Peer absence is informational in the development environment; elsewhere it degrades only once it has persisted for the rolling grace window, measured on the observing host's clock from the absence first being seen | Hosting |
+| 47 | Telemetry export never propagates a failure to a caller | Observability |
+| 48 | No secret appears in any exported log, span attribute or metric label | Observability |
+| 49 | No metric is labelled with an unbounded value | Observability |
 
 ---
 
 ## Unresolved
 
-The design does not determine these. **None of them blocks implementation** — the three that did
-were settled on 2026-08-03 and are now in the design, and each of the seven below has a safe
+The design does not determine these. **None of them blocks implementation** — each has a safe
 provisional reading with no stated value. Each still needs a decision-log entry when someone picks
 one, because each sets a value a future reader would ask "why?" about.
 
-1. **The settings fingerprint's canonical form and hash algorithm.** Membership is now determined —
-   the `[Fingerprinted]` marker and the rule behind it. The canonical serialisation of those values
-   and the digest over it are not, and two hosts computing them differently would report a permanent
+1. **The settings fingerprint's canonical form and hash algorithm.** Membership is determined — the
+   `[Fingerprinted]` marker and the rule behind it. The canonical serialisation of those values and
+   the digest over it are not, and two hosts computing them differently would report a permanent
    false mismatch.
 
 2. **Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.** The design makes both
@@ -1397,9 +1568,9 @@ one, because each sets a value a future reader would ask "why?" about.
    from what it says. What value is too large to hold the single write lock for is not stated.
 
 3. **The wire format of the error envelope and the probe body.** Determined: the envelope's two
-   fields, that the probe body narrows by detail level, and that neither carries exception text or
-   payload content. Undetermined: media type, member names, and whether the envelope reuses an
-   existing problem-details shape.
+   fields, that the probe body narrows by detail level and enumerates registered checks, and that
+   neither carries exception text or payload content. Undetermined: media type, member names, and
+   whether the envelope reuses an existing problem-details shape.
 
 4. **The per-check default timeout, and the probe endpoint's overall timeout.** The design sizes the
    SQLite busy-wait bound as "shorter than a probe timeout" without stating that timeout.
@@ -1409,7 +1580,8 @@ one, because each sets a value a future reader would ask "why?" about.
    The design names the concept and not its construction.
 
 6. **The naming convention for a module's migration history table.** One history per module is
-   determined; what each is called, and therefore whether two modules can collide, is not.
+   determined and the capability supplies the name; what convention it follows, and therefore
+   whether two modules can collide, is not.
 
 7. **The provider contract tests' invocation surface.** What they must assert is determined and
    listed above. Whether they are an abstract base class, a shared suite parameterised by a provider
