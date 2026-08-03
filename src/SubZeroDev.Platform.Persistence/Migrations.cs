@@ -145,6 +145,11 @@ internal sealed class MigrationRunner(
 
     public async Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken)
     {
+        if (FindHistoryTableCollision() is { } collision)
+        {
+            return Result<MigrationError>.Failure(collision);
+        }
+
         var acquired = await capability.AcquireMigrationLockAsync(cancellationToken).ConfigureAwait(false);
         if (!acquired.IsSuccess)
         {
@@ -248,6 +253,30 @@ internal sealed class MigrationRunner(
         }
 
         return applied;
+    }
+
+    /// <summary>Rejects two modules whose history tables resolve to one name before anything is
+    /// applied.</summary>
+    /// <remarks>Module names are unique case-sensitively, so <c>Orders</c> and <c>orders</c> are two
+    /// legal modules — and both resolve to one history table. Sharing a history is silent corruption
+    /// of the exact mechanism per-module histories exist to provide: each module would read the
+    /// other's applied list and skip its own migrations as already applied.</remarks>
+    private MigrationError? FindHistoryTableCollision()
+    {
+        var byTable = new Dictionary<string, ModuleName>(StringComparer.Ordinal);
+
+        foreach (var source in sources)
+        {
+            var table = capability.MigrationHistoryTable(source.Module);
+            if (byTable.TryGetValue(table, out var existing) && existing != source.Module)
+            {
+                return MigrationError.HistoryTableCollision(existing, source.Module, table);
+            }
+
+            byTable[table] = source.Module;
+        }
+
+        return null;
     }
 
     /// <summary>Lists every migration history table actually present, tolerating a schema that does

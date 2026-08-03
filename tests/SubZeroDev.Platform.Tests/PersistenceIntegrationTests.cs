@@ -107,6 +107,50 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Two_modules_resolving_to_one_history_table_are_refused_before_anything_applies()
+    {
+        // Module names are unique case-sensitively, so these are two legal, distinct modules — and
+        // both resolve to one history table. Sharing a history would have each skip its own
+        // migrations as already applied, which is why this is caught rather than tolerated.
+        var upper = new TestMigrationSource(
+            "Ledger", TestMigration.Sql("0001_create", "CREATE TABLE t_ledger_upper (id TEXT PRIMARY KEY);"));
+        var lower = new TestMigrationSource(
+            "ledger", TestMigration.Sql("0001_create", "CREATE TABLE t_ledger_lower (id TEXT PRIMARY KEY);"));
+
+        await using var host = await StartAsync(sources: [upper, lower]);
+
+        var applied = await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None);
+
+        Assert.False(applied.IsSuccess);
+        Assert.Equal(nameof(MigrationError.HistoryTableCollision), applied.Error.Code);
+        Assert.Contains("Ledger", applied.Error.Detail, StringComparison.Ordinal);
+        Assert.Contains("ledger", applied.Error.Detail, StringComparison.Ordinal);
+
+        // Refused *before* anything applies: neither module's table exists.
+        Assert.Equal(0, await CountTablesAsync(_connectionString, "t_ledger_upper"));
+        Assert.Equal(0, await CountTablesAsync(_connectionString, "t_ledger_lower"));
+    }
+
+    [Fact]
+    public async Task An_unreachable_store_degrades_rather_than_reporting_a_non_retryable_fault()
+    {
+        // A database that is merely down is the most retryable condition in the system. A connect
+        // timeout surfaces as a cancellation rather than a provider exception, which without an
+        // explicit arm classifies as Faulted — not retryable — for exactly that condition.
+        await using var host = await StartAsync(UnreachableConnectionString(), sources: []);
+
+        var report = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
+        var database = Assert.Single(report.Entries, entry => entry.Name == PlatformHealthChecks.Database);
+
+        Assert.Equal(HealthStatus.Degraded, database.Status);
+
+        // No exception message reaches the body — invariant 46 admits no exception text into a
+        // probe body, and a classifier that passed one through is how it got there.
+        Assert.DoesNotContain("Exception", database.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("cancel", database.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task No_foreign_key_crosses_a_module_boundary()
     {
         // The rule the design states and nothing in the mechanism enforces on its own: separate
@@ -333,6 +377,10 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     protected abstract Task<int> CountRowsAsync(string connectionString, string table, string id);
+
+    /// <summary>How many tables of this name exist — 0 or 1. Used to assert a migration did *not*
+    /// apply, which counting rows cannot express against a table that should not be there at all.</summary>
+    protected abstract Task<int> CountTablesAsync(string connectionString, string table);
 
     protected abstract Task<int> CountCrossModuleForeignKeysAsync(string connectionString, string ownerTable, string referencingTable);
 

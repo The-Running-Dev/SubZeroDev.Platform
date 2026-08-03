@@ -96,13 +96,15 @@ internal sealed class SqliteProviderCapability(PersistenceOptions options) : IPr
     public async Task<Result<IMigrationLock, MigrationError>> AcquireMigrationLockAsync(
         CancellationToken cancellationToken)
     {
-        // Fails fast rather than waiting indefinitely: Microsoft.Data.Sqlite treats a zero busy
-        // timeout as "no timeout" (retries forever) rather than SQLite's own "fail immediately", so
-        // this uses the shortest timeout the connection string actually honours. An immediate
-        // transaction acquires SQLite's single write lock up front — the same mutual exclusion an
-        // exclusive transaction would give for this purpose, and the one the ADO surface exposes a
-        // real DbTransaction for, which the runner needs to hand to a module's migration.
-        var connection = new SqliteConnection(ConnectionString(busyTimeout: TimeSpan.FromSeconds(1)));
+        // Bounded by the configured busy-wait, which is what that setting already means: how long a
+        // write waits for the single write lock before failing, and acquiring this lock is exactly
+        // that write. It must be bounded rather than zero — Microsoft.Data.Sqlite reads a zero
+        // timeout as "retry forever" rather than SQLite's own "fail immediately", so zero would turn
+        // a fail-fast lock into one that never fails. An immediate transaction takes the write lock
+        // up front — the same mutual exclusion an exclusive transaction gives for this purpose, and
+        // the one the ADO surface exposes a real DbTransaction for, which the runner hands to a
+        // module's migration.
+        var connection = new SqliteConnection(ConnectionString());
         DbTransaction? transaction = null;
 
         try
@@ -163,7 +165,8 @@ internal sealed class SqliteProviderCapability(PersistenceOptions options) : IPr
     {
         SqliteException sqlite when IsBusy(sqlite) => TransactionError.Busy(),
         SqliteException => TransactionError.Unavailable(),
-        _ => TransactionError.Faulted(exception.Message),
+        OperationCanceledException or TimeoutException => TransactionError.Unavailable(),
+        _ => TransactionError.Faulted(),
     };
 
     private string ConnectionString(TimeSpan? busyTimeout = null)

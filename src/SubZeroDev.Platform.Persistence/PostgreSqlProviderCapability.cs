@@ -133,7 +133,12 @@ internal sealed class PostgreSqlProviderCapability(PersistenceOptions options) :
     {
         PostgresException { SqlState: "40001" or "40P01" } => TransactionError.Conflict(),
         NpgsqlException => TransactionError.Unavailable(),
-        _ => TransactionError.Faulted(exception.Message),
+
+        // Npgsql surfaces a connect or command timeout as a cancellation rather than as an
+        // NpgsqlException, so without this arm the single most retryable condition in the system —
+        // a database that is merely down — reports itself as not retryable.
+        OperationCanceledException or TimeoutException => TransactionError.Unavailable(),
+        _ => TransactionError.Faulted(),
     };
 
     private sealed class PostgresMigrationLock(NpgsqlConnection connection, NpgsqlTransaction transaction)

@@ -100,6 +100,108 @@ Persistence existing, and quietly turns "a host composed without Persistence is 
 false the day Hosting's own composition path starts touching Persistence types unconditionally.
 Reversibility: cheap now; expensive once a product's `Program.cs` is written against either shape.
 
+### 2026-08-03 — The provider contract tests are an abstract base with one subclass per provider
+Context: The last of the contract's seven unresolved items, assigned to S2 and settled by it without
+being recorded — the same omission the entries above were written to correct. It decides how a third
+party runs the suite against a provider of their own, so leaving it open invites a future session to
+re-decide it and diverge from what shipped.
+Chosen: **an abstract base class holding every assertion, with one subclass per provider.** A
+subclass supplies a connection string, its lifecycle, and the handful of schema queries an assertion
+needs that have no portable form — listing a table's foreign keys, counting tables by name. Every
+assertion lives once. PostgreSQL's subclass takes a container per test class and a fresh database per
+test; SQLite's takes a temp file. A third party adds a subclass.
+Rejected: **A shared suite parameterised by a provider factory** — no inheritance, and the
+provider-specific schema queries would have to be passed in as a bag of delegates or pushed into the
+capability, which the membership rule forbids since they are test concerns and not runtime
+differences. **`[Theory]` over a provider enum** — the least ceremony, and container lifetime per
+test case rather than per class makes the PostgreSQL run far slower, while a third party could not
+add a provider without editing Platform's own test file.
+Reversibility: cheap for this repository, expensive once a third party's suite inherits the base.
+
+### 2026-08-03 — The six dependencies S2 took, none of which had been logged
+Context: `AGENTS.md` requires a log entry naming the alternatives whenever a dependency is taken, and
+[ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4 requires one when a package is
+*passed over* too. S2 took six and logged none — caught by a second reconcile pass, not by review.
+The entry below on xUnit was titled "and nothing else was added", which stopped being true the moment
+Persistence existed; its title is now scoped to S1, which is what its body always claimed.
+Chosen: **`Npgsql`** and **`Microsoft.Data.Sqlite.Core`** with **`SQLitePCLRaw.bundle_e_sqlite3`** —
+the ADO providers for the two databases the contract names by enum value, so there is no version of
+D3 that does not take them. The `.Core` package plus an explicit SQLite bundle rather than the
+umbrella `Microsoft.Data.Sqlite`, because the umbrella pulls a bundle transitively at a version
+carrying a known advisory, and naming the bundle explicitly is what lets it be pinned. **The
+`Microsoft.Extensions` DI and hosting abstractions**, already the dependency line Abstractions
+accepted for `IPlatformModule.Register`, extended here for `IHostedLifecycleService` and the
+registration extension. **`Testcontainers.PostgreSql`** for tests only: it starts a disposable
+PostgreSQL per test class, so the contract suite runs identically on a developer's machine and in CI
+with no ambient database to arrange or reset.
+Rejected: **Pointing the tests at an already-running PostgreSQL** via a connection string from
+configuration — no test dependency at all, and it makes the suite's result depend on the state of a
+database nobody owns, needs a documented setup step the brief's self-hosted audience would also have
+to follow, and gives CI something to provision separately. **Testing PostgreSQL behaviour against
+SQLite alone** — the fourth CI assertion is that both providers pass, so a suite that runs one
+proves the opposite of what it claims. **Entity Framework Core** for the store or the migrations —
+the largest thing not taken, and [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4
+requires saying why: the design's provider seam is one store implementation parameterised by a
+capability, the migrations are a dozen lines of DDL per module, and EF Core would supply a model,
+a change tracker and a migration history this design has already specified differently — its own
+per-module histories, its own instant and identifier encodings. It remains available to a *product*
+for its own tables, which §2's refusal to impose a repository pattern exists to protect.
+Reversibility: cheap for Testcontainers, which no shipped package references. **Expensive for the two
+ADO providers**, which are the contract's own provider enum made real.
+
+### 2026-08-03 — Reconciling S2, second pass: four defects the first pass did not look for
+Context: A second `/reconcile` run over the same tree, verifying behaviour by executing it rather
+than by reading it. The first pass compared signatures and prose and found real drift; it did not run
+the system, and four defects were invisible from the source alone. One of them invalidates a claim
+the first pass itself made.
+Chosen: **(1) No `TransactionError` variant carries an exception message.** `Faulted` took
+`exception.Message` and health checks passed it into `HealthCheckResult.Detail`, which the probe
+renders at full detail — verified returning `"detail":"The operation was canceled."` on the wire, a
+plain violation of invariant 46. `Faulted()` now takes no argument and every variant's detail is a
+fixed operator-facing string. **(2) A connect or command timeout classifies as `Unavailable`, not
+`Faulted`.** Both providers surface it as `OperationCanceledException`, which matched no provider
+exception arm and fell through to `Faulted` — reporting `IsRetryable = false` for a database that is
+merely down, the single most retryable condition in the system. **(3) The SQLite migration lock
+honours `Persistence:SqliteBusyWaitBound`** instead of a hardcoded second, which also makes true a
+sentence the first reconcile pass had added to the contract while the code disagreed with it. **(4)
+`ApplyAsync` refuses two modules whose history tables resolve to one name**, with a new
+`MigrationError.HistoryTableCollision`, before acquiring the lock and before applying anything.
+Module names are unique *case-sensitively*, so `Orders` and `orders` are two legal modules — verified
+— and both snake-case to one table; sharing a history means each reads the other's applied list and
+skips its own migrations. The first pass had asserted in the contract that the registry already
+prevented this. It does not.
+Rejected: **(1) Qualifying invariant 46 to permit messages at full detail** — full detail is loopback
+and Development only, so nothing leaves the box; declined because it turns an absolute invariant into
+a conditional one, and full detail is still reachable by anything running on the host. **(2) Leaving
+`Faulted` as the catch-all** and documenting it — no code change, and `IsRetryable` then misreports
+the one condition it exists for. **(3) Correcting the doc to name a fixed one second** — keeps the
+wait short, and leaves a magic number in a package where every other duration is a setting. **(4)
+Correcting the doc to admit the hazard and leaving it unguarded** — honest, and it documents a
+silent-corruption path instead of closing it for a dictionary lookup.
+Reversibility: cheap for all four. (1) is expensive in one direction only — a consumer parsing a
+detail string would break, and no consumer should be parsing one, which is why it is fixed now.
+
+### 2026-08-03 — Readiness answers even when its own budget expires
+Context: Found by the same executing pass, in S1's code rather than S2's. The probe links every
+check's timeout to an endpoint budget; when the budget expired, `RunOneAsync`'s cancellation handler
+was guarded on that same budget token, so the guard was false exactly when it was needed, the second
+handler excluded `OperationCanceledException`, and the exception escaped `RunAsync`. Readiness then
+answered **500 with an error envelope and no report**. Today's two checks sum to 15 s against a 15 s
+budget — measured at 15.18 s, on the edge — and S3 adds two checks with S6 adding three, so this
+moves from edge case to normal.
+Chosen: guard on the **caller's** token instead. The budget expiring degrades the entries that did
+not finish and still returns the report; only a genuinely disconnected client stops the probe, since
+there is then nobody to read it. `AGENTS.md` says a defect found outside the current slice is noted
+rather than fixed, and this was fixed anyway: readiness is the always-on surface this design routes
+every silent condition through, and a 500 there drains the host while telling the operator nothing.
+Both behaviours now have a test, and the budget test was confirmed to fail against the old guard
+before the fix was kept.
+Rejected: **Noting it and deferring to its own slice** — the strict reading of the out-of-slice rule,
+and it leaves a latent 500 on the operational surface through the two slices that make it routine.
+**Raising the endpoint budget above the sum of the check timeouts** — treats the arithmetic and not
+the escape, and the sum grows with every slice while the budget would have to be guessed ahead of it.
+Reversibility: cheap.
+
 ### 2026-08-03 — Reconciling S2: the capability seam was not implementable, and four values it set
 Context: `/reconcile` against the working tree after S2. The largest finding is one no reading of the
 contract would have caught, because the contract was self-consistent and the code was too: building
@@ -177,7 +279,7 @@ query hitting the same staleness would have no such retry.
 Reversibility: cheap. Connection pooling is a performance detail with no public surface; the fix is
 one property on a connection string builder.
 
-### 2026-08-03 — xUnit is the test framework, and nothing else was added
+### 2026-08-03 — xUnit is the test framework, and S1 added nothing else
 Context: [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4 and `AGENTS.md` both require a decision-log entry naming the alternatives whenever a dependency is taken. S1 takes exactly one that is not in the shared framework.
 Chosen: **xUnit**, with `Microsoft.NET.Test.Sdk` and the Visual Studio runner. It is the .NET SDK template default, it needs no attribute ceremony for a plain fact, and its licence is durable — Apache 2.0 under the .NET Foundation, which is the qualifier ADR-004 §4 added after three foundational libraries in this corner of .NET changed licence inside one year.
 Rejected: **NUnit** — equally durable, and its per-class fixture lifetime differs from the constructor-per-test model these tests are written against. **MSTest** — first-party and fine, and the ecosystem around it is thinner for the assertion styles used here. **Adding an assertion library** such as FluentAssertions or Shouldly — better failure messages, and FluentAssertions' own move to a paid licence at v8 is precisely the durability risk ADR-004 §4 exists to price; xUnit's built-in assertions cover every case here. **Adding a mocking library** — nothing here needs one: every double in the suite is a small hand-written class, which is also what keeps the doubles readable as specifications of the contract.

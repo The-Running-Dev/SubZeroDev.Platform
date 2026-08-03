@@ -63,6 +63,16 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    protected override async Task<int> CountTablesAsync(string connectionString, string table)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public' AND tablename = @name;";
+        command.Parameters.AddWithValue("@name", table);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     protected override async Task<int> CountCrossModuleForeignKeysAsync(
         string connectionString, string ownerTable, string referencingTable)
     {

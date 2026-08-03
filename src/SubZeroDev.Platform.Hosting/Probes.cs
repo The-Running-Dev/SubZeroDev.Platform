@@ -23,19 +23,30 @@ internal sealed class HealthProbe(IHealthCheckRegistry registry)
         var entries = new List<HealthReportEntry>();
         foreach (var check in registry.Registered.Where(check => check.Kind == kind))
         {
-            entries.Add(await RunOneAsync(check, budget.Token).ConfigureAwait(false));
+            entries.Add(await RunOneAsync(check, budget.Token, cancellationToken).ConfigureAwait(false));
         }
 
         return new HealthReport(Aggregate(entries, registry, kind), entries);
     }
 
-    private static async Task<HealthReportEntry> RunOneAsync(IHealthCheck check, CancellationToken cancellationToken)
+    /// <summary>Runs one check under two deadlines: its own timeout, and the endpoint's remaining
+    /// budget. Exhausting either yields an unhealthy entry rather than an exception, because the
+    /// probe's job is to answer — a readiness endpoint that throws tells an operator nothing and
+    /// drains the host while doing it.</summary>
+    /// <param name="check">The check to run.</param>
+    /// <param name="budget">The endpoint's overall budget, which the check's own timeout links to.</param>
+    /// <param name="callerCancelled">The request's token. The only cancellation that stops the probe
+    /// rather than degrading one entry, since a disconnected client has nothing to read the report.</param>
+    private static async Task<HealthReportEntry> RunOneAsync(
+        IHealthCheck check,
+        CancellationToken budget,
+        CancellationToken callerCancelled)
     {
         var started = Stopwatch.GetTimestamp();
 
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(budget);
             timeout.CancelAfter(check.Timeout);
 
             var result = await check.CheckAsync(timeout.Token).ConfigureAwait(false);
@@ -46,9 +57,11 @@ internal sealed class HealthProbe(IHealthCheckRegistry registry)
                 result.Detail,
                 result.Data);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (!callerCancelled.IsCancellationRequested)
         {
-            // A hanging check is unhealthy at its timeout, and it never escapes the endpoint.
+            // A hanging check is unhealthy at its timeout, and it never escapes the endpoint. The
+            // guard is the *caller's* token, not the endpoint budget: when the budget expires the
+            // report must still be returned, so only a genuine client disconnect stops the probe.
             return Failed(check, started, "The check did not complete within its timeout.");
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

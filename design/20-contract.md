@@ -1105,9 +1105,10 @@ on exactly the run competing deploy scripts are most likely to race — and a le
 stalled migrator is unfenced while its DDL still lands. The native lock is connection-scoped, which
 closes both holes at once: no table, so no bootstrap ordering; released by the provider when the
 holding process dies, so no expiry window. A second concurrent invocation **fails fast** with
-`MigrationError.Locked` — on SQLite that means at the busy-wait bound rather than instantly, because
-`Microsoft.Data.Sqlite` reads a zero timeout as *wait forever* rather than as SQLite's own *fail
-immediately*, so the shortest honoured bound is what "fast" can mean there.
+`MigrationError.Locked` — on SQLite that means at `Persistence:SqliteBusyWaitBound`, the same setting
+that bounds every other write's wait for the single write lock, because acquiring this lock *is* that
+write. It cannot be zero: `Microsoft.Data.Sqlite` reads a zero timeout as *wait forever* rather than
+as SQLite's own *fail immediately*, so zero would turn a fail-fast lock into one that never fails.
 
 **One run is one transaction, so a failure rolls the whole run back.** This is a consequence of the
 lock rather than a separate choice: on SQLite the exclusion *is* the transaction, so committing each
@@ -1564,10 +1565,15 @@ rather than two. Revisitable if the bypass ever happens.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `Unavailable` | The database cannot be reached, or its schema is absent | **Yes**, by the caller's own policy — never by Platform | Surfaces an error envelope carrying the correlation identity; readiness checks report degraded citing the cause |
+| `Unavailable` | The database cannot be reached, or its schema is absent. **Includes a connect or command timeout**, which both providers surface as a cancellation rather than as a provider exception | **Yes**, by the caller's own policy — never by Platform | Surfaces an error envelope carrying the correlation identity; readiness checks report degraded citing the cause |
 | `Conflict` | A concurrency conflict aborts the transaction | **Yes** | May retry the whole unit of work; outbox rows roll back with the domain write |
 | `Busy` | SQLite's busy-wait bound elapsed without acquiring the write lock | **Yes** | Fails the operation normally; under contention this is the visible symptom |
 | `Faulted` | Any other failure inside the transaction | No | Surfaces; the rollback is complete |
+
+**No variant's `Detail` carries an exception message.** Every one is a fixed operator-facing string,
+because a readiness body renders `Detail` at full detail and invariant 46 admits no exception text
+into a probe body. The exception goes to the log, where the correlation ties the two together — the
+same division the error envelope already makes.
 
 **Platform retries nothing on the request path.** A generic retry doubles load on a struggling
 database and turns a fast failure into a slow one.
@@ -1626,6 +1632,7 @@ attempt instead of poisoning instantly.
 | `Failed` | A migration failed to apply | No | Stops, and does not continue to the next module. **The whole run rolls back** — every migration that run had applied, across every module — so the database is left exactly as the run found it |
 | `Locked` | Another invocation holds the provider-native migration lock | **Yes**, once the other run finishes | **Fails fast**, exiting non-zero without applying anything. The lock is connection-scoped: it exists on a fresh store and dies with its holder, so there is no expiry window and no bootstrap ordering |
 | `Unavailable` | The database cannot be reached | **Yes** | Exits non-zero; the operator retries |
+| `HistoryTableCollision` | Two modules' history tables resolve to one name — module names are unique case-sensitively, so `Orders` and `orders` are two legal modules sharing one table | No | **Fails before acquiring the lock and before applying anything**, naming both modules and the table. Sharing a history is silent corruption of what per-module histories provide: each module reads the other's applied list and skips its own migrations as already applied |
 
 ### Hosting — `HostStartupError`
 
@@ -1748,11 +1755,15 @@ renumbering would silently break every reference.
    The design names the concept and not its construction.
 
 6. ~~**The naming convention for a module's migration history table.**~~ **Resolved in S2:**
-   `platform_migrations_{module}`, the module name in lower snake case. Two modules collide exactly
-   when their names collide, which the module registry already rejects. See
-   [`90-decisions.md`](90-decisions.md).
+   `platform_migrations_{module}`, the module name in lower snake case. **Two distinct modules can
+   collide** — names are unique case-sensitively, so `Orders` and `orders` are both legal and both
+   resolve to one table — so `ApplyAsync` rejects a collision with `HistoryTableCollision` before
+   applying anything, rather than letting two modules share one history and skip each other's
+   migrations. See [`90-decisions.md`](90-decisions.md).
 
-7. **The provider contract tests' invocation surface.** What they must assert is determined and
-   listed above. Whether they are an abstract base class, a shared suite parameterised by a provider
-   factory, or something else, is not — and it decides how a third party runs them against a
-   provider of their own.
+7. ~~**The provider contract tests' invocation surface.**~~ **Resolved in S2:** an abstract base
+   class holding every assertion, with one subclass per provider supplying a connection string and
+   the few provider-specific schema queries an assertion needs. PostgreSQL's subclass sources its
+   store from a container per test class and a database per test; SQLite's from a temp file. A third
+   party runs the suite against a provider of their own by adding a subclass. See
+   [`90-decisions.md`](90-decisions.md).

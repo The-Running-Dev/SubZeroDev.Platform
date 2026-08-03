@@ -77,6 +77,20 @@ and preferences belong in `AGENTS.md`.
   connection string the store builds. **Cost: a wrong diagnosis that looked right, plus the
   repro loop to overturn it.** When a fix is "it stopped failing", suspect the odds changed
   rather than the cause.
+- **A test standing in for an acceptance criterion must reproduce the criterion's stated
+  condition, not a neighbouring one.** The criterion was "against a store whose schema is
+  absent"; the test used an *unreachable* store. Both produce a degraded report, so it passed —
+  through a different branch, for a different reason — and the half of the criterion that named
+  a specific check went unexercised. **Cost: twelve criteria reported met when one was not,
+  found only by running the literal stated condition against the sample, after the work was
+  committed and the claim made.** Read the criterion and the test side by side and ask which
+  words differ.
+- **A timeout shortened to make a test fast hides the behaviour the test exists to prove.**
+  Pinning `Timeout=1` in an unreachable-store connection string concealed both a 15-second
+  real-world readiness probe and a retryability misclassification. **Cost: two defects survived
+  a suite that was green on the exact scenario they live in**, surfacing only when the sample
+  ran at provider defaults. If a test tunes a timeout for speed, something else has to exercise
+  the default.
 - **A test that proves a safety net works needs inputs wide enough to trip it.** The
   "goes red against a broken identifier encoder" test first minted 100 ids one millisecond
   apart and **passed against the deliberately broken encoder** — the platform's native `Guid`

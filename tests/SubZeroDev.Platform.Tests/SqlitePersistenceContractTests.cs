@@ -51,6 +51,19 @@ public sealed class SqlitePersistenceContractTests : PersistenceContractTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    protected override async Task<int> CountTablesAsync(string connectionString, string table)
+    {
+        await using var connection = OpenNonPooled(connectionString);
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = @name;";
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "@name";
+        parameter.Value = table;
+        command.Parameters.Add(parameter);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     protected override async Task<int> CountCrossModuleForeignKeysAsync(
         string connectionString, string ownerTable, string referencingTable)
     {
