@@ -11,6 +11,9 @@ namespace SubZeroDev.Platform.Tests;
 /// <see cref="IProviderCapability"/>, not one per provider — <c>HostRegistrationTests</c> exercises
 /// it on SQLite; this proves the same SQL, including the <c>ON CONFLICT</c> upsert, is equally valid
 /// against PostgreSQL.</summary>
+/// <remarks>Cases: 1 total — 1 positive (the same upsert semantics SQLite exercises hold on
+/// PostgreSQL too). The negative cases for this schema are covered once, on SQLite, in
+/// <c>HostRegistrationTests</c>, rather than duplicated per provider.</remarks>
 public sealed class HostRegistrationPostgresTests(PostgresContainerFixture fixture) : IClassFixture<PostgresContainerFixture>
 {
     [Fact]

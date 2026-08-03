@@ -13,6 +13,9 @@ namespace SubZeroDev.Platform.Tests;
 /// proven in isolation in <c>HostRegistrationHealthCheckTests</c> and
 /// <c>HostRegistrationHeartbeatTests</c>, where a single clock and an in-memory store make the
 /// timing unambiguous instead of racing two independent <see cref="FakeClock"/> instances.</summary>
+/// <remarks>Cases: 8 total — 5 positive (the store, migration and shutdown hook behave as the
+/// contract states) and 3 negative (a schema-less store, two split-brain stores, and a fingerprint
+/// disagreement are each correctly detected rather than silently accepted).</remarks>
 public sealed class HostRegistrationTests
 {
     [Fact]

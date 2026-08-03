@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
@@ -279,7 +281,7 @@ public sealed class HostRegistrationHeartbeatTests
         var instance = new InstanceId("this-host/1");
         var store = new FakeHostRegistrationStore();
 
-        var heartbeat = new HostRegistrationHeartbeat(store, fingerprint, options, instance, clock);
+        var heartbeat = new HostRegistrationHeartbeat(store, fingerprint, options, instance, clock, NullLogger<HostRegistrationHeartbeat>.Instance);
         await heartbeat.TickAsync(CancellationToken.None);
 
         var written = Assert.Single(store.Upserted);
@@ -296,7 +298,12 @@ public sealed class HostRegistrationHeartbeatTests
         var clock = new FakeClock();
         var store = new FakeHostRegistrationStore();
         var heartbeat = new HostRegistrationHeartbeat(
-            store, new SettingsFingerprint(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), clock);
+            store,
+            new SettingsFingerprint(),
+            PeerHostHealthCheckTests.Options(),
+            new InstanceId("host/1"),
+            clock,
+            NullLogger<HostRegistrationHeartbeat>.Instance);
 
         await heartbeat.TickAsync(CancellationToken.None);
         var firstStartedAt = store.Upserted[0].StartedAt;
@@ -311,14 +318,32 @@ public sealed class HostRegistrationHeartbeatTests
     }
 
     [Fact]
-    public async Task An_unavailable_store_does_not_throw()
+    public async Task An_unavailable_store_does_not_throw_and_logs_at_debug_rather_than_warning()
     {
         var store = new FakeHostRegistrationStore { Unavailable = true };
+        var logger = new CapturingLogger<HostRegistrationHeartbeat>();
         var heartbeat = new HostRegistrationHeartbeat(
-            store, new SettingsFingerprint(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock());
+            store, new SettingsFingerprint(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock(), logger);
 
         var exception = await Record.ExceptionAsync(() => heartbeat.TickAsync(CancellationToken.None));
 
         Assert.Null(exception);
+        Assert.Contains(logger.Entries, entry => entry.Level == LogLevel.Debug);
+        Assert.DoesNotContain(logger.Entries, entry => entry.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task A_write_failure_other_than_unavailable_logs_a_warning_naming_the_error()
+    {
+        var store = new FakeHostRegistrationStore { UpsertFailure = TransactionError.Faulted() };
+        var logger = new CapturingLogger<HostRegistrationHeartbeat>();
+        var heartbeat = new HostRegistrationHeartbeat(
+            store, new SettingsFingerprint(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock(), logger);
+
+        await heartbeat.TickAsync(CancellationToken.None);
+
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Level == LogLevel.Warning && entry.Message.Contains(nameof(TransactionError.Faulted), StringComparison.Ordinal));
     }
 }

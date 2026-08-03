@@ -53,6 +53,24 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
+    public void A_peer_absence_grace_shorter_than_the_heartbeat_interval_names_both()
+    {
+        // Shorter than the interval means a fresh host's very first heartbeat — due only once the
+        // interval elapses, since Hosting's timer waits a full tick before the first one — could
+        // still be outstanding when the grace built to absorb exactly that delay has already
+        // elapsed, turning ordinary startup into a spurious split-brain degrade.
+        var error = AbortOf(settings =>
+        {
+            settings["Platform:HostRegistration:HeartbeatInterval"] = "00:00:30";
+            settings["Platform:HostRegistration:PeerAbsenceGrace"] = "00:00:15";
+        });
+
+        Assert.Equal("InconsistentSettings", error.Inner?.Code);
+        Assert.Contains("Platform:HostRegistration:PeerAbsenceGrace", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("Platform:HostRegistration:HeartbeatInterval", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_backoff_factor_of_one_names_the_constraint()
     {
         var error = AbortOf(settings => settings["Platform:Outbox:RetryBackoffFactor"] = "1");

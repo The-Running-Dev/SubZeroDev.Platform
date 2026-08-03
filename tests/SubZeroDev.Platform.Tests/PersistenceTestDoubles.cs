@@ -1,9 +1,26 @@
 using System.Data.Common;
+using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.Tests;
+
+/// <summary>Captures every log entry rather than writing anywhere, so a test can assert what a
+/// component logged without a real logging provider.</summary>
+internal sealed class CapturingLogger<T> : ILogger<T>
+{
+    internal List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state)
+        where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+        Entries.Add((logLevel, formatter(state, exception)));
+}
 
 /// <summary>An in-memory <see cref="IHostRegistrationStore"/> for testing the two readiness checks
 /// and the heartbeat in isolation from real SQL — the store's own upsert semantics (write-once
@@ -17,6 +34,11 @@ internal sealed class FakeHostRegistrationStore : IHostRegistrationStore
     /// unreachable schema classifies as.</summary>
     internal bool Unavailable { get; set; }
 
+    /// <summary>When set, <see cref="UpsertAsync"/> fails with this instead of the ordinary
+    /// <see cref="Unavailable"/> outage — for exercising a write failure that is not the expected
+    /// pre-migration case.</summary>
+    internal TransactionError? UpsertFailure { get; set; }
+
     /// <summary>Every registration this store was asked to upsert, in call order — so a test can
     /// assert what a tick wrote without the store's own conflict-resolution policy in the way.</summary>
     internal List<HostRegistration> Upserted { get; } = [];
@@ -26,6 +48,11 @@ internal sealed class FakeHostRegistrationStore : IHostRegistrationStore
     public Task<Result<TransactionError>> UpsertAsync(HostRegistration registration, CancellationToken cancellationToken)
     {
         Upserted.Add(registration);
+
+        if (UpsertFailure is { } failure)
+        {
+            return Task.FromResult(Result<TransactionError>.Failure(failure));
+        }
 
         if (Unavailable)
         {

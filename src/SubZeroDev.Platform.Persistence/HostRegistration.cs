@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 
@@ -164,6 +165,11 @@ internal sealed class HostRegistrationStore(
 
 /// <summary>Creates <c>platform_host_registration</c> — the first table Platform owns and migrates
 /// itself, under a module name of its own rather than a product's.</summary>
+/// <remarks>Applying and re-applying this migration, on both providers, is exercised in
+/// <c>HostRegistrationTests</c> and <c>HostRegistrationPostgresTests</c> (positive cases); a
+/// consumer module accidentally reusing the <c>"Platform"</c> name is rejected by
+/// <see cref="MigrationRunner"/>'s history-table-collision check before anything applies (negative
+/// case, in <c>PersistenceIntegrationTests</c>).</remarks>
 internal sealed class PlatformHostRegistrationMigrationSource : IModuleMigrationSource
 {
     public ModuleName Module { get; } = new("Platform");
@@ -209,7 +215,8 @@ internal sealed class HostRegistrationHeartbeat(
     ISettingsFingerprint fingerprint,
     PlatformOptions options,
     InstanceId instance,
-    IClock clock) : IBackgroundWork
+    IClock clock,
+    ILogger<HostRegistrationHeartbeat> logger) : IBackgroundWork
 {
     // Captured once, at construction — effectively at process start — because started_at is
     // write-once at the row's first insert and every later upsert excludes it from the update
@@ -238,8 +245,24 @@ internal sealed class HostRegistrationHeartbeat(
         // An unreachable or not-yet-migrated store is the ordinary state before migrate mode runs
         // — reported here by simply not writing, exactly as a schema-absent readiness check
         // degrades rather than throws. The next tick, on the ordinary interval, is the retry; no
-        // bespoke retry loop exists beside it.
-        await store.UpsertAsync(registration, cancellationToken).ConfigureAwait(false);
+        // bespoke retry loop exists beside it. Logged rather than thrown, so BackgroundWorkService
+        // never turns the ordinary pre-migration case into a per-tick error — but a failure a
+        // caller cannot otherwise see still leaves a line an operator can find.
+        var written = await store.UpsertAsync(registration, cancellationToken).ConfigureAwait(false);
+        if (!written.IsSuccess)
+        {
+            if (written.Error.Code == nameof(TransactionError.Unavailable))
+            {
+                logger.LogDebug("Host registration heartbeat did not write: the store is unreachable or not yet migrated.");
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Host registration heartbeat did not write: {Code}. {Detail}",
+                    written.Error.Code,
+                    written.Error.Detail);
+            }
+        }
     }
 }
 
