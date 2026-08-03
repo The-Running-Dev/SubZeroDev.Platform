@@ -43,6 +43,15 @@ storage is per provider.
 | Payload | native json | text |
 | Text | text | text |
 
+**The identifier's SQLite encoding is pinned to RFC 4122 network byte order**, not the platform
+`Guid` byte order, whose little-endian first three fields scramble precisely the bytes a version-7
+UUID's time ordering lives in. Blob comparison is bytewise, so under the platform default the
+identity column sorts in an order unrelated to time on one production provider and in time order on
+the other. This is the same defect class as the instant format below — a lexicographic order that
+silently stops matching a chronological one — and it reaches every identifier column in every
+module's tables, not only the outbox. **The provider contract tests assert that blob sort order
+equals mint order** across a run of identifiers minted in sequence.
+
 **Instants are stored UTC and compared as instants, never as local time.** SQLite has no date type,
 so an ISO-8601 form that sorts lexicographically in the same order it sorts chronologically is the
 requirement, not a convenience.
@@ -57,6 +66,17 @@ instant. Eligibility (`next attempt at <= now`) and claim expiry are both evalua
 text, so a variable-width writer makes messages intermittently ineligible when they are due, and
 eligible when they are not. **The provider contract tests must include a sub-second boundary case**;
 nothing else in the definition of done would catch it.
+
+**The comparand is pinned with the column, and its clock is the abstraction's.** Every instant
+crossing into SQL as a parameter is written by the same fixed-width formatter as the column. The
+platform's default parameter binding for SQLite uses a space separator, no `Z`, and a trimming
+fractional format — all three of the properties the stored form exists to guarantee, violated — so
+pinning only the write side moves the defect from the column to the other side of the comparison
+and changes nothing else. And **`now` always comes from the clock abstraction, never from the
+database**: eligibility, claim expiry and lease expiry are each evaluated against it, so a database
+clock would put the whole dispatch loop beyond the reach of a fake clock and make Testing's
+deterministic background work unprovidable. The boundary case binds a comparand as well as writing
+a column.
 
 ### Persisted — outbox message
 
@@ -77,18 +97,28 @@ The entity Platform both defines and stores.
 | First deferred at | instant, null | dispatch | Stamped on first deferral — unresolvable type or undeserializable payload; the deferral age measures from it |
 | Claimed by | text, null | dispatch | Dispatcher instance identity |
 | Claimed at | instant, null | dispatch | **Present so a claim can expire** |
-| Processed at | instant, null | dispatch | Null means undispatched |
+| Processed at | instant, null | dispatch | Null alone does not mean pending — see *Outbox row states* |
 | Poisoned at | instant, null | dispatch | Set when attempts are exhausted, kept on discard. **A poisoned row is never eligible, and poisoned-at set means the poison window governs pruning** |
 | Last error | text, null | dispatch | Most recent failure only, not a history |
 
 **Ownership:** Persistence. **Lifecycle:** inserted inside the caller's transaction alongside the
 domain write; claimed by a dispatcher; dispatched; marked processed *or* poisoned; pruned.
 
-**Enqueue requires an ambient transaction and throws a named error without one.** The atomicity
-above is structural rather than conventional — no code path exists that silently commits an outbox
-row apart from the domain write it belongs to. A call site that genuinely has only the enqueue opens
-a transaction around it, one explicit line that states the intent. The provider contract tests
-assert the throw.
+**Enqueue requires an ambient transaction and an ambient operation scope, and throws a named error
+without either.** The atomicity above is structural rather than conventional — no code path exists
+that silently commits an outbox row apart from the domain write it belongs to. A call site that
+genuinely has only the enqueue opens a transaction around it, one explicit line that states the
+intent.
+
+**The scope requirement is the same move for the same reason.** Trace context, correlation and
+tenant are all stamped from the ambient scope, and the paths that have no scope are real rather than
+hypothetical: a seeder, a migrate-mode utility, anything Hosting's request pipeline never touched.
+The two permissive alternatives are both worse than a throw. A nullable trace context admits rows
+whose correlation identity appears nowhere upstream, so the value quoted in a bug report leads
+nowhere. An implicitly minted scope is worse still — it fabricates a traceparent that dispatch will
+faithfully rebuild and hand to the handler, a fiction indistinguishable at read time from a real
+origin. One more explicit line at the handful of call sites that need it. **The provider contract
+tests assert both throws.**
 
 **Identity is the id — a version-7 UUID minted app-side at enqueue, its timestamp drawn from the
 clock abstraction** so a fake clock controls it, the same rule occurred-at already follows. The
@@ -96,7 +126,8 @@ runtime supplies the generator, so no Platform code is written for it, per ADR-0
 before the insert — loggable and returnable at enqueue — survives a database restore, and is the
 dedupe key at-least-once delivery offers handlers. **The provider contract tests assert id
 uniqueness across a drain, prune-to-empty, insert cycle**, the exact sequence that exposed the
-defect below.
+defect below, **and that ids sort in mint order on both providers**, which the encoding rule above
+is what makes true.
 
 **The sequence is claim order and nothing else.** An earlier draft made it the identity and called
 it monotonic per database, and both claims were false on SQLite: a plain rowid alias allocates
@@ -113,6 +144,17 @@ old rows drain. The rule exists because a backlog is this design's normal shape:
 failure mode makes days-old rows routine, so an upgrade that changes what a Type's payload means is
 dispatching against history — and without the rule it mass-poisons everything enqueued before the
 deploy.
+
+**One handler per Type, enforced at startup.** A second handler registration for the same Type is a
+named startup failure, not a fan-out. Every dispatch-state column above is per row — attempts,
+next-attempt, first-deferred-at, poisoned-at, processed-at, last error — so N handlers behind one row
+share one retry budget and one poison verdict. A single broken subscriber then burns the attempts of
+the subscribers that already succeeded, poisons delivery for all of them at once, and leaves a last
+error that cannot even say which of them is broken. A product that wants two things to happen writes
+one handler that does two things: it owns the composition, which is also where it can decide what
+partial failure means. **The direction matters as much as the rule** — relaxing one handler to many
+later is additive, while tightening many to one later breaks every consumer that spread work across
+handlers, so the restrictive reading is the reversible one at 0.x.
 
 **Claimed-at exists because a dispatcher can die holding a claim.** Without an expiry those rows are
 stranded forever, undispatched and invisible — the exact failure the outbox exists to prevent,
@@ -135,6 +177,12 @@ a short window, and the two pressures that used to point in opposite directions 
 handler that can exceed five minutes is a design signal, not a tuning problem** — it belongs behind
 its own durable state rather than inside a dispatch attempt.
 
+**That sizing is only true because a claim covers one message rather than a batch.** See *Control
+flow*: rows are claimed and marked one at a time under a per-tick budget. Claimed as a batch, a
+claim would age across the whole batch's serial duration instead of its own message's, and the
+window would have to be sized against the budget times the slowest handler rather than the slowest
+handler — a number with no defensible value.
+
 **Two retention windows, both required settings with no default**, validated as present at startup
 and failing the host when absent. The brief chose configurable and declined to set a default, and
 "configurable with no default" silently becomes "never prune" otherwise.
@@ -146,6 +194,37 @@ An earlier draft of this document claimed retention closed the only unbounded-gr
 owns. That was false: a poisoned row is never processed, so a recurring poison source — one handler
 bug, one malformed payload shape — accumulated rows forever under the single-window rule. The second
 window is what makes the original claim true.
+
+### Outbox row states, by predicate
+
+Three consumers read this row's state — readiness, the prune pass, and redrive — and an earlier
+draft left each of them to infer it from the timestamps. They inferred differently, and the three
+disagreements below were one omission. The states are therefore defined once, as predicates over
+columns that already exist, and every consumer derives from them.
+
+| State | Predicate | Prunes on | Counts toward |
+|---|---|---|---|
+| Pending | processed-at null, poisoned-at null | never | backlog age |
+| Processed | processed-at set, poisoned-at null | processed window | nothing |
+| Poisoned | poisoned-at set, processed-at null | poison window | poison count |
+| Discarded | both set | poison window | nothing |
+
+What the table fixes, in the order the omission bit:
+
+- **Backlog age considers pending rows only.** Under "processed-at null means undispatched", one
+  poisoned row is the oldest undispatched row within days and permanently exceeds a five-minute
+  threshold whose stated meaning is that dispatch is absent or wedged. Dispatch would be fine. Two
+  readiness conditions would then fire with contradictory diagnoses, one of them false, for as long
+  as the poison retention window kept the row — and the backlog age is the very detail this design
+  elected to separate "worker down" from "worker mispointed".
+- **Poison count considers poisoned rows only, never discarded ones.** Discard is the operator
+  saying *I have looked, and I have decided to stop retrying*. A surface that stays degraded for the
+  full poison window after that disposition is demanding a decision that has already been made, and
+  it trains operators to ignore the one signal this design elected as always-on.
+- **Redrive requires the poisoned state, not merely a poison mark.** A discarded row still carries
+  poisoned-at. Redriving one would clear the poison mark while processed-at stayed set, producing a
+  row that can never deliver and that now prunes on the short window — an operator "recovery" that
+  delivers nothing and destroys the forensic record discard exists to preserve.
 
 ### Persisted — background work lease
 
@@ -281,6 +360,11 @@ trace-id are one value. They part company in exactly one place — outbox dispat
 trace while the correlation stays the origin's, see *Control flow* — so a single value stays
 greppable end to end even where the trace changes.
 
+**It is established as well as read, and both operations have the same owner.** The scope-opening
+primitive is a contract in Abstractions alongside the three accessors, because there are two
+establishers rather than one — Hosting on an inbound request, Persistence on each dispatched message
+— and an unowned write path gets invented twice. See *Module boundaries*.
+
 ### In-memory — health registration and report
 
 A registration is a name, a kind (liveness or readiness), a check, a timeout, and a criticality
@@ -296,8 +380,8 @@ design calls silent therefore reports **degraded** on readiness, with the detail
 |---|---|
 | No live peer host in this store | The split-brain above. Nothing else can see it |
 | Peer present, settings fingerprint disagrees | Half-upgraded installation |
-| Oldest undispatched row older than a threshold | Worker down, or dispatch wedged |
-| Any poisoned rows present | The handler is broken and nobody is watching |
+| Oldest **pending** row older than a threshold | Worker down, or dispatch wedged |
+| Any **poisoned** rows present, discarded excluded | The handler is broken and nobody is watching |
 | Schema has pending migrations | See *Failure modes* |
 
 **Wire mapping, because a three-state model over a two-state protocol is otherwise undefined:**
@@ -337,12 +421,42 @@ reconstructs it at dispatch, while depending on Abstractions and Core only. With
 Abstractions, that column is unimplementable without either a new Persistence→Observability edge or
 a silent relocation by the first implementer.
 
+**The accessors have an owner; the writer needed one too.** Reading the context is not the only
+operation on it — something must *establish* it, and there are two establishers rather than one:
+Hosting on an inbound request, and Persistence on each dispatched message. **The operation-scope
+contract therefore lives in Abstractions beside the accessors** — one primitive that opens a scope
+carrying correlation, tenant and principal, and closes it. Left unowned, the second establisher
+invents its own write path, which is the silent relocation this overlap was resolved to prevent,
+one layer further down and harder to see.
+
+**Trace context crossing the outbox is propagation, and propagation is Observability's.** Persistence
+stamps a traceparent and tracestate, parses them back at dispatch, and starts a new linked trace
+honouring the stored sampling flags — every one of which the resolution above assigns to
+Observability, performed in a package with no edge to it. So **the W3C parse, format and link
+operations are a contract in Abstractions that Observability implements**, and Persistence calls the
+contract. The alternative — Persistence handling W3C strings itself against the runtime — puts trace
+handling in two packages that can drift apart on the one value this design promises stays greppable
+end to end.
+
 **Overlap 3 — background work is owned by nobody, and Hosting has to start it.** The worker role must
 run the outbox dispatcher, which belongs to Persistence, while not depending on Persistence.
 Resolved the same way: **the background-work contract lives in Abstractions**; **Core owns
-registering and ordering** the registrations; **Hosting's worker role runs everything registered
-against the contract**, without knowing what any of it is; **Persistence registers the dispatcher and
-the prune pass as background work** and supplies the lease that guards them.
+registering, ordering and role-scoping** the registrations; **Hosting runs everything registered
+against the contract, in the role each registration declares**, without knowing what any of it is;
+**Persistence registers the dispatcher, the prune pass and the registration heartbeat as background
+work** and supplies the lease that guards the first two.
+
+**Registrations declare their role, because not all background work is the worker's.** The
+dispatcher and the prune pass are worker-only. The registration heartbeat is not, and that is what
+forced the scoping: the peer check detects a split database only if *both* hosts write their row, so
+the web host has one loop it must run — and under a worker-only rule no package was permitted to run
+it. Hosting cannot start it without an edge to Persistence; dropping it leaves the split undetectable
+from the side positioned to notice, which is the whole mechanism. One declared role per registration
+covers both cases through the channel that already exists, and it states out loud which loops run
+where instead of leaving every future infrastructure loop to improvise a second channel. The brief's
+"the worker host owns all background work" is preserved where it carries meaning: no product work
+and no dispatch runs in the web host. A telemetry exporter's own threads are that exporter's
+internals, not registrations, and are governed by *Concurrency* instead.
 
 **None of these adds an edge.** That is the test each resolution had to pass — a boundary problem
 solved by adding a dependency is a boundary problem renamed.
@@ -355,11 +469,11 @@ dependency pointing the wrong way that every future check-contributing package w
 
 | Package | Owns | Depends on | Exposes |
 |---|---|---|---|
-| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract** | Nothing but the BCL | Interfaces and value types only |
-| **Core** | Default implementations, module registration, ordering, startup validation, typed configuration binding, **background-work registration and ordering** | Abstractions | Registration surface, module graph |
-| **Observability** | Telemetry wiring, correlation identity and propagation, instrumentation, sampling policy | Abstractions | Configuration surface, ambient correlation |
-| **Persistence** | Transaction boundary, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message context reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher and prune registered as background work** |
-| **Hosting** | Host bootstrap for **both host roles**, DI wiring, middleware order, graceful shutdown, health and readiness **endpoints**, request/principal/correlation/tenant context establishment, **running registered background work in the worker role** | Abstractions, Core, Observability | The standard registration call, in web and worker forms |
+| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **the operation-scope contract that establishes all three**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract** | Nothing but the BCL | Interfaces and value types only |
+| **Core** | Default implementations, module registration, ordering, startup validation, typed configuration binding, **background-work registration, ordering and role scoping** | Abstractions | Registration surface, module graph |
+| **Observability** | Telemetry wiring, correlation identity derivation and propagation, **the trace-context contract's implementation**, instrumentation, sampling policy | Abstractions | Configuration surface, correlation derivation and propagation |
+| **Persistence** | Transaction boundary, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message scope reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **redrive and discard**, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher, prune and the registration heartbeat registered as background work** |
+| **Hosting** | Host bootstrap for **both host roles**, DI wiring, middleware order, graceful shutdown, health and readiness **endpoints**, request/principal/correlation/tenant scope establishment, **running registered background work in the role each registration declares** | Abstractions, Core, Observability | The standard registration call, in web and worker forms |
 | **Testing** | Test host for both roles, fake clock, fake principal and tenant, capture, deterministic background work, **provider contract tests** | All five | Test host builder |
 
 **Two host roles, one package.** The worker is not a second Hosting package — it is the same
@@ -401,8 +515,8 @@ comment. The sample sits on the consumer side of the arrow.
 
 Modules collect → **topological sort; missing or cyclic dependency aborts with a named error** →
 options bind and validate, **including both required retention settings** → provider selected →
-health registrations freeze → module graph freezes → **the host starts its registration heartbeat**
-→ host runs in its role.
+health registrations freeze → module graph freezes → **the host starts the background work registered
+for its role**, the registration heartbeat among them in both roles → host runs in its role.
 
 **Registration is the heartbeat; there is no separate write.** The heartbeat loop upserts the host's
 row — role, instance, settings fingerprint — so the first successful beat is the registration and
@@ -415,10 +529,12 @@ and no ordering dependency between startup and the schema.
 writing to the wrong database registers itself there too, so its absence from the right one is
 detectable from the other side.
 
-The two roles diverge only at the end: the web role maps endpoints and serves; the worker role
-**starts everything registered against the background-work contract** — the outbox dispatcher and
-the prune pass among them — and serves probes only. Hosting does not know what any registration is,
-which is what lets it start Persistence's dispatcher without depending on Persistence.
+The two roles diverge only at the end: the web role maps endpoints and serves; the worker role serves
+probes only. **Both start the registrations that declare their role**, which for the web host is the
+heartbeat alone and for the worker is the heartbeat, the outbox dispatcher and the prune pass.
+Hosting does not know what any registration is, which is what lets it start Persistence's dispatcher
+without depending on Persistence — and what lets the web host run a Persistence-owned heartbeat on
+the same terms rather than through a second mechanism invented for it.
 
 **The worker serves its probes over HTTP on its own port — a defaulted setting in *Settings
 inventory* — through the same endpoint code as the web role.** It exists for nothing else. The alternative — inferring worker health from the store alone —
@@ -442,15 +558,30 @@ an error envelope carrying the correlation identity; the span records the error.
 
 ### 3. Outbox dispatch — triggered by a timer in the worker role
 
-Claim a batch of eligible rows — **expired claims are eligible, so reclaim needs no separate pass** →
-dispatch each in-process → mark processed, or record the failure, increment attempts and set the next
-attempt → separately, under a lease, prune processed and poisoned rows past their windows.
+Claim **one** eligible row — **expired claims are eligible, so reclaim needs no separate pass** →
+dispatch it in-process → mark processed, or record the failure, increment attempts and set the next
+attempt → repeat up to a per-tick budget → separately, under a lease, prune processed and poisoned
+rows past their windows.
 
-**Prune runs in bounded batches, exactly as dispatch does.** It is a lease-guarded pass rather than a
-per-message one, which made it easy to overlook, but on SQLite it competes for the same single write
-lock — and its worst case is the largest: a worker returning after days down, or a retention window
-shortened, leaves an arbitrarily large backlog to delete in one statement while the web process needs
-that lock for every request.
+**A claim covers one message, and the batch size is a per-tick budget rather than a single claim.**
+An earlier draft claimed twenty rows at once and dispatched them serially, which meant each claim
+aged across the *batch's* duration rather than its own message's: twenty handlers averaging sixteen
+seconds exceed the five-minute window, so the tail of every busy batch expires while still queued in
+this worker's own memory, becomes eligible, and is picked up and redelivered — by this same
+dispatcher's next poll, or by the overlapping twin during a deploy. That is routine duplicate
+delivery under nothing but moderate load, presented to consumers as the rare crash-window case the
+at-least-once caveat prices. Per-row claiming also holds SQLite's single write lock for one row at a
+time instead of twenty, and it is what makes the claim window's sizing argument — the slowest
+legitimate handler — true as written rather than aspirational.
+
+**The dispatcher does not claim at all while this host has unapplied migrations**, and consumes no
+attempts while it waits. The reasoning is in *Failure modes*, under the wrong-schema branch.
+
+**Prune runs in bounded batches, and it is the one background path that is not per-message.** That
+is what made it easy to overlook: on SQLite it competes for the same single write lock, and its
+worst case is the largest of anything here — a worker returning after days down, or a retention
+window shortened, leaves an arbitrarily large backlog to delete while the web process needs that
+lock for every request.
 
 **The trigger is a timer, not a signal from the writer.** With the writer in the web process and the
 dispatcher in the worker, an in-process signal cannot reach it, and a cross-process one would need a
@@ -459,9 +590,9 @@ also the only mechanism that survives the process dying between commit and dispa
 case this exists for.
 
 **Each message is dispatched in its own scope, with its context rebuilt from the row — not inherited
-from the worker.** The dispatcher opens a fresh dependency scope per message, resolves handlers for
-the row's Type through the event-handler contract, and populates the ambient operation context from
-the row itself: correlation from the stored traceparent's trace-id — the origin's, not the new
+from the worker.** The dispatcher opens a fresh dependency scope per message, resolves **the**
+handler for the row's Type through the event-handler contract — one per Type, per *Data model* — and
+opens an ambient operation scope populated from the row itself: correlation from the stored traceparent's trace-id — the origin's, not the new
 linked trace's — tenant from the row's tenant column, principal null — the worker has no principal
 and must not invent one.
 
@@ -522,6 +653,26 @@ binaries and restarts; migrations are registered but not applied.
 and a host that will not start is harder to inspect than one that says what it needs. Refusing
 traffic outright would also make every upgrade an outage even when the pending change is additive.
 
+**That answer is only honest if the pending change is additive, so additivity is a rule and not a
+hope.** Schema change is expand-then-contract: a column is added, populated and read before anything
+stops writing the one it replaces, and a breaking change is two releases rather than one. Without
+the rule, the justification above prices the additive case and stays silent on the other, where a
+host reports degraded — **which maps to success on the wire** — while every request touching the
+missing column fails. A probe saying *take traffic, something needs attention* in front of a host
+returning errors is worse than one that refuses, because nothing drains it. This is the schema
+counterpart of the additive-only payload rule, it exists for the same reason, and it is what turns
+an operator's restart-before-migrate from an outage into a delay.
+
+**The dispatcher holds while this host has unapplied migrations, and consumes no attempts.** A
+handler throwing because its table is not there yet is the **third** deploy hazard with exactly the
+shape the deferral path was built for: the Type resolves, the payload deserializes, and the failure
+is environmental and temporary. Left on the handler-throws path it increments attempts against a
+backoff spanning roughly a day, so an operator who runs migrate mode the next morning may find the
+entire pre-upgrade backlog already poisoned — the catastrophe the payload rule exists to prevent,
+arriving through the one door deferral did not cover. Holding is cheaper than deferring here because
+the condition is per-host rather than per-row: there is nothing to stamp and nothing to age, and the
+backlog-age readiness condition already reports the wait.
+
 **A fresh database is the extreme case of this branch, not a fourth one.** On a first production run
 nothing has been applied — including Platform's own tables, which registration and the persistence
 checks themselves need. Every persistence readiness check therefore self-guards: pending migrations
@@ -544,6 +695,19 @@ Automatic application happens only in the development environment. Naming this m
 design previously said migrations were "applied by an explicit operation" without saying anywhere
 what that operation *was* — leaving a homelab operator with a documented requirement and no
 documented way to meet it.
+
+**Migrate mode takes an exclusive lease before applying, and refuses to start if one is held.** It
+is the operation with the most destructive potential per statement and was the only one in this
+design with no concurrency guard, while the ways to invoke it twice at once are entirely ordinary: a
+unit restarting a run that appeared to fail, an operator retrying in a second shell, both hosts'
+deploy scripts each helpfully migrating. Neither provider serialises this on our behalf.
+
+**On SQLite a non-additive migration is a planned outage, and implying otherwise is the error.** A
+table rebuild holds the single write lock for far longer than the busy-wait bound, so the web
+process does not degrade during it — it fails. The degraded-and-serve branch covers a host that is
+*behind* the schema, not a host serving *through* a rebuild. The operator stops the hosts, runs
+migrate mode, starts them. Additive migrations need no such stop on either provider, which is most
+of them, and is most of why the additivity rule above is worth having.
 
 ### Hosts disagree, or cannot see each other
 
@@ -573,8 +737,8 @@ a time across the whole database. The web process writes domain rows and outbox 
 writes claims, marks and prunes. They contend.
 
 **Detected by** the provider returning a busy condition.
-**System does:** waits, bounded, then fails the operation normally. Dispatch batches are kept small
-so the worker holds the write lock briefly.
+**System does:** waits, bounded, then fails the operation normally. Dispatch claims one row at a
+time and prune deletes in bounded batches, so the worker holds the write lock briefly.
 **User sees:** nothing at the stated scale; under contention, latency.
 **State left behind:** none — a failed write is a failed transaction.
 
@@ -588,6 +752,21 @@ footnote and are not:
   so they are configurable and validated, not constants someone picked.
 - **The busy-wait bound is part of the contract**, because it decides whether contention shows up as
   latency or as a failed request.
+
+**Two configuration facts everything above depends on, stated rather than assumed:**
+
+- **Write-ahead logging is required, not preferred.** A reader and a writer coexisting, and
+  contention appearing as bounded waiting, are properties of WAL. In the rollback journal they are
+  false — the worker's every poll then contends with the web process's *reads* as well as its
+  writes, and the "nothing at the stated scale" line above stops holding. An analysis whose
+  conclusions depend on a mode nobody wrote down is not an analysis.
+- **A transaction that will write begins immediate, never deferred.** A deferred transaction that
+  upgrades to a write after reading — which is the shape of both a claim and a mark — can take a
+  busy condition that waiting *cannot* resolve, because no amount of waiting makes its read snapshot
+  valid again. The bounded busy-wait assumes waiting helps; for this one class it does not, and the
+  answer is to take the write lock at the start rather than to wait longer. Left unstated, it
+  surfaces as intermittent immediate failures on the two paths that matter most, misdiagnosed as
+  load.
 
 It remains the cost of SQLite as a production path rather than a test double, acceptable only because
 scale is single-digit concurrent users. It does not survive being scaled.
@@ -671,10 +850,13 @@ expires.
 
 **A poisoned message has two exits, and Persistence exposes both as operations: redrive** — a
 conditional update clearing the poison mark, attempts and first-deferred-at only if the row still
-exists and is still poisoned, so racing the prune pass returns a clear "already pruned" rather than
-silent nothing — **and discard**, which sets processed-at, keeps poisoned-at, and appends the reason
-to the last error. A discarded row carries both marks, and poisoned-at governs: it prunes on the
-longer poison window, so the forensic record outlives the decision to stop retrying. **Both
+exists and is **still in the poisoned state as *Outbox row states* defines it** — poisoned-at set,
+processed-at null — so racing the prune pass returns a clear "already pruned" rather than silent
+nothing, and a row someone already discarded is not silently resurrected into one that can never
+deliver — **and discard**, which sets processed-at, keeps poisoned-at, and appends the reason to the
+last error. A discarded row carries both marks, and poisoned-at governs pruning: it prunes on the
+longer poison window, so the forensic record outlives the decision to stop retrying, while the
+poison *count* on readiness excludes it, because the decision it was demanding has been made. **Both
 operations exist per row and in bulk by Type**, because a violated payload rule poisons in bulk and
 the recovery must not be a thousand hand-invocations. Without these the only recovery is editing the
 database by hand, which this design's own posture treats as unthinkable.
@@ -737,6 +919,33 @@ that is a new root, counted rather than logged per occurrence.
 
 ---
 
+## What the operational surfaces expose
+
+Identity is D5, so none of this is authentication. It is the smaller question D3 cannot postpone,
+because D3 ships two surfaces that carry internal detail and one of them listens on a port: **what
+goes in the body, and which interface serves it.** Left unstated, both shapes become public API the
+moment a third party compiles against them — the audience the brief names — and D5 would have to
+break them in order to secure them. A homelab is not a trusted network by declaration.
+
+- **The worker probe binds loopback by default.** It exists for the operator and for CI, not for the
+  network. The web host's probes follow whatever the product's own listener does, because they share
+  it.
+- **Full structured detail on loopback and in the development environment; a minimal body
+  elsewhere.** The detail this design deliberately routes through readiness — pending migration
+  names, peer instance identities, settings-fingerprint disagreement, backlog age, poison counts — is
+  precisely what an operator needs and precisely what an attacker would enjoy. Only the body
+  narrows; the status is the same either way, so nothing that consumes the probe programmatically
+  changes behaviour.
+- **Last error never crosses a wire in D3.** It is store-only. A deserialization failure's message
+  plausibly embeds payload content, and no redaction rule can be trusted to find it reliably.
+- **The error envelope carries a correlation identity and a stable error code, never exception text
+  or payload content.** "Wholly derived from the failure and the ambient context" was a construction
+  rule, not a disclosure rule, and the two were being read as one. The correlation identity is what
+  ties the envelope to the log line that does carry the detail — which is the whole reason the
+  design insisted on a single greppable value.
+
+---
+
 ## Concurrency and ordering
 
 **Startup is not concurrent within a process.** Module sort, options binding, registration and freeze
@@ -755,7 +964,8 @@ there is no static mutable state to race on.
 throws rather than mutating a structure concurrent readers are walking, which is what makes lock-free
 probing correct.
 
-**Outbox rows are claimed by a conditional update that stamps a claim, not by a locking read.** A
+**Outbox rows are claimed one at a time by a conditional update that stamps a claim, not by a
+locking read.** A
 locking read that skips locked rows exists in PostgreSQL and does not exist in SQLite, and the brief
 made both production paths. A conditional update stamping holder and time works identically on both
 and needs no dialect-specific correctness path. PostgreSQL may use its locking read underneath the
@@ -779,11 +989,16 @@ guaranteed; a log line and the span describing it may export in either order.
 **No background work — telemetry export, health probing, dispatch, or prune — may block, slow, or
 fail a request.** Enforced by four choices: the export queue is bounded and drops rather than blocks;
 probe endpoints do not share a pipeline with request handling; dispatch runs in a different process
-entirely; and **every background write is batch-bounded, dispatch and prune alike**, so that under
-SQLite the worker holds the single write lock briefly.
+entirely; and **every background write is bounded — dispatch claims and marks one row at a time
+under a per-tick budget, prune deletes in bounded batches** — so that under SQLite the worker holds
+the single write lock briefly.
 
 Prune is named explicitly because it is the one background path that is not per-message. Bounding
 "dispatch batches" alone left it uncovered, and its worst case is the largest of any of them.
+
+The registration heartbeat runs in both hosts and is a single small upsert per interval, which is
+why it needs no bound of its own — but it is a background write in the *web* process, and it takes
+the same busy-wait and immediate-transaction discipline as every other write.
 
 ---
 
@@ -810,7 +1025,7 @@ meaningless rather than dangerous.
 | Retry backoff | base 30 s, factor 2, cap 6 h | yes | Early retries are cheap; late ones land hours apart, so a same-day fix beats poison |
 | Deferral age | 24 h | yes | Longer than any sane upgrade overlap; short enough that a genuinely orphaned Type surfaces the next day |
 | Deferral retry interval | 1 min, fixed | no | Resolution flips when the deploy finishes; polling faster buys nothing |
-| Dispatch batch size | 20 | no | Bounds the worker's hold on SQLite's single write lock |
+| Dispatch per-tick budget | 20 | no | Rows are claimed and marked one at a time; the budget bounds a tick, not a claim — see *Control flow* |
 | Prune batch size | 500 | no | The same bound; larger because a delete is cheaper than a dispatch |
 | Dispatch timer interval | 5 s | no | The latency floor for async work; idle polling at this scale is noise |
 | SQLite busy-wait bound | 5 s | no | Longer than any bounded batch holds the lock, shorter than a probe timeout |
@@ -820,7 +1035,8 @@ meaningless rather than dangerous.
 | Registration retention window | 7 days | no | Dead rows are forensic breadcrumbs, then noise |
 | Backlog-age threshold | 5 min | no | The claim window's twin: older means dispatch is absent or wedged, not merely busy |
 | Peer-absence startup grace | 60 s | no | Covers a routine restart of the other role without flapping readiness |
-| Worker probe port | 5100 | no | Any fixed default beats a required setting for a probe surface |
+| Worker probe port | 5100, **loopback** | no | Any fixed default beats a required setting for a probe surface; loopback because the probe is for the operator, not the network |
+| SQLite journal mode | **WAL, required** | — | A property of the file rather than of a host, so two hosts cannot disagree; listed because the contention analysis is false without it |
 
 ---
 
@@ -870,6 +1086,37 @@ every consumer, which is the burden Platform exists to absorb.
 **Version 7 specifically** because its time-ordering keeps the identity index append-mostly on
 PostgreSQL and covers any future cursor need — which is what lets the sequence stay demoted.
 **Reversibility: cheap** — no rows exist yet, which is precisely why this happened now.
+
+### Claim unit — one row, not a batch
+
+**Chosen, reversing this document's earlier decision:** the dispatcher claims and marks one row at a
+time, and the batch number becomes a per-tick budget. The earlier draft claimed a batch and
+dispatched it serially, which silently redefined a claim's lifetime as the batch's duration rather
+than the message's — so the five-minute window, sized against the slowest single handler, did not
+cover what it was actually timing.
+**Rejected — keep the batch claim and size the window against the batch.** Fewer statements, and one
+round trip instead of twenty. Rejected because the window would then have to exceed the budget times
+the slowest handler, a product of two numbers with no defensible joint value, and because
+overshooting it lengthens every genuine dead-dispatcher stall.
+**Rejected — keep the batch claim and dispatch it concurrently.** Keeps the window meaningful and is
+faster. Rejected because it puts twenty concurrent mark-writes against SQLite's single write lock,
+which is the contention the batch bound existed to limit, and it would require restating the whole
+contention section for a throughput this design does not need at single-digit concurrent users.
+**Reversibility: cheap** — it is a loop shape behind an interface, and no persisted shape changes.
+
+### Fan-out — one handler per Type, not many
+
+**Chosen:** a second handler registration for a Type is a named startup failure; a product composes
+inside its one handler.
+**Rejected — many handlers behind one row, all-or-nothing.** The obvious shape, and the one an
+event-handler contract invites. Rejected because every dispatch-state column is per row: one broken
+subscriber burns the shared attempts budget, poisons delivery for the subscribers that already
+succeeded, and leaves a last error that cannot name which of them is at fault.
+**Rejected — a delivery row per resolved handler.** Actually correct, and it is the shape a mature
+outbox converges on. Rejected as the largest schema and semantics addition available in D3, for a
+fan-out no consumer has yet asked for — the extraction guard's argument exactly.
+**Reversibility: asymmetric, which is the reason for the choice.** One-to-many later is additive;
+many-to-one later breaks every consumer that had spread work across handlers.
 
 ### Claiming — portable conditional update, not a dialect-specific locking read
 
@@ -927,9 +1174,19 @@ would be false exactly when someone relies on it.
 ## Open questions
 
 **None.** All eight are settled — four by the brief, four by direct decision on 2026-08-03, and each
-is written into the section it governs rather than left here. A further adversarial review the same
+is written into the section it governs rather than left here. A third adversarial review the same
 day produced thirteen findings; every one is dispositioned in the section it touches, and the
 numbers it demanded now live in *Settings inventory*.
+
+**A fourth review, also 2026-08-03, produced thirteen more findings and twelve decisions** — two of
+the findings were one omission wearing two faces, and are answered together by *Outbox row states*.
+One was blocking: the web host's registration heartbeat had no package permitted to run it, so the
+peer check that detects a split database could only ever have half-worked. The rest split between
+things stated for one side of a comparison and not the other (the instant format, the identifier's
+byte order), owners named for readers but not for writers (the operation scope, trace propagation
+across the outbox), and rules the design relied on without writing down (additive schema change,
+WAL, one handler per Type). Each is dispositioned where it belongs; **nothing from that review is
+parked here**, which is the same discipline the third review's findings were held to.
 
 That is a claim worth being suspicious of rather than pleased about, so it is qualified:
 
