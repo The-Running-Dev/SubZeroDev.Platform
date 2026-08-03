@@ -43,9 +43,10 @@ handler throws, and abort startup with a named error on a bad setting.
 
 Touches:
 - **Abstractions** — the value types (`TenantId`, `CorrelationId`, `TraceContext`, `InstanceId`,
-  `ModuleName`, `HealthCheckName`, `BackgroundWorkName`), `PlatformError`, `Result<…>`,
+  `ModuleName`, `HealthCheckName`, `BackgroundWorkName`, `CultureTag`), `PlatformError`, `Result<…>`,
   `PlatformContractViolationException`, `IClock`, `IOperationScope`, `IOperationScopeFactory`,
   `IOperationScopeAccessor`, `ICurrentTenant`, `ICurrentPrincipal`, `ICurrentCorrelation`,
+  `ICurrentCulture`,
   `ITraceContextCodec`, `ITraceHandle`, `IPlatformModule`, the health contract, the background-work
   contract, `HostRole`, `HostRoles`, `PlatformHealthChecks`, `PlatformBackgroundWork`,
   `FingerprintedAttribute`
@@ -58,7 +59,7 @@ Touches:
 - **Hosting** — `PlatformHostExtensions` web and worker forms, `MapPlatformProbes`, the probe
   endpoints and their wire mapping, request scope establishment, `ErrorEnvelope`, the
   background-work timers, graceful shutdown, `HostStartupError`
-- **Testing** — `FakeClock`, `FakeCurrentTenant`, `FakeCurrentPrincipal`,
+- **Testing** — `FakeClock`, `FakeCurrentTenant`, `FakeCurrentPrincipal`, `FakeCurrentCulture`,
   `IPlatformTestHostBuilder` and `IPlatformTestHost` less `WithProvider` and `Events`
 - **samples/** — a web project with one endpoint and a worker project, both in CI
 
@@ -91,9 +92,14 @@ Acceptance:
 - An endpoint that throws returns `ErrorEnvelope` with a stable code and the request's correlation,
   and no exception text, stack trace or payload content anywhere in the response.
 - Inside a request, `ICurrentCorrelation.Current.TraceId` equals the trace-id of the request's
-  established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`, and
-  `ICurrentPrincipal.Current` is null. Outside any scope all three throw
+  established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`,
+  `ICurrentPrincipal.Current` is null, and `ICurrentCulture.Current` equals `CultureTag.Invariant`
+  **even when the request carries an `Accept-Language` header** — nothing in D3 resolves culture, and
+  a test sending one proves the absence rather than assuming it. Outside any scope all four throw
   `PlatformContractViolationException` carrying `NoAmbientOperationScope`.
+- A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new CultureTag("bg"))`
+  yields `ICurrentCulture.Current` of `bg`, and the same call omitting the argument yields
+  `CultureTag.Invariant`.
 - A request carrying a well-formed `traceparent` adopts its trace-id as the correlation. A request
   carrying `traceparent: not-a-traceparent` returns 200 with a fresh root trace, never 400.
 - `IOperationScopeFactory.Begin(TenantId.Implicit, null)` outside any request opens a root trace
@@ -272,7 +278,15 @@ Acceptance:
 - The stored row carries: `type` equal to the registered literal and unchanged after the CLR class
   is renamed; `tenant` from the ambient scope; `trace_parent` the complete traceparent **including
   trace flags**; `trace_state` when the origin carried one and null otherwise; `correlation` equal
-  to `ICurrentCorrelation.Current.TraceId`; `attempts` 0; and every dispatch-state column null.
+  to `ICurrentCorrelation.Current.TraceId`; `culture` equal to `ICurrentCulture.Current`; `attempts`
+  0; and every dispatch-state column null.
+- An event enqueued inside a scope opened with culture `bg` stores `bg`, and a handler dispatching it
+  in a **worker process started under a different operating-system culture** observes `bg` from
+  `ICurrentCulture.Current`. The assertion goes red when the dispatcher reads the ambient
+  `CultureInfo.CurrentCulture` instead of the row — which is the defect the column exists to prevent
+  and is invisible whenever the two happen to agree.
+- A follow-up event enqueued by that handler stores `bg` unchanged, at any depth — culture propagates
+  like `correlation`, not like `trace_parent`.
 - The check constraints hold: `claimed_by` and `claimed_at` are null together, `attempts >= 0`, and
   `poisoned_at` set implies `last_error` non-null. **No constraint makes `processed_at` and
   `poisoned_at` mutually exclusive** — all four combinations are legal and each names a state.
