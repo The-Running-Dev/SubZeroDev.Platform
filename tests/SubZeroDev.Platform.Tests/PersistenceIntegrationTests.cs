@@ -25,6 +25,32 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     public async Task DisposeAsync() => await ReleaseConnectionStringAsync(_connectionString).ConfigureAwait(false);
 
     [Fact]
+    public async Task Caller_cancellation_propagates_rather_than_reporting_a_retryable_outage()
+    {
+        // Classify turns a provider's own connect-or-command timeout into Unavailable. Without a
+        // separate guard, the caller's own cancellation — cancelling for its own reasons, nothing to
+        // do with the database — would be classified the identical way: a retryable outage the
+        // caller never asked about, rather than the cancellation it did ask for.
+        var source = new TestMigrationSource(
+            "Cancellable", TestMigration.Sql("0001_create", "CREATE TABLE t_cancellable (id TEXT PRIMARY KEY);"));
+
+        await using var host = await StartAsync(sources: [source]);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        using var caller = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                await caller.CancelAsync();
+                token.ThrowIfCancellationRequested();
+            },
+            caller.Token));
+    }
+
+    [Fact]
     public async Task Migrate_creates_both_modules_tables_and_one_history_each__second_run_applies_nothing()
     {
         var catalogue = new TestMigrationSource(

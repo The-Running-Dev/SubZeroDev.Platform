@@ -1,3 +1,4 @@
+using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
 
@@ -92,6 +93,37 @@ public sealed class ProviderCapabilityTests
         const string trimmedComparand = "2026-08-03T12:00:00.12Z";
 
         Assert.True(string.CompareOrdinal(trimmedEarlier, trimmedComparand) > 0);
+    }
+
+    [Theory]
+    [InlineData(PersistenceProvider.Sqlite)]
+    [InlineData(PersistenceProvider.PostgreSql)]
+    public void Migration_history_table_names_are_safe_regardless_of_module_name(PersistenceProvider provider)
+    {
+        var capability = CreateCapability(provider);
+
+        // ModuleName only requires non-empty and trims — it does not forbid spaces, punctuation, or
+        // anything else a developer types — and the result is interpolated unquoted into DDL.
+        var table = capability.MigrationHistoryTable(new ModuleName("Orders; DROP TABLE t--"));
+
+        Assert.Matches("^[a-z0-9_]+$", table);
+        Assert.StartsWith("platform_migrations_", table, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(PersistenceProvider.Sqlite)]
+    [InlineData(PersistenceProvider.PostgreSql)]
+    public void Module_names_differing_only_in_unsafe_characters_still_collide_predictably(PersistenceProvider provider)
+    {
+        var capability = CreateCapability(provider);
+
+        var withSpace = capability.MigrationHistoryTable(new ModuleName("Order Processing"));
+        var withHyphen = capability.MigrationHistoryTable(new ModuleName("Order-Processing"));
+
+        // Both collapse every non-alphanumeric run to one underscore, so these collide — which is
+        // exactly what the migration runner's own collision guard exists to catch before anything
+        // is applied, rather than corrupting two modules' histories silently.
+        Assert.Equal(withSpace, withHyphen);
     }
 
     private static IProviderCapability CreateCapability(PersistenceProvider provider) => provider switch

@@ -173,7 +173,7 @@ internal sealed class SqliteProviderCapability(PersistenceOptions options) : IPr
     {
         var builder = new SqliteConnectionStringBuilder(options.ConnectionString)
         {
-            DefaultTimeout = (int)(busyTimeout ?? options.SqliteBusyWaitBound).TotalSeconds,
+            DefaultTimeout = ToWholeSecondsAtLeastOne(busyTimeout ?? options.SqliteBusyWaitBound),
 
             // Pooling reuses a connection whose schema snapshot can predate a DDL change another
             // pooled connection just committed — reproduced directly: a fresh connection
@@ -184,6 +184,14 @@ internal sealed class SqliteProviderCapability(PersistenceOptions options) : IPr
 
         return builder.ConnectionString;
     }
+
+    /// <summary>Rounds up to at least one second. <c>DefaultTimeout</c> is whole seconds, so a
+    /// configured bound under a second — valid, since the binder only requires it positive — would
+    /// otherwise truncate to zero, which Microsoft.Data.Sqlite treats as "retry forever" rather than
+    /// SQLite's own "fail immediately". Truncating a sub-second bound to zero would turn a bounded
+    /// wait into an unbounded one, silently.</summary>
+    private static int ToWholeSecondsAtLeastOne(TimeSpan value) =>
+        Math.Max(1, (int)Math.Ceiling(value.TotalSeconds));
 
     private static bool IsBusy(SqliteException exception) =>
         exception.SqliteErrorCode is 5 /* SQLITE_BUSY */ or 6 /* SQLITE_LOCKED */;
@@ -219,6 +227,12 @@ internal static class Naming
 {
     /// <summary>Lower snake case, so a migration history table name is legal and readable on both
     /// providers. Decided in S2, per the contract's unresolved list.</summary>
+    /// <remarks><c>ModuleName</c> only requires non-empty and trims — it permits spaces, punctuation
+    /// and anything else a developer types — and this result is interpolated unquoted into DDL and
+    /// DML. Every character outside <c>[a-z0-9]</c> collapses to a single underscore rather than
+    /// passing through, so no module name can produce a malformed or unintended SQL identifier; the
+    /// migration runner's collision guard is what catches two names that collapse to the same
+    /// table.</remarks>
     internal static string SnakeCase(string value)
     {
         Span<char> buffer = stackalloc char[value.Length * 2];
@@ -226,19 +240,30 @@ internal static class Naming
 
         foreach (var character in value)
         {
-            if (char.IsUpper(character))
+            if (char.IsAsciiLetterUpper(character))
             {
-                if (length > 0)
+                if (length > 0 && buffer[length - 1] != '_')
                 {
                     buffer[length++] = '_';
                 }
 
                 buffer[length++] = char.ToLowerInvariant(character);
             }
-            else
+            else if (char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character))
             {
                 buffer[length++] = character;
             }
+            else if (length > 0 && buffer[length - 1] != '_')
+            {
+                // Anything not a plain ASCII letter or digit — space, hyphen, quote, semicolon, any
+                // non-ASCII character — becomes one underscore rather than passing through.
+                buffer[length++] = '_';
+            }
+        }
+
+        while (length > 0 && buffer[length - 1] == '_')
+        {
+            length--;
         }
 
         return new string(buffer[..length]);

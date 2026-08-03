@@ -241,7 +241,7 @@ internal sealed class MigrationRunner(
     private async Task<HashSet<string>> ReadAppliedAsync(
         DbConnection connection, DbTransaction transaction, string table, CancellationToken cancellationToken)
     {
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = $"SELECT name FROM {table};";
 
@@ -286,7 +286,7 @@ internal sealed class MigrationRunner(
     {
         try
         {
-            var command = connection.CreateCommand();
+            using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = provider == PersistenceProvider.Sqlite
                 ? "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'platform\\_migrations\\_%' ESCAPE '\\';"
@@ -325,7 +325,7 @@ internal sealed class MigrationRunner(
     private async Task InsertHistoryRowAsync(
         DbConnection connection, DbTransaction transaction, string table, string name, CancellationToken cancellationToken)
     {
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = $"INSERT INTO {table} (name, applied_at) VALUES (@name, @appliedAt);";
 
@@ -345,7 +345,7 @@ internal sealed class MigrationRunner(
     private static async Task ExecuteAsync(
         DbConnection connection, DbTransaction transaction, string sql, CancellationToken cancellationToken)
     {
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

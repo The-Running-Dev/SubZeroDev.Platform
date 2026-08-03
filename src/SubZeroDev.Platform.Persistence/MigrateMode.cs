@@ -50,7 +50,29 @@ public static class PlatformMigrationExtensions
                      .Where(descriptor => descriptor.ServiceType == typeof(IPlatformModule))
                      .ToList())
         {
-            Instantiate(descriptor).Register(builder.Services);
+            IPlatformModule module;
+            try
+            {
+                module = Instantiate(descriptor);
+            }
+            catch (MissingMethodException)
+            {
+                // Mirrors the real host's own registration failure — a named, actionable message
+                // rather than an unhandled activation stack trace, on the exit-code channel this
+                // one-shot command reports through.
+                Console.Error.WriteLine(
+                    $"Registration: Module '{descriptor.ImplementationType?.FullName}' must have a "
+                    + "public parameterless constructor: modules are composed before the container "
+                    + "exists, so nothing can be injected into one.");
+                return 1;
+            }
+            catch (InvalidOperationException exception)
+            {
+                Console.Error.WriteLine($"Registration: {exception.Message}");
+                return 1;
+            }
+
+            module.Register(builder.Services);
         }
 
         await using var provider = builder.Services.BuildServiceProvider();

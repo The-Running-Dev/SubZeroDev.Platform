@@ -149,6 +149,23 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
             await transaction.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return Result<T, TransactionError>.Success(value);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller asked to stop — a request aborted, a shutdown — not a database outage.
+            // Classify exists to turn a provider's own connect-or-command timeout into Unavailable;
+            // applying it here would report the caller's own cancellation as a retryable outage.
+            // Rolling back and propagating the cancellation is the ordinary .NET convention instead.
+            try
+            {
+                await transaction.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The transaction is already gone — the rollback is moot.
+            }
+
+            throw;
+        }
         catch (Exception exception)
         {
             try

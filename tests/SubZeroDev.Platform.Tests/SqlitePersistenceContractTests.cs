@@ -1,11 +1,58 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using SubZeroDev.Platform.Core;
+using SubZeroDev.Platform.Persistence;
+using SubZeroDev.Platform.Testing;
 
 namespace SubZeroDev.Platform.Tests;
 
 public sealed class SqlitePersistenceContractTests : PersistenceContractTests
 {
     protected override PersistenceProvider Provider => PersistenceProvider.Sqlite;
+
+    [Fact]
+    public async Task A_sub_second_busy_wait_bound_still_fails_fast_rather_than_hanging_forever()
+    {
+        // DefaultTimeout is whole seconds. Casting a sub-second bound to int truncates it to zero,
+        // and Microsoft.Data.Sqlite treats zero as "retry forever" rather than SQLite's own "fail
+        // immediately" — silently turning a bounded wait into an unbounded one.
+        var connectionString = await AcquireConnectionStringAsync();
+
+        try
+        {
+            await using var host = await PlatformTestHost.CreateBuilder()
+                .WithProvider(PersistenceProvider.Sqlite)
+                .WithSetting("Persistence:ConnectionString", connectionString)
+                .WithSetting("Persistence:SqliteBusyWaitBound", "00:00:00.500")
+                .StartAsync(CancellationToken.None);
+
+            var capability = host.Services.GetRequiredService<IProviderCapability>();
+            var firstLock = await capability.AcquireMigrationLockAsync(CancellationToken.None);
+            Assert.True(firstLock.IsSuccess);
+
+            try
+            {
+                var stopwatch = Stopwatch.StartNew();
+                var secondLock = await capability.AcquireMigrationLockAsync(CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+
+                Assert.False(secondLock.IsSuccess);
+                Assert.Equal(nameof(MigrationError.Locked), secondLock.Error.Code);
+                Assert.True(
+                    stopwatch.Elapsed < TimeSpan.FromSeconds(5),
+                    $"Expected the bound (rounded up to one second) to fail the second acquisition quickly; took {stopwatch.Elapsed}.");
+            }
+            finally
+            {
+                await firstLock.Value.DisposeAsync();
+            }
+        }
+        finally
+        {
+            await ReleaseConnectionStringAsync(connectionString);
+        }
+    }
 
     protected override Task<string> AcquireConnectionStringAsync()
     {
