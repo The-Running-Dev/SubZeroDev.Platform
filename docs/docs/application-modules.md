@@ -53,6 +53,10 @@ unrelated to workflow automation and unrelated to game hosting, which is what ma
 one consumer encodes that consumer's assumptions as though they were general. A third, unrelated one
 tests that more cheaply than the first paying customer does.
 
+**[Platform Identity](platform-identity.md) §4 is the canonical count of which candidate has which
+consumer.** The table below is a view of it from BarStrad's side — it adds a standing column and the
+framework rows §4 does not carry, and where the two disagree, §4 is right.
+
 | Capability | Automator | Game Engine | BarStrad | Standing |
 |---|---|---|---|---|
 | Hosting, configuration, startup validation | ✓ | ✓ | ✓ | Framework, built |

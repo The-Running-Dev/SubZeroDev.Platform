@@ -50,9 +50,10 @@ preventing that**, so it is restated here in its operative form:
 > A candidate becomes a package when a **second** consumer needs it. Until then it lives
 > inside the product that wants it.
 
-[Platform Identity](platform-identity.md) §4 records that four candidates now have their
-second consumer. That makes them *justified*, not *scheduled* — see
-[`implementation-plan.md`](implementation-plan.md).
+[Platform Identity](platform-identity.md) §4 records which candidates have their second consumer,
+and now a third — seven rows, counted there rather than restated here, because a number repeated in
+two documents is a number that will disagree with itself. That makes them *justified*, not
+*scheduled* — see [`implementation-plan.md`](implementation-plan.md).
 
 ---
 
@@ -309,8 +310,10 @@ Configuration, Events, Identity, Authorization, Organizations, Tenancy, Notifica
 Storage, BackgroundJobs, Scheduling, Plugins, Billing, Licensing, Audit, Api, Mcp, Web, UI.
 
 Each is specified in [`platform-specification.md`](platform-specification.md) so the shape is
-agreed, and none is built. Four of them now have a justified second consumer —
-[`second-consumer-packages.md`](second-consumer-packages.md).
+agreed, and none is built. Several now have a justified second consumer, and some a third —
+[Platform Identity](platform-identity.md) §4 holds the count,
+[`second-consumer-packages.md`](second-consumer-packages.md) and
+[`application-modules.md`](application-modules.md) hold the shapes.
 
 **`Platform.Plugins` deserves particular care.** Plugin abstractions belong to the plugin
 contract, which has its own repository precisely so that a non-.NET plugin need not depend

@@ -248,9 +248,14 @@ Recorded so the assumptions are visible rather than implied.
   module contract change, and the transferred ecosystem specifications stop being verbatim.
   The boundaries in [`minimal-platform-packages.md`](minimal-platform-packages.md) survive;
   the layout does not.
-- **If GEaaS is deprioritized indefinitely**, the extraction guard loses its second consumer
-  and Identity, Tenancy, Billing and Mcp go back to being speculative. They should then not
-  be built.
+- **If GEaaS is deprioritized indefinitely**, the guard no longer loses everything with it — this
+  risk was written when GEaaS was the only second consumer, and BarStrad is now a third. Identity,
+  Tenancy and Mcp keep a second consumer and stay justified; **Billing goes back to being
+  speculative**, since BarStrad's commercial model is unsettled and an unsettled consumer is not a
+  consumer. Notifications and localized content are unaffected — BarStrad wants both independently
+  of the engine. **Read the row-by-row count in [Platform Identity](platform-identity.md) §4 before
+  mothballing anything**; the earlier wording would have retired four packages at once, and it is
+  the kind of statement someone acts on rather than weighs.
 - **If the Automator ships first and grows its own identity and tenancy**, that is the guard
   working as designed, not a failure — extraction follows the second consumer, and D4 is
   where it lands.
