@@ -1,5 +1,6 @@
 using Npgsql;
 using SubZeroDev.Platform.Core;
+using SubZeroDev.Platform.Persistence;
 using Testcontainers.PostgreSql;
 
 namespace SubZeroDev.Platform.Tests;
@@ -89,6 +90,39 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
         command.Parameters.AddWithValue("@referencing", referencingTable);
         command.Parameters.AddWithValue("@owner", ownerTable);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    protected override async Task<RawOutboxRow?> ReadOutboxRowAsync(
+        string connectionString, IProviderCapability capability, OutboxMessageId id)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT sequence, type, tenant, trace_parent, trace_state, correlation, culture, attempts, payload, "
+            + "claimed_by, claimed_at, processed_at, poisoned_at FROM platform_outbox WHERE id = @id;";
+        command.Parameters.AddWithValue("@id", capability.EncodeIdentifier(id.Value));
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new RawOutboxRow(
+            Sequence: reader.GetInt64(0),
+            Type: reader.GetString(1),
+            Tenant: reader.GetString(2),
+            TraceParent: reader.GetString(3),
+            TraceState: reader.IsDBNull(4) ? null : reader.GetString(4),
+            Correlation: reader.GetString(5),
+            Culture: reader.GetString(6),
+            Attempts: reader.GetInt32(7),
+            Payload: reader.GetString(8),
+            ClaimedByIsNull: reader.IsDBNull(9),
+            ClaimedAtIsNull: reader.IsDBNull(10),
+            ProcessedAtIsNull: reader.IsDBNull(11),
+            PoisonedAtIsNull: reader.IsDBNull(12));
     }
 
     protected override async Task<(string Tenant, string CreatedAt, string? CreatedBy)> ReadAuditRowAsync(

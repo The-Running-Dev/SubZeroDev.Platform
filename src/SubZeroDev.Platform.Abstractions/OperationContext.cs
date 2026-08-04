@@ -10,7 +10,7 @@ public interface IClock
     DateTimeOffset UtcNow { get; }
 }
 
-/// <summary>One operation's ambient context: the four values every persisted row and every log line
+/// <summary>One operation's ambient context: the five values every persisted row and every log line
 /// is stamped from.</summary>
 public interface IOperationScope : IDisposable
 {
@@ -25,6 +25,10 @@ public interface IOperationScope : IDisposable
 
     /// <summary>The trace context this scope established.</summary>
     TraceContext Trace { get; }
+
+    /// <summary>The originating culture, unchanged through any depth of derived events. Defaults to
+    /// <see cref="CultureTag.Invariant"/> — nothing resolves one in D3.</summary>
+    CultureTag Culture { get; }
 }
 
 /// <summary>Opens an operation scope. There are two establishers — an inbound request, and each
@@ -35,8 +39,9 @@ public interface IOperationScopeFactory
     /// that calls this <em>is</em> the origin.</summary>
     /// <param name="tenant">The tenant for the scope.</param>
     /// <param name="principal">The principal, or <see langword="null"/>.</param>
+    /// <param name="culture">The originating culture. Defaults to <see cref="CultureTag.Invariant"/>.</param>
     /// <returns>The scope, which restores the previous ambient context when disposed.</returns>
-    IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal);
+    IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal, CultureTag culture = default);
 
     /// <summary>Establishment from values the caller already holds — an adopted request context, or
     /// a dispatched message's new linked trace with the origin's correlation.</summary>
@@ -44,12 +49,14 @@ public interface IOperationScopeFactory
     /// <param name="correlation">The originating trace-id.</param>
     /// <param name="tenant">The tenant for the scope.</param>
     /// <param name="principal">The principal, or <see langword="null"/>.</param>
+    /// <param name="culture">The originating culture. Defaults to <see cref="CultureTag.Invariant"/>.</param>
     /// <returns>The scope, which restores the previous ambient context when disposed.</returns>
     IOperationScope Begin(
         TraceContext established,
         CorrelationId correlation,
         TenantId tenant,
-        ClaimsPrincipal? principal);
+        ClaimsPrincipal? principal,
+        CultureTag culture = default);
 }
 
 /// <summary>Reads the ambient scope. The only member here that can be null, and what makes
@@ -84,4 +91,13 @@ public interface ICurrentCorrelation
     /// <summary>The ambient correlation.</summary>
     /// <exception cref="PlatformContractViolationException">No operation scope is open.</exception>
     CorrelationId Current { get; }
+}
+
+/// <summary>The ambient culture. In D3 nothing resolves one — the interface exists so the outbox
+/// column has a supplier, exactly as <see cref="ICurrentTenant"/> exists so the tenant column does.</summary>
+public interface ICurrentCulture
+{
+    /// <summary>The ambient culture. Defaults to <see cref="CultureTag.Invariant"/>.</summary>
+    /// <exception cref="PlatformContractViolationException">No operation scope is open.</exception>
+    CultureTag Current { get; }
 }

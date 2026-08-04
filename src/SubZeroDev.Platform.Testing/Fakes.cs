@@ -40,3 +40,11 @@ public sealed class FakeCurrentPrincipal : ICurrentPrincipal
     /// <summary>The principal every read returns.</summary>
     public ClaimsPrincipal? Current { get; set; }
 }
+
+/// <summary>A culture a test sets. <see cref="CultureTag.Invariant"/> is the ordinary value: nothing
+/// resolves one in D3.</summary>
+public sealed class FakeCurrentCulture : ICurrentCulture
+{
+    /// <summary>The culture every read returns.</summary>
+    public CultureTag Current { get; set; } = CultureTag.Invariant;
+}

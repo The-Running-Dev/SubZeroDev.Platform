@@ -89,7 +89,14 @@ internal sealed class AmbientTransactionAccessor(AmbientTransactionState state) 
 internal sealed record AmbientTransaction(
     TransactionIntent Intent,
     DbConnection Connection,
-    DbTransaction Transaction) : IAmbientTransaction;
+    DbTransaction Transaction) : IAmbientTransaction
+{
+    /// <summary>Rows <see cref="IOutboxWriter.Enqueue{TEvent}"/> staged against this transaction.
+    /// <see cref="UnitOfWork"/> inserts them right before commit — which is what "the write happens
+    /// on commit" means, and what gives a failed insert the same <c>TransactionError</c> handling as
+    /// any other participant's write rather than a bare exception escaping a synchronous call.</summary>
+    internal List<OutboxMessage> PendingOutboxMessages { get; } = [];
+}
 
 /// <summary>Chooses the capability the configured provider calls for. A capability holds no
 /// per-transaction state — <see cref="IProviderCapability.BeginAsync"/> hands the connection and
@@ -105,7 +112,8 @@ internal static class ProviderCapabilityFactory
 }
 
 /// <inheritdoc cref="IUnitOfWork"/>
-internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransactionState ambient) : IUnitOfWork
+internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransactionState ambient, IOutboxStore outboxStore)
+    : IUnitOfWork
 {
     public async Task<Result<TransactionError>> ExecuteAsync(
         TransactionIntent intent,
@@ -146,6 +154,31 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
         try
         {
             var value = await work(cancellationToken).ConfigureAwait(false);
+
+            // Enqueue stages rows rather than writing them, so a failed insert here is reported the
+            // same way any other participant's write failure is — rolled back and classified —
+            // rather than as a bare exception escaping Enqueue's synchronous call.
+            foreach (var message in ((AmbientTransaction)transaction).PendingOutboxMessages)
+            {
+                var inserted = await outboxStore.InsertAsync(message, cancellationToken).ConfigureAwait(false);
+                if (!inserted.IsSuccess)
+                {
+                    try
+                    {
+                        // CancellationToken.None, not the caller's token — a cancelled token here
+                        // must not prevent rollback from completing, the same reason every other
+                        // rollback in this method uses it rather than the ambient token.
+                        await transaction.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Best-effort: the connection may already be gone.
+                    }
+
+                    return Result<T, TransactionError>.Failure(inserted.Error);
+                }
+            }
+
             await transaction.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return Result<T, TransactionError>.Success(value);
         }

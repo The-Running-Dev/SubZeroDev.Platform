@@ -163,18 +163,21 @@ internal sealed class HostRegistrationStore(
     }
 }
 
-/// <summary>Creates <c>platform_host_registration</c> — the first table Platform owns and migrates
-/// itself, under a module name of its own rather than a product's.</summary>
+/// <summary>Creates every table Platform owns and migrates itself, under one module name of its
+/// own rather than a product's — one source, since a second <see cref="IModuleMigrationSource"/>
+/// declaring the same <see cref="ModuleName"/> is exactly the collision
+/// <see cref="MigrationRunner"/>'s own history-table-collision check rejects.</summary>
 /// <remarks>Applying and re-applying this migration, on both providers, is exercised in
 /// <c>HostRegistrationTests</c> and <c>HostRegistrationPostgresTests</c> (positive cases); a
 /// consumer module accidentally reusing the <c>"Platform"</c> name is rejected by
 /// <see cref="MigrationRunner"/>'s history-table-collision check before anything applies (negative
 /// case, in <c>PersistenceIntegrationTests</c>).</remarks>
-internal sealed class PlatformHostRegistrationMigrationSource : IModuleMigrationSource
+internal sealed class PlatformMigrationSource : IModuleMigrationSource
 {
     public ModuleName Module { get; } = new("Platform");
 
-    public IReadOnlyList<IModuleMigration> Migrations { get; } = [new CreateHostRegistrationTable()];
+    public IReadOnlyList<IModuleMigration> Migrations { get; } =
+        [new CreateHostRegistrationTable(), new PlatformOutboxMigration()];
 
     private sealed class CreateHostRegistrationTable : IModuleMigration
     {

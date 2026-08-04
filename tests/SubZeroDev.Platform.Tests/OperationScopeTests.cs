@@ -95,6 +95,37 @@ public sealed class OperationScopeTests
     }
 
     [Fact]
+    public async Task An_explicit_culture_reports_on_the_scope_and_the_ambient_accessor()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
+        var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        using var scope = factory.Begin(TenantId.Implicit, null, new CultureTag("bg"));
+
+        Assert.Equal(new CultureTag("bg"), scope.Culture);
+        Assert.Equal(new CultureTag("bg"), host.Services.GetRequiredService<ICurrentCulture>().Current);
+    }
+
+    [Fact]
+    public async Task Omitting_the_culture_yields_the_invariant_on_both_begin_overloads()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
+        var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        using var originated = factory.Begin(TenantId.Implicit, null);
+        Assert.Equal(CultureTag.Invariant, originated.Culture);
+
+        var trace = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", null);
+        var origin = new CorrelationId("3333333333333333333333333333bbbb");
+        using var established = factory.Begin(trace, origin, TenantId.Implicit, null);
+        Assert.Equal(CultureTag.Invariant, established.Culture);
+
+        // default(CultureTag) is Invariant, not merely equivalent to it — the whole point of making
+        // the type non-positional.
+        Assert.Equal(default, CultureTag.Invariant);
+    }
+
+    [Fact]
     public void Trace_flags_travel_with_the_context()
     {
         Assert.True(TraceContext.TryParse(
@@ -116,5 +147,6 @@ public sealed class OperationScopeTests
         yield return () => _ = services.GetRequiredService<ICurrentCorrelation>().Current;
         yield return () => _ = services.GetRequiredService<ICurrentTenant>().Current;
         yield return () => _ = services.GetRequiredService<ICurrentPrincipal>().Current;
+        yield return () => _ = services.GetRequiredService<ICurrentCulture>().Current;
     }
 }

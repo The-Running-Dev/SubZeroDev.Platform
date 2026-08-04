@@ -94,3 +94,52 @@ public sealed record MigrationError : PlatformError
             $"Modules '{first}' and '{second}' both resolve to migration history table '{table}'. "
             + "Rename one so each module owns its own history.");
 }
+
+/// <summary>A rejected event handler registration, or a handler this host could not construct.</summary>
+public sealed record EventHandlerRegistrationError : PlatformError
+{
+    private EventHandlerRegistrationError(string code, string detail)
+        : base(code) => Detail = detail;
+
+    /// <summary>Names the type and handler involved.</summary>
+    public string Detail { get; }
+
+    /// <inheritdoc/>
+    public override bool IsRetryable => false;
+
+    /// <summary>A second handler registered for an <see cref="EventTypeName"/> already registered. A
+    /// product that wants two things to happen writes one handler that does two things.</summary>
+    /// <param name="type">The event type name.</param>
+    /// <param name="first">The handler already registered.</param>
+    /// <param name="second">The handler that tried to register alongside it.</param>
+    /// <returns>The error.</returns>
+    public static EventHandlerRegistrationError DuplicateHandlerForType(EventTypeName type, Type first, Type second) =>
+        new(
+            nameof(DuplicateHandlerForType),
+            $"Event type '{type}' already has handler '{first.FullName}'; '{second.FullName}' cannot also register for it.");
+
+    /// <summary>A second <see cref="EventTypeName"/> registered for a CLR event type already bound.
+    /// Enqueue could not choose which name to stamp.</summary>
+    /// <param name="eventType">The CLR event type.</param>
+    /// <param name="first">The name already bound.</param>
+    /// <param name="second">The name that tried to bind alongside it.</param>
+    /// <returns>The error.</returns>
+    public static EventHandlerRegistrationError DuplicateNameForEventType(Type eventType, EventTypeName first, EventTypeName second) =>
+        new(
+            nameof(DuplicateNameForEventType),
+            $"CLR event type '{eventType.FullName}' is already bound to name '{first}'; it cannot also bind to '{second}'.");
+
+    /// <summary>The handler's constructor dependencies failed to resolve, checked only in the
+    /// dispatching role.</summary>
+    /// <param name="handlerType">The handler that could not be constructed.</param>
+    /// <param name="detail">What could not be resolved.</param>
+    /// <returns>The error.</returns>
+    public static EventHandlerRegistrationError HandlerNotConstructible(Type handlerType, string detail) =>
+        new(nameof(HandlerNotConstructible), $"Handler '{handlerType.FullName}' could not be constructed: {detail}");
+
+    /// <summary>Registration was attempted after the host was built.</summary>
+    /// <param name="type">The registration that arrived late.</param>
+    /// <returns>The error.</returns>
+    public static EventHandlerRegistrationError RegistryFrozen(EventTypeName type) =>
+        new(nameof(RegistryFrozen), $"The event handler registry is frozen; '{type}' cannot be registered.");
+}

@@ -26,6 +26,10 @@ builder.AddPlatformWebHost();
 // composed without this call is a supported shape with a smaller readiness surface.
 builder.Services.AddPlatformPersistence();
 
+// The web host registers the same triple the worker does, in order to enqueue — it never
+// constructs the handler, but the registration is a statement both roles make identically.
+builder.Services.AddPlatformEventHandler<OrderPlaced, OrderPlacedHandler>(SampleEventTypes.OrderPlaced);
+
 var app = builder.Build();
 
 app.MapGet("/", (ICurrentCorrelation correlation, ICurrentTenant tenant) => new
@@ -47,6 +51,7 @@ app.MapPost("/orders", async (
     IUnitOfWork unitOfWork,
     IAmbientTransactionAccessor ambient,
     IProviderCapability capability,
+    IOutboxWriter outbox,
     IClock clock,
     ICurrentTenant tenant,
     ICurrentPrincipal principal,
@@ -91,6 +96,10 @@ app.MapPost("/orders", async (
                 AddParameter(insertOrder, "@createdBy", createdBy);
                 await insertOrder.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }
+
+            // Enlists in the same transaction as both product rows above — a rollback after this
+            // point leaves neither the order nor this outbox row.
+            outbox.Enqueue(new OrderPlaced(orderId, itemId, request.Quantity));
 
             return new CreateOrderResponse(itemId, orderId);
         },

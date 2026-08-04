@@ -136,4 +136,14 @@ public sealed record ContractViolation(string Code) : PlatformError(Code)
     /// <summary><c>Value</c> was read on a failure, or <c>Error</c> on a success.</summary>
     /// <returns>The violation.</returns>
     public static ContractViolation ResultAccessedIncorrectly() => new(nameof(ResultAccessedIncorrectly));
+
+    /// <summary><c>Enqueue</c> was called outside a unit of work. Fix the call site — open a
+    /// transaction around the enqueue.</summary>
+    /// <returns>The violation.</returns>
+    public static ContractViolation NoAmbientTransaction() => new(nameof(NoAmbientTransaction));
+
+    /// <summary><c>Enqueue</c> was called with an event type no registration bound to a stable name.
+    /// There is nothing to stamp on the row without the name.</summary>
+    /// <returns>The violation.</returns>
+    public static ContractViolation UnregisteredEventType() => new(nameof(UnregisteredEventType));
 }

@@ -66,6 +66,9 @@ public interface IPlatformTestHost : IAsyncDisposable
     /// <summary>The clock the host reads, which a test moves.</summary>
     FakeClock Clock { get; }
 
+    /// <summary>Every event enqueued or dispatched while this host ran.</summary>
+    IEventCapture Events { get; }
+
     /// <summary>Runs one probe and returns its report, without going over HTTP.</summary>
     /// <param name="kind">Which probe to run.</param>
     /// <param name="cancellationToken">Cancels the probe.</param>
@@ -137,9 +140,33 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
         var clock = new FakeClock();
         builder.Services.AddSingleton<IClock>(clock);
 
+        var capture = new EventCapture();
+        builder.Services.AddSingleton<IEventCapture>(capture);
+
         if (_persistenceRequested)
         {
             builder.Services.AddPlatformPersistence();
+
+            // Splices the capturing decorator over the factory AddPlatformPersistence registered,
+            // rather than resolving and re-wrapping after the container builds: IOutboxWriter is a
+            // singleton other singletons (the ambient scope's callers) capture a reference to during
+            // their own construction, so anything resolved post-build would be a second, unused
+            // instance rather than the one actually in use.
+            var writerDescriptor = builder.Services.FirstOrDefault(descriptor => descriptor.ServiceType == typeof(IOutboxWriter));
+            if (writerDescriptor?.ImplementationFactory is { } innerFactory)
+            {
+                builder.Services.Remove(writerDescriptor);
+                builder.Services.AddSingleton<IOutboxWriter>(provider =>
+                {
+                    var innerWriter = (IOutboxWriter)innerFactory(provider);
+                    return new CapturingOutboxWriter(
+                        innerWriter,
+                        capture,
+                        provider.GetRequiredService<IOperationScopeAccessor>(),
+                        provider.GetRequiredService<IEventHandlerRegistry>(),
+                        provider.GetRequiredService<IClock>());
+                });
+            }
 
             var resolvedProvider = _settings.TryGetValue("Platform:Persistence:Provider", out var raw)
                 && Enum.TryParse<PersistenceProvider>(raw, out var parsed)
@@ -172,7 +199,7 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
         var host = builder.Build();
         await host.StartAsync(cancellationToken).ConfigureAwait(false);
 
-        return new StartedTestHost(host, clock, _sqliteFile);
+        return new StartedTestHost(host, clock, capture, _sqliteFile);
     }
 
     /// <summary>Every required setting, so a test needs none of them, and a probe port that cannot
@@ -238,11 +265,14 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
     }
 }
 
-internal sealed class StartedTestHost(IHost host, FakeClock clock, string? sqliteFile = null) : IPlatformTestHost
+internal sealed class StartedTestHost(IHost host, FakeClock clock, IEventCapture events, string? sqliteFile = null)
+    : IPlatformTestHost
 {
     public IServiceProvider Services => host.Services;
 
     public FakeClock Clock => clock;
+
+    public IEventCapture Events => events;
 
     public Task<HealthReport> ProbeAsync(HealthCheckKind kind, CancellationToken cancellationToken) =>
         host.Services.GetRequiredService<HealthProbe>().RunAsync(kind, cancellationToken);

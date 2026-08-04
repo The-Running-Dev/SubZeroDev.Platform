@@ -123,6 +123,69 @@ internal sealed class TestMigrationSource(string module, params IModuleMigration
     public IReadOnlyList<IModuleMigration> Migrations { get; } = migrations;
 }
 
+/// <summary>An event a test enqueues, with no product meaning of its own.</summary>
+/// <param name="Value">A payload field, used to prove round-tripping.</param>
+internal sealed record TestEvent(string Value = "test") : IIntegrationEvent;
+
+/// <summary>A second event type, for tests that need two distinct registrations.</summary>
+internal sealed record OtherTestEvent : IIntegrationEvent;
+
+/// <summary>A handler with no side effect a test needs — S4 delivers enqueue, not dispatch, so
+/// nothing invokes this yet. Exists to be registered and, in worker-role tests, constructed.</summary>
+internal sealed class TestEventHandler : IIntegrationEventHandler<TestEvent>
+{
+    public Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken) =>
+        Task.FromResult(Result<HandlerError>.Success());
+}
+
+/// <summary>A second handler for <see cref="TestEvent"/>, for asserting
+/// <c>DuplicateHandlerForType</c>.</summary>
+internal sealed class SecondTestEventHandler : IIntegrationEventHandler<TestEvent>
+{
+    public Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken) =>
+        Task.FromResult(Result<HandlerError>.Success());
+}
+
+/// <summary>A handler for <see cref="OtherTestEvent"/>, for asserting
+/// <c>DuplicateNameForEventType</c>.</summary>
+internal sealed class OtherTestEventHandler : IIntegrationEventHandler<OtherTestEvent>
+{
+    public Task<Result<HandlerError>> HandleAsync(OtherTestEvent @event, CancellationToken cancellationToken) =>
+        Task.FromResult(Result<HandlerError>.Success());
+}
+
+/// <summary>A handler whose constructor depends on a type nothing registers, so resolving it always
+/// fails — the shape <c>HandlerNotConstructible</c> exists to catch.</summary>
+internal sealed class UnconstructibleTestEventHandler(INeverRegistered dependency) : IIntegrationEventHandler<TestEvent>
+{
+    private readonly INeverRegistered _dependency = dependency;
+
+    public Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken) =>
+        Task.FromResult(Result<HandlerError>.Success());
+}
+
+internal interface INeverRegistered;
+
+/// <summary>A raw <c>platform_outbox</c> row, read back directly rather than through
+/// <see cref="IOutboxStore"/> — which has no read member yet — so a test can assert what was
+/// actually stored. Public because <see cref="PersistenceContractTests"/>'s abstract method
+/// returning it is protected on a public class, and CS0050 requires the return type be at least as
+/// accessible as the member.</summary>
+public sealed record RawOutboxRow(
+    long Sequence,
+    string Type,
+    string Tenant,
+    string TraceParent,
+    string? TraceState,
+    string Correlation,
+    string Culture,
+    int Attempts,
+    string Payload,
+    bool ClaimedByIsNull,
+    bool ClaimedAtIsNull,
+    bool ProcessedAtIsNull,
+    bool PoisonedAtIsNull);
+
 /// <summary>Orders two byte arrays lexicographically, the same comparison a database performs over
 /// a blob column.</summary>
 internal sealed class ByteArrayComparer : IComparer<byte[]>

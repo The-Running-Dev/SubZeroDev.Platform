@@ -12,8 +12,9 @@ namespace SubZeroDev.Platform.Persistence;
 public static class PlatformPersistenceExtensions
 {
     /// <summary>Registers the unit of work, the ambient transaction accessor, the migration runner,
-    /// host registration and its heartbeat, and the <c>Database</c>, <c>PendingMigrations</c>,
-    /// <c>PeerHost</c> and <c>SettingsFingerprint</c> readiness checks.</summary>
+    /// the outbox writer and store, the event handler registry, host registration and its heartbeat,
+    /// and the <c>Database</c>, <c>PendingMigrations</c>, <c>PeerHost</c> and
+    /// <c>SettingsFingerprint</c> readiness checks.</summary>
     /// <param name="services">The host's service collection.</param>
     /// <returns>The same collection, so calls chain.</returns>
     public static IServiceCollection AddPlatformPersistence(this IServiceCollection services)
@@ -30,6 +31,20 @@ public static class PlatformPersistenceExtensions
         services.TryAddSingleton<IProviderCapability>(provider =>
             ProviderCapabilityFactory.Create(provider.GetRequiredService<PlatformOptions>()));
 
+        services.TryAddSingleton<IOutboxStore, OutboxStore>();
+
+        // A factory registration rather than TryAddSingleton<IOutboxWriter, OutboxWriter>(): Testing
+        // decorates this to feed IEventCapture, and a factory is a delegate a different assembly can
+        // invoke without needing compile-time access to the internal implementation type a plain
+        // TImplementation registration would require reflecting into.
+        services.TryAddSingleton<IOutboxWriter>(provider => new OutboxWriter(
+            provider.GetRequiredService<IAmbientTransactionAccessor>(),
+            provider.GetRequiredService<IOperationScopeAccessor>(),
+            provider.GetRequiredService<IEventHandlerRegistry>(),
+            provider.GetRequiredService<IClock>()));
+
+        services.TryAddSingleton<IEventHandlerRegistry, EventHandlerRegistry>();
+
         services.TryAddSingleton<IUnitOfWork, UnitOfWork>();
         services.TryAddSingleton<IMigrationRunner, MigrationRunner>();
 
@@ -38,7 +53,7 @@ public static class PlatformPersistenceExtensions
         // same implementation, so Persistence does not silently depend on Hosting's call order.
         services.TryAddSingleton<ISettingsFingerprint, SettingsFingerprint>();
 
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IModuleMigrationSource, PlatformHostRegistrationMigrationSource>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IModuleMigrationSource, PlatformMigrationSource>());
         services.TryAddSingleton<IHostRegistrationStore, HostRegistrationStore>();
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, DatabaseHealthCheck>());
@@ -51,6 +66,11 @@ public static class PlatformPersistenceExtensions
         if (!services.Any(descriptor => descriptor.ImplementationType == typeof(PersistenceStartupCheck)))
         {
             services.AddHostedService<PersistenceStartupCheck>();
+        }
+
+        if (!services.Any(descriptor => descriptor.ImplementationType == typeof(EventHandlerRegistryStartup)))
+        {
+            services.AddHostedService<EventHandlerRegistryStartup>();
         }
 
         if (!services.Any(descriptor => descriptor.ImplementationType == typeof(HostRegistrationShutdownCleanup)))
