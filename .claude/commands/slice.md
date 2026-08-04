@@ -9,11 +9,13 @@ Before writing code, read `design/20-contract.md` for every signature you will t
 
 Sequence:
 
-1. State the slice's acceptance criteria back as a checklist. One line each. Nothing else.
+1. State the slice's acceptance criteria back as a checklist, **by id** — `S3.1`, `S3.2`. One line each. Nothing else.
 2. Write the tests that check those criteria. They must fail for the right reason before you write the implementation.
 3. Implement against the contract signatures exactly. No signature drift, no added parameters, no widened return types.
 4. Run the tests. Run the full suite, not just the new tests.
-5. Report: criteria met, criteria not met and why, and anything you had to decide that the contract did not determine.
+5. Report **by criterion id**: which are met, which are not and why, and anything you had to decide that the contract did not determine.
+
+**You do not tick the issue's checkboxes.** Ticking is the user's confirmation that a criterion is genuinely met, and it is deliberately not yours to give — a report saying "S3.1 met" and a ticked box are different claims by different parties. End by listing the ids you believe are met, in one line, so ticking them is mechanical.
 
 Stop conditions — halt and report rather than proceeding:
 

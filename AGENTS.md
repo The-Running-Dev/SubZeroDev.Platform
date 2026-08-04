@@ -102,7 +102,7 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 
 **Division of control.** I set the session model. You set subagent models and scale your own reasoning depth. You cannot change your own session model — if a task warrants a different tier, say so rather than silently over- or under-spending.
 
-**Never use `max` effort unless I ask for it by name.** **`xhigh` is for one question, not one phase** — running a whole design pass at `xhigh` is not rigour, it is a substitute for asking a precise question. `/track` is mechanical sync work: Sonnet, medium, escalating only to judge whether a drifted slice is a design change.
+**Never use `max` effort unless I ask for it by name.** **`xhigh` is for one question, not one phase** — running a whole design pass at `xhigh` is not rigour, it is a substitute for asking a precise question. `/track` is mechanical sync work: Sonnet, medium, escalating only to judge whether a drifted slice is a design change. `/verify` and `/pr` are the same tier; `/verify` escalates only to diagnose a failure, never to run the gates. `/resolve` is the same tier too, escalating only to judge a contested finding, not to triage the obvious ones.
 
 ## Hard rules
 
@@ -177,7 +177,8 @@ Match capability and reasoning effort to the **task**, not to the tool that reac
 - **Push every commit before announcing a PR is ready.** Announcing invites an immediate merge, and a commit pushed after that lands on a branch nobody merges.
 - External writes need my authorization: creating a remote repository, changing visibility, pushing, opening pull requests, changing a domain, deploying. **Discussing a decision does not authorize it.** One carve-out — see **Tracking work**, below.
 - Do not delete files, branches, or history without explicit authorization.
-- Check review **threads**, not just requested reviewers — an automated reviewer can leave blocking conversation threads that do not appear in a reviewer listing. Resolve a thread only when a validated fix satisfies it; leave ambiguous findings open and report them.
+- Check review **threads**, not just requested reviewers — an automated reviewer can leave blocking conversation threads that do not appear in a reviewer listing. Resolve a thread only when a validated fix satisfies it; leave ambiguous findings open and report them. `/resolve` does this; the query it needs is written out there.
+- **Resolving or replying to a review thread is not carved out.** The exception in *Tracking work* covers opening issues and nothing else. Where a repository delegates resolution explicitly, follow its wording; where it is silent, ask.
 
 ## Tracking work
 
@@ -197,6 +198,23 @@ or a section of a document that will rot.
   it opens to it. It never creates a project or a milestone.
 - `design/30-slices.md` stays authoritative for what a slice *is*; its issue tracks whether it
   is *done*. If the two come to disagree, say so rather than editing either.
+- **Every issue reads human-first.** A narrative anyone can follow, then `### Done when`
+  checkboxes, then the agent detail in a collapsed `<details>` block.
+- **The agent block is fenced** by `<!-- agent:start -->` and `<!-- agent:end -->`. Inside the
+  fence is regenerable; **outside it is never touched** — a ticked checkbox is progress someone
+  recorded, an edited narrative is someone's deliberate wording.
+- **Where a document already governs, the block points; where none does, it carries.** A slice
+  names `design/30-slices.md § S<n> @ <sha>` and leaves procedure to `.claude/commands/slice.md`
+  — copying stop conditions into an issue freezes a stale copy that nothing can go back and fix.
+  A bug or a story has no upstream document, so its block legitimately holds the constraints.
+- **Criteria carry stable ids** (`S3.1`), and drift is compared on ids, never prose. Reworded
+  criteria are not drift; an added, removed, or renumbered id is.
+- **Report drift, change neither side.** Which is wrong is my call.
+- **Ticking a checkbox is mine, not yours.** An agent reporting "S3.1 met" and a ticked box are
+  different claims by different parties. `/slice` ends by listing the ids it believes are met so
+  ticking them is mechanical.
+- **Bugs and stories are filed by hand** from `.github/ISSUE_TEMPLATE/`. `/track` does not open
+  them.
 - This does not suspend one-at-a-time sign-off. The tracker is where findings I accept go,
   not a way to skip presenting them.
 

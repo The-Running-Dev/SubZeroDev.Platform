@@ -4,6 +4,12 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-04 — Kit catch-up install; skipped the new agent.md lesson, this repo is its source
+Context: Installing the agent kit's catch-up (five commits since this repository's `da5d1f7`-era install: `/verify`/`/pr`/`/resolve`, the human-first fenced-issue shape, stable criterion ids). The kit's seed gained a new lesson, "a fix that only changed the odds is not a fix" — a generalised, evidence-stripped SQLite connection-pooling / stale-schema-snapshot incident. The installer's own provenance rule requires checking whether an offered lesson actually originated in the target before adding it back.
+Chosen: Skip it. `agent.md`, *Verification*, already carries this exact incident as "Three green runs is not evidence a race is fixed" with more detail than the kit's version — the actual root cause (`Microsoft.Data.Sqlite` connection pooling serving a stale schema snapshot), the fix (`Pooling=false`), and the repro method. The kit's copy did not come from elsewhere; it came from here, generalised. Adding it back would duplicate a rule already stated more precisely.
+Rejected: **Add the kit's version anyway, since the user approved it in general** — rejected because the approval was for the general case (Blog, GameEngine, neither of which had this lesson), and this repository is the one case the installer's provenance check exists to catch.
+Reversibility: cheap
+
 ## Open
 - **Two automated-review findings are valid, not fixed here, and now raised upstream** — [Docs-Template#62](https://github.com/The-Running-Dev/Docs-Template/issues/62) (mutable tag) and [Docs-Template#63](https://github.com/The-Running-Dev/Docs-Template/issues/63) (traversal). Both sit in files installed **byte-identical** from `ghcr.io/the-running-dev/docs-template` (verified by diffing against the image), and both were already tracked in `SubZeroDev.GameEngine`'s `TODO.md`.
   1. `docs-ci.yml` and `docs-deploy.yml` run in `ghcr.io/the-running-dev/docs-template:latest`, a **mutable tag** — the same commit can start failing after an image update, and past failures are hard to reproduce.
