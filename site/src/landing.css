@@ -1,0 +1,135 @@
+.hero {
+  border-bottom: 1px solid var(--border);
+  padding-block: 2rem 1.5rem;
+}
+
+.hero h1 {
+  margin: 0 0 0.6rem;
+}
+
+/* The banner pill is the largest thing on the page, and it is still smaller
+ * than the engine's smallest heading — status pages do not shout. */
+.hero .status-pill {
+  font-size: 1rem;
+  padding: 0.4em 0.8em;
+}
+
+.hero-sub {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0 0 1.1rem;
+}
+
+.fact-strip {
+  display: flex;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  gap: 1.75rem;
+  margin: 0;
+}
+
+.fact-strip > div {
+  border-left: 1px solid var(--border);
+  padding-left: 0.75rem;
+}
+
+.fact-strip dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fact-strip dd {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0.1rem 0 0;
+}
+
+.postmortem {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  max-width: 46rem;
+}
+
+.postmortem div {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.15rem;
+  padding-top: 0.6rem;
+}
+
+.postmortem dt {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.postmortem dd {
+  margin: 0;
+}
+
+.declined-list,
+.accepted-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  max-width: 42rem;
+  padding: 0;
+}
+
+.declined-list li,
+.accepted-list li {
+  align-items: baseline;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.declined-list span[aria-hidden] {
+  color: var(--unhealthy);
+  font-family: var(--mono);
+}
+
+.accepted-list span[aria-hidden] {
+  color: var(--ok);
+  font-family: var(--mono);
+}
+
+.uptime-bars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 0.6rem;
+  max-width: 42rem;
+}
+
+.uptime-bar {
+  background: var(--ok);
+  border-radius: 1px;
+  height: 1rem;
+  width: 5px;
+}
+
+.uptime-legend {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.readiness-example {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin: 0.9rem 0 0;
+  max-width: 34rem;
+  overflow-x: auto;
+  padding: 1rem 1.1rem;
+}
+
+.readiness-example code {
+  white-space: pre;
+}

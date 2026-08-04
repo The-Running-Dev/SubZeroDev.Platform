@@ -1,15 +1,20 @@
 name: Docs CI
 
 # Everything documentation needs except deploy: check the authored Markdown,
-# then build the site to prove it still builds. No path filters -- both jobs
-# are meant to be required status checks, and a required check that never runs
-# leaves a pull request permanently blocked.
+# then build the combined site (docs + status-page landing site) to prove it
+# still builds. No path filters -- all jobs are meant to be required status
+# checks, and a required check that never runs leaves a pull request
+# permanently blocked.
 #
 # The gate and the build are not the same check. Docusaurus fails on unresolved
 # routes inside the site; the gate covers what the site build never sees --
 # README.md, which is not part of the site at all, plus relative link targets,
 # heading anchors, product-name casing, and drift between a generated file and
-# its source.
+# its source. Neither one checks that site/ still merges cleanly onto the docs
+# build -- that is what the verify job's extra steps are for, so a PR proves
+# the deploy path before it can run for real. Neither checks that
+# design/30-slices.md's Status markers stay internally consistent either --
+# see the slice-status-markers job.
 
 "on":
     pull_request:
@@ -43,6 +48,25 @@ jobs:
               run: ./build/Test-Documentation.ps1
     # --- DocumentationGate:end ---
 
+    # Not inside the DocumentationGate block above, deliberately: that block is
+    # located by its markers and removed whole by setup-docs.ps1 -SkipGate, and
+    # Test-Documentation.ps1 is installed byte-identical from the docs-template
+    # image (design/90-decisions.md) -- this repository's practice is not to
+    # hand-edit that file, so re-running the installer keeps picking up
+    # upstream fixes. This check is repository-owned and lives in its own job
+    # instead, checking design/30-slices.md's Status markers stay consistent --
+    # see build/Test-SliceStatusMarkers.ps1 and design/40-site.md.
+    slice-status-markers:
+        name: Slice status markers
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Validate design/30-slices.md's Status markers
+              run: ./build/Test-SliceStatusMarkers.ps1
+
     verify:
         name: Verify Documentation Build
         # Skipped on push to main: docs-deploy.yml builds and deploys there, so
@@ -63,6 +87,30 @@ jobs:
 
             - name: Build documentation
               run: /template/scripts/docs-build.ps1 -SourceDocs ./docs -OutputPath artifacts/docs
+
+            # The status-page site is a second, independent project (site/)
+            # sharing this one GitHub Pages deployment: it serves "/", the docs
+            # serve "/docs". The base image already has Node -- no setup-node
+            # needed.
+            #
+            # `check` runs format:check, lint, typecheck, vitest and the build
+            # (site/package.json), not just the build. A bare `build` would let
+            # a broken component test or a missing metadata tag merge and
+            # deploy as long as the bundle still compiled -- `check` is what a
+            # contributor runs locally before pushing, made a required step
+            # here too, not a weaker CI-only substitute for it.
+            - name: Build and verify the status-page site
+              run: |
+                  npm --prefix site ci
+                  npm --prefix site run check
+
+            # Overlays the site onto the docs build -- overwrites the docs
+            # build's generated-from-README root index.html, merges in the
+            # site's assets, and refuses to proceed if anything under
+            # artifacts/docs/docs/ changed. See build/Merge-LandingPage.ps1 for
+            # why the two builds never collide.
+            - name: Merge the site into the documentation build
+              run: ./build/Merge-LandingPage.ps1 -LandingDist site/dist -DocsOutput artifacts/docs
 
             # Run the same archiving step docs-deploy.yml uses, so the deploy
             # path is covered before merge rather than after it. This action

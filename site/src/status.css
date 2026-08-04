@@ -1,0 +1,269 @@
+/*
+ * Design tokens and the shared status-page shell — header, footer, pills,
+ * panels, tables. Light by default; a `prefers-color-scheme: dark` variant
+ * is a console treatment, not a copy of any other site's palette. See
+ * design/40-site.md, "Design language — and what it may not be": no dark
+ * default, no ice-blue accent, no reveal-on-scroll, no full-bleed display
+ * type, monospace structural / sans prose only, dense hairline-ruled panels.
+ */
+:root {
+  --bg: #f3f4f6;
+  --panel: #ffffff;
+  --panel-alt: #f9fafb;
+  --border: rgba(15, 23, 42, 0.12);
+  --border-strong: rgba(15, 23, 42, 0.32);
+  --text: #0f172a;
+  --muted: #55606f;
+
+  --mono:
+    ui-monospace, "Cascadia Code", "Segoe UI Mono", "SFMono-Regular", Menlo,
+    Consolas, "Liberation Mono", monospace;
+  --sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --ok: #15803d;
+  --ok-bg: #dcfce7;
+  --ok-border: #86efac;
+  --degraded: #92400e;
+  --degraded-bg: #fef3c7;
+  --degraded-border: #fcd34d;
+  --unhealthy: #b91c1c;
+  --unhealthy-bg: #fee2e2;
+  --unhealthy-border: #fca5a5;
+  --unknown: #475569;
+  --unknown-bg: #e2e8f0;
+  --unknown-border: #cbd5e1;
+
+  --measure: 68rem;
+  --page-inline: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0f14;
+    --panel: #11161d;
+    --panel-alt: #0e1319;
+    --border: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.3);
+    --text: #e6e9ee;
+    --muted: #96a1b0;
+
+    --ok: #4ade80;
+    --ok-bg: rgba(74, 222, 128, 0.14);
+    --ok-border: rgba(74, 222, 128, 0.4);
+    --degraded: #fbbf24;
+    --degraded-bg: rgba(251, 191, 36, 0.14);
+    --degraded-border: rgba(251, 191, 36, 0.4);
+    --unhealthy: #f87171;
+    --unhealthy-bg: rgba(248, 113, 113, 0.14);
+    --unhealthy-border: rgba(248, 113, 113, 0.4);
+    --unknown: #94a3b8;
+    --unknown-bg: rgba(148, 163, 184, 0.14);
+    --unknown-border: rgba(148, 163, 184, 0.4);
+  }
+}
+
+body {
+  font-family: var(--sans);
+}
+
+/* ---------- header / footer ---------- */
+
+.site-header,
+footer {
+  margin-inline: auto;
+  padding-inline: var(--page-inline);
+  width: min(100%, calc(var(--measure) + 3rem));
+}
+
+.site-header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  padding-block: 0.85rem;
+}
+
+.wordmark {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.wordmark span {
+  color: var(--ok);
+}
+
+.site-header nav {
+  display: flex;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  gap: 1.1rem;
+}
+
+.site-header nav a {
+  color: var(--muted);
+  text-decoration: none;
+  text-underline-offset: 0.3em;
+}
+
+.site-header nav a[aria-current="page"],
+.site-header nav a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  display: grid;
+  font-size: 0.85rem;
+  gap: 0.5rem;
+  padding-block: 1.75rem 3rem;
+}
+
+@media (max-width: 640px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ---------- status pill ---------- */
+
+.status-pill {
+  align-items: center;
+  border: 1px solid;
+  border-radius: 3px;
+  display: inline-flex;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  gap: 0.4em;
+  letter-spacing: 0.03em;
+  padding: 0.15em 0.55em;
+  white-space: nowrap;
+}
+
+.status-pill-ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok);
+}
+
+.status-pill-degraded {
+  background: var(--degraded-bg);
+  border-color: var(--degraded-border);
+  color: var(--degraded);
+}
+
+.status-pill-unhealthy {
+  background: var(--unhealthy-bg);
+  border-color: var(--unhealthy-border);
+  color: var(--unhealthy);
+}
+
+.status-pill-unknown {
+  background: var(--unknown-bg);
+  border-color: var(--unknown-border);
+  color: var(--unknown);
+}
+
+/* The only motion this page allows: a slow pulse on the live status dot. */
+.status-pill-ok .live-dot {
+  animation: status-pulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-pill-ok .live-dot {
+    animation: none;
+  }
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ---------- shell ---------- */
+
+main {
+  margin-inline: auto;
+  width: min(100%, calc(var(--measure) + 3rem));
+}
+
+.page-section {
+  padding-block: 1.75rem;
+  padding-inline: var(--page-inline);
+}
+
+.page-section + .page-section {
+  border-top: 1px solid var(--border);
+}
+
+.section-index {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.5rem;
+}
+
+.page-section h2 {
+  font-family: var(--mono);
+  font-size: clamp(1.05rem, 1.6vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
+}
+
+/* ---------- panels & tables ---------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.status-table {
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+.status-table th,
+.status-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 0.85rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.status-table thead th {
+  background: var(--panel-alt);
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.status-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.status-table .component-message {
+  color: var(--muted);
+  font-family: var(--sans);
+}
