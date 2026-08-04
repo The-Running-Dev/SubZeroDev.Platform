@@ -658,6 +658,48 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Exactly_one_of_two_concurrent_claimants_receives_one_eligible_row()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        await EnqueueOneAsync(host);
+
+        var store = host.Services.GetRequiredService<IOutboxStore>();
+        var first = store.ClaimNextAsync(new InstanceId("claimant/first"), CancellationToken.None);
+        var second = store.ClaimNextAsync(new InstanceId("claimant/second"), CancellationToken.None);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.All(results, result => Assert.True(result.IsSuccess));
+        Assert.Single(results, result => result.Value is not null);
+    }
+
+    [Fact]
+    public async Task Expired_claim_is_reclaimed_by_the_ordinary_query_and_the_old_holder_cannot_write()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        var id = await EnqueueOneAsync(host);
+
+        var store = host.Services.GetRequiredService<IOutboxStore>();
+        var oldHolder = new InstanceId("claimant/old");
+        var newHolder = new InstanceId("claimant/new");
+        Assert.NotNull((await store.ClaimNextAsync(oldHolder, CancellationToken.None)).Value);
+
+        host.Clock.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromTicks(1));
+        var reclaimed = await store.ClaimNextAsync(newHolder, CancellationToken.None);
+        Assert.True(reclaimed.IsSuccess);
+        Assert.Equal(id, reclaimed.Value!.Id);
+
+        var staleWrite = await store.MarkProcessedAsync(id, oldHolder, CancellationToken.None);
+        Assert.True(staleWrite.IsSuccess);
+        Assert.Equal(ClaimedWriteOutcome.ClaimLost, staleWrite.Value);
+
+        var liveWrite = await store.MarkProcessedAsync(id, newHolder, CancellationToken.None);
+        Assert.True(liveWrite.IsSuccess);
+        Assert.Equal(ClaimedWriteOutcome.Applied, liveWrite.Value);
+    }
+
+    [Fact]
     public async Task Concurrent_enqueues_each_commit_with_a_distinct_sequence()
     {
         // MAX(sequence)+1 races under real concurrency — on SQLite a write transaction already
@@ -766,6 +808,25 @@ public abstract class PersistenceContractTests : IAsyncLifetime
                 services.AddPlatformEventHandler<TestEvent, TestEventHandler>(new EventTypeName("test.event"));
             })
             .StartAsync(CancellationToken.None);
+
+    private static async Task<OutboxMessageId> EnqueueOneAsync(IPlatformTestHost host)
+    {
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopes = host.Services.GetRequiredService<IOperationScopeFactory>();
+        using var scope = scopes.Begin(TenantId.Implicit, null);
+        var id = default(OutboxMessageId);
+        var committed = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token =>
+            {
+                id = outbox.Enqueue(new TestEvent());
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+        Assert.True(committed.IsSuccess);
+        return id;
+    }
 
     private static async Task InsertProductRowAsync(IAmbientTransaction current, string id, CancellationToken cancellationToken)
     {

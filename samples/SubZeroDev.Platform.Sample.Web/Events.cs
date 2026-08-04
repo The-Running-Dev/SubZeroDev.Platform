@@ -17,8 +17,8 @@ public static class SampleEventTypes
 /// <param name="Quantity">How many were ordered.</param>
 public sealed record OrderPlaced(string OrderId, string CatalogueItemId, int Quantity) : IIntegrationEvent;
 
-/// <summary>Demonstrates registration only — S4 delivers enqueue, not dispatch, so nothing invokes
-/// this yet. It exists so the worker's constructibility check has a handler to construct.</summary>
+/// <summary>Handles the sample event in the worker. CI kills the web process after commit and
+/// verifies that a restarted worker reaches this handler from the durable outbox row.</summary>
 public sealed class OrderPlacedHandler(ILogger<OrderPlacedHandler> logger) : IIntegrationEventHandler<OrderPlaced>
 {
     /// <inheritdoc/>

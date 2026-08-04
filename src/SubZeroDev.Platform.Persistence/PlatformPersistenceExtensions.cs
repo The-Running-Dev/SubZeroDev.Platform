@@ -31,7 +31,11 @@ public static class PlatformPersistenceExtensions
         services.TryAddSingleton<IProviderCapability>(provider =>
             ProviderCapabilityFactory.Create(provider.GetRequiredService<PlatformOptions>()));
 
-        services.TryAddSingleton<IOutboxStore, OutboxStore>();
+        services.TryAddSingleton<IOutboxStore>(provider => new OutboxStore(
+            provider.GetRequiredService<IAmbientTransactionAccessor>(),
+            provider.GetRequiredService<IProviderCapability>(),
+            provider.GetRequiredService<IClock>(),
+            provider.GetRequiredService<PlatformOptions>()));
 
         // A factory registration rather than TryAddSingleton<IOutboxWriter, OutboxWriter>(): Testing
         // decorates this to feed IEventCapture, and a factory is a delegate a different assembly can
@@ -62,6 +66,7 @@ public static class PlatformPersistenceExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, SettingsFingerprintHealthCheck>());
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, HostRegistrationHeartbeat>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, OutboxDispatcher>());
 
         if (!services.Any(descriptor => descriptor.ImplementationType == typeof(PersistenceStartupCheck)))
         {

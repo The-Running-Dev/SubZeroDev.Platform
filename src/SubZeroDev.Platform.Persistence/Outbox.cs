@@ -142,6 +142,54 @@ public interface IOutboxStore
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>Success, or why the write did not complete.</returns>
     Task<Result<TransactionError>> InsertAsync(OutboxMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Claims one due pending row, or returns null when none is eligible.</summary>
+    Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
+        InstanceId holder, CancellationToken cancellationToken);
+
+    /// <summary>Marks a live claim processed.</summary>
+    Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
+
+    /// <summary>Records one transient handler failure against a live claim.</summary>
+    Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
+        OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken);
+
+    /// <summary>Poisons a live claim, explicitly selecting whether this transition consumes a
+    /// handler attempt.</summary>
+    Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
+        OutboxMessageId id, InstanceId holder, string error, PoisonAttemptMode attemptMode,
+        CancellationToken cancellationToken);
+
+    /// <summary>Defers a live claim without consuming an attempt.</summary>
+    Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
+        OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken);
+
+    /// <summary>Releases a live claim without changing retry state.</summary>
+    Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
+}
+
+/// <summary>The result of a conditional dispatch-state write.</summary>
+public enum ClaimedWriteOutcome
+{
+    /// <summary>The conditional write changed the row.</summary>
+    Applied,
+
+    /// <summary>The claim expired or was reclaimed before the write.</summary>
+    ClaimLost,
+}
+
+/// <summary>Whether poisoning consumes a handler attempt.</summary>
+public enum PoisonAttemptMode
+{
+    /// <summary>Increment attempts once for the handler failure that caused poison.</summary>
+    Increment,
+
+    /// <summary>Preserve attempts because a dispatch failure caused poison.</summary>
+    Preserve,
 }
 
 /// <summary>Platform's pinned <c>System.Text.Json</c> options. Not exposed publicly and not
@@ -203,7 +251,11 @@ internal sealed class OutboxWriter(
 }
 
 /// <inheritdoc cref="IOutboxStore"/>
-internal sealed class OutboxStore(IAmbientTransactionAccessor ambient, IProviderCapability capability) : IOutboxStore
+internal sealed class OutboxStore(
+    IAmbientTransactionAccessor ambient,
+    IProviderCapability capability,
+    IClock clock,
+    PlatformOptions options) : IOutboxStore
 {
     public async Task<Result<TransactionError>> InsertAsync(OutboxMessage message, CancellationToken cancellationToken)
     {
@@ -271,6 +323,190 @@ internal sealed class OutboxStore(IAmbientTransactionAccessor ambient, IProvider
         {
             return Result<TransactionError>.Failure(capability.Classify(exception));
         }
+    }
+
+    public async Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
+        InstanceId holder, CancellationToken cancellationToken)
+    {
+        var claimed = await capability.StampClaimAsync(
+            holder, clock.UtcNow, options.Outbox.ClaimWindow, cancellationToken).ConfigureAwait(false);
+        if (!claimed.IsSuccess)
+        {
+            return Result<OutboxMessage?, TransactionError>.Failure(claimed.Error);
+        }
+
+        return claimed.Value is { } id
+            ? await ReadClaimedAsync(id, holder, cancellationToken).ConfigureAwait(false)
+            : Result<OutboxMessage?, TransactionError>.Success(null);
+    }
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
+        WriteClaimedAsync(
+            "SET processed_at = @now, claimed_by = NULL, claimed_at = NULL",
+            id, holder, null, cancellationToken);
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
+        OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken) =>
+        WriteClaimedAsync(
+            "SET attempts = attempts + 1, last_error = @error, next_attempt_at = @nextAttemptAt, claimed_by = NULL, claimed_at = NULL",
+            id, holder, (error, nextAttemptAt), cancellationToken);
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
+        OutboxMessageId id, InstanceId holder, string error, PoisonAttemptMode attemptMode,
+        CancellationToken cancellationToken)
+    {
+        var attempts = attemptMode switch
+        {
+            PoisonAttemptMode.Increment => "attempts = attempts + 1, ",
+            PoisonAttemptMode.Preserve => string.Empty,
+            _ => throw new ArgumentOutOfRangeException(nameof(attemptMode)),
+        };
+
+        return WriteClaimedAsync(
+            $"SET {attempts}last_error = @error, poisoned_at = @now, claimed_by = NULL, claimed_at = NULL",
+            id, holder, (error, null), cancellationToken);
+    }
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
+        OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken) =>
+        WriteClaimedAsync(
+            "SET first_deferred_at = COALESCE(first_deferred_at, @now), next_attempt_at = @nextAttemptAt, claimed_by = NULL, claimed_at = NULL",
+            id, holder, (null, nextAttemptAt), cancellationToken);
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
+        WriteClaimedAsync("SET claimed_by = NULL, claimed_at = NULL", id, holder, null, cancellationToken);
+
+    private async Task<Result<OutboxMessage?, TransactionError>> ReadClaimedAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken)
+    {
+        var opened = await capability.BeginAsync(TransactionIntent.ReadOnly, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return Result<OutboxMessage?, TransactionError>.Failure(opened.Error);
+        }
+
+        var support = opened.Value;
+        try
+        {
+            await using var command = support.Connection.CreateCommand();
+            command.Transaction = support.Transaction;
+            command.CommandText = """
+                SELECT id, sequence, occurred_at, type, payload, tenant, trace_parent, trace_state,
+                       correlation, culture, attempts, next_attempt_at, first_deferred_at, claimed_by,
+                       claimed_at, processed_at, poisoned_at, last_error
+                FROM platform_outbox
+                WHERE id = @id AND claimed_by = @holder;
+                """;
+            AddParameter(command, "@id", capability.EncodeIdentifier(id.Value));
+            AddParameter(command, "@holder", holder.Value);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return Result<OutboxMessage?, TransactionError>.Success(null);
+            }
+
+            return Result<OutboxMessage?, TransactionError>.Success(ReadMessage(reader));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Result<OutboxMessage?, TransactionError>.Failure(capability.Classify(exception));
+        }
+        finally
+        {
+            try { await support.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+            await support.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task<Result<ClaimedWriteOutcome, TransactionError>> WriteClaimedAsync(
+        string setClause,
+        OutboxMessageId id,
+        InstanceId holder,
+        (string? Error, DateTimeOffset? NextAttemptAt)? values,
+        CancellationToken cancellationToken)
+    {
+        var opened = await capability.BeginAsync(TransactionIntent.Write, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return Result<ClaimedWriteOutcome, TransactionError>.Failure(opened.Error);
+        }
+
+        var support = opened.Value;
+        try
+        {
+            await using var command = support.Connection.CreateCommand();
+            command.Transaction = support.Transaction;
+            command.CommandText = $"UPDATE platform_outbox {setClause} WHERE id = @id AND claimed_by = @holder AND claimed_at > @expired;";
+            AddParameter(command, "@id", capability.EncodeIdentifier(id.Value));
+            AddParameter(command, "@holder", holder.Value);
+            AddParameter(command, "@now", capability.FormatInstant(clock.UtcNow));
+            AddParameter(command, "@expired", capability.FormatInstant(clock.UtcNow - options.Outbox.ClaimWindow));
+            AddParameter(command, "@error", values?.Error);
+            AddParameter(command, "@nextAttemptAt", values?.NextAttemptAt is { } next ? capability.FormatInstant(next) : null);
+            var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await support.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return Result<ClaimedWriteOutcome, TransactionError>.Success(
+                changed == 1 ? ClaimedWriteOutcome.Applied : ClaimedWriteOutcome.ClaimLost);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            try { await support.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+            return Result<ClaimedWriteOutcome, TransactionError>.Failure(capability.Classify(exception));
+        }
+        finally
+        {
+            await support.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private OutboxMessage ReadMessage(DbDataReader reader)
+    {
+        if (!capability.TryDecodeIdentifier((byte[])reader.GetValue(0), out var id)
+            || !capability.TryParseInstant(reader.GetString(2), out var occurredAt)
+            || !TenantId.TryParse(reader.GetString(5), out var tenant)
+            || !TraceContext.TryParse(reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7), out var trace))
+        {
+            throw new InvalidOperationException("The outbox row contains an invalid Platform-owned value.");
+        }
+
+        DateTimeOffset? InstantOrNull(int ordinal) => reader.IsDBNull(ordinal)
+            ? null
+            : capability.TryParseInstant(reader.GetString(ordinal), out var instant)
+                ? instant
+                : throw new InvalidOperationException("The outbox row contains an invalid instant.");
+
+        return new OutboxMessage
+        {
+            Id = new OutboxMessageId(id),
+            Sequence = reader.GetInt64(1),
+            OccurredAt = occurredAt,
+            Type = new EventTypeName(reader.GetString(3)),
+            Payload = reader.GetString(4),
+            Tenant = tenant,
+            TraceContext = trace,
+            Correlation = new CorrelationId(reader.GetString(8)),
+            Culture = new CultureTag(reader.GetString(9)),
+            Attempts = reader.GetInt32(10),
+            NextAttemptAt = InstantOrNull(11),
+            FirstDeferredAt = InstantOrNull(12),
+            ClaimedBy = reader.IsDBNull(13) ? null : new InstanceId(reader.GetString(13)),
+            ClaimedAt = InstantOrNull(14),
+            ProcessedAt = InstantOrNull(15),
+            PoisonedAt = InstantOrNull(16),
+            LastError = reader.IsDBNull(17) ? null : reader.GetString(17),
+        };
     }
 
     private static void AddParameter(DbCommand command, string name, object? value)

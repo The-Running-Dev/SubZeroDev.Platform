@@ -62,7 +62,7 @@ jobs:
           ) > worker.log 2>&1 &
           worker=$!
 
-          fail() { echo "::error::$1"; cat web.log worker.log; kill $web $worker 2>/dev/null || true; exit 1; }
+          fail() { echo "::error::$1"; cat web.log worker.log worker-restart.log 2>/dev/null || true; kill $web $worker 2>/dev/null || true; exit 1; }
 
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:5199/health/ready > /dev/null 2>&1 \
@@ -81,10 +81,43 @@ jobs:
           # the machine's routable address is asserted in the test suite rather than here.
           echo "Both roles served their probes in $ASPNETCORE_ENVIRONMENT."
 
-          # SIGTERM is the ordinary shutdown signal, and a graceful host exits zero on it.
-          kill -TERM $web $worker
-          for pid in $web $worker; do
-            status=0
-            wait "$pid" || status=$?
-            [ "$status" -eq 0 ] || fail "a sample host exited with status $status"
+          # Stop dispatch before committing the order. The web process is then killed rather than
+          # shut down, proving the durable row—not process memory—bridges commit to delivery.
+          kill -TERM $worker
+          worker_status=0
+          wait "$worker" || worker_status=$?
+          [ "$worker_status" -eq 0 ] || fail "the first worker exited with status $worker_status"
+
+          order=$(curl -fsS -X POST http://127.0.0.1:5199/orders \
+            -H 'content-type: application/json' \
+            --data '{"name":"restart-survivor","quantity":1}') \
+            || fail "the sample order did not commit"
+          order_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["orderId"])' <<<"$order")
+          [ -n "$order_id" ] || fail "the committed order response carried no id"
+
+          kill -KILL $web
+          web_status=0
+          wait "$web" || web_status=$?
+          [ "$web_status" -ne 0 ] || fail "the web process was expected to be killed"
+
+          ( cd "$root/samples/SubZeroDev.Platform.Sample.Worker/bin/Release/net10.0" \
+            && exec ./SubZeroDev.Platform.Sample.Worker \
+          ) > worker-restart.log 2>&1 &
+          worker=$!
+
+          for attempt in $(seq 1 30); do
+            if grep -F "Order $order_id placed" worker-restart.log > /dev/null 2>&1; then
+              break
+            fi
+            kill -0 $worker 2>/dev/null || fail "the restarted worker exited before dispatch"
+            sleep 1
+            [ "$attempt" -lt 30 ] || fail "the committed outbox row was not delivered after restart"
           done
+
+          echo "The outbox row survived process death and dispatched order $order_id after restart."
+
+          # SIGTERM is the ordinary shutdown signal, and a graceful worker exits zero on it.
+          kill -TERM $worker
+          worker_status=0
+          wait "$worker" || worker_status=$?
+          [ "$worker_status" -eq 0 ] || fail "the restarted worker exited with status $worker_status"

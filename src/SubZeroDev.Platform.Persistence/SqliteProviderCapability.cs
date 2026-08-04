@@ -169,6 +169,64 @@ internal sealed class SqliteProviderCapability(PersistenceOptions options) : IPr
         _ => TransactionError.Faulted(),
     };
 
+    public async Task<Result<OutboxMessageId?, TransactionError>> StampClaimAsync(
+        InstanceId holder,
+        DateTimeOffset now,
+        TimeSpan claimWindow,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var connection = new SqliteConnection(ConnectionString());
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE platform_outbox
+                SET claimed_by = @holder, claimed_at = @now
+                WHERE id = (
+                    SELECT id FROM platform_outbox
+                    WHERE processed_at IS NULL AND poisoned_at IS NULL
+                      AND (claimed_at IS NULL OR claimed_at <= @expired)
+                      AND COALESCE(next_attempt_at, occurred_at) <= @now
+                    ORDER BY sequence
+                    LIMIT 1
+                )
+                  AND processed_at IS NULL AND poisoned_at IS NULL
+                  AND (claimed_at IS NULL OR claimed_at <= @expired)
+                  AND COALESCE(next_attempt_at, occurred_at) <= @now
+                RETURNING id;
+                """;
+            AddParameter(command, "@holder", holder.Value);
+            AddParameter(command, "@now", FormatInstant(now));
+            AddParameter(command, "@expired", FormatInstant(now - claimWindow));
+            var claimed = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (claimed is null || claimed is DBNull)
+            {
+                return Result<OutboxMessageId?, TransactionError>.Success(null);
+            }
+
+            return TryDecodeIdentifier((byte[])claimed, out var id)
+                ? Result<OutboxMessageId?, TransactionError>.Success(new OutboxMessageId(id))
+                : Result<OutboxMessageId?, TransactionError>.Failure(TransactionError.Faulted());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Result<OutboxMessageId?, TransactionError>.Failure(Classify(exception));
+        }
+    }
+
+    private static void AddParameter(DbCommand command, string name, object? value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value ?? DBNull.Value;
+        command.Parameters.Add(parameter);
+    }
+
     private string ConnectionString(TimeSpan? busyTimeout = null)
     {
         var builder = new SqliteConnectionStringBuilder(options.ConnectionString)

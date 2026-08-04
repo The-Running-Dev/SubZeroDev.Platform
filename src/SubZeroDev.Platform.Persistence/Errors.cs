@@ -143,3 +143,22 @@ public sealed record EventHandlerRegistrationError : PlatformError
     public static EventHandlerRegistrationError RegistryFrozen(EventTypeName type) =>
         new(nameof(RegistryFrozen), $"The event handler registry is frozen; '{type}' cannot be registered.");
 }
+
+/// <summary>Why a row could not reach a handler. Unlike <see cref="HandlerError"/>, none of these
+/// variants consumes an attempt.</summary>
+public sealed record DispatchError : PlatformError
+{
+    private DispatchError(string code) : base(code) { }
+
+    /// <inheritdoc/>
+    public override bool IsRetryable => true;
+
+    /// <summary>No handler is registered for the stored event name.</summary>
+    public static DispatchError HandlerUnresolved() => new(nameof(HandlerUnresolved));
+
+    /// <summary>The stored payload could not deserialize into its registered CLR type.</summary>
+    public static DispatchError PayloadUndeserializable() => new(nameof(PayloadUndeserializable));
+
+    /// <summary>This host has registered migrations that are not applied.</summary>
+    public static DispatchError MigrationsPending() => new(nameof(MigrationsPending));
+}

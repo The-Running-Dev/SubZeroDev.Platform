@@ -168,6 +168,16 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
                 });
             }
 
+            var storeDescriptor = builder.Services.FirstOrDefault(descriptor => descriptor.ServiceType == typeof(IOutboxStore));
+            if (storeDescriptor?.ImplementationFactory is { } storeFactory)
+            {
+                builder.Services.Remove(storeDescriptor);
+                builder.Services.AddSingleton<IOutboxStore>(provider => new CapturingOutboxStore(
+                    (IOutboxStore)storeFactory(provider),
+                    capture,
+                    provider.GetRequiredService<IClock>()));
+            }
+
             var resolvedProvider = _settings.TryGetValue("Platform:Persistence:Provider", out var raw)
                 && Enum.TryParse<PersistenceProvider>(raw, out var parsed)
                 ? parsed
