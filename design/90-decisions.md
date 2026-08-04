@@ -569,3 +569,21 @@ Context: The kit asserts a five-document precedence chain under `design/`. This 
 Chosen: State both in `AGENTS.md`. `platform-identity.md` is authoritative today; the `design/` chain governs design work once a brief is written, and a contract there is authoritative for its own package only. `platform-identity.md` remains authoritative for what this repository is.
 Rejected: **Install the kit's chain as written** — asserts precedence for empty files over the document that currently decides everything. **Omit the kit's chain until a brief exists** — leaves the pipeline commands referring to an authority the contract never grants them.
 Reversibility: cheap
+
+### 2026-08-04 — Kit upgrade to `8d4ffdb`: two new commands install verbatim, their routing stays prose
+Context: Upgrading the agent kit from `dcd0d8f` to `8d4ffdb`, which adds `/kit-help` and `/refine`, makes `/slice`'s argument optional, and adds transcript-based session cost measurement. This repository runs the kit's arrangement — `AGENTS.md` holds the contract, `CLAUDE.md` points at it, slice ids are `S<n>` — so both new commands are already correct as shipped.
+Chosen: Copy both byte-identical, overwrite the unedited `slice.md`, and extend the existing routing **paragraph** with a clause for each. The kit states routing as a table; this repository states it as prose, and that is a deliberate local form.
+Rejected: **Convert the paragraph to the kit's table** — easier to scan, and it is what the kit and two sibling repositories do; rejected because the installer must not reformat prose it is not otherwise changing, and a table conversion is a diff nobody asked for buried inside an upgrade. Worth doing on its own if it is worth doing.
+Reversibility: cheap
+
+### 2026-08-04 — Session boundaries and the model-work tiers, both scoped away from ADRs
+Context: The upgrade adds two `AGENTS.md` sections written for a repository whose only long-form reasoning is the `design/` chain. This repository also has `docs/docs/adr/`, which is authored directly and is not a design cycle.
+Chosen: Install both, each with one scoping sentence. The boundary table says an ADR does not inherit it. The model-work tiers cite ADR-005 as this repository's own precedent for a red item leaving the model: it rejects a hand-authored `.proto`/OpenAPI document precisely because it would be a second definition of types TypeScript already owns, and projects the contract instead.
+Rejected: **Install both unscoped** — a boundary table with no scope note reads as requiring a fresh session per ADR, which nothing intends. **Skip them** — they are the substance of this upgrade; skipping leaves the repository on the kit's older model without saying so.
+Reversibility: cheap
+
+### 2026-08-04 — Created `tools/` for `Measure-Session.ps1` rather than using `build/`
+Context: The kit ships `tools/Measure-Session.ps1`, run as a `SessionEnd` hook. This repository had no `tools/`, and `build/` already holds committed PowerShell — the documentation gate and homepage generator — with a `.gitignore` comment explaining at length why `build/` must never be ignored.
+Chosen: Create `tools/` and install there, matching the kit's hook path `${CLAUDE_PROJECT_DIR}/tools/Measure-Session.ps1`. `settings.json` did not exist and was created holding only `hooks.SessionEnd` — no model pin, no permissions block.
+Rejected: **`build/Measure-Session.ps1`** — one home for PowerShell here, and the naming fits. Rejected because `build/` is wired into `docs-ci.yml`; a per-machine session-cost reporter is not part of the documentation gate, and adding it there invites exactly the confusion that `.gitignore` comment records. Reversing this costs one file move and two path edits.
+Reversibility: cheap
