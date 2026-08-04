@@ -130,12 +130,95 @@ internal sealed record TestEvent(string Value = "test") : IIntegrationEvent;
 /// <summary>A second event type, for tests that need two distinct registrations.</summary>
 internal sealed record OtherTestEvent : IIntegrationEvent;
 
-/// <summary>A handler with no side effect a test needs — S4 delivers enqueue, not dispatch, so
-/// nothing invokes this yet. Exists to be registered and, in worker-role tests, constructed.</summary>
+/// <summary>A handler with no side effect a test needs. Exists where a test only needs a valid
+/// registration and, in worker-role tests, a constructible dispatch target.</summary>
 internal sealed class TestEventHandler : IIntegrationEventHandler<TestEvent>
 {
     public Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken) =>
         Task.FromResult(Result<HandlerError>.Success());
+}
+
+internal sealed class CountingTestEventHandler : IIntegrationEventHandler<TestEvent>
+{
+    internal static int Count { get; set; }
+
+    public Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken)
+    {
+        Count++;
+        return Task.FromResult(Result<HandlerError>.Success());
+    }
+}
+
+internal sealed class DispatchScript
+{
+    internal Queue<Result<HandlerError>> Results { get; } = [];
+
+    internal int ExceptionsRemaining { get; set; }
+
+    internal List<(CorrelationId Correlation, TenantId Tenant, CultureTag Culture, TraceContext Trace, object? Principal)> Observed { get; } = [];
+
+    internal bool Block { get; set; }
+
+    internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+internal sealed class ScriptedTestEventHandler(
+    DispatchScript script,
+    IOperationScopeAccessor scopes) : IIntegrationEventHandler<TestEvent>
+{
+    public async Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken)
+    {
+        var current = scopes.Current!;
+        script.Observed.Add((current.Correlation, current.Tenant, current.Culture, current.Trace, current.Principal));
+        if (script.ExceptionsRemaining > 0)
+        {
+            script.ExceptionsRemaining--;
+            throw new InvalidOperationException("scripted handler failure");
+        }
+
+        if (script.Block)
+        {
+            script.Started.TrySetResult();
+            await script.Release.Task.WaitAsync(cancellationToken);
+        }
+
+        return script.Results.Count > 0
+            ? script.Results.Dequeue()
+            : Result<HandlerError>.Success();
+    }
+}
+
+internal sealed record ChainedTestEvent(int Remaining) : IIntegrationEvent;
+
+internal sealed class ChainedTestEventHandler(
+    IOutboxWriter outbox,
+    DispatchScript script,
+    IOperationScopeAccessor scopes) : IIntegrationEventHandler<ChainedTestEvent>
+{
+    public Task<Result<HandlerError>> HandleAsync(ChainedTestEvent @event, CancellationToken cancellationToken)
+    {
+        var current = scopes.Current!;
+        script.Observed.Add((current.Correlation, current.Tenant, current.Culture, current.Trace, current.Principal));
+        if (@event.Remaining > 0)
+        {
+            outbox.Enqueue(new ChainedTestEvent(@event.Remaining - 1));
+        }
+
+        return Task.FromResult(Result<HandlerError>.Success());
+    }
+}
+
+internal sealed class PendingMigrationRunner : IMigrationRunner
+{
+    public Task<Result<IReadOnlyList<ModuleMigrationStatus>, MigrationError>> GetStatusAsync(
+        CancellationToken cancellationToken) => Task.FromResult(
+            Result<IReadOnlyList<ModuleMigrationStatus>, MigrationError>.Success(
+                [new ModuleMigrationStatus(new ModuleName("Pending"), ["0001_pending"], [])]));
+
+    public Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(Result<MigrationError>.Success());
 }
 
 /// <summary>A second handler for <see cref="TestEvent"/>, for asserting

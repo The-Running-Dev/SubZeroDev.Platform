@@ -351,7 +351,8 @@ Touches:
 - **Persistence** — the dispatcher registered as `IBackgroundWork` declaring `HostRoles.Worker`
   under `PlatformBackgroundWork.OutboxDispatch`; `IOutboxStore.ClaimNextAsync`,
   `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`, `DeferAsync`, `ReleaseClaimAsync`;
-  `ClaimedWriteOutcome`; `IProviderCapability.StampClaimAsync`; `HandlerError`; `DispatchError`;
+  `ClaimedWriteOutcome`; `PoisonAttemptMode`; `IProviderCapability.StampClaimAsync`; `HandlerError`;
+  `DispatchError`;
   the per-message dependency and operation scopes; `ITraceContextCodec.StartLinked`
 - **Hosting** — graceful shutdown stopping claims and releasing unstarted ones within the drain
   window

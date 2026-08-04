@@ -82,6 +82,18 @@ public interface IProviderCapability
     /// <returns>The error the caller surfaces.</returns>
     TransactionError Classify(Exception exception);
 
+    /// <summary>Atomically stamps one due pending outbox row with a live claim.</summary>
+    /// <param name="holder">The claiming process instance.</param>
+    /// <param name="now">The clock instant used for due and expiry predicates.</param>
+    /// <param name="claimWindow">How long an existing claim remains live.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The claimed id, null when no row was eligible, or the transaction error.</returns>
+    Task<Result<OutboxMessageId?, TransactionError>> StampClaimAsync(
+        InstanceId holder,
+        DateTimeOffset now,
+        TimeSpan claimWindow,
+        CancellationToken cancellationToken);
+
     /// <summary>Acquires the provider-native migration lock. A second concurrent invocation fails
     /// fast rather than waiting.</summary>
     /// <param name="cancellationToken">Cancels the operation.</param>

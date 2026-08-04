@@ -1288,6 +1288,8 @@ second interface of identical shape.
 ```csharp
 public enum ClaimedWriteOutcome { Applied, ClaimLost }
 
+public enum PoisonAttemptMode { Increment, Preserve }
+
 public interface IOutboxStore
 {
     Task<Result<TransactionError>> InsertAsync(
@@ -1304,7 +1306,8 @@ public interface IOutboxStore
         CancellationToken cancellationToken);
 
     Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
-        OutboxMessageId id, InstanceId holder, string error, CancellationToken cancellationToken);
+        OutboxMessageId id, InstanceId holder, string error, PoisonAttemptMode attemptMode,
+        CancellationToken cancellationToken);
 
     Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
         OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
@@ -1376,6 +1379,13 @@ so these cover the three tables Platform both defines and stores and never produ
 when a row is poisoned rather than deferred — two copies of that is the objection this design
 already raised against a dialect-specific claim, applied to the surrounding logic rather than the
 statement.
+
+**`PoisonAttemptMode` makes the two poison paths explicit at the store boundary.** `Increment` is
+used when a `HandlerError` reaches poison — a permanent failure or the final transient attempt — and
+increments `attempts` exactly once. `Preserve` is used when a `DispatchError` ages past its deferral
+window and leaves `attempts` unchanged. The mode is named rather than inferred from the `error`
+string: the stored error is diagnostic data, not a control protocol, and renaming an error code must
+not change the row transition.
 
 **Every dispatch-state write is conditional on the live claim, which is why each takes the holder
 and returns `ClaimedWriteOutcome`.** `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`,

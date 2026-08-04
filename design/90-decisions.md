@@ -14,6 +14,14 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 ---
 
+### 2026-08-04 — Poison writes name whether they consume a handler attempt
+Context: S5 could not implement the contract's two attempt invariants through its only poison write. A `HandlerError` that poisons must increment `attempts` exactly once — including a permanent failure on its first delivery — while a `DispatchError` that ages out of deferral must poison without incrementing it. `PoisonAsync(id, holder, error)` carried no value that distinguished those transitions, so either implementation would contradict one invariant or infer policy from diagnostic text.
+Chosen: Add `PoisonAttemptMode` with `Increment` and `Preserve`, and require it on `IOutboxStore.PoisonAsync`. The dispatcher selects the mode from the typed error branch it is already handling; the store performs one conditional state write against the live claim. This preserves the one-store policy boundary and keeps the attempt transition visible at the call site.
+Rejected: **Infer the mode from the `error` string** — no signature change, and it turns stored diagnostic data into an undocumented control protocol where renaming an error code changes persistence semantics. **Make every poison preserve attempts and call `RecordFailureAsync` first for handler failures** — reuses existing members, and `RecordFailureAsync` releases the claim, so the following poison correctly returns `ClaimLost` and never applies. **Make every poison increment attempts** — simplest, and it violates the contract's defining separation between `HandlerError` and `DispatchError`. **Split poison into two methods** — the most explicit names, and it grows the public store surface with two operations whose only difference is one column expression.
+Reversibility: cheap before S5 ships; expensive once a third-party provider or store implementation compiles against the signature.
+
+---
+
 ## Index — decisions whose home is elsewhere
 
 Reasoning, consequences and rejected alternatives live in the linked document, never here — *Single ownership* in `AGENTS.md`.

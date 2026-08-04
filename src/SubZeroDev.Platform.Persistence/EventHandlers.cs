@@ -149,7 +149,7 @@ public static class PlatformEventHandlerExtensions
 
         // Registered in both roles identically. Only the worker's EventHandlerRegistryStartup ever
         // resolves it — the web host's container holds the registration and never constructs it.
-        services.TryAddSingleton<THandler>();
+        services.TryAddScoped<THandler>();
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IEventHandlerRegistrant>(new EventHandlerRegistrant<TEvent, THandler>(type)));
 
@@ -181,11 +181,12 @@ internal sealed class EventHandlerRegistryStartup(
 
         if (options.Role == HostRole.Worker)
         {
+            using var scope = serviceProvider.CreateScope();
             foreach (var registration in registry.Registered)
             {
                 try
                 {
-                    serviceProvider.GetRequiredService(registration.HandlerType);
+                    scope.ServiceProvider.GetRequiredService(registration.HandlerType);
                 }
                 catch (Exception exception) when (exception is not PersistenceStartupException)
                 {
