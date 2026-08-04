@@ -7,13 +7,13 @@ not a tenth package.
 
 **The prefix is `L`, and it is not a phase.** Per `AGENTS.md` *Single ownership*, a local sequence
 uses a letter that cannot be misread as an ecosystem phase, and must say which phase each stage maps
-to. `L1` maps to **ecosystem Phase 2** — the same window D3 occupies — as a parallel, non-gating
-deliverable within it, never a milestone inside D3's own D0–D5 package pipeline. It does not gate D3,
-D3 does not gate it, and no package's done-criteria reference it.
+to. `L1` and `L2` map to **ecosystem Phase 2** — the same window D3 occupies — as parallel,
+non-gating deliverables within it, never milestones inside D3's own D0–D5 package pipeline. They do
+not gate D3, D3 does not gate them, and no package's done-criteria reference them.
 
 **This document does not outrank the code, the contract or the brief.** It is a work breakdown for
-one deliverable that ships no public API. Where it and `30-slices.md` appear to disagree about what a
-slice *is*, `30-slices.md` wins and this document is the defect.
+the consumer-owned site work, which ships no Platform public API. Where it and `30-slices.md` appear
+to disagree about what a slice *is*, `30-slices.md` wins and this document is the defect.
 
 ---
 
@@ -341,3 +341,132 @@ complete:
    Record the accepted cost plainly: done-ness is now written in the document *and* tracked in the
    issue, and `AGENTS.md` *Tracking work* still governs what to do when they disagree — report it,
    do not silently reconcile.
+
+---
+
+## L2 — Consume the reusable landing-page package
+
+Delivers: the existing Platform landing page and roadmap are built and merged through the published
+`subzerodev-platform-ui-landing-page` package instead of repository-owned Vite configuration,
+entry-point HTML, and merge infrastructure. The rendered site, its routes, its authored React and
+CSS, and its derivation from `design/30-slices.md` remain Platform-owned and observably unchanged.
+
+Depends on: L1, and on a published corrective `0.x` release of
+`SubZeroDev.Platform.UI.LandingPage`. Version `0.1.0` is published from
+`d2625b7be51585371d9f0b6c0b435c25e6ea4ade`, but it is **not sufficient for this migration**: its
+adapter cannot express all static head content the current build verifies. L2 does not start until a
+released package contract can preserve the existing Open Graph title, description, type and URL;
+Twitter card metadata; favicon and apple-touch-icon links; theme colour; and `<noscript>` content.
+The correction is made and released in the package repository, not improvised in this consumer.
+
+The package choice, ownership split, pinning rule and rejected alternatives are recorded once in
+[`90-decisions.md`](90-decisions.md), *L2 consumes the reusable landing-page package only after its
+adapter preserves L1's static document contract*.
+
+### Ownership after the migration
+
+The package owns the integration mechanism:
+
+- Vite configuration and route-entry HTML generation
+- the `dev`, adapter `build`, adapter `check`, and protected `merge` commands
+- the rule that a landing build cannot alter the documentation subtree
+
+Platform continues to own everything specific to this site:
+
+- both React page compositions, all copy, all CSS and public image assets
+- the roadmap parser and its one-source relationship with `design/30-slices.md`
+- the route metadata values and the static-head requirements they must produce
+- component, accessibility, route, derived-content, distinctness and built-output tests
+- documentation build policy, CI triggers, required checks, Pages permissions, environment and
+  deployment concurrency
+
+The package's generic README-and-changelog renderer is not used. This is the existing custom-site
+case, so `site/landing.config.ts` uses the exported `defineLandingPage` adapter with exactly two
+routes: `/` from `site/src/main.tsx` and `/roadmap/` from `site/src/roadmap/main.tsx`. Its dev-server
+allow-list names `design/` and nothing broader, preserving L1's file-access boundary.
+
+### Migration
+
+1. Add the first sufficient release as an **exact** development dependency in `site/package.json`
+   and lock it in `site/package-lock.json`. A `0.x` range, `latest`, a Git branch, and a local path are
+   not accepted inputs.
+2. Add `site/landing.config.ts` declaring the two routes, their complete metadata and `design/` as
+   the sole path outside `site/` the dev server may read. Keep the adapter inside `site/`; it is
+   consumer configuration, not a new repository-root build system.
+3. Route the existing `dev`, `build` and built-output check through the package CLI while retaining
+   Platform's format, lint, typecheck and component-test gates. Typecheck the adapter itself.
+4. Replace both workflow invocations of `build/Merge-LandingPage.ps1` with the installed package's
+   protected `merge` command. Keep the existing caller-owned CI and deploy workflows; do not adopt
+   the package's reusable deployment workflow or composite action in this slice.
+5. Only after the package-backed positive and negative cases pass, remove the superseded
+   `site/vite.config.ts`, `site/index.html`, `site/roadmap/index.html` and
+   `build/Merge-LandingPage.ps1`, plus direct Vite integration dependencies that no consumer-owned
+   source still imports. Update `site/tsconfig.node.json` from the deleted Vite config to the adapter.
+6. Update `site/README.md`, workflow comments and L1's implementation-specific references to state
+   the new owner. Preserve L1 as the historical specification of what shipped; do not rewrite its
+   toolchain and deploy sections as though the package had existed when L1 was implemented.
+
+Every step above lands in one slice. There is no intermediate commit where CI calls a removed script,
+the package builds routes the adapter does not declare, or the old and new merge implementations are
+both treated as authoritative.
+
+### Acceptance
+
+**Package and ownership**
+
+- A clean `npm --prefix site ci` installs one exact
+  `subzerodev-platform-ui-landing-page` version, and `npm --prefix site ls` reports that version with
+  no local-path or Git dependency.
+- `site/landing.config.ts` is the only route-build configuration. It declares `/` and `/roadmap/`,
+  their consumer-owned entry modules and complete static metadata, and allows `design/` but not the
+  repository root.
+- No consumer-owned Vite configuration, rollup-input list, generated entry HTML, or landing/docs
+  merge implementation remains. Searching the tree finds no workflow or script reference to
+  `Merge-LandingPage.ps1`.
+- The package is a development dependency of `site/` only. No .NET project or shipped Platform
+  package references it, and no D3 package done-criterion changes.
+
+**Behaviour preservation**
+
+- `npm --prefix site run check` passes from a clean clone and still runs Platform's formatting,
+  linting, typechecking, component tests, adapter build and built-output verification. Removing the
+  adapter or either route makes it fail.
+- The package-backed build produces `/index.html` and `/roadmap/index.html`; both render the same
+  authored page and pass the same accessibility, derived-content, route and distinctness assertions
+  as L1.
+- The built pages retain every static-head value verified before L2: distinct titles and
+  descriptions, canonical URLs, Open Graph fields, Twitter card fields, favicon and apple-touch-icon
+  links, theme colour, social image and the route-specific `<noscript>` text. The verification may
+  become serialization-insensitive; it may not delete an assertion to accommodate the package.
+- The roadmap still imports `design/30-slices.md` statically, issues no runtime request, fails on a
+  malformed or empty inventory, and renders every count from parsed data.
+- The built site issues no runtime network request and contains no development-only `/src/` URL.
+
+**Merge and deploy**
+
+- The installed package's merge command overlays the landing build onto a real documentation build,
+  leaves every file under `/docs/` content-identical, and leaves `/`, `/roadmap/` and `/docs/`
+  resolvable in the combined artifact.
+- Before the old merge script is removed, the package command is exercised against the same positive
+  fixture and at least these negative cases: a target without the protected docs subtree, a landing
+  build without `index.html`, and a landing build containing `docs/`. All three refuse with messages
+  naming the violated boundary.
+- Pull-request CI builds and archives the combined artifact through the package command. The deploy
+  workflow performs the same package-backed build and merge on `main`; permissions, environment and
+  concurrency remain caller-owned.
+- Deployment is verified only by polling the Pages deployment for the exact L2 commit and reading
+  the served `/`, `/roadmap/` and `/docs/` routes. A green package build or merged pull request is not
+  reported as a successful deployment.
+
+### Out of scope
+
+- Any visual, copy, route, roadmap-model or accessibility change. A migration that needs one is a
+  package defect or a separate signed-off slice, not L2.
+- The package contract correction and release. L2 states what this consumer requires and stops until
+  a released version provides it; it does not edit the package repository.
+- The generic README renderer, generated changelog route, reusable Pages workflow or composite
+  action. None is needed to replace the duplicated integration in this repository.
+- A floating package update policy. L2 pins one sufficient release exactly; evaluating a later
+  release is separate work.
+- Any change to `src/`, `samples/`, `tests/`, the six Platform packages, D3 ordering or S-slice
+  statuses.

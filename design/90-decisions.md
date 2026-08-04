@@ -4,6 +4,33 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-04 — L2 consumes the reusable landing-page package only after its adapter preserves L1's static document contract
+Context: L1 built a consumer-owned React site and also copied the Vite and protected-merge
+integration into this repository. `SubZeroDev.Platform.UI.LandingPage` now publishes that reusable
+integration as `subzerodev-platform-ui-landing-page@0.1.0`, from source commit
+`d2625b7be51585371d9f0b6c0b435c25e6ea4ade`, specifically so consumers stop owning those copies.
+The released adapter already owns route builds and the protected docs merge, but its metadata
+contract cannot reproduce all static head content L1 currently verifies: Open Graph title,
+description, type and URL; Twitter card metadata; icon links; theme colour; and `<noscript>` text.
+Chosen: add L2 in [`40-site.md`](40-site.md) to consume the first corrected `0.x` release as an exact
+`site/` development dependency through its custom adapter and CLI. The package owns Vite
+configuration, entry HTML generation and protected merge; Platform retains its React, CSS, content,
+route metadata values, tests and caller-owned CI/deploy policy. L2 is blocked until the package
+publishes a contract that preserves the current static document surface, and no version number is
+invented before that release exists.
+Rejected: **Consume `0.1.0` now and drop the metadata its adapter cannot express** — the smallest
+migration, and a silent public regression made to fit a dependency. **Keep the local Vite config,
+entry HTML and PowerShell merge indefinitely** — avoids the blocker and leaves the duplicated
+integration the package now owns. **Use the generic README renderer** — removes the React project
+too, and discards the status-page composition and roadmap parser L1 exists to ship. **Adopt the
+package's reusable deployment workflow or composite action in the same slice** — available, but it
+also changes the caller's documentation-build orchestration, permissions boundary and deployment
+shape; direct CLI consumption replaces the duplicated mechanism without transferring deployment
+policy. **A Git submodule, local path or floating npm range** — each makes the consumer depend on
+mutable or workspace-local source instead of the immutable release UI1 exists to provide.
+Reversibility: moderate. Returning to local integration means recreating deleted build machinery;
+switching between exact package releases is cheap and deliberate.
+
 ### 2026-08-04 — Kit catch-up install; picked up `/install-all` and a `Measure-Session.ps1` fix
 Context: Target's `.claude/kit.json` recorded kit commit `8d4ffdb`; kit HEAD is `9b8313c`. The gap is five files: `.claude/commands/install-all.md` (new), one `AGENTS.md` line naming its effort tier, one bugfix in `tools/Measure-Session.ps1`, and two entries in the kit's own decision log (never copied into a target). `install-all.md` and the `kit.json` bump were already present, uncommitted, on this branch when this install started — a partially-applied attempt at this same increment; this run completed it rather than redoing it.
 Chosen: Added one sentence to the existing effort-tier prose in `AGENTS.md` — that prose already names `/track`, `/verify`, `/pr`, `/resolve`, `/refine`, `/kit-help` individually but never `/install`, so `/install` and `/install-all` were added together, same tier (sonnet, medium), with `/install-all`'s one escalation condition. Applied the kit's `Measure-Session.ps1` fix verbatim (guards `$session.Id.Substring(0, 8)` against ids ≤ 8 chars) — pure bugfix, no conflicting rationale.
