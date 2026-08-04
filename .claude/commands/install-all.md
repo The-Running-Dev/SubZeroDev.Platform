@@ -28,7 +28,7 @@ Orient, classify, reconcile — exactly as `INSTALL.md` states them. Running sev
 
 **Has one deterministic resolution already stated in `INSTALL.md`** — apply it and move on, the same action an interactive run would take once you approved it. This covers: absent → create, identical → skip, the default reconciliation for `AGENTS.md`/`CLAUDE.md` and `agent.md` when one side is clearly a pointer or clearly holds content and the other is absent or agrees, `codex/PROFILES.md`'s skip-unless-evidence default, and writing `.claude/kit.json`.
 
-**Is a named fork with no default** — `INSTALL.md` phase 1's *Occupied* state, `design/` occupied or ambiguous against an existing plans/ADR home, both `AGENTS.md` and `CLAUDE.md` holding content, `.github/ISSUE_TEMPLATE/` already present, a same-named command already present, and the `SessionEnd` hook (which `INSTALL.md` requires proposing and waiting on, unconditionally, with no automatic path at all). **Skip that artifact — or, if it blocks classifying the rest, that whole repository — record it as needing a decision, and continue to the next target.** Never pick the answer an unattended run cannot ask about, and never write the `SessionEnd` hook here.
+**Is a named fork with no default** — `INSTALL.md` phase 1's *Occupied* state, `design/` occupied or ambiguous against an existing plans/ADR home, both `AGENTS.md` and `CLAUDE.md` holding content, `.github/ISSUE_TEMPLATE/` already present, a same-named command already present, and the `settings.json` hooks — `SessionEnd` and `UserPromptSubmit`, both of which `INSTALL.md` requires proposing and waiting on, unconditionally, with no automatic path at all. **Skip that artifact — or, if it blocks classifying the rest, that whole repository — record it as needing a decision, and continue to the next target.** Never pick the answer an unattended run cannot ask about, and never write either hook here.
 
 ## Phase 3 — What must not happen, in any target
 
@@ -37,7 +37,7 @@ Same list as `INSTALL.md`'s, and unattended does not relax it — if anything it
 - No commit, no push, no pull request, in any target.
 - No `git add -A`, `git add .`, or bare-directory add — this command does not stage anything at all.
 - No deletion without approval, including proposed `agent.md` prunes — leave those unpruned and listed, not silently applied.
-- No write to a target's `settings.json`, `settings.local.json`, or `launch.json` beyond the (skipped, per phase 2) `SessionEnd` hook.
+- No write to a target's `settings.json`, `settings.local.json`, or `launch.json` beyond the (skipped, per phase 2) `SessionEnd` and `UserPromptSubmit` hooks.
 
 ## Phase 4 — One consolidated report, then stop
 

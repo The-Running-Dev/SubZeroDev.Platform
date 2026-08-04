@@ -342,7 +342,7 @@ attribute-based alternative to the registration call, which stays available as l
 ---
 
 ## S5 — Outbox dispatch
-**Status:** in progress
+**Status:** shipped · [#34](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/34)
 
 Delivers: the worker claims, dispatches and marks messages one at a time; a process killed between
 the domain commit and the dispatch delivers the message on restart.
@@ -412,7 +412,7 @@ trigger is a timer.
 ---
 
 ## S6 — Leases, prune, and the outbox readiness conditions
-**Status:** queued
+**Status:** shipped · [#36](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/36)
 
 Delivers: retention actually deletes, under a lease, in bounded batches; and readiness names a
 backlog, a pending flood, and a poisoned row.
@@ -464,7 +464,7 @@ instead.
 ---
 
 ## S7 — Redrive and discard
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator recovers or retires poisoned rows, per id and in bulk by type, without editing
 the database by hand.
