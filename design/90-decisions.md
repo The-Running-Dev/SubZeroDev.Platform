@@ -4,6 +4,18 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-05 — L2 pins the corrected landing-page package at 0.2.0
+Context: L2 could begin only once an immutable release preserved L1's complete static-head contract.
+`subzerodev-platform-ui-landing-page@0.2.0` is the first release to carry the typed custom-adapter
+metadata for Open Graph, X/Twitter, icons, theme colour and no-script content.
+Chosen: add `0.2.0` as an exact `site/` development dependency and route Platform's build, development
+and protected merge commands through its CLI.
+Rejected: **`0.1.0`** — its adapter cannot express the required static head. **A `0.x` range or
+`latest`** — would let the integration change without a Platform review. **A Git or local-path
+dependency** — makes the consumer depend on mutable or workspace-local source rather than the
+released artifact.
+Reversibility: cheap. A future reviewed release changes one exact version and its lockfile entry.
+
 ### 2026-08-04 — L2 consumes the reusable landing-page package only after its adapter preserves L1's static document contract
 Context: L1 built a consumer-owned React site and also copied the Vite and protected-merge
 integration into this repository. `SubZeroDev.Platform.UI.LandingPage` now publishes that reusable

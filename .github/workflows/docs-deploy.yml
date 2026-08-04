@@ -53,25 +53,16 @@ jobs:
             - name: Build Documentation
               run: /template/scripts/docs-build.ps1 -SourceDocs ./docs -OutputPath artifacts/docs
 
-            # The status-page site is a second, independent project (site/)
-            # sharing this one GitHub Pages deployment: it serves "/", the docs
-            # serve "/docs". The base image already has Node -- no setup-node
-            # needed. `check`, not a bare build -- see docs-ci.yml's verify
-            # job, which runs the same command. This job is the one that
-            # actually runs on a push to main (verify skips push events), so
-            # it is also the last thing standing between a broken site and a
-            # real deploy if a check was ever bypassed getting there.
+            # The reusable landing-page package builds this consumer-owned React
+            # site. `check`, not a bare build, remains the last local gate
+            # before deployment.
             - name: Build and verify the status-page site
               run: |
                   npm --prefix site ci
                   npm --prefix site run check
 
-            # Overlays the site onto the docs build -- see
-            # build/Merge-LandingPage.ps1, and the same step in docs-ci.yml's
-            # verify job, which proves this on every pull request before it
-            # ever runs here on push to main.
             - name: Merge the site into the documentation build
-              run: ./build/Merge-LandingPage.ps1 -LandingDist site/dist -DocsOutput artifacts/docs
+              run: npm --prefix site run merge
 
             - name: Upload Pages Artifact
               uses: actions/upload-pages-artifact@v5

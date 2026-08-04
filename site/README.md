@@ -5,8 +5,9 @@ status pill per package, `/roadmap/` is an incident history derived from
 [`design/30-slices.md`](../design/30-slices.md). See
 [`design/40-site.md`](../design/40-site.md) for the design and its acceptance criteria.
 
-Toolchain and script names are transcribed from `SubZeroDev.GameEngine/site/` deliberately — the
-design and every stylesheet are not. See `design/40-site.md`, _Toolchain_.
+The reusable landing-page package owns route builds and the protected documentation merge. This
+repository retains the React pages, styles, metadata, static assets, and tests. See
+`design/40-site.md`, _L2 — Consume the reusable landing-page package_.
 
 ## Development
 
@@ -25,5 +26,7 @@ and the built HTML's static metadata.
   `design/30-slices.md` at build time — and never edits it.
 - Documentation destinations live in one `routes` constant in `src/shared.tsx`, each checked
   against a real file under `docs/docs/` by `routes.test.ts`.
+- `landing.config.ts` is the only route-build configuration; it allows the raw `design/` import and
+  no broader repository path.
 - No stylesheet, token, or page composition here is copied from the engine's `site/`. Only the
   toolchain configuration is.
