@@ -351,12 +351,11 @@ Delivers: the existing Platform landing page and roadmap are built and merged th
 entry-point HTML, and merge infrastructure. The rendered site, its routes, its authored React and
 CSS, and its derivation from `design/30-slices.md` remain Platform-owned and observably unchanged.
 
-Depends on: L1, and on a published corrective `0.x` release of
-`SubZeroDev.Platform.UI.LandingPage`. Version `0.1.0` is published from
-`d2625b7be51585371d9f0b6c0b435c25e6ea4ade`, but it is **not sufficient for this migration**: its
-adapter cannot express all static head content the current build verifies. L2 does not start until a
-released package contract can preserve the existing Open Graph title, description, type and URL;
-Twitter card metadata; favicon and apple-touch-icon links; theme colour; and `<noscript>` content.
+Depends on: L1 and
+`subzerodev-platform-ui-landing-page@0.2.0`, the published corrective `0.x` release of
+`SubZeroDev.Platform.UI.LandingPage`. It preserves the existing Open Graph title, description, type
+and URL; Twitter card metadata; favicon and apple-touch-icon links; theme colour; and `<noscript>`
+content. The exact pin is recorded in `90-decisions.md`.
 The correction is made and released in the package repository, not improvised in this consumer.
 
 The package choice, ownership split, pinning rule and rejected alternatives are recorded once in
@@ -387,9 +386,9 @@ allow-list names `design/` and nothing broader, preserving L1's file-access boun
 
 ### Migration
 
-1. Add the first sufficient release as an **exact** development dependency in `site/package.json`
-   and lock it in `site/package-lock.json`. A `0.x` range, `latest`, a Git branch, and a local path are
-   not accepted inputs.
+1. Add `0.2.0` as an **exact** development dependency in `site/package.json` and lock it in
+   `site/package-lock.json`. A `0.x` range, `latest`, a Git branch, and a local path are not accepted
+   inputs.
 2. Add `site/landing.config.ts` declaring the two routes, their complete metadata and `design/` as
    the sole path outside `site/` the dev server may read. Keep the adapter inside `site/`; it is
    consumer configuration, not a new repository-root build system.

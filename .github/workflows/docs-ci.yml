@@ -88,10 +88,9 @@ jobs:
             - name: Build documentation
               run: /template/scripts/docs-build.ps1 -SourceDocs ./docs -OutputPath artifacts/docs
 
-            # The status-page site is a second, independent project (site/)
-            # sharing this one GitHub Pages deployment: it serves "/", the docs
-            # serve "/docs". The base image already has Node -- no setup-node
-            # needed.
+            # The reusable landing-page package builds this consumer-owned React
+            # site. Platform retains its page code and verification; the package
+            # owns the route-entry integration and protected merge.
             #
             # `check` runs format:check, lint, typecheck, vitest and the build
             # (site/package.json), not just the build. A bare `build` would let
@@ -104,13 +103,8 @@ jobs:
                   npm --prefix site ci
                   npm --prefix site run check
 
-            # Overlays the site onto the docs build -- overwrites the docs
-            # build's generated-from-README root index.html, merges in the
-            # site's assets, and refuses to proceed if anything under
-            # artifacts/docs/docs/ changed. See build/Merge-LandingPage.ps1 for
-            # why the two builds never collide.
             - name: Merge the site into the documentation build
-              run: ./build/Merge-LandingPage.ps1 -LandingDist site/dist -DocsOutput artifacts/docs
+              run: npm --prefix site run merge
 
             # Run the same archiving step docs-deploy.yml uses, so the deploy
             # path is covered before merge rather than after it. This action
