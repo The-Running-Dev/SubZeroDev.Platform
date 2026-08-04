@@ -3,6 +3,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
+
+    <!-- Shares OrderPlaced/OrderPlacedHandler with the web sample: both roles must register the
+         identical CLR types under the identical name, so the event and handler have one home. -->
+    <ProjectReference Include="..\SubZeroDev.Platform.Sample.Web\SubZeroDev.Platform.Sample.Web.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

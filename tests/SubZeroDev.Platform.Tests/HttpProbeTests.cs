@@ -183,4 +183,29 @@ public sealed class HttpProbeTests
             await app.DisposeAsync();
         }
     }
+
+    [Fact]
+    public async Task An_accept_language_header_never_changes_the_ambient_culture()
+    {
+        // Nothing in D3 resolves culture — a test sending Accept-Language proves the absence rather
+        // than assuming it, since a header Platform silently ignored would look identical to one it
+        // never received.
+        var (app, client) = await WebHostUnderTest.StartAsync();
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/");
+            request.Headers.Add("Accept-Language", "bg-BG");
+
+            var response = await client.SendAsync(request, CancellationToken.None);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(CancellationToken.None);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(CultureTag.Invariant.Value, body.GetProperty("culture").GetString());
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
 }

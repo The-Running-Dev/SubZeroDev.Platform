@@ -94,10 +94,11 @@ internal static class WebHostUnderTest
         builder.AddPlatformWebHost();
 
         var app = builder.Build();
-        app.MapGet("/", (ICurrentCorrelation correlation, ICurrentTenant tenant) => new
+        app.MapGet("/", (ICurrentCorrelation correlation, ICurrentTenant tenant, ICurrentCulture culture) => new
         {
             correlation = correlation.Current.TraceId,
             tenant = tenant.Current.Value,
+            culture = culture.Current.Value,
         });
         app.MapGet("/boom", void () => throw new InvalidOperationException("secret detail that must not reach the wire"));
 

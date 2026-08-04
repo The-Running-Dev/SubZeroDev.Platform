@@ -397,6 +397,355 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         Assert.Null(createdBy);
     }
 
+    [Fact]
+    public async Task Enqueue_commits_with_the_domain_write_and_neither_survives_a_rollback()
+    {
+        var product = ProductTableSource();
+        await using var host = await StartWithOutboxAsync(product);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+
+        var committedProductId = Guid.NewGuid().ToString();
+        OutboxMessageId committedOutboxId;
+
+        using (scopeFactory.Begin(TenantId.Implicit, null))
+        {
+            var committed = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                async token =>
+                {
+                    await InsertProductRowAsync(ambient.Current!, committedProductId, token);
+                    return outbox.Enqueue(new TestEvent());
+                },
+                CancellationToken.None);
+
+            Assert.True(committed.IsSuccess);
+            committedOutboxId = committed.Value;
+        }
+
+        Assert.Equal(1, await CountRowsAsync(_connectionString, "t_outbox_product", committedProductId));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, committedOutboxId));
+
+        var rolledBackProductId = Guid.NewGuid().ToString();
+
+        using (scopeFactory.Begin(TenantId.Implicit, null))
+        {
+            var rolledBack = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                async token =>
+                {
+                    await InsertProductRowAsync(ambient.Current!, rolledBackProductId, token);
+                    outbox.Enqueue(new TestEvent());
+                    throw new InvalidOperationException("Simulated failure after both writes.");
+                },
+                CancellationToken.None);
+
+            Assert.False(rolledBack.IsSuccess);
+        }
+
+        Assert.Equal(0, await CountRowsAsync(_connectionString, "t_outbox_product", rolledBackProductId));
+    }
+
+    [Fact]
+    public async Task Enqueue_returns_the_id_synchronously_before_commit_and_the_committed_row_carries_it()
+    {
+        await using var host = await StartWithOutboxAsync(ProductTableSource());
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+
+        OutboxMessageId returnedId = default;
+
+        using (scopeFactory.Begin(TenantId.Implicit, null))
+        {
+            var committed = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token =>
+                {
+                    // Returned before the row is durable — nothing has committed yet at this point.
+                    returnedId = outbox.Enqueue(new TestEvent());
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+
+            Assert.True(committed.IsSuccess);
+        }
+
+        var row = await ReadOutboxRowAsync(_connectionString, capability, returnedId);
+        Assert.NotNull(row);
+    }
+
+    [Fact]
+    public async Task Enqueue_throws_without_an_ambient_transaction_and_writes_nothing()
+    {
+        await using var host = await StartWithOutboxAsync(ProductTableSource());
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+
+        var thrown = Assert.Throws<PlatformContractViolationException>(() => outbox.Enqueue(new TestEvent()));
+        Assert.Equal("NoAmbientTransaction", thrown.Error.Code);
+    }
+
+    [Fact]
+    public async Task Enqueue_throws_without_an_ambient_operation_scope_and_writes_nothing()
+    {
+        await using var host = await StartWithOutboxAsync(ProductTableSource());
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+
+        PlatformContractViolationException? thrown = null;
+
+        var result = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token =>
+            {
+                thrown = Assert.Throws<PlatformContractViolationException>(() => outbox.Enqueue(new TestEvent()));
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(thrown);
+        Assert.Equal("NoAmbientOperationScope", thrown!.Error.Code);
+        Assert.True(result.IsSuccess); // the callback itself did not rethrow; committing an empty transaction is not this test's concern
+    }
+
+    [Fact]
+    public async Task Enqueue_throws_for_an_unregistered_event_type_and_writes_nothing()
+    {
+        // No AddPlatformEventHandler call at all — TestEvent is never bound to a name. Built inline
+        // rather than through StartWithOutboxAsync, which always registers one.
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .StartAsync(CancellationToken.None);
+
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+
+        var thrown = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token =>
+            {
+                var violation = Assert.Throws<PlatformContractViolationException>(() => outbox.Enqueue(new TestEvent()));
+                Assert.Equal("UnregisteredEventType", violation.Error.Code);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.True(thrown.IsSuccess);
+    }
+
+    [Fact]
+    public async Task The_stored_row_carries_the_registered_type_tenant_trace_correlation_culture_and_zero_attempts()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+
+        var trace = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", "vendor=state");
+        var correlation = new CorrelationId("3333333333333333333333333333bbbb");
+
+        OutboxMessageId id = default;
+
+        using (scopeFactory.Begin(trace, correlation, TenantId.Implicit, null, new CultureTag("bg")))
+        {
+            var committed = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token =>
+                {
+                    id = outbox.Enqueue(new TestEvent());
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+
+            Assert.True(committed.IsSuccess);
+        }
+
+        var row = await ReadOutboxRowAsync(_connectionString, capability, id);
+        Assert.NotNull(row);
+
+        Assert.Equal("test.event", row!.Type);
+        Assert.Equal(TenantId.Implicit.ToString(), row.Tenant);
+        Assert.Equal(trace.TraceParent, row.TraceParent);
+        Assert.Equal("vendor=state", row.TraceState);
+        Assert.Equal(correlation.TraceId, row.Correlation);
+        Assert.Equal("bg", row.Culture);
+        Assert.Equal(0, row.Attempts);
+        Assert.True(row.ClaimedByIsNull);
+        Assert.True(row.ClaimedAtIsNull);
+        Assert.True(row.ProcessedAtIsNull);
+        Assert.True(row.PoisonedAtIsNull);
+    }
+
+    [Fact]
+    public async Task IEventCapture_Enqueued_records_id_type_tenant_correlation_and_instant()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        OutboxMessageId id = default;
+
+        using (scopeFactory.Begin(TenantId.Implicit, null))
+        {
+            await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token =>
+                {
+                    id = outbox.Enqueue(new TestEvent());
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+        }
+
+        var captured = Assert.Single(host.Events.Enqueued);
+        Assert.Equal(id, captured.Id);
+        Assert.Equal(new EventTypeName("test.event"), captured.Type);
+        Assert.Equal(TenantId.Implicit, captured.Tenant);
+    }
+
+    [Fact]
+    public async Task The_check_constraints_reject_a_direct_write_that_violates_them()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+
+        // claimed_by set without claimed_at violates "null together".
+        var claimMismatch = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token => InsertRawOutboxRowAsync(ambient.Current!, capability, claimedBy: "homelab-01/aaaaaaaa", claimedAt: null, poisonedAt: null, lastError: null, token),
+            CancellationToken.None);
+        Assert.False(claimMismatch.IsSuccess);
+
+        // poisoned_at set without last_error violates "poisoned implies last_error".
+        var poisonMismatch = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token => InsertRawOutboxRowAsync(ambient.Current!, capability, claimedBy: null, claimedAt: null, poisonedAt: capability.FormatInstant(host.Clock.UtcNow), lastError: null, token),
+            CancellationToken.None);
+        Assert.False(poisonMismatch.IsSuccess);
+
+        // Both marks set (discard's own shape) is legal and rejects neither constraint.
+        var discardShape = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token => InsertRawOutboxRowAsync(
+                ambient.Current!,
+                capability,
+                claimedBy: null,
+                claimedAt: null,
+                poisonedAt: capability.FormatInstant(host.Clock.UtcNow),
+                lastError: "discarded",
+                token,
+                processedAt: capability.FormatInstant(host.Clock.UtcNow)),
+            CancellationToken.None);
+        Assert.True(discardShape.IsSuccess);
+    }
+
+    private static TestMigrationSource ProductTableSource() => new(
+        "OutboxProduct",
+        TestMigration.Sql("0001_create", "CREATE TABLE t_outbox_product (id TEXT PRIMARY KEY);"));
+
+    private async Task<IPlatformTestHost> StartWithOutboxAsync(params IModuleMigrationSource[] sources) =>
+        await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .WithServices(services =>
+            {
+                foreach (var source in sources)
+                {
+                    services.AddSingleton<IModuleMigrationSource>(source);
+                }
+
+                services.AddPlatformEventHandler<TestEvent, TestEventHandler>(new EventTypeName("test.event"));
+            })
+            .StartAsync(CancellationToken.None);
+
+    private static async Task InsertProductRowAsync(IAmbientTransaction current, string id, CancellationToken cancellationToken)
+    {
+        await using var insert = current.Connection.CreateCommand();
+        insert.Transaction = current.Transaction;
+        insert.CommandText = "INSERT INTO t_outbox_product (id) VALUES (@id);";
+        AddParameter(insert, "@id", id);
+        await insert.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Inserts directly against <c>platform_outbox</c>, bypassing <see cref="IOutboxStore"/>
+    /// — the only way to exercise a check constraint the store's own writer never violates by
+    /// construction.</summary>
+    private static async Task InsertRawOutboxRowAsync(
+        IAmbientTransaction current,
+        IProviderCapability capability,
+        string? claimedBy,
+        string? claimedAt,
+        string? poisonedAt,
+        string? lastError,
+        CancellationToken cancellationToken,
+        string? processedAt = null)
+    {
+        var occurredAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        await using var insert = current.Connection.CreateCommand();
+        insert.Transaction = current.Transaction;
+        insert.CommandText = """
+            INSERT INTO platform_outbox
+                (id, sequence, occurred_at, type, payload, tenant, trace_parent, trace_state,
+                 correlation, culture, attempts, next_attempt_at, first_deferred_at, claimed_by,
+                 claimed_at, processed_at, poisoned_at, last_error)
+            VALUES
+                (@id, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM platform_outbox), @occurredAt, @type,
+                 @payload, @tenant, @traceParent, NULL, @correlation, @culture, 0, NULL, NULL,
+                 @claimedBy, @claimedAt, @processedAt, @poisonedAt, @lastError);
+            """;
+
+        AddParameter(insert, "@id", capability.EncodeIdentifier(Guid.NewGuid()));
+        AddParameter(insert, "@occurredAt", capability.FormatInstant(occurredAt));
+        AddParameter(insert, "@type", "test.constraint");
+        AddParameter(insert, "@payload", "{}");
+        AddParameter(insert, "@tenant", TenantId.Implicit.ToString());
+        AddParameter(insert, "@traceParent", "00-1111111111111111111111111111aaaa-2222222222222222-01");
+        AddParameter(insert, "@correlation", "3333333333333333333333333333bbbb");
+        AddParameter(insert, "@culture", string.Empty);
+        AddParameter(insert, "@claimedBy", claimedBy);
+        AddParameter(insert, "@claimedAt", claimedAt);
+        AddParameter(insert, "@processedAt", processedAt);
+        AddParameter(insert, "@poisonedAt", poisonedAt);
+        AddParameter(insert, "@lastError", lastError);
+
+        await insert.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    protected abstract Task<RawOutboxRow?> ReadOutboxRowAsync(
+        string connectionString, IProviderCapability capability, OutboxMessageId id);
+
     private async Task<IPlatformTestHost> StartAsync(
         string? connectionString = null, IReadOnlyList<IModuleMigrationSource>? sources = null) =>
         await PlatformTestHost.CreateBuilder()

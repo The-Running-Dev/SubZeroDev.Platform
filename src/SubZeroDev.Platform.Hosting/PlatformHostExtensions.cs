@@ -137,6 +137,7 @@ public static class PlatformHostExtensions
         services.TryAddSingleton<ICurrentTenant, CurrentTenant>();
         services.TryAddSingleton<ICurrentPrincipal, CurrentPrincipal>();
         services.TryAddSingleton<ICurrentCorrelation, CurrentCorrelation>();
+        services.TryAddSingleton<ICurrentCulture, CurrentCulture>();
         services.TryAddSingleton<IModuleRegistry, ModuleRegistry>();
         services.TryAddSingleton<IHealthCheckRegistry, HealthCheckRegistry>();
         services.TryAddSingleton<IBackgroundWorkRegistry, BackgroundWorkRegistry>();

@@ -198,6 +198,81 @@ public readonly record struct BackgroundWorkName(string Value)
     public override string ToString() => Value;
 }
 
+/// <summary>The stable name a stored outbox row's <c>type</c> column carries. Supplied by an explicit
+/// registration rather than read off the CLR type, because dispatch must get from a stored string to
+/// a type and has no instance to ask.</summary>
+/// <param name="Value">The event's stable name.</param>
+public readonly record struct EventTypeName(string Value)
+{
+    /// <summary>The event's stable name.</summary>
+    public string Value { get; } = Names.Require(Value, nameof(Value));
+
+    /// <inheritdoc/>
+    public override string ToString() => Value;
+}
+
+/// <summary>A BCP-47 language tag carried by the ambient scope and the outbox row's <c>culture</c>
+/// column. Deliberately non-positional so its all-zero representation — no backing string — is
+/// <see cref="Invariant"/>, which is what lets culture join the scope as an optional parameter
+/// without every existing call site changing.</summary>
+public readonly record struct CultureTag
+{
+    private readonly string? _value;
+
+    /// <summary>Creates a culture tag. <see cref="string.Empty"/> normalises to <see cref="Invariant"/>'s
+    /// representation, so there is exactly one way to mean "no preference expressed".</summary>
+    /// <param name="value">A BCP-47 language tag, or <see cref="string.Empty"/> for the invariant.</param>
+    public CultureTag(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        _value = value.Length == 0 ? null : value;
+    }
+
+    /// <summary>The tag, never <see langword="null"/> — <see cref="string.Empty"/> for the invariant.</summary>
+    public string Value => _value ?? string.Empty;
+
+    /// <summary>The well-known invariant: the actor expressed no preference. Equal to
+    /// <c>default(CultureTag)</c>, not merely equivalent to it by convention.</summary>
+    public static CultureTag Invariant { get; }
+
+    /// <summary>Parses a culture tag, returning <see langword="false"/> rather than throwing. Accepts
+    /// exactly what <see cref="System.Globalization.CultureInfo.GetCultureInfo(string)"/> will later
+    /// resolve, and the empty string as the invariant.</summary>
+    /// <param name="candidate">The text to parse.</param>
+    /// <param name="result">The parsed tag, or <see langword="default"/> when parsing failed.</param>
+    /// <returns><see langword="true"/> when <paramref name="candidate"/> was a legal tag.</returns>
+    public static bool TryParse(string candidate, out CultureTag result)
+    {
+        if (candidate is null)
+        {
+            result = default;
+            return false;
+        }
+
+        if (candidate.Length == 0)
+        {
+            result = Invariant;
+            return true;
+        }
+
+        try
+        {
+            System.Globalization.CultureInfo.GetCultureInfo(candidate);
+        }
+        catch (System.Globalization.CultureNotFoundException)
+        {
+            result = default;
+            return false;
+        }
+
+        result = new CultureTag(candidate);
+        return true;
+    }
+
+    /// <inheritdoc/>
+    public override string ToString() => Value;
+}
+
 internal static class Names
 {
     internal static string Require(string value, string parameterName)

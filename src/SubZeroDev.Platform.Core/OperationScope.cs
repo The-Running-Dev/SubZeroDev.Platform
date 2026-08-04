@@ -30,7 +30,7 @@ internal sealed class OperationScopeAccessor(AmbientOperationScope ambient) : IO
 internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITraceContextCodec codec)
     : IOperationScopeFactory
 {
-    public IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal)
+    public IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal, CultureTag culture = default)
     {
         // Origination. The scope that calls this is the origin, so the root's trace-id is the
         // correlation — the same claim an inbound request with no traceparent makes.
@@ -43,6 +43,7 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
             new CorrelationId(established.TraceId),
             tenant,
             principal,
+            culture,
             handle);
     }
 
@@ -50,8 +51,9 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
         TraceContext established,
         CorrelationId correlation,
         TenantId tenant,
-        ClaimsPrincipal? principal) =>
-        new Scope(ambient, established, correlation, tenant, principal, ownedTrace: null);
+        ClaimsPrincipal? principal,
+        CultureTag culture = default) =>
+        new Scope(ambient, established, correlation, tenant, principal, culture, ownedTrace: null);
 
     private sealed class Scope : IOperationScope
     {
@@ -66,6 +68,7 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
             CorrelationId correlation,
             TenantId tenant,
             ClaimsPrincipal? principal,
+            CultureTag culture,
             ITraceHandle? ownedTrace)
         {
             _ambient = ambient;
@@ -76,6 +79,7 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
             Correlation = correlation;
             Tenant = tenant;
             Principal = principal;
+            Culture = culture;
 
             ambient.Current = this;
         }
@@ -87,6 +91,8 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
         public ClaimsPrincipal? Principal { get; }
 
         public TraceContext Trace { get; }
+
+        public CultureTag Culture { get; }
 
         public void Dispose()
         {
@@ -115,6 +121,11 @@ internal sealed class CurrentPrincipal(IOperationScopeAccessor accessor) : ICurr
 internal sealed class CurrentCorrelation(IOperationScopeAccessor accessor) : ICurrentCorrelation
 {
     public CorrelationId Current => AmbientScope.Require(accessor).Correlation;
+}
+
+internal sealed class CurrentCulture(IOperationScopeAccessor accessor) : ICurrentCulture
+{
+    public CultureTag Current => AmbientScope.Require(accessor).Culture;
 }
 
 internal static class AmbientScope
