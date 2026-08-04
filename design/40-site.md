@@ -6,9 +6,10 @@ page names none, which is why it is not appended there — S9 is the release, an
 not a tenth package.
 
 **The prefix is `L`, and it is not a phase.** Per `AGENTS.md` *Single ownership*, a local sequence
-uses a letter that cannot be misread as an ecosystem phase. `L1` runs alongside D3 (ecosystem Phase
-2) and maps to no phase of its own. It does not gate D3, D3 does not gate it, and no package's
-done-criteria reference it.
+uses a letter that cannot be misread as an ecosystem phase, and must say which phase each stage maps
+to. `L1` maps to **ecosystem Phase 2** — the same window D3 occupies — as a parallel, non-gating
+deliverable within it, never a milestone inside D3's own D0–D5 package pipeline. It does not gate D3,
+D3 does not gate it, and no package's done-criteria reference it.
 
 **This document does not outrank the code, the contract or the brief.** It is a work breakdown for
 one deliverable that ships no public API. Where it and `30-slices.md` appear to disagree about what a
@@ -68,7 +69,11 @@ A status-page shell: wordmark, global status banner, component list, then sectio
 themselves components.
 
 - **Banner** — `● ALL SYSTEMS OPERATIONAL`, with the subtext that the last incident was never and the
-  last user is a sample. Under it: `uptime 100% · incidents 0 · consumers 0 (2 planned)`.
+  last user is a sample. Under it: `uptime 100% · open incidents 0 · consumers 0 (2 planned)`. **Open**,
+  not a bare `incidents 0` — the roadmap page one click away frames every merged slice as a resolved
+  incident, and a banner claiming zero incidents at all would contradict a page showing four. "Open"
+  keeps both claims true in the same breath: reconciled during L1's implementation, recorded in
+  `90-decisions.md`.
 - **01 / COMPONENTS** — the six packages as monitored components, each with a pill and a one-line
   status message in the register of an ops summary: Abstractions depends on nothing and is smug about
   it; Core refuses to start rather than start wrong; Hosting starts, serves, and stops when asked;
@@ -82,7 +87,8 @@ themselves components.
 - **03 / INCIDENT REPORT** — the founding problem as a postmortem. *Impact:* two unrelated products
   each re-deriving hosting shape, configuration binding, startup validation and test infrastructure.
   *Root cause:* nothing shared existed. *Time to detect:* years. *Time to resolve:* ongoing.
-  *Resolution:* this repository. *Action items:* nine.
+  *Resolution:* this repository. *Action items:* the parsed slice count — nine at the time of writing,
+  never the literal word: the "no hard-coded slice count" acceptance criterion below binds here too.
 - **04 / RETURNS 503** — things the platform refuses to do, rendered as declined checks: start on a
   configuration it cannot explain; retry your request on your behalf; impose a repository pattern on
   your tables; depend on a product; reach the internet at startup; report a missing check as a
@@ -217,9 +223,14 @@ this slice does not do that.
   what has actually merged, and the note in its preamble that the line is what the site reads. **No
   heading text changes**, so every existing anchor survives
 - **build/** — `Merge-LandingPage.ps1`, ported from the engine with this repository's paths;
-  `Test-Documentation.ps1` gains the marker's well-formedness check
-- **.github/workflows/** — `docs-ci.yml`'s verify job builds and checks `site/` and performs the
-  merge before archiving; `docs-deploy.yml` does the same before uploading. Neither needs a deeper
+  `Test-SliceStatusMarkers.ps1`, a **new, repository-owned script**, checks the markers' well-formedness.
+  **Not `Test-Documentation.ps1`** — `90-decisions.md` already records that file as installed
+  byte-identical from the docs-template image, kept that way deliberately so re-running the installer
+  keeps picking up upstream fixes; a repository-specific check belongs in a repository-owned file
+  instead. Found during L1's implementation, reconciled here rather than left to drift
+- **.github/workflows/** — `docs-ci.yml` gains a `slice-status-markers` job running the new script,
+  alongside the unmodified `documentation` job; its verify job builds and checks `site/` and performs
+  the merge before archiving; `docs-deploy.yml` does the same before uploading. None needs a deeper
   checkout: nothing in this slice reads git
 - **design/90-decisions.md** — two entries, both required before implementation is complete
 - **.gitignore** — `site/node_modules` and `site/dist`
@@ -250,7 +261,7 @@ this slice does not do that.
 - Changing the heading or status format in `30-slices.md` fails a test rather than silently emptying
   the page. **A parser that returns zero slices, or a slice whose status line is missing or
   unrecognised, is a build failure — never an empty roadmap and never a silent `SCHEDULED`.**
-- `Test-Documentation.ps1` fails when the markers are internally inconsistent: more than one
+- `Test-SliceStatusMarkers.ps1` fails when the markers are internally inconsistent: more than one
   `in progress`, none at all while a `queued` slice exists, or a `queued` slice ordered before a
   `shipped` one. This is what catches a slice that merges without setting its own marker, which is
   the failure mode the marker introduces. **The check is asserted against a deliberately inconsistent
