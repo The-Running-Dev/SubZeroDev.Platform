@@ -219,6 +219,33 @@ internal sealed class SqliteProviderCapability(PersistenceOptions options) : IPr
         }
     }
 
+    public async Task<Result<int, TransactionError>> DeleteBoundedAsync(
+        PruneTarget target,
+        DateTimeOffset olderThan,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var connection = new SqliteConnection(ConnectionString());
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = PruneSql.For(target);
+            AddParameter(command, "@olderThan", FormatInstant(olderThan));
+            AddParameter(command, "@batchSize", batchSize);
+            var deleted = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return Result<int, TransactionError>.Success(deleted);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Result<int, TransactionError>.Failure(Classify(exception));
+        }
+    }
+
     private static void AddParameter(DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();

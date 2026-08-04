@@ -191,6 +191,33 @@ internal sealed class PostgreSqlProviderCapability(PersistenceOptions options) :
         }
     }
 
+    public async Task<Result<int, TransactionError>> DeleteBoundedAsync(
+        PruneTarget target,
+        DateTimeOffset olderThan,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var connection = new NpgsqlConnection(options.ConnectionString);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = PruneSql.For(target);
+            command.Parameters.AddWithValue("olderThan", FormatInstant(olderThan));
+            command.Parameters.AddWithValue("batchSize", batchSize);
+            var deleted = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return Result<int, TransactionError>.Success(deleted);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Result<int, TransactionError>.Failure(Classify(exception));
+        }
+    }
+
     private sealed class PostgresMigrationLock(NpgsqlConnection connection, NpgsqlTransaction transaction)
         : IMigrationLock
     {

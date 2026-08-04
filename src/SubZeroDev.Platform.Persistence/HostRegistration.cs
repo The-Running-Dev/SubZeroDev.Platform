@@ -177,7 +177,7 @@ internal sealed class PlatformMigrationSource : IModuleMigrationSource
     public ModuleName Module { get; } = new("Platform");
 
     public IReadOnlyList<IModuleMigration> Migrations { get; } =
-        [new CreateHostRegistrationTable(), new PlatformOutboxMigration()];
+        [new CreateHostRegistrationTable(), new PlatformOutboxMigration(), new CreateBackgroundWorkLeaseTable()];
 
     private sealed class CreateHostRegistrationTable : IModuleMigration
     {

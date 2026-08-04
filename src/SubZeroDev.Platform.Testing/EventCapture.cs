@@ -185,6 +185,19 @@ internal sealed class CapturingOutboxStore(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) => CompleteAsync(
             id, holder, inner.ReleaseClaimAsync(id, holder, cancellationToken));
 
+    public Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
+        inner.OldestPendingDueAsync(cancellationToken);
+
+    public Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken) =>
+        inner.PendingCountAsync(cancellationToken);
+
+    public Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken) =>
+        inner.PoisonedCountAsync(cancellationToken);
+
+    public Task<Result<int, TransactionError>> PruneAsync(
+        PruneTarget target, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken) =>
+        inner.PruneAsync(target, olderThan, batchSize, cancellationToken);
+
     private async Task<Result<ClaimedWriteOutcome, TransactionError>> CompleteAsync(
         OutboxMessageId id,
         InstanceId holder,

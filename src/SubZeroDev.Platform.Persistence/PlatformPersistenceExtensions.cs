@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 
@@ -13,8 +14,9 @@ public static class PlatformPersistenceExtensions
 {
     /// <summary>Registers the unit of work, the ambient transaction accessor, the migration runner,
     /// the outbox writer and store, the event handler registry, host registration and its heartbeat,
-    /// and the <c>Database</c>, <c>PendingMigrations</c>, <c>PeerHost</c> and
-    /// <c>SettingsFingerprint</c> readiness checks.</summary>
+    /// the lease store and manager, the prune background work, and the <c>Database</c>,
+    /// <c>PendingMigrations</c>, <c>PeerHost</c>, <c>SettingsFingerprint</c>, <c>OutboxBacklogAge</c>,
+    /// <c>OutboxPendingCount</c> and <c>OutboxPoisonCount</c> readiness checks.</summary>
     /// <param name="services">The host's service collection.</param>
     /// <returns>The same collection, so calls chain.</returns>
     public static IServiceCollection AddPlatformPersistence(this IServiceCollection services)
@@ -35,7 +37,8 @@ public static class PlatformPersistenceExtensions
             provider.GetRequiredService<IAmbientTransactionAccessor>(),
             provider.GetRequiredService<IProviderCapability>(),
             provider.GetRequiredService<IClock>(),
-            provider.GetRequiredService<PlatformOptions>()));
+            provider.GetRequiredService<PlatformOptions>(),
+            provider.GetRequiredService<ILogger<OutboxStore>>()));
 
         // A factory registration rather than TryAddSingleton<IOutboxWriter, OutboxWriter>(): Testing
         // decorates this to feed IEventCapture, and a factory is a delegate a different assembly can
@@ -59,14 +62,20 @@ public static class PlatformPersistenceExtensions
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IModuleMigrationSource, PlatformMigrationSource>());
         services.TryAddSingleton<IHostRegistrationStore, HostRegistrationStore>();
+        services.TryAddSingleton<ILeaseStore, LeaseStore>();
+        services.TryAddSingleton<ILeaseManager, LeaseManager>();
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, DatabaseHealthCheck>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, PendingMigrationsHealthCheck>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, PeerHostHealthCheck>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, SettingsFingerprintHealthCheck>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, OutboxBacklogAgeHealthCheck>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, OutboxPendingCountHealthCheck>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, OutboxPoisonCountHealthCheck>());
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, HostRegistrationHeartbeat>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, OutboxDispatcher>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, PruneWork>());
 
         if (!services.Any(descriptor => descriptor.ImplementationType == typeof(PersistenceStartupCheck)))
         {

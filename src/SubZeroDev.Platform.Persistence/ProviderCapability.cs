@@ -21,6 +21,27 @@ public interface IMigrationLock : IAsyncDisposable
     DbTransaction Transaction { get; }
 }
 
+/// <summary>What a bounded prune statement targets. <see cref="ProcessedOutboxRows"/> and
+/// <see cref="PoisonedOutboxRows"/> both live in <c>platform_outbox</c> — the poisoned target also
+/// removes discarded rows, since the predicate table prunes both on the poison window.
+/// <see cref="DeadHostRegistrations"/> is the third retention window, in
+/// <c>platform_host_registration</c>. One registration — <c>PlatformBackgroundWork.Prune</c> —
+/// covers all three.</summary>
+public enum PruneTarget
+{
+    /// <summary>Rows in <c>platform_outbox</c> with <c>processed_at</c> set and <c>poisoned_at</c>
+    /// null, older than <c>Outbox:ProcessedRetention</c>.</summary>
+    ProcessedOutboxRows,
+
+    /// <summary>Rows in <c>platform_outbox</c> with <c>poisoned_at</c> set — poisoned or discarded,
+    /// per the predicate table — older than <c>Outbox:PoisonedRetention</c>.</summary>
+    PoisonedOutboxRows,
+
+    /// <summary>Rows in <c>platform_host_registration</c> whose heartbeat is older than
+    /// <c>HostRegistration:RetentionWindow</c>.</summary>
+    DeadHostRegistrations,
+}
+
 /// <summary>Everything the two providers must do differently to produce the same observable
 /// result. A member belongs here on that test alone; everything identical between providers
 /// belongs in a store instead.</summary>
@@ -105,4 +126,57 @@ public interface IProviderCapability
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>Success, or the named configuration defect.</returns>
     Task<Result<ConfigurationError>> AssertStartupPreconditionsAsync(CancellationToken cancellationToken);
+
+    /// <summary>Deletes up to <paramref name="batchSize"/> rows matching <paramref name="target"/>
+    /// and older than <paramref name="olderThan"/>, in one bounded statement — never an unbounded
+    /// delete.</summary>
+    /// <param name="target">What to prune.</param>
+    /// <param name="olderThan">The age boundary; a row at or after this instant is not eligible.</param>
+    /// <param name="batchSize">The most rows one statement may remove.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>How many rows were deleted, or why the delete did not complete.</returns>
+    Task<Result<int, TransactionError>> DeleteBoundedAsync(
+        PruneTarget target,
+        DateTimeOffset olderThan,
+        int batchSize,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>The bounded-delete statement for each <see cref="PruneTarget"/>. Identical text for both
+/// providers — a subquery ordered and limited, deleted by primary key — the same shape
+/// <c>StampClaimAsync</c> already uses for a portable conditional write; each provider still opens
+/// the connection itself, which is the actual difference the capability seam exists for.</summary>
+internal static class PruneSql
+{
+    internal static string For(PruneTarget target) => target switch
+    {
+        PruneTarget.ProcessedOutboxRows => """
+            DELETE FROM platform_outbox
+            WHERE id IN (
+                SELECT id FROM platform_outbox
+                WHERE processed_at IS NOT NULL AND poisoned_at IS NULL AND processed_at < @olderThan
+                ORDER BY processed_at
+                LIMIT @batchSize
+            );
+            """,
+        PruneTarget.PoisonedOutboxRows => """
+            DELETE FROM platform_outbox
+            WHERE id IN (
+                SELECT id FROM platform_outbox
+                WHERE poisoned_at IS NOT NULL AND poisoned_at < @olderThan
+                ORDER BY poisoned_at
+                LIMIT @batchSize
+            );
+            """,
+        PruneTarget.DeadHostRegistrations => """
+            DELETE FROM platform_host_registration
+            WHERE (role, instance) IN (
+                SELECT role, instance FROM platform_host_registration
+                WHERE heartbeat_at < @olderThan
+                ORDER BY heartbeat_at
+                LIMIT @batchSize
+            );
+            """,
+        _ => throw new ArgumentOutOfRangeException(nameof(target)),
+    };
 }

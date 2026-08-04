@@ -95,6 +95,41 @@ public sealed record MigrationError : PlatformError
             + "Rename one so each module owns its own history.");
 }
 
+/// <summary>Why a lease operation did not complete as asked. The lease is an optimisation against
+/// duplicate work, not a mutual-exclusion primitive — nothing fences a holder that stalls past its
+/// expiry, so leased work must be idempotent.</summary>
+public sealed record LeaseError : PlatformError
+{
+    private LeaseError(string code, bool isRetryable, string detail)
+        : base(code)
+    {
+        IsRetryable = isRetryable;
+        Detail = detail;
+    }
+
+    /// <summary>Names the cause.</summary>
+    public string Detail { get; }
+
+    /// <inheritdoc/>
+    public override bool IsRetryable { get; }
+
+    /// <summary>Another holder has an unexpired lease. The caller skips this run entirely.</summary>
+    /// <returns>The error.</returns>
+    public static LeaseError Held() =>
+        new(nameof(Held), isRetryable: true, "Another holder has an unexpired lease.");
+
+    /// <summary>Renewal found the lease held by someone else — the caller must abort its work
+    /// immediately rather than continue on the assumption it still holds the lease.</summary>
+    /// <returns>The error.</returns>
+    public static LeaseError Lost() =>
+        new(nameof(Lost), isRetryable: false, "Renewal found the lease held by someone else.");
+
+    /// <summary>The database cannot be reached.</summary>
+    /// <returns>The error.</returns>
+    public static LeaseError Unavailable() =>
+        new(nameof(Unavailable), isRetryable: true, "The database could not be reached.");
+}
+
 /// <summary>A rejected event handler registration, or a handler this host could not construct.</summary>
 public sealed record EventHandlerRegistrationError : PlatformError
 {
