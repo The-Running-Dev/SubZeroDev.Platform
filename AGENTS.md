@@ -119,6 +119,17 @@ The tiers above say which model runs a command. This says **when a session must 
 
 **Compaction is a boundary you did not choose.** If a session compacts mid-slice, report it — the slice was mis-sized, and the work after the compaction was done against a summary of the contract rather than the contract.
 
+**End a response that lands on a fresh-session boundary with a banner, not a footnote.** A boundary buried in the last sentence of a report gets carried into the next reply of the same session out of habit, which is the exact failure the boundary exists to prevent. Set it off visibly — a horizontal rule and a bold line is enough — naming: the boundary just crossed, the next command, and its tier from *Effort and model selection*. For example:
+
+```
+---
+**Session boundary.** This context should not carry into `/track`.
+Next: `/track`, fresh session, Sonnet, medium.
+---
+```
+
+Do not run the next command yourself. Ending a session may be the next step, and a command that starts work cannot also tell the user to start a new one for it — that restriction is unchanged, only how visibly the handoff is stated.
+
 An ADR is not a design cycle and does not inherit this table. `docs/docs/` decisions are authored directly; the boundaries above govern the `design/` pipeline.
 
 ### What should stop being model work
@@ -136,7 +147,7 @@ The tiers above decide *which* model does a job. This decides whether a model sh
 Two distinctions that are easy to get wrong:
 
 - **The mechanical half of a task is red; the judgement half is not.** Opening an issue is an API call, but deciding what warrants one is not. Writing a PR description is a template, but which merge convention governs is not. Do not classify a whole command by its cheapest step.
-- **Do not report a cost you did not measure.** A model is not given its own token counts or elapsed time, so any figure it states about its own run is an estimate presented as a measurement. `tools/Measure-Session.ps1` reads the real per-call usage from the session transcript, and runs as a `SessionEnd` hook. Use it, or say nothing.
+- **Do not report a cost you did not measure.** A model is not given its own token counts or elapsed time, so any figure it states about its own run is an estimate presented as a measurement. `tools/Measure-Session.ps1` reads the real per-call usage from the session transcript, and runs as a `SessionEnd` hook. Use it, or say nothing. It measures **Claude Code sessions only** — Codex writes a different schema this has no reader for, and Copilot records no token usage at all. Under either, *say nothing* is the whole instruction.
 
 ## Hard rules
 
@@ -209,34 +220,44 @@ Two distinctions that are easy to get wrong:
 - Run `git diff --check` before committing. Never use trailing double-spaces for a line break; it rejects them.
 - If a pushed commit needs changing, add a follow-up commit.
 - **Push every commit before announcing a PR is ready.** Announcing invites an immediate merge, and a commit pushed after that lands on a branch nobody merges.
-- External writes need my authorization: creating a remote repository, changing visibility, pushing, opening pull requests, changing a domain, deploying. **Discussing a decision does not authorize it.** One carve-out — see **Tracking work**, below.
+- External writes need my authorization: creating a remote repository, changing visibility, pushing, opening or merging pull requests, changing a domain, deploying. **Discussing a decision does not authorize it.** Two carve-outs: GitHub issue, milestone, and project writes (*Tracking work*), and `/slice` pushing the branch it just created and opening the PR it starts **as a draft** (`.claude/commands/slice.md`). A draft blocks no one and requests no review, so opening one carries the same reversibility argument as opening an issue. Marking that PR ready for review, and merging it, are not carved out and stay `/pr`'s and the user's respectively.
 - Do not delete files, branches, or history without explicit authorization.
 - Check review **threads**, not just requested reviewers — an automated reviewer can leave blocking conversation threads that do not appear in a reviewer listing. Resolve a thread only when a validated fix satisfies it; leave ambiguous findings open and report them. `/resolve` does this; the query it needs is written out there.
-- **Resolving or replying to a review thread is not carved out.** The exception in *Tracking work* covers opening issues and nothing else. Where a repository delegates resolution explicitly, follow its wording; where it is silent, ask.
+- **Resolving or replying to a review thread is not carved out.** The exceptions in *Tracking work* cover issue, milestone, and project writes; a pull request's review threads are a different object and stay authorized regardless. Where a repository delegates resolution explicitly, follow its wording; where it is silent, ask.
 
 ## Tracking work
 
 **Defer work to the tracker rather than processing it inline.** A finding, a follow-up, or a
-defect noticed in passing goes to a GitHub issue, not into a running list in the conversation
-or a section of a document that will rot.
+defect noticed in passing goes to a GitHub issue — not into a running list in the conversation,
+and not into a section of a document that will rot. Prose is where work goes to be forgotten.
 
-- `/track` is the only command that writes to GitHub. **Opening and labelling an issue in a
-  repository I own is carved out of the authorization rule above** — cheap and reversible, so
-  it needs no per-instance approval. Closing an issue, editing anyone else's, and creating a
-  milestone or a project all still need my sign-off.
+- **Opening, labelling, closing, commenting on, and editing an issue is carved out of the
+  authorization rule**, in a repository I own — including one opened by someone else. Issues are
+  cheap and reversible, which is the entire justification.
+- **Milestones and projects are carved out too**, in a repository I own. Creating one no longer
+  needs approval; deleting one still does, since that direction is not cheaply reversible.
+- **Writing to a repository I do not own is never carved out.** That boundary is the one this
+  section does not relax.
+- **`/track` owns every GitHub write it can make idempotent.** No other command creates issues,
+  milestones, or projects. It is idempotent, so run it often rather than batching. Closing an
+  issue and ticking a checkbox are the exceptions — the command that observes the work done does
+  those directly, in the same run, rather than waiting for a sync pass.
 - It opens one issue per slice in `design/30-slices.md` that lacks one, matching on title
   across open **and** closed issues so a finished slice is never reopened or duplicated. It
   opens one issue per bullet under `## Open` in `design/90-decisions.md`, removing the bullet
   once tracked — that section is a staging area, not a home.
 - If a matching GitHub Project exists (named after this repository), `/track` adds the issues
-  it opens to it. It never creates a project or a milestone.
+  it opens to it. If none exists, it creates one named after the repository and adds every
+  issue it opened, since project creation is carved out the same as an issue or a milestone.
 - `design/30-slices.md` stays authoritative for what a slice *is*; its issue tracks whether it
-  is *done*. If the two come to disagree, say so rather than editing either.
+  is *done*. If the two come to describe the work differently, say so rather than editing either.
 - **Every issue reads human-first.** A narrative anyone can follow, then `### Done when`
   checkboxes, then the agent detail in a collapsed `<details>` block.
 - **The agent block is fenced** by `<!-- agent:start -->` and `<!-- agent:end -->`. Inside the
-  fence is regenerable; **outside it is never touched** — a ticked checkbox is progress someone
-  recorded, an edited narrative is someone's deliberate wording.
+  fence is regenerable; **outside it, a regenerating command never rewrites anything** — an
+  edited narrative is someone's deliberate wording, and a stale copy gets fixed by hand, not
+  overwritten. The one narrow exception is a `Done when` checkbox, which the command that
+  confirms a criterion ticks directly, in place, outside the fence.
 - **Where a document already governs, the block points; where none does, it carries.** A slice
   names `design/30-slices.md § S<n> @ <sha>` and leaves procedure to `.claude/commands/slice.md`
   — copying stop conditions into an issue freezes a stale copy that nothing can go back and fix.
@@ -244,13 +265,13 @@ or a section of a document that will rot.
 - **Criteria carry stable ids** (`S3.1`), and drift is compared on ids, never prose. Reworded
   criteria are not drift; an added, removed, or renumbered id is.
 - **Report drift, change neither side.** Which is wrong is my call.
-- **Ticking a checkbox is mine, not yours.** An agent reporting "S3.1 met" and a ticked box are
-  different claims by different parties. `/slice` ends by listing the ids it believes are met so
-  ticking them is mechanical.
+- **Ticking a checkbox is carved out of the authorization rule, the same as opening an issue.**
+  `/slice` ticks a `Done when` box in the same run it reports the criterion met, by id, so the
+  tick is traceable to the report that justified it rather than a separate confirmation.
 - **Bugs and stories are filed by hand** from `.github/ISSUE_TEMPLATE/`. `/track` does not open
   them.
-- This does not suspend one-at-a-time sign-off. The tracker is where findings I accept go,
-  not a way to skip presenting them.
+- **This does not suspend one-at-a-time sign-off.** Findings are still presented for
+  adjudication; the tracker is where the ones you accept go, not a way to skip the conversation.
 
 ## Decision logging
 

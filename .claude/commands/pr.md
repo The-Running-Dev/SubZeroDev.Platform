@@ -14,12 +14,19 @@ Open a pull request for the work on the current branch.
 git status --short --branch
 git log --oneline @{u}..HEAD
 git diff --check
+gh pr view --json number,isDraft,url,title 2>$null
 ```
 
 - **Every commit must be pushed first.** Announcing a PR invites an immediate merge, and a commit pushed after that lands on a branch nobody merges. Check `@{u}..HEAD` is empty before you announce anything.
 - **Never open a PR from the default branch.** If that is where the work is, stop and say so — moving commits to a branch is the user's call.
 - **Run `/verify` first, or say that you did not.** A PR description claiming green checks without having run them is the exact failure `AGENTS.md` names.
 - Stage by explicit named path. Never `git add -A`, `git add .`, or a bare directory.
+
+**Check for a PR already open on this branch before creating one.** `/slice` opens its own PR as a draft when it finishes a slice (`.claude/commands/slice.md`) — that carve-out is narrower than this command's. If `gh pr view` finds one:
+  - It is this command's job to write the real description (below) and, once the checks and thread count are reported, **ask before marking it ready for review.** Marking ready is what makes the PR actionable to reviewers and CI gates that ignore drafts — that crosses the same authorization line as opening one, so it is not carved out just because the draft itself was.
+  - Do not open a second PR for the same branch.
+
+If none exists — a slice implemented before this convention, or `/pr` run standalone — **ask before opening one**, same as always.
 
 ## The description
 

@@ -54,15 +54,12 @@ Three of these stop rather than proceed, and that is the cheapest failure availa
 
 One slice, one branch, one session. Do not start slice N+1 because you noticed something in slice N — that goes in `90-decisions.md` under `## Open`, and `/track` turns it into an issue.
 
-1. **Branch.** `/pr` refuses to open from the default branch.
-2. **`/slice S3`**, or bare **`/slice`** for the lowest-numbered slice that is neither closed nor fully ticked and whose dependencies are done. Criteria stated by id, failing tests first, implemented against the contract, ending with the ids it believes are met.
-3. **You tick the boxes.** Deliberately not the agent's to do — "S3.1 met" and a ticked box are different claims by different parties.
-4. **`/verify`** — same session. Discovers the gates from CI and reports three lists; the one that matters is *did not run*. It fixes nothing.
-5. **Commit, then push.** Named paths only, and push before announcing anything.
-6. **`/pr`** — same session, because the description must carry `/verify`'s did-not-run list **verbatim**.
-7. **`/resolve`** — same session, once review lands. Fixed order: fix → push → confirm checks on the **new** head → only then resolve.
-8. **Merge** — the user's, unless this repository's instruction file explicitly delegates it.
-9. **`/track`** — **new session**, after the merge.
+1. **`/slice S3`**, or bare **`/slice`** for the lowest-numbered slice that is neither closed nor fully ticked and whose dependencies are done. Branches, states criteria by id, writes failing tests first, implements against the contract, commits, pushes, opens the PR **as a draft**, ticks the `Done when` boxes it confirms, and ends by reporting the ids it believes are met.
+2. **`/verify`** — same session. Discovers the gates from CI and reports three lists; the one that matters is *did not run*. It fixes nothing.
+3. **`/pr`** — same session. Finds the draft `/slice` opened, writes the real description — carrying `/verify`'s did-not-run list **verbatim** — and asks before marking it ready for review.
+4. **`/resolve`** — same session, once review lands. Fixed order: fix → push → confirm checks on the **new** head → only then resolve.
+5. **Merge** — the user's, unless this repository's instruction file explicitly delegates it.
+6. **`/track`** — **new session**, after the merge. Closes the issue if every box is ticked.
 
 Then back to 1 for the next slice.
 
@@ -82,5 +79,6 @@ For something short-lived, the honest minimum is `00-brief.md` with real non-goa
 ## Answering
 
 - **Name the next command, its tier from `AGENTS.md`, and whether it needs a fresh session.** That is the whole answer most of the time.
+- **Where it needs a fresh session, say so as the banner defined in `AGENTS.md`, *Session boundaries*** — set off visibly, not folded into the same sentence as the orientation line. This is the one command whose entire job is telling the user what's next, so it is the last place that banner should be easy to miss.
 - **Do not run the next command.** This orients; it does not act. Ending a session may be the next step, and a command that starts work cannot tell the user to start a new session for it.
 - **Do not invent a step, a stage, or a tier.** If something here does not cover the situation, say so — an invented step in a help command is the one that gets followed.

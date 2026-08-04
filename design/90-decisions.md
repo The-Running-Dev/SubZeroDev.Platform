@@ -4,6 +4,41 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-05 — Kit upgrade to `9896915`: adopt self-ticking checkboxes and carved-out milestones/projects
+Context: Upgrading the agent kit from `9b8313c` to `9896915`. The kit's *Tracking work* section moved
+from "only issue-opening is carved out of the authorization rule; milestones, projects, and ticking
+a `Done when` box all need my sign-off" to "issue, milestone, and project writes are all carved out
+(deletion excepted); `/slice` ticks its own boxes in the same run it reports a criterion met." This
+repository had already adopted the adjacent piece — `/slice` branching, committing, and opening its
+own draft PR (see the 2026-08-04 entry below) — so this is the next increment of the same direction,
+not a new one.
+Chosen: Adopt in full. `AGENTS.md`'s *Tracking work* and *Git and delivery* sections, and
+`.claude/commands/{install-all,kit-help,pr,slice,track}.md`, now match the kit's current text. Also
+carried forward, non-conflicting: the session-boundary "banner" instruction (adapted to name this
+repository's *Effort and model selection* section rather than the kit's *Command routing* table,
+since the 2026-08-04 entry below already declined the table conversion), and the Codex/Copilot scope
+note on `tools/Measure-Session.ps1`.
+Rejected: **Keep the current, more conservative rule** — ticking and milestone/project creation stay
+mine; the six files above stay as they are. Rejected because the adjacent draft-PR decision already
+established the direction, and holding this one piece back leaves `/track` and `/slice`'s own
+descriptions of themselves inconsistent with what they actually do.
+Reversibility: cheap — a doc/procedure change with no data-shape implication.
+
+### 2026-08-05 — `tools/Measure-Session.ps1` upgraded; `-Watch` added as a second, `UserPromptSubmit` hook
+Context: Same kit upgrade. The script gained a vendor-detection fix (a foreign, non-Claude transcript
+now refuses rather than silently reporting zero cost), JSON-by-default output with `-Human` for the
+old text table, and `-Watch` — a `UserPromptSubmit` hook that warns once a session's context crosses
+150,000 tokens and stays silent below it. `INSTALL.md`'s bounded exception requires proposing the
+exact hook JSON and waiting, separately from the general reconciliation sign-off, before adding a
+second hook.
+Chosen: Upgrade the script, and add the `UserPromptSubmit` hook exactly as proposed —
+`Measure-Session.ps1 -Watch`, 10s timeout — alongside the existing `SessionEnd` hook in
+`.claude/settings.json`. Neither event had a competing hook. `tools/Measure-Session.Tests.ps1`
+installed alongside it (previously absent).
+Rejected: **Upgrade the script but skip `-Watch`** — take the bugfix and JSON-default change only,
+leave `settings.json` untouched. Declined once the user confirmed the fuller option.
+Reversibility: cheap — one param, one script block, one `settings.json` key.
+
 ### 2026-08-05 — L2 pins the corrected landing-page package at 0.2.0
 Context: L2 could begin only once an immutable release preserved L1's complete static-head contract.
 `subzerodev-platform-ui-landing-page@0.2.0` is the first release to carry the typed custom-adapter
