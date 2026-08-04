@@ -27,7 +27,8 @@ package's reusable deployment workflow or composite action in the same slice** â
 also changes the caller's documentation-build orchestration, permissions boundary and deployment
 shape; direct CLI consumption replaces the duplicated mechanism without transferring deployment
 policy. **A Git submodule, local path or floating npm range** â€” each makes the consumer depend on
-mutable or workspace-local source instead of the immutable release UI1 exists to provide.
+mutable or workspace-local source instead of the immutable package release this integration is meant
+to provide.
 Reversibility: moderate. Returning to local integration means recreating deleted build machinery;
 switching between exact package releases is cheap and deliberate.
 
