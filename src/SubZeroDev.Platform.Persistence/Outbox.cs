@@ -133,6 +133,48 @@ public interface IOutboxWriter
     OutboxMessageId Enqueue<TEvent>(TEvent @event) where TEvent : IIntegrationEvent;
 }
 
+/// <summary>Recovers poisoned outbox rows or records an operator's decision to retire them. This is
+/// deliberately a library surface: D3 ships no administrative endpoint, command, or UI.</summary>
+public interface IOutboxAdministration
+{
+    /// <summary>Resets each named poisoned row so the next dispatch tick may claim it.</summary>
+    Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> RedriveAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken);
+
+    /// <summary>Resets every poisoned row of one registered event type.</summary>
+    Task<Result<int, OutboxError>> RedriveByTypeAsync(EventTypeName type, CancellationToken cancellationToken);
+
+    /// <summary>Retires each named poisoned row, retaining its poison record and the operator reason.</summary>
+    Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> DiscardAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken);
+
+    /// <summary>Retires every poisoned row of one registered event type.</summary>
+    Task<Result<int, OutboxError>> DiscardByTypeAsync(
+        EventTypeName type, string reason, CancellationToken cancellationToken);
+
+    /// <summary>Lists at most <paramref name="limit"/> non-discarded poisoned rows.</summary>
+    Task<Result<IReadOnlyList<OutboxMessage>, OutboxError>> ListPoisonedAsync(
+        int limit, CancellationToken cancellationToken);
+}
+
+/// <summary>The successful disposition of one named administrative operation.</summary>
+public enum OutboxAdministrationOutcome
+{
+    /// <summary>The requested transition was applied.</summary>
+    Applied,
+
+    /// <summary>No row has this identifier.</summary>
+    NotFound,
+
+    /// <summary>The row exists but is not eligible for the requested poisoned-row operation.</summary>
+    NotPoisoned,
+}
+
+/// <summary>The outcome for one requested outbox message.</summary>
+/// <param name="Id">The requested message identifier.</param>
+/// <param name="Outcome">Whether the operation was applied.</param>
+public sealed record OutboxAdministrationResult(OutboxMessageId Id, OutboxAdministrationOutcome Outcome);
+
 /// <summary>Stores outbox rows. One implementation, parameterised by
 /// <see cref="IProviderCapability"/>.</summary>
 public interface IOutboxStore
@@ -171,6 +213,25 @@ public interface IOutboxStore
     /// <summary>Releases a live claim without changing retry state.</summary>
     Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
+
+    /// <summary>Resets each named poisoned row and returns an outcome for each id.</summary>
+    Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken);
+
+    /// <summary>Resets every poisoned row with the given type.</summary>
+    Task<Result<int, TransactionError>> RedriveByTypeAsync(EventTypeName type, CancellationToken cancellationToken);
+
+    /// <summary>Discards each named poisoned row and returns an outcome for each id.</summary>
+    Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken);
+
+    /// <summary>Discards every poisoned row with the given type.</summary>
+    Task<Result<int, TransactionError>> DiscardByTypeAsync(
+        EventTypeName type, string reason, CancellationToken cancellationToken);
+
+    /// <summary>Lists at most <paramref name="limit"/> non-discarded poisoned rows.</summary>
+    Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
+        int limit, CancellationToken cancellationToken);
 
     /// <summary>The due instant of the oldest pending row — <c>next_attempt_at</c> when set,
     /// otherwise <c>occurred_at</c> — or null when nothing is pending. Readiness measures time past
@@ -277,6 +338,35 @@ internal sealed class OutboxWriter(
 
         return id;
     }
+}
+
+/// <inheritdoc cref="IOutboxAdministration"/>
+internal sealed class OutboxAdministration(IOutboxStore store) : IOutboxAdministration
+{
+    public async Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> RedriveAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken) =>
+        Map(await store.RedriveAsync(ids, cancellationToken).ConfigureAwait(false));
+
+    public async Task<Result<int, OutboxError>> RedriveByTypeAsync(
+        EventTypeName type, CancellationToken cancellationToken) =>
+        Map(await store.RedriveByTypeAsync(type, cancellationToken).ConfigureAwait(false));
+
+    public async Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> DiscardAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken) =>
+        Map(await store.DiscardAsync(ids, reason, cancellationToken).ConfigureAwait(false));
+
+    public async Task<Result<int, OutboxError>> DiscardByTypeAsync(
+        EventTypeName type, string reason, CancellationToken cancellationToken) =>
+        Map(await store.DiscardByTypeAsync(type, reason, cancellationToken).ConfigureAwait(false));
+
+    public async Task<Result<IReadOnlyList<OutboxMessage>, OutboxError>> ListPoisonedAsync(
+        int limit, CancellationToken cancellationToken) =>
+        Map(await store.ListPoisonedAsync(limit, cancellationToken).ConfigureAwait(false));
+
+    private static Result<T, OutboxError> Map<T>(Result<T, TransactionError> result) =>
+        result.IsSuccess
+            ? Result<T, OutboxError>.Success(result.Value)
+            : Result<T, OutboxError>.Failure(OutboxError.Unavailable());
 }
 
 /// <inheritdoc cref="IOutboxStore"/>
@@ -410,6 +500,50 @@ internal sealed class OutboxStore(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
         WriteClaimedAsync("SET claimed_by = NULL, claimed_at = NULL", id, holder, null, cancellationToken);
 
+    public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken) =>
+        WriteAdministrationRowsAsync(ids, null, redrive: true, cancellationToken);
+
+    public Task<Result<int, TransactionError>> RedriveByTypeAsync(
+        EventTypeName type, CancellationToken cancellationToken) =>
+        WriteAdministrationTypeAsync(type, null, redrive: true, cancellationToken);
+
+    public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken) =>
+        WriteAdministrationRowsAsync(ids, reason, redrive: false, cancellationToken);
+
+    public Task<Result<int, TransactionError>> DiscardByTypeAsync(
+        EventTypeName type, string reason, CancellationToken cancellationToken) =>
+        WriteAdministrationTypeAsync(type, reason, redrive: false, cancellationToken);
+
+    public Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
+        int limit, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+
+        return ReadOnlyAsync<IReadOnlyList<OutboxMessage>>(async (command, token) =>
+        {
+            command.CommandText = """
+                SELECT id, sequence, occurred_at, type, payload, tenant, trace_parent, trace_state,
+                       correlation, culture, attempts, next_attempt_at, first_deferred_at, claimed_by,
+                       claimed_at, processed_at, poisoned_at, last_error
+                FROM platform_outbox
+                WHERE poisoned_at IS NOT NULL AND processed_at IS NULL
+                ORDER BY poisoned_at, sequence
+                LIMIT @limit;
+                """;
+            AddParameter(command, "@limit", limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            List<OutboxMessage> rows = [];
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                rows.Add(ReadMessage(reader));
+            }
+
+            return Result<IReadOnlyList<OutboxMessage>, TransactionError>.Success(rows);
+        }, cancellationToken);
+    }
+
     public Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
         ReadOnlyAsync<DateTimeOffset?>(async (command, token) =>
         {
@@ -505,6 +639,117 @@ internal sealed class OutboxStore(
             var value = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
             return Result<long, TransactionError>.Success(Convert.ToInt64(value));
         }, cancellationToken);
+
+    private async Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> WriteAdministrationRowsAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string? reason, bool redrive, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (!redrive)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        }
+
+        var opened = await capability.BeginAsync(TransactionIntent.Write, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>.Failure(opened.Error);
+        }
+
+        var support = opened.Value;
+        try
+        {
+            List<OutboxAdministrationResult> outcomes = [];
+            foreach (var id in ids)
+            {
+                await using var command = support.Connection.CreateCommand();
+                command.Transaction = support.Transaction;
+                command.CommandText = AdministrationUpdateSql(redrive, byType: false);
+                AddParameter(command, "@id", capability.EncodeIdentifier(id.Value));
+                AddParameter(command, "@now", capability.FormatInstant(clock.UtcNow));
+                AddParameter(command, "@reason", reason);
+                var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                if (changed == 1)
+                {
+                    outcomes.Add(new OutboxAdministrationResult(id, OutboxAdministrationOutcome.Applied));
+                    continue;
+                }
+
+                await using var lookup = support.Connection.CreateCommand();
+                lookup.Transaction = support.Transaction;
+                lookup.CommandText = "SELECT COUNT(*) FROM platform_outbox WHERE id = @id;";
+                AddParameter(lookup, "@id", capability.EncodeIdentifier(id.Value));
+                var exists = Convert.ToInt64(await lookup.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)) != 0;
+                outcomes.Add(new OutboxAdministrationResult(
+                    id, exists ? OutboxAdministrationOutcome.NotPoisoned : OutboxAdministrationOutcome.NotFound));
+            }
+
+            await support.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>.Success(outcomes);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            try { await support.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+            return Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>.Failure(capability.Classify(exception));
+        }
+        finally
+        {
+            await support.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task<Result<int, TransactionError>> WriteAdministrationTypeAsync(
+        EventTypeName type, string? reason, bool redrive, CancellationToken cancellationToken)
+    {
+        if (!redrive)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        }
+
+        var opened = await capability.BeginAsync(TransactionIntent.Write, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return Result<int, TransactionError>.Failure(opened.Error);
+        }
+
+        var support = opened.Value;
+        try
+        {
+            await using var command = support.Connection.CreateCommand();
+            command.Transaction = support.Transaction;
+            command.CommandText = AdministrationUpdateSql(redrive, byType: true);
+            AddParameter(command, "@type", type.Value);
+            AddParameter(command, "@now", capability.FormatInstant(clock.UtcNow));
+            AddParameter(command, "@reason", reason);
+            var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await support.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return Result<int, TransactionError>.Success(changed);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            try { await support.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+            return Result<int, TransactionError>.Failure(capability.Classify(exception));
+        }
+        finally
+        {
+            await support.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static string AdministrationUpdateSql(bool redrive, bool byType)
+    {
+        var predicate = byType ? "type = @type" : "id = @id";
+        return redrive
+            ? $"UPDATE platform_outbox SET poisoned_at = NULL, attempts = 0, first_deferred_at = NULL, claimed_by = NULL, claimed_at = NULL, next_attempt_at = @now WHERE {predicate} AND poisoned_at IS NOT NULL AND processed_at IS NULL;"
+            : $"UPDATE platform_outbox SET processed_at = @now, claimed_by = NULL, claimed_at = NULL, last_error = last_error || ': ' || @reason WHERE {predicate} AND poisoned_at IS NOT NULL AND processed_at IS NULL;";
+    }
 
     /// <summary>Runs one read-only query against a fresh transaction, self-guarding on an absent
     /// schema the same way every other store method does — the catch classifies the exception rather
