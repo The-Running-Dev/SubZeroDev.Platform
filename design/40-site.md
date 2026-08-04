@@ -167,8 +167,10 @@ Ported effectively verbatim, adjusted only for this repository's paths and names
   `format`, `format:check`, `lint`, `preview`, `test`, `test:build`, `typecheck`. `check` is the one
   command CI runs, and it runs all of them.
 - Vite with the React plugin and **two rollup inputs** — `index.html` and `roadmap/index.html` —
-  producing `/` and `/roadmap/`; `server.fs.allow` widened to the repository root, which is what makes
-  the `?raw` import of `../design/30-slices.md` resolve in dev as well as in build.
+  producing `/` and `/roadmap/`; `server.fs.allow` widened to `design/` **only** — not the repository
+  root — so the `?raw` import of `../design/30-slices.md` resolves in dev as well as in build, without
+  a network-exposed dev server (`vite dev --host`) gaining read access to the rest of the repository.
+  Found too broad during review, narrowed before it shipped.
 - Vitest with `environment: "jsdom"`, `src/test/setup.ts`, testing-library and jest-dom.
 - oxlint, prettier, TypeScript strict with project references.
 - `scripts/verify-build.mjs`, asserting the built HTML rather than trusting the build.
@@ -291,8 +293,9 @@ this slice does not do that.
 - `Merge-LandingPage.ps1` refuses a target that is not a documentation build and refuses a source
   with no `index.html`, each with a message naming what it expected. **Both refusals are asserted,
   since a merge script that has never refused anything is not known to guard anything.**
-- After the merge, the docs subtree's file count is unchanged and every route under `/docs/`
-  resolves; `/` is the landing page and `/roadmap/` is the roadmap.
+- After the merge, every file under the docs subtree is **content-identical** to before the merge —
+  not merely equal in count, which a same-path overwrite would pass silently — and every route under
+  `/docs/` resolves; `/` is the landing page and `/roadmap/` is the roadmap.
 - `./build/Test-Documentation.ps1` passes with this document and `site/README.md` in the tree.
 - CI performs the merge on every pull request, before the deploy path ever runs it on `main`.
 - The deploy is verified by polling the deployment for the exact commit and reading the served page —

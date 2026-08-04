@@ -52,6 +52,12 @@ Depends on: S2.
 | Something | S1 |
 `;
 
+// Cases: 7 total — 2 positive (a well-formed document parses; adding or
+// removing a slice heading changes the parsed count with no code edit) and
+// 5 negative (no headings at all, headings that never match the slice
+// pattern, a missing Status line, an unrecognised status value, a missing
+// Depends-on line — each throws rather than returning an empty or partial
+// result).
 describe("parseSlices — the fixture, so tests do not go red the day a real slice ships", () => {
   it("parses every slice heading, its status, its dependency, and stops before a non-slice heading", () => {
     const result = parseSlices(validFixture);
@@ -125,7 +131,11 @@ Depends on: S3.
   });
 });
 
-describe("assertConsistent — the invariants Test-Documentation.ps1 also checks", () => {
+// Cases: 5 total — 2 positive (one in-progress slice with queued slices
+// after it; all-shipped with none in progress and none queued) and 3
+// negative (more than one in-progress slice, zero in-progress while a
+// queued slice exists, a queued slice ordered before a shipped one).
+describe("assertConsistent — the invariants Test-SliceStatusMarkers.ps1 also checks", () => {
   function slice(id: string, status: Slice["status"]): Slice {
     return {
       id,

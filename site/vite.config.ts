@@ -8,9 +8,11 @@ const siteRoot = fileURLToPath(new URL(".", import.meta.url));
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // Widened to the repository root so the roadmap's `?raw` import of
-  // ../design/30-slices.md resolves in dev as well as in build.
-  server: { fs: { allow: [siteRoot, resolve(siteRoot, "..")] } },
+  // Widened only as far as design/ -- not the repository root -- so the
+  // roadmap's `?raw` import of ../design/30-slices.md resolves in dev as
+  // well as in build, without handing a network-exposed dev server
+  // (`vite dev --host`) read access to the rest of the repository.
+  server: { fs: { allow: [siteRoot, resolve(siteRoot, "..", "design")] } },
   build: {
     rollupOptions: {
       input: {

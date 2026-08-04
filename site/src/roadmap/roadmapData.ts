@@ -83,7 +83,7 @@ function parseStatus(id: string, text: string): SliceStatus {
 }
 
 /**
- * Fails the internal-consistency invariants build/Test-Documentation.ps1
+ * Fails the internal-consistency invariants build/Test-SliceStatusMarkers.ps1
  * also checks at the repository level: exactly one 'in progress' slice
  * whenever any slice is unshipped, and every queued slice ordered after
  * every shipped one. Exported so both the app and its tests can assert it

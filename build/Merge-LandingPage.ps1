@@ -18,6 +18,10 @@
     SubZeroDev.GameEngine/build/Merge-LandingPage.ps1, where this was verified
     against a real build of both projects, not assumed.
 
+    The guard over docs/ hashes every file's content before and after, not
+    just the count -- a same-path overwrite leaves the count unchanged, so a
+    count alone cannot see it.
+
 .PARAMETER LandingDist
     Path to the built landing page (a Vite `dist/` directory).
 
@@ -41,6 +45,66 @@ param(
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 
+function Get-DocsTreeFingerprint {
+    <#
+    .SYNOPSIS
+        Relative path -> SHA-256 content hash for every file under $Path.
+
+    .DESCRIPTION
+        A file *count* before/after the merge cannot see a same-path
+        overwrite -- the count is unchanged either way -- so this hashes
+        content too. Cheap at documentation-site scale (tens of files), and
+        it is what turns "the docs tree still has N files" into "the docs
+        tree is byte-identical to before."
+    #>
+    param (
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $fingerprint = @{}
+    Get-ChildItem -LiteralPath $Path -Recurse -File | ForEach-Object {
+        $relative = [IO.Path]::GetRelativePath($Path, $_.FullName).Replace('\', '/')
+        $fingerprint[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+    }
+    return $fingerprint
+}
+
+function Assert-DocsTreeUnchanged {
+    param (
+        [Parameter(Mandatory)]
+        [hashtable]$Before,
+
+        [Parameter(Mandatory)]
+        [hashtable]$After,
+
+        [Parameter(Mandatory)]
+        [string]$DocsSubtree
+    )
+
+    $added = @($After.Keys | Where-Object { -not $Before.ContainsKey($_) })
+    $removed = @($Before.Keys | Where-Object { -not $After.ContainsKey($_) })
+    $changed = @(
+        $Before.Keys |
+            Where-Object { $After.ContainsKey($_) -and $After[$_] -ne $Before[$_] }
+    )
+
+    if ($added.Count -eq 0 -and $removed.Count -eq 0 -and $changed.Count -eq 0) {
+        return
+    }
+
+    $parts = @()
+    if ($added.Count -gt 0) { $parts += "added: $($added -join ', ')" }
+    if ($removed.Count -gt 0) { $parts += "removed: $($removed -join ', ')" }
+    if ($changed.Count -gt 0) { $parts += "changed: $($changed -join ', ')" }
+
+    throw (
+        "The merge changed content under '$DocsSubtree' ($($parts -join '; ')). " +
+        "The landing page must never write into docs/ -- aborting rather than shipping a " +
+        "possibly-corrupted docs tree."
+    )
+}
+
 if (-not (Test-Path -LiteralPath $LandingDist -PathType Container)) {
     throw "Landing page build not found at '$LandingDist'. Run 'npm --prefix site run build' first."
 }
@@ -53,7 +117,7 @@ $docsSubtree = Join-Path $DocsOutput 'docs'
 if (-not (Test-Path -LiteralPath $docsSubtree -PathType Container)) {
     throw "'$DocsOutput' does not look like a docs-build.ps1 output -- no 'docs' subdirectory found. Refusing to merge into a directory that isn't a real docs build, to avoid silently producing a broken site."
 }
-$docsPageCountBefore = (Get-ChildItem -LiteralPath $docsSubtree -Recurse -File).Count
+$docsFingerprintBefore = Get-DocsTreeFingerprint -Path $docsSubtree
 
 $landingIndex = Join-Path $LandingDist 'index.html'
 if (-not (Test-Path -LiteralPath $landingIndex -PathType Leaf)) {
@@ -81,14 +145,12 @@ Get-ChildItem -LiteralPath $LandingDist -Force |
         Copy-Item -LiteralPath $_.FullName -Destination $DocsOutput -Recurse -Force
     }
 
-$docsPageCountAfter = (Get-ChildItem -LiteralPath $docsSubtree -Recurse -File).Count
-if ($docsPageCountAfter -ne $docsPageCountBefore) {
-    throw "The merge changed the file count under '$docsSubtree' ($docsPageCountBefore -> $docsPageCountAfter). The landing page must never write into docs/ -- aborting rather than shipping a possibly-corrupted docs tree."
-}
+$docsFingerprintAfter = Get-DocsTreeFingerprint -Path $docsSubtree
+Assert-DocsTreeUnchanged -Before $docsFingerprintBefore -After $docsFingerprintAfter -DocsSubtree $docsSubtree
 
 $roadmapPage = Join-Path $DocsOutput 'roadmap/index.html'
 if (-not (Test-Path -LiteralPath $roadmapPage -PathType Leaf)) {
     throw "The landing build did not leave a static roadmap route at '$roadmapPage'."
 }
 
-Write-Host "[MERGE] Landing page overlaid onto '$DocsOutput'. docs/ untouched ($docsPageCountAfter files)." -ForegroundColor Green
+Write-Host "[MERGE] Landing page overlaid onto '$DocsOutput'. docs/ untouched ($($docsFingerprintAfter.Count) files, content-verified)." -ForegroundColor Green
