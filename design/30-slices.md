@@ -18,6 +18,15 @@ forbids. Nothing is added that the contract does not already carry.
 in S1 because S2 cannot be verified without them, and the provider contract tests accumulate
 assertions from S2 onward.
 
+**Each heading carries a `**Status:**` line** — `shipped`, `in progress`, or `queued` — as the first
+line of its body, never inside the heading itself: Docusaurus derives anchors from heading text, and
+a marker there would break `[S9](#s9--pack-publish-consume-and-the-api-reference)` above along with
+every inbound link written later. [`design/40-site.md`](40-site.md) reads this line to render the
+public roadmap and reads nothing else — a slice sets its own marker to `shipped` in the same change
+that satisfies it, and sets the next one to `in progress`. This is a second place done-ness is
+recorded, alongside the slice's tracking issue; where they disagree, say so per `AGENTS.md`
+*Tracking work* rather than editing either to match.
+
 ## Where the contract's unresolved items get decided
 
 Each needed a `90-decisions.md` entry from the slice that first set a value. **All seven are now
@@ -40,6 +49,7 @@ is unresolved. S3 transcribes them.
 ---
 
 ## S1 — Host boots, scopes the operation, answers its probes
+**Status:** shipped · [#11](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/11)
 
 Delivers: a sample web host and a sample worker host start from `AddPlatformWebHost()` and
 `AddPlatformWorkerHost()` alone — no second call — serve liveness and readiness, populate an
@@ -124,6 +134,7 @@ Hosting.
 ---
 
 ## S2 — Two providers, one connection, per-module migrations
+**Status:** shipped · [#12](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/12)
 
 Delivers: the sample's two product modules each own a table carrying the tenant and audit columns;
 migrate mode applies both in either order on PostgreSQL and SQLite; and one request writing to both
@@ -199,6 +210,7 @@ policy over `TransactionError` — Platform retries nothing on the request path.
 ---
 
 ## S3 — Host registration, heartbeat, and the split-brain surface
+**Status:** shipped · [#31](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/31)
 
 Delivers: every host records itself in the store it is actually using, and both roles report
 degraded when the peer is missing or its fingerprinted settings disagree — the only mechanism that
@@ -250,6 +262,7 @@ refuses traffic over a missing peer.
 ---
 
 ## S4 — Outbox enqueue
+**Status:** shipped · [#32](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/32)
 
 Delivers: a product writes a domain row and enqueues an integration event in one transaction, and
 the row is committed with the domain write or with neither.
@@ -329,6 +342,7 @@ attribute-based alternative to the registration call, which stays available as l
 ---
 
 ## S5 — Outbox dispatch
+**Status:** in progress
 
 Delivers: the worker claims, dispatches and marks messages one at a time; a process killed between
 the domain commit and the dispatch delivers the message on restart.
@@ -397,6 +411,7 @@ trigger is a timer.
 ---
 
 ## S6 — Leases, prune, and the outbox readiness conditions
+**Status:** queued
 
 Delivers: retention actually deletes, under a lease, in bounded batches; and readiness names a
 backlog, a pending flood, and a poisoned row.
@@ -448,6 +463,7 @@ instead.
 ---
 
 ## S7 — Redrive and discard
+**Status:** queued
 
 Delivers: an operator recovers or retires poisoned rows, per id and in bulk by type, without editing
 the database by hand.
@@ -488,6 +504,7 @@ of a redrive; a bulk operation keyed on anything other than `EventTypeName`.
 ---
 
 ## S8 — Telemetry
+**Status:** queued
 
 Delivers: logs, traces and metrics configured by the standard registration call alone, exporting
 nowhere by default, and never able to fail a request.
@@ -528,6 +545,7 @@ fallible on any path.
 ---
 
 ## S9 — Pack, publish, consume, and the API reference
+**Status:** queued
 
 Delivers: the six packages publish to a private GitHub Packages feed, the sample restores them from
 it, and the generated API reference gates the release.
