@@ -275,8 +275,9 @@ foreach ($file in ($files | Sort-Object LastWriteTime)) {
         }
     }
 
+    $shortId = if ($session.Id.Length -gt 8) { $session.Id.Substring(0, 8) } else { $session.Id }
     ''
-    "Session {0}   {1}" -f $session.Id.Substring(0, 8), $session.Models
+    "Session {0}   {1}" -f $shortId, $session.Models
     "  started {0:yyyy-MM-dd HH:mm}   span {1:hh\:mm\:ss}   active {2:hh\:mm\:ss} (gaps over {3} min excluded)" -f
         $session.Started, $session.Span, $session.Active, $IdleThresholdMinutes
     ''
