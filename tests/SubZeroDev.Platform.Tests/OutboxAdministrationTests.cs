@@ -89,6 +89,26 @@ public sealed class OutboxAdministrationTests
         Assert.Contains(claimed.Value!.Id, poisoned);
     }
 
+    [Fact]
+    public async Task Type_operations_apply_to_500_poisoned_rows_without_touching_another_type()
+    {
+        await using var host = await StartAsync();
+        var administration = host.Services.GetRequiredService<IOutboxAdministration>();
+        for (var index = 0; index < 500; index++)
+        {
+            await InsertAsync(host, poisoned: true, type: "test.redrive-500");
+            await InsertAsync(host, poisoned: true, type: "test.discard-500");
+        }
+
+        var redriven = await administration.RedriveByTypeAsync(new EventTypeName("test.redrive-500"), CancellationToken.None);
+        var discarded = await administration.DiscardByTypeAsync(
+            new EventTypeName("test.discard-500"), "operator retired batch", CancellationToken.None);
+
+        Assert.Equal(500, redriven.Value);
+        Assert.Equal(500, discarded.Value);
+        Assert.Empty((await administration.ListPoisonedAsync(10, CancellationToken.None)).Value);
+    }
+
     private static async Task<IPlatformTestHost> StartAsync()
     {
         var host = await PlatformTestHost.CreateBuilder()
