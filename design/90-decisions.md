@@ -54,6 +54,52 @@ Reasoning, consequences and rejected alternatives live in the linked document, n
 
 ---
 
+### 2026-08-04 — `design/30-slices.md` gains a done marker, beneath each heading rather than inside it
+Context: L1's roadmap page must derive slice status from a single source rather than inventing its
+own, and the source has to be something the public page can import and something a slice already
+touches when it ships. `30-slices.md` had no such marker.
+Chosen: a `**Status:**` line — `shipped`, `in progress`, or `queued` — as the first line of each
+slice's body, immediately under the heading. A slice sets its own marker to `shipped` in the same
+change that satisfies it and sets the next one to `in progress`. This puts done-ness in the document
+as well as in the slice's tracking issue, which `AGENTS.md` *Tracking work* separates deliberately —
+the issue stays the tracker's record, and a disagreement between the two is reported per that section
+rather than silently reconciled by editing either.
+Rejected: **Deriving shipped-ness from `git log` subjects** (`S4 — Outbox enqueue (#32)`) — no second
+home for done-ness, but it makes a static page depend on clone depth, git availability inside the
+containerised CI jobs, and a commit-subject convention nobody validates; the failure mode is a page
+that silently reports nothing shipped after a shallow checkout. **Querying the GitHub issue tracker
+at build time** — a network dependency in the build of a page whose entire point is that it needs
+none. **A hand-authored status list inside `site/`** — the option explicitly declined when L1 was
+scoped, since it is a second copy of the tracker with nothing keeping it honest. **An `[x]` prefix on
+the heading itself**, matching `SubZeroDev.GameEngine`'s `TODO.md` convention — rejected because
+Docusaurus derives anchors from heading text, and prefixing one would change every slice's anchor and
+break the existing `[S9](#s9--pack-publish-consume-and-the-api-reference)` in-document link along
+with any inbound link written later.
+Reversibility: cheap to relocate the marker again; expensive to have shipped without one, since every
+already-merged slice would need the backfill this entry performs.
+
+### 2026-08-04 — A Node/Vite/React toolchain enters the repository, matching `SubZeroDev.GameEngine`'s
+Context: L1 needed a toolchain for a standalone status-page landing site with two build entry points,
+component tests and a production-metadata check. The repository owner decided this directly rather
+than leaving it derived: use Node and Vite, transcribing the engine repository's already-proven
+`site/` setup, rather than choosing independently.
+Chosen: Node, Vite with the React plugin and two rollup inputs, vitest with jsdom and
+testing-library, oxlint, prettier, and TypeScript strict with project references — the same script
+names and the same meanings as `SubZeroDev.GameEngine/site/package.json`. Ported: configuration and
+scaffolding only. Written fresh: every stylesheet, token, copy block, page composition, and the
+roadmap's parser — see [`design/40-site.md`](40-site.md), *Toolchain* and *Design language*.
+Rejected: **Docusaurus pages inside the existing documentation site** — no control over the page
+shell, and the status-page conceit needs that control. **Hand-written static HTML with no build** —
+no component tests, and every count on the page becomes a typed number, which L1's acceptance
+criteria forbid. **A Node toolchain that differs from the engine's** — two setups to keep current for
+one person, for no gain: the requirement was that the two sites look unalike, not that they build
+unalike.
+Reversibility: moderate. Swapping the bundler later touches only `site/`; the accepted cost stands
+regardless — this repository now carries a second package manager and a second lockfile alongside
+its .NET tooling, and both need to stay current.
+
+---
+
 ### 2026-08-04 — The settings fingerprint's canonical form and digest (unresolved item 1)
 Context: S3's split-brain surface rests entirely on two hosts computing the same string from the same settings, and its acceptance criterion requires `Compute` to agree **across two separate processes**. The contract named the stake and not the construction: two hosts computing it differently "would report a permanent false mismatch", which turns the one check that can detect split-brain into the check an operator learns to mute. Three concrete traps sit in the way, and each produces a green single-process test with a broken pair of hosts: `Type.GetProperties()` guarantees no ordering, so reflection order is not reproducible across a trimmed or AOT publish or a runtime upgrade — and the brief commits to upgrading every release; `double.ToString()` is culture-sensitive and its default format has already changed once across a .NET major version, and `RetryBackoffFactor` is the one `double` among the nine `[Fingerprinted]` properties; and `string.GetHashCode()` is seeded per process, so anything built on it mismatches every time.
 Chosen: key each `[Fingerprinted]` value by its **configuration path** — the same string a startup error names, so a fingerprint and an error message speak one language — then ordinal-sort the pairs by path, **length-prefix** both path and value so no two different inputs can concatenate to identical bytes, prefix a format version, hash with **SHA-256**, render lowercase hex. Values format invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, enums by name, null distinctly from empty. Sorting by path rather than reflection order is the load-bearing part; everything else is hygiene.
