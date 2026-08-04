@@ -445,10 +445,11 @@ internal sealed class OutboxStore(
             await using var command = support.Connection.CreateCommand();
             command.Transaction = support.Transaction;
             command.CommandText = $"UPDATE platform_outbox {setClause} WHERE id = @id AND claimed_by = @holder AND claimed_at > @expired;";
+            var now = clock.UtcNow;
             AddParameter(command, "@id", capability.EncodeIdentifier(id.Value));
             AddParameter(command, "@holder", holder.Value);
-            AddParameter(command, "@now", capability.FormatInstant(clock.UtcNow));
-            AddParameter(command, "@expired", capability.FormatInstant(clock.UtcNow - options.Outbox.ClaimWindow));
+            AddParameter(command, "@now", capability.FormatInstant(now));
+            AddParameter(command, "@expired", capability.FormatInstant(now - options.Outbox.ClaimWindow));
             AddParameter(command, "@error", values?.Error);
             AddParameter(command, "@nextAttemptAt", values?.NextAttemptAt is { } next ? capability.FormatInstant(next) : null);
             var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

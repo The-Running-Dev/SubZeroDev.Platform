@@ -31,7 +31,13 @@ internal sealed class OutboxDispatcher(
     public async Task TickAsync(CancellationToken cancellationToken)
     {
         var status = await migrations.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-        if (!status.IsSuccess || status.Value.Any(module => module.Pending.Count > 0))
+        if (!status.IsSuccess)
+        {
+            logger.LogWarning("Outbox dispatch could not read migration status: {Code}.", status.Error.Code);
+            return;
+        }
+
+        if (status.Value.Any(module => module.Pending.Count > 0))
         {
             return;
         }
@@ -44,14 +50,23 @@ internal sealed class OutboxDispatcher(
             }
 
             var claimed = await store.ClaimNextAsync(instance, cancellationToken).ConfigureAwait(false);
-            if (!claimed.IsSuccess || claimed.Value is not { } message)
+            if (!claimed.IsSuccess)
+            {
+                logger.LogWarning("Outbox dispatch could not claim the next message: {Code}.", claimed.Error.Code);
+                return;
+            }
+
+            if (claimed.Value is not { } message)
             {
                 return;
             }
 
             if (cancellationToken.IsCancellationRequested)
             {
-                await store.ReleaseClaimAsync(message.Id, instance, CancellationToken.None).ConfigureAwait(false);
+                await ObserveClaimedWriteAsync(
+                    message.Id,
+                    await store.ReleaseClaimAsync(message.Id, instance, CancellationToken.None).ConfigureAwait(false))
+                    .ConfigureAwait(false);
                 return;
             }
 
@@ -118,6 +133,10 @@ internal sealed class OutboxDispatcher(
         if (!transaction.IsSuccess)
         {
             logger.LogWarning("Outbox message {MessageId} transaction did not commit: {Code}.", message.Id, transaction.Error.Code);
+            await ObserveClaimedWriteAsync(
+                message.Id,
+                await store.ReleaseClaimAsync(message.Id, instance, CancellationToken.None).ConfigureAwait(false))
+                .ConfigureAwait(false);
             return;
         }
 
