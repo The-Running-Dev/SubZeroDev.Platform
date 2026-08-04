@@ -165,7 +165,10 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
                 {
                     try
                     {
-                        await transaction.Transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                        // CancellationToken.None, not the caller's token — a cancelled token here
+                        // must not prevent rollback from completing, the same reason every other
+                        // rollback in this method uses it rather than the ambient token.
+                        await transaction.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     }
                     catch
                     {

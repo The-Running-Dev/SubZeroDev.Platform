@@ -484,6 +484,33 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Caller_cancellation_during_the_outbox_flush_propagates_rather_than_reporting_a_retryable_outage()
+    {
+        // The same property PersistenceContractTests already asserts for the work callback itself,
+        // but here the cancellation happens after work returns, while UnitOfWork is flushing a
+        // staged row through IOutboxStore — Classify must not turn the caller's own cancellation
+        // into a misreported TransactionError.Unavailable there either.
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        using var caller = new CancellationTokenSource();
+
+        using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                outbox.Enqueue(new TestEvent());
+                await caller.CancelAsync();
+            },
+            caller.Token));
+    }
+
+    [Fact]
     public async Task Enqueue_throws_without_an_ambient_transaction_and_writes_nothing()
     {
         await using var host = await StartWithOutboxAsync(ProductTableSource());
@@ -631,6 +658,56 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Concurrent_enqueues_each_commit_with_a_distinct_sequence()
+    {
+        // MAX(sequence)+1 races under real concurrency — on SQLite a write transaction already
+        // serialises against every other writer, so this exercises the case that matters:
+        // PostgreSQL's identity column must allocate every concurrent insert its own value rather
+        // than colliding on the UNIQUE constraint.
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+
+        async Task<OutboxMessageId> EnqueueOneAsync()
+        {
+            using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+            var id = default(OutboxMessageId);
+
+            var committed = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token =>
+                {
+                    id = outbox.Enqueue(new TestEvent());
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+
+            Assert.True(committed.IsSuccess);
+            return id;
+        }
+
+        var ids = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => EnqueueOneAsync()));
+
+        var sequences = new List<long>();
+        foreach (var id in ids)
+        {
+            var row = await ReadOutboxRowAsync(_connectionString, capability, id);
+            Assert.NotNull(row);
+            sequences.Add(row!.Sequence);
+        }
+
+        Assert.Equal(sequences.Count, sequences.Distinct().Count());
+    }
+
+    // Cases: 1 positive (both dispatch marks set, the shape discard alone may produce), 2 negative
+    // (claimed_by/claimed_at set independently of each other; poisoned_at set with no last_error) —
+    // one direct write per case, asserted against the schema's own CHECK constraints rather than
+    // against IOutboxStore, which never constructs a message that could violate them.
+    [Fact]
     public async Task The_check_constraints_reject_a_direct_write_that_violates_them()
     {
         await using var host = await StartWithOutboxAsync();
@@ -640,21 +717,22 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
         var capability = host.Services.GetRequiredService<IProviderCapability>();
 
-        // claimed_by set without claimed_at violates "null together".
+        // Negative case 1 of 2: claimed_by set without claimed_at violates "null together".
         var claimMismatch = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
             token => InsertRawOutboxRowAsync(ambient.Current!, capability, claimedBy: "homelab-01/aaaaaaaa", claimedAt: null, poisonedAt: null, lastError: null, token),
             CancellationToken.None);
         Assert.False(claimMismatch.IsSuccess);
 
-        // poisoned_at set without last_error violates "poisoned implies last_error".
+        // Negative case 2 of 2: poisoned_at set without last_error violates "poisoned implies last_error".
         var poisonMismatch = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
             token => InsertRawOutboxRowAsync(ambient.Current!, capability, claimedBy: null, claimedAt: null, poisonedAt: capability.FormatInstant(host.Clock.UtcNow), lastError: null, token),
             CancellationToken.None);
         Assert.False(poisonMismatch.IsSuccess);
 
-        // Both marks set (discard's own shape) is legal and rejects neither constraint.
+        // Positive case 1 of 1: both marks set (discard's own shape) is legal and rejects neither
+        // constraint.
         var discardShape = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
             token => InsertRawOutboxRowAsync(

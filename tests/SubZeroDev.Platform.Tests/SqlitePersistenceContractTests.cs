@@ -141,7 +141,7 @@ public sealed class SqlitePersistenceContractTests : PersistenceContractTests
         await connection.OpenAsync();
         var command = connection.CreateCommand();
         command.CommandText =
-            "SELECT type, tenant, trace_parent, trace_state, correlation, culture, attempts, payload, "
+            "SELECT sequence, type, tenant, trace_parent, trace_state, correlation, culture, attempts, payload, "
             + "claimed_by, claimed_at, processed_at, poisoned_at FROM platform_outbox WHERE id = @id;";
         var parameter = command.CreateParameter();
         parameter.ParameterName = "@id";
@@ -155,18 +155,19 @@ public sealed class SqlitePersistenceContractTests : PersistenceContractTests
         }
 
         return new RawOutboxRow(
-            Type: reader.GetString(0),
-            Tenant: reader.GetString(1),
-            TraceParent: reader.GetString(2),
-            TraceState: reader.IsDBNull(3) ? null : reader.GetString(3),
-            Correlation: reader.GetString(4),
-            Culture: reader.GetString(5),
-            Attempts: reader.GetInt32(6),
-            Payload: reader.GetString(7),
-            ClaimedByIsNull: reader.IsDBNull(8),
-            ClaimedAtIsNull: reader.IsDBNull(9),
-            ProcessedAtIsNull: reader.IsDBNull(10),
-            PoisonedAtIsNull: reader.IsDBNull(11));
+            Sequence: reader.GetInt64(0),
+            Type: reader.GetString(1),
+            Tenant: reader.GetString(2),
+            TraceParent: reader.GetString(3),
+            TraceState: reader.IsDBNull(4) ? null : reader.GetString(4),
+            Correlation: reader.GetString(5),
+            Culture: reader.GetString(6),
+            Attempts: reader.GetInt32(7),
+            Payload: reader.GetString(8),
+            ClaimedByIsNull: reader.IsDBNull(9),
+            ClaimedAtIsNull: reader.IsDBNull(10),
+            ProcessedAtIsNull: reader.IsDBNull(11),
+            PoisonedAtIsNull: reader.IsDBNull(12));
     }
 
     protected override async Task<(string Tenant, string CreatedAt, string? CreatedBy)> ReadAuditRowAsync(

@@ -172,6 +172,7 @@ internal interface INeverRegistered;
 /// returning it is protected on a public class, and CS0050 requires the return type be at least as
 /// accessible as the member.</summary>
 public sealed record RawOutboxRow(
+    long Sequence,
     string Type,
     string Tenant,
     string TraceParent,
