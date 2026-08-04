@@ -152,6 +152,26 @@ internal sealed class FakeOutboxStore : IOutboxStore
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
         throw new NotSupportedException("Not read by the checks under test.");
 
+    public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<int, TransactionError>> RedriveByTypeAsync(
+        EventTypeName type, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
+        IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<int, TransactionError>> DiscardByTypeAsync(
+        EventTypeName type, string reason, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
+        int limit, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
     public Task<Result<int, TransactionError>> PruneAsync(
         PruneTarget target, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken) =>
         throw new NotSupportedException("Not read by the checks under test.");

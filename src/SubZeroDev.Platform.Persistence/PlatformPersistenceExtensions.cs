@@ -39,6 +39,8 @@ public static class PlatformPersistenceExtensions
             provider.GetRequiredService<IClock>(),
             provider.GetRequiredService<PlatformOptions>(),
             provider.GetRequiredService<ILogger<OutboxStore>>()));
+        services.TryAddSingleton<IOutboxAdministration>(provider => new OutboxAdministration(
+            provider.GetRequiredService<IOutboxStore>()));
 
         // A factory registration rather than TryAddSingleton<IOutboxWriter, OutboxWriter>(): Testing
         // decorates this to feed IEventCapture, and a factory is a delegate a different assembly can

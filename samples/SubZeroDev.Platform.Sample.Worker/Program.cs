@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
@@ -29,3 +30,18 @@ var app = builder.Build();
 app.Run();
 
 return 0;
+
+// Administration remains a library call in D3: a product can compose recovery into its own
+// authenticated operator workflow, but Platform adds neither a route nor a console command.
+internal static class OutboxAdministrationDemonstration
+{
+    internal static async Task ApplyAsync(
+        IOutboxAdministration administration,
+        IReadOnlyCollection<OutboxMessageId> messageIds,
+        EventTypeName eventType,
+        CancellationToken cancellationToken)
+    {
+        await administration.RedriveAsync(messageIds, cancellationToken);
+        await administration.DiscardByTypeAsync(eventType, "Operator retired the poisoned messages.", cancellationToken);
+    }
+}

@@ -512,6 +512,26 @@ public sealed class OutboxDispatchTests
             OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
             inner.ReleaseClaimAsync(id, holder, cancellationToken);
 
+        public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
+            IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken) =>
+            inner.RedriveAsync(ids, cancellationToken);
+
+        public Task<Result<int, TransactionError>> RedriveByTypeAsync(
+            EventTypeName type, CancellationToken cancellationToken) =>
+            inner.RedriveByTypeAsync(type, cancellationToken);
+
+        public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
+            IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken) =>
+            inner.DiscardAsync(ids, reason, cancellationToken);
+
+        public Task<Result<int, TransactionError>> DiscardByTypeAsync(
+            EventTypeName type, string reason, CancellationToken cancellationToken) =>
+            inner.DiscardByTypeAsync(type, reason, cancellationToken);
+
+        public Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
+            int limit, CancellationToken cancellationToken) =>
+            inner.ListPoisonedAsync(limit, cancellationToken);
+
         public Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
             inner.OldestPendingDueAsync(cancellationToken);
 

@@ -44,6 +44,19 @@ public sealed record TransactionError : PlatformError
         new(nameof(Faulted), isRetryable: false, "The transaction failed and was rolled back.");
 }
 
+/// <summary>Why an outbox administration operation did not complete.</summary>
+public sealed record OutboxError : PlatformError
+{
+    private OutboxError(string code) : base(code) { }
+
+    /// <inheritdoc/>
+    public override bool IsRetryable => true;
+
+    /// <summary>The outbox store could not be reached.</summary>
+    /// <returns>The error.</returns>
+    public static OutboxError Unavailable() => new(nameof(Unavailable));
+}
+
 /// <summary>Why a migration operation did not complete.</summary>
 public sealed record MigrationError : PlatformError
 {
