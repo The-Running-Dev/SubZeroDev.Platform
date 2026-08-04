@@ -4,6 +4,18 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-04 — Kit catch-up install; picked up `/install-all` and a `Measure-Session.ps1` fix
+Context: Target's `.claude/kit.json` recorded kit commit `8d4ffdb`; kit HEAD is `9b8313c`. The gap is five files: `.claude/commands/install-all.md` (new), one `AGENTS.md` line naming its effort tier, one bugfix in `tools/Measure-Session.ps1`, and two entries in the kit's own decision log (never copied into a target). `install-all.md` and the `kit.json` bump were already present, uncommitted, on this branch when this install started — a partially-applied attempt at this same increment; this run completed it rather than redoing it.
+Chosen: Added one sentence to the existing effort-tier prose in `AGENTS.md` — that prose already names `/track`, `/verify`, `/pr`, `/resolve`, `/refine`, `/kit-help` individually but never `/install`, so `/install` and `/install-all` were added together, same tier (sonnet, medium), with `/install-all`'s one escalation condition. Applied the kit's `Measure-Session.ps1` fix verbatim (guards `$session.Id.Substring(0, 8)` against ids ≤ 8 chars) — pure bugfix, no conflicting rationale.
+Rejected: **Leave the `/install` mention out** — it predates this kit bump and arguably wasn't this increment's gap to close; rejected because the kit's new `/install-all` row made the omission newly visible, and leaving it out means the next reader has no tier for either command in the one place that states tiers in prose.
+Reversibility: cheap — one sentence, one guarded substring.
+
+### 2026-08-04 — Kit catch-up install; skipped the new agent.md lesson, this repo is its source
+Context: Installing the agent kit's catch-up (five commits since this repository's `da5d1f7`-era install: `/verify`/`/pr`/`/resolve`, the human-first fenced-issue shape, stable criterion ids). The kit's seed gained a new lesson, "a fix that only changed the odds is not a fix" — a generalised, evidence-stripped SQLite connection-pooling / stale-schema-snapshot incident. The installer's own provenance rule requires checking whether an offered lesson actually originated in the target before adding it back.
+Chosen: Skip it. `agent.md`, *Verification*, already carries this exact incident as "Three green runs is not evidence a race is fixed" with more detail than the kit's version — the actual root cause (`Microsoft.Data.Sqlite` connection pooling serving a stale schema snapshot), the fix (`Pooling=false`), and the repro method. The kit's copy did not come from elsewhere; it came from here, generalised. Adding it back would duplicate a rule already stated more precisely.
+Rejected: **Add the kit's version anyway, since the user approved it in general** — rejected because the approval was for the general case (Blog, GameEngine, neither of which had this lesson), and this repository is the one case the installer's provenance check exists to catch.
+Reversibility: cheap
+
 ## Open
 - **Two automated-review findings are valid, not fixed here, and now raised upstream** — [Docs-Template#62](https://github.com/The-Running-Dev/Docs-Template/issues/62) (mutable tag) and [Docs-Template#63](https://github.com/The-Running-Dev/Docs-Template/issues/63) (traversal). Both sit in files installed **byte-identical** from `ghcr.io/the-running-dev/docs-template` (verified by diffing against the image), and both were already tracked in `SubZeroDev.GameEngine`'s `TODO.md`.
   1. `docs-ci.yml` and `docs-deploy.yml` run in `ghcr.io/the-running-dev/docs-template:latest`, a **mutable tag** — the same commit can start failing after an image update, and past failures are hard to reproduce.
@@ -562,4 +574,22 @@ Reversibility: cheap
 Context: The kit asserts a five-document precedence chain under `design/`. This repository already has one: `docs/docs/platform-identity.md` is authoritative, followed by the sidebar reading order. Installing the kit's chain wholesale would assert authority over five files that do not exist while ignoring the one that does.
 Chosen: State both in `AGENTS.md`. `platform-identity.md` is authoritative today; the `design/` chain governs design work once a brief is written, and a contract there is authoritative for its own package only. `platform-identity.md` remains authoritative for what this repository is.
 Rejected: **Install the kit's chain as written** — asserts precedence for empty files over the document that currently decides everything. **Omit the kit's chain until a brief exists** — leaves the pipeline commands referring to an authority the contract never grants them.
+Reversibility: cheap
+
+### 2026-08-04 — Kit upgrade to `8d4ffdb`: two new commands install verbatim, their routing stays prose
+Context: Upgrading the agent kit from `dcd0d8f` to `8d4ffdb`, which adds `/kit-help` and `/refine`, makes `/slice`'s argument optional, and adds transcript-based session cost measurement. This repository runs the kit's arrangement — `AGENTS.md` holds the contract, `CLAUDE.md` points at it, slice ids are `S<n>` — so both new commands are already correct as shipped.
+Chosen: Copy both byte-identical, overwrite the unedited `slice.md`, and extend the existing routing **paragraph** with a clause for each. The kit states routing as a table; this repository states it as prose, and that is a deliberate local form.
+Rejected: **Convert the paragraph to the kit's table** — easier to scan, and it is what the kit and two sibling repositories do; rejected because the installer must not reformat prose it is not otherwise changing, and a table conversion is a diff nobody asked for buried inside an upgrade. Worth doing on its own if it is worth doing.
+Reversibility: cheap
+
+### 2026-08-04 — Session boundaries and the model-work tiers, both scoped away from ADRs
+Context: The upgrade adds two `AGENTS.md` sections written for a repository whose only long-form reasoning is the `design/` chain. This repository also has `docs/docs/adr/`, which is authored directly and is not a design cycle.
+Chosen: Install both, each with one scoping sentence. The boundary table says an ADR does not inherit it. The model-work tiers cite ADR-005 as this repository's own precedent for a red item leaving the model: it rejects a hand-authored `.proto`/OpenAPI document precisely because it would be a second definition of types TypeScript already owns, and projects the contract instead.
+Rejected: **Install both unscoped** — a boundary table with no scope note reads as requiring a fresh session per ADR, which nothing intends. **Skip them** — they are the substance of this upgrade; skipping leaves the repository on the kit's older model without saying so.
+Reversibility: cheap
+
+### 2026-08-04 — Created `tools/` for `Measure-Session.ps1` rather than using `build/`
+Context: The kit ships `tools/Measure-Session.ps1`, run as a `SessionEnd` hook. This repository had no `tools/`, and `build/` already holds committed PowerShell — the documentation gate and homepage generator — with a `.gitignore` comment explaining at length why `build/` must never be ignored.
+Chosen: Create `tools/` and install there, matching the kit's hook path `${CLAUDE_PROJECT_DIR}/tools/Measure-Session.ps1`. `settings.json` did not exist and was created holding only `hooks.SessionEnd` — no model pin, no permissions block.
+Rejected: **`build/Measure-Session.ps1`** — one home for PowerShell here, and the naming fits. Rejected because `build/` is wired into `docs-ci.yml`; a per-machine session-cost reporter is not part of the documentation gate, and adding it there invites exactly the confusion that `.gitignore` comment records. Reversing this costs one file move and two path edits.
 Reversibility: cheap
