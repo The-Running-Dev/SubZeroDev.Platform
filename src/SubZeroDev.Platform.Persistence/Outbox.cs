@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 
@@ -170,6 +171,34 @@ public interface IOutboxStore
     /// <summary>Releases a live claim without changing retry state.</summary>
     Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
+
+    /// <summary>The due instant of the oldest pending row — <c>next_attempt_at</c> when set,
+    /// otherwise <c>occurred_at</c> — or null when nothing is pending. Readiness measures time past
+    /// due against this, never time since occurred.</summary>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The oldest pending due instant, or why the read did not complete.</returns>
+    Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken);
+
+    /// <summary>How many rows are pending.</summary>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The count, or why the read did not complete.</returns>
+    Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken);
+
+    /// <summary>How many rows are poisoned. Excludes discarded rows — the decision a discarded row
+    /// was demanding has already been made.</summary>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The count, or why the read did not complete.</returns>
+    Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken);
+
+    /// <summary>Deletes up to <paramref name="batchSize"/> eligible rows for <paramref name="target"/>,
+    /// older than <paramref name="olderThan"/>.</summary>
+    /// <param name="target">What to prune.</param>
+    /// <param name="olderThan">The age boundary.</param>
+    /// <param name="batchSize">The most rows one statement may remove.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>How many rows were deleted, or why the delete did not complete.</returns>
+    Task<Result<int, TransactionError>> PruneAsync(
+        PruneTarget target, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken);
 }
 
 /// <summary>The result of a conditional dispatch-state write.</summary>
@@ -255,7 +284,8 @@ internal sealed class OutboxStore(
     IAmbientTransactionAccessor ambient,
     IProviderCapability capability,
     IClock clock,
-    PlatformOptions options) : IOutboxStore
+    PlatformOptions options,
+    ILogger<OutboxStore> logger) : IOutboxStore
 {
     public async Task<Result<TransactionError>> InsertAsync(OutboxMessage message, CancellationToken cancellationToken)
     {
@@ -379,6 +409,137 @@ internal sealed class OutboxStore(
     public Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
         WriteClaimedAsync("SET claimed_by = NULL, claimed_at = NULL", id, holder, null, cancellationToken);
+
+    public Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
+        ReadOnlyAsync<DateTimeOffset?>(async (command, token) =>
+        {
+            command.CommandText = """
+                SELECT COALESCE(next_attempt_at, occurred_at) AS due
+                FROM platform_outbox
+                WHERE processed_at IS NULL AND poisoned_at IS NULL
+                ORDER BY due
+                LIMIT 1;
+                """;
+            var value = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            if (value is null or DBNull)
+            {
+                return Result<DateTimeOffset?, TransactionError>.Success(null);
+            }
+
+            return capability.TryParseInstant((string)value, out var due)
+                ? Result<DateTimeOffset?, TransactionError>.Success(due)
+                : Result<DateTimeOffset?, TransactionError>.Failure(TransactionError.Faulted());
+        }, cancellationToken);
+
+    public Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken) =>
+        CountAsync("SELECT COUNT(*) FROM platform_outbox WHERE processed_at IS NULL AND poisoned_at IS NULL;", cancellationToken);
+
+    public Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken) =>
+        CountAsync("SELECT COUNT(*) FROM platform_outbox WHERE poisoned_at IS NOT NULL AND processed_at IS NULL;", cancellationToken);
+
+    public async Task<Result<int, TransactionError>> PruneAsync(
+        PruneTarget target, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken)
+    {
+        if (target == PruneTarget.PoisonedOutboxRows)
+        {
+            await LogPoisonedRowsAboutToBePrunedAsync(olderThan, batchSize, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await capability.DeleteBoundedAsync(target, olderThan, batchSize, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Best-effort: names each poisoned row a prune is about to remove, under the same
+    /// predicate, order and limit the delete itself uses. Not required to match the delete
+    /// row-for-row under concurrent mutation — the delete is what actually prunes and self-guards on
+    /// its own terms; this only names what an operator should expect to see go.</summary>
+    private async Task LogPoisonedRowsAboutToBePrunedAsync(
+        DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken)
+    {
+        var opened = await capability.BeginAsync(TransactionIntent.ReadOnly, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return;
+        }
+
+        var support = opened.Value;
+        try
+        {
+            await using var command = support.Connection.CreateCommand();
+            command.Transaction = support.Transaction;
+            command.CommandText = """
+                SELECT id FROM platform_outbox
+                WHERE poisoned_at IS NOT NULL AND poisoned_at < @olderThan
+                ORDER BY poisoned_at
+                LIMIT @batchSize;
+                """;
+            AddParameter(command, "@olderThan", capability.FormatInstant(olderThan));
+            AddParameter(command, "@batchSize", batchSize);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (capability.TryDecodeIdentifier((byte[])reader.GetValue(0), out var id))
+                {
+                    logger.LogWarning("Pruning poisoned outbox message {MessageId}.", new OutboxMessageId(id));
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Best-effort logging only.
+        }
+        finally
+        {
+            try { await support.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+            await support.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private Task<Result<long, TransactionError>> CountAsync(string sql, CancellationToken cancellationToken) =>
+        ReadOnlyAsync<long>(async (command, token) =>
+        {
+            command.CommandText = sql;
+            var value = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            return Result<long, TransactionError>.Success(Convert.ToInt64(value));
+        }, cancellationToken);
+
+    /// <summary>Runs one read-only query against a fresh transaction, self-guarding on an absent
+    /// schema the same way every other store method does — the catch classifies the exception rather
+    /// than throwing, which is what turns a missing table into <c>TransactionError.Unavailable</c>.</summary>
+    private async Task<Result<T, TransactionError>> ReadOnlyAsync<T>(
+        Func<DbCommand, CancellationToken, Task<Result<T, TransactionError>>> run,
+        CancellationToken cancellationToken)
+    {
+        var opened = await capability.BeginAsync(TransactionIntent.ReadOnly, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return Result<T, TransactionError>.Failure(opened.Error);
+        }
+
+        var support = opened.Value;
+        try
+        {
+            await using var command = support.Connection.CreateCommand();
+            command.Transaction = support.Transaction;
+            return await run(command, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Result<T, TransactionError>.Failure(capability.Classify(exception));
+        }
+        finally
+        {
+            try { await support.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+            await support.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 
     private async Task<Result<OutboxMessage?, TransactionError>> ReadClaimedAsync(
         OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken)

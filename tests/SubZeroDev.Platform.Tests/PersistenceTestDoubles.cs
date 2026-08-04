@@ -95,6 +95,132 @@ internal sealed class FakeHostRegistrationStore : IHostRegistrationStore
     }
 }
 
+/// <summary>An in-memory <see cref="IOutboxStore"/> exposing only what the three outbox readiness
+/// checks read, for testing them in isolation from real SQL — the store's own query semantics are
+/// proven against a real database in <c>PersistenceIntegrationTests</c>. Every other member is
+/// unused by those checks and throws if called.</summary>
+internal sealed class FakeOutboxStore : IOutboxStore
+{
+    /// <summary>When set, every method fails as the ordinary retryable outage a missing or
+    /// unreachable schema classifies as.</summary>
+    internal bool Unavailable { get; set; }
+
+    internal DateTimeOffset? OldestPendingDue { get; set; }
+
+    internal long PendingCount { get; set; }
+
+    internal long PoisonedCount { get; set; }
+
+    public Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(Unavailable
+            ? Result<DateTimeOffset?, TransactionError>.Failure(TransactionError.Unavailable())
+            : Result<DateTimeOffset?, TransactionError>.Success(OldestPendingDue));
+
+    public Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(Unavailable
+            ? Result<long, TransactionError>.Failure(TransactionError.Unavailable())
+            : Result<long, TransactionError>.Success(PendingCount));
+
+    public Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(Unavailable
+            ? Result<long, TransactionError>.Failure(TransactionError.Unavailable())
+            : Result<long, TransactionError>.Success(PoisonedCount));
+
+    public Task<Result<TransactionError>> InsertAsync(OutboxMessage message, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(InstanceId holder, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
+        OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
+        OutboxMessageId id, InstanceId holder, string error, PoisonAttemptMode attemptMode, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
+        OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
+        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+
+    public Task<Result<int, TransactionError>> PruneAsync(
+        PruneTarget target, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not read by the checks under test.");
+}
+
+/// <summary>An in-memory <see cref="ILeaseStore"/>, replicating the real store's atomic
+/// absent-or-expired acquisition and live-holder-only renew/release — for testing
+/// <see cref="ILeaseManager"/> and <see cref="ILeaseHandle"/> in isolation from real SQL. The real
+/// store's own conditional-update SQL is proven against a real database in
+/// <c>PersistenceIntegrationTests</c>.</summary>
+internal sealed class FakeLeaseStore : ILeaseStore
+{
+    private readonly Dictionary<BackgroundWorkName, (InstanceId Holder, DateTimeOffset ExpiresAt)> _rows = [];
+    private readonly IClock _clock;
+
+    internal FakeLeaseStore(IClock clock) => _clock = clock;
+
+    internal bool Unavailable { get; set; }
+
+    public Task<Result<bool, TransactionError>> TryAcquireAsync(
+        BackgroundWorkName name, InstanceId holder, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    {
+        if (Unavailable)
+        {
+            return Task.FromResult(Result<bool, TransactionError>.Failure(TransactionError.Unavailable()));
+        }
+
+        if (_rows.TryGetValue(name, out var existing) && existing.ExpiresAt > _clock.UtcNow)
+        {
+            return Task.FromResult(Result<bool, TransactionError>.Success(false));
+        }
+
+        _rows[name] = (holder, expiresAt);
+        return Task.FromResult(Result<bool, TransactionError>.Success(true));
+    }
+
+    public Task<Result<bool, TransactionError>> TryRenewAsync(
+        BackgroundWorkName name, InstanceId holder, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    {
+        if (Unavailable)
+        {
+            return Task.FromResult(Result<bool, TransactionError>.Failure(TransactionError.Unavailable()));
+        }
+
+        if (!_rows.TryGetValue(name, out var existing) || !existing.Holder.Equals(holder))
+        {
+            return Task.FromResult(Result<bool, TransactionError>.Success(false));
+        }
+
+        _rows[name] = (holder, expiresAt);
+        return Task.FromResult(Result<bool, TransactionError>.Success(true));
+    }
+
+    public Task<Result<TransactionError>> ReleaseAsync(BackgroundWorkName name, InstanceId holder, CancellationToken cancellationToken)
+    {
+        if (Unavailable)
+        {
+            return Task.FromResult(Result<TransactionError>.Failure(TransactionError.Unavailable()));
+        }
+
+        if (_rows.TryGetValue(name, out var existing) && existing.Holder.Equals(holder))
+        {
+            _rows.Remove(name);
+        }
+
+        return Task.FromResult(Result<TransactionError>.Success());
+    }
+}
+
 /// <summary>A migration whose DDL a test supplies inline.</summary>
 internal sealed class TestMigration(string name, Func<DbConnection, DbTransaction, CancellationToken, Task> apply)
     : IModuleMigration

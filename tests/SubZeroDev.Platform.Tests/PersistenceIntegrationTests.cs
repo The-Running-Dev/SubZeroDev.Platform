@@ -790,6 +790,275 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         Assert.True(discardShape.IsSuccess);
     }
 
+    [Fact]
+    public async Task One_prune_tick_deletes_processed_and_poisoned_rows_past_retention_and_never_deletes_pending()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .WithSetting("Outbox:ProcessedRetention", "01:00:00")
+            .WithSetting("Outbox:PoisonedRetention", "02:00:00")
+            .WithRole(HostRole.Worker)
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var now = host.Clock.UtcNow;
+
+        var oldProcessed = await InsertRawOutboxRowAtAsync(host, now - TimeSpan.FromHours(2), null, null);
+        var youngProcessed = await InsertRawOutboxRowAtAsync(host, now - TimeSpan.FromMinutes(1), null, null);
+        var oldPoisoned = await InsertRawOutboxRowAtAsync(host, null, now - TimeSpan.FromHours(3), "boom");
+        var youngPoisoned = await InsertRawOutboxRowAtAsync(host, null, now - TimeSpan.FromMinutes(1), "boom");
+        var ancientPending = await InsertRawOutboxRowAtAsync(host, null, null, null);
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        Assert.Null(await ReadOutboxRowAsync(_connectionString, capability, oldProcessed));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, youngProcessed));
+        Assert.Null(await ReadOutboxRowAsync(_connectionString, capability, oldPoisoned));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, youngPoisoned));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, ancientPending));
+    }
+
+    [Fact]
+    public async Task Poisoned_and_discarded_rows_both_prune_on_the_poison_window_and_the_counts_exclude_the_wrong_states()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .WithSetting("Outbox:ProcessedRetention", "01:00:00")
+            .WithSetting("Outbox:PoisonedRetention", "02:00:00")
+            .WithRole(HostRole.Worker)
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var store = host.Services.GetRequiredService<IOutboxStore>();
+        var now = host.Clock.UtcNow;
+
+        var pending = await InsertRawOutboxRowAtAsync(host, null, null, null);
+        var processed = await InsertRawOutboxRowAtAsync(host, now - TimeSpan.FromMinutes(1), null, null);
+        var poisoned = await InsertRawOutboxRowAtAsync(host, null, now - TimeSpan.FromMinutes(1), "boom");
+        var discardedOld = await InsertRawOutboxRowAtAsync(host, now - TimeSpan.FromMinutes(1), now - TimeSpan.FromHours(3), "boom");
+
+        // Pending and poisoned (never discarded) are what the two counts see.
+        Assert.Equal(1, (await store.PendingCountAsync(CancellationToken.None)).Value);
+        Assert.Equal(1, (await store.PoisonedCountAsync(CancellationToken.None)).Value);
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        // The discarded row is old enough to prune on the poison window even though it also carries
+        // processed_at — discard alone may produce the both-set state, and it prunes on the same
+        // window a purely poisoned row does.
+        Assert.Null(await ReadOutboxRowAsync(_connectionString, capability, discardedOld));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, pending));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, processed));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, poisoned));
+    }
+
+    [Fact]
+    public async Task One_prune_tick_deletes_a_dead_host_registration_and_leaves_a_live_one()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .WithSetting("HostRegistration:RetentionWindow", "01:00:00")
+            .WithRole(HostRole.Worker)
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var store = host.Services.GetRequiredService<IHostRegistrationStore>();
+        var now = host.Clock.UtcNow;
+        var dead = new HostRegistration
+        {
+            Role = HostRole.Web,
+            Instance = new InstanceId("dead/1"),
+            StartedAt = now - TimeSpan.FromDays(2),
+            HeartbeatAt = now - TimeSpan.FromHours(2),
+            SettingsFingerprint = "fp",
+        };
+        var live = new HostRegistration
+        {
+            Role = HostRole.Worker,
+            Instance = new InstanceId("live/1"),
+            StartedAt = now,
+            HeartbeatAt = now,
+            SettingsFingerprint = "fp",
+        };
+        Assert.True((await store.UpsertAsync(dead, CancellationToken.None)).IsSuccess);
+        Assert.True((await store.UpsertAsync(live, CancellationToken.None)).IsSuccess);
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        var remaining = await store.ListLiveAsync(DateTimeOffset.MinValue, CancellationToken.None);
+        Assert.True(remaining.IsSuccess);
+        Assert.DoesNotContain(remaining.Value, registration => registration.Instance == dead.Instance);
+        Assert.Contains(remaining.Value, registration => registration.Instance == live.Instance);
+    }
+
+    [Fact]
+    public async Task A_single_prune_statement_never_removes_more_than_the_configured_batch_size()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var now = host.Clock.UtcNow;
+        var processedAt = capability.FormatInstant(now - TimeSpan.FromDays(2));
+
+        var inserted = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                var current = ambient.Current!;
+                for (var index = 0; index < 1200; index++)
+                {
+                    await using var insert = current.Connection.CreateCommand();
+                    insert.Transaction = current.Transaction;
+                    insert.CommandText = """
+                        INSERT INTO platform_outbox
+                            (id, sequence, occurred_at, type, payload, tenant, trace_parent, trace_state,
+                             correlation, culture, attempts, next_attempt_at, first_deferred_at, claimed_by,
+                             claimed_at, processed_at, poisoned_at, last_error)
+                        VALUES
+                            (@id, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM platform_outbox), @occurredAt, @type,
+                             @payload, @tenant, @traceParent, NULL, @correlation, @culture, 0, NULL, NULL,
+                             NULL, NULL, @processedAt, NULL, NULL);
+                        """;
+                    AddParameter(insert, "@id", capability.EncodeIdentifier(Guid.NewGuid()));
+                    AddParameter(insert, "@occurredAt", processedAt);
+                    AddParameter(insert, "@type", "test.batch");
+                    AddParameter(insert, "@payload", "{}");
+                    AddParameter(insert, "@tenant", TenantId.Implicit.ToString());
+                    AddParameter(insert, "@traceParent", "00-1111111111111111111111111111aaaa-2222222222222222-01");
+                    AddParameter(insert, "@correlation", "3333333333333333333333333333bbbb");
+                    AddParameter(insert, "@culture", string.Empty);
+                    AddParameter(insert, "@processedAt", processedAt);
+                    await insert.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                }
+            },
+            CancellationToken.None);
+        Assert.True(inserted.IsSuccess);
+
+        var deleted = await capability.DeleteBoundedAsync(
+            PruneTarget.ProcessedOutboxRows, now - TimeSpan.FromHours(1), batchSize: 500, CancellationToken.None);
+
+        Assert.True(deleted.IsSuccess);
+        Assert.Equal(500, deleted.Value);
+    }
+
+    [Fact]
+    public async Task The_three_readiness_queries_self_guard_on_an_absent_schema_rather_than_throwing()
+    {
+        await using var host = await StartWithOutboxAsync();
+        // No IMigrationRunner.ApplyAsync — the schema does not exist yet.
+        var store = host.Services.GetRequiredService<IOutboxStore>();
+
+        var oldest = await store.OldestPendingDueAsync(CancellationToken.None);
+        var pending = await store.PendingCountAsync(CancellationToken.None);
+        var poisoned = await store.PoisonedCountAsync(CancellationToken.None);
+
+        Assert.False(oldest.IsSuccess);
+        Assert.Equal(nameof(TransactionError.Unavailable), oldest.Error.Code);
+        Assert.False(pending.IsSuccess);
+        Assert.Equal(nameof(TransactionError.Unavailable), pending.Error.Code);
+        Assert.False(poisoned.IsSuccess);
+        Assert.Equal(nameof(TransactionError.Unavailable), poisoned.Error.Code);
+    }
+
+    [Fact]
+    public async Task Two_concurrent_lease_acquisitions_over_one_store__one_succeeds_the_other_is_held()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var store = host.Services.GetRequiredService<ILeaseStore>();
+        var expiresAt = host.Clock.UtcNow + TimeSpan.FromMinutes(5);
+
+        var first = store.TryAcquireAsync(PlatformBackgroundWork.Prune, new InstanceId("worker/1"), expiresAt, CancellationToken.None);
+        var second = store.TryAcquireAsync(PlatformBackgroundWork.Prune, new InstanceId("worker/2"), expiresAt, CancellationToken.None);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.All(results, result => Assert.True(result.IsSuccess));
+        Assert.Single(results, result => result.Value);
+    }
+
+    [Fact]
+    public async Task An_expired_lease_is_acquired_by_a_second_holder_and_the_original_holders_renewal_is_lost()
+    {
+        await using var host = await StartWithOutboxAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var store = host.Services.GetRequiredService<ILeaseStore>();
+        var first = new InstanceId("worker/first");
+        var second = new InstanceId("worker/second");
+
+        var firstAcquired = await store.TryAcquireAsync(
+            PlatformBackgroundWork.Prune, first, host.Clock.UtcNow + TimeSpan.FromMinutes(5), CancellationToken.None);
+        Assert.True(firstAcquired.IsSuccess);
+        Assert.True(firstAcquired.Value);
+
+        host.Clock.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromTicks(1));
+
+        var secondAcquired = await store.TryAcquireAsync(
+            PlatformBackgroundWork.Prune, second, host.Clock.UtcNow + TimeSpan.FromMinutes(5), CancellationToken.None);
+        Assert.True(secondAcquired.IsSuccess);
+        Assert.True(secondAcquired.Value);
+
+        var firstRenewed = await store.TryRenewAsync(
+            PlatformBackgroundWork.Prune, first, host.Clock.UtcNow + TimeSpan.FromMinutes(5), CancellationToken.None);
+        Assert.True(firstRenewed.IsSuccess);
+        Assert.False(firstRenewed.Value);
+    }
+
+    /// <summary>Inserts directly against <c>platform_outbox</c> with a known id, so the caller can
+    /// read it back afterward — the same bypass <see cref="InsertRawOutboxRowAsync"/> uses, with an
+    /// id the caller controls instead of a random one.</summary>
+    private static async Task<OutboxMessageId> InsertRawOutboxRowAtAsync(
+        IPlatformTestHost host, DateTimeOffset? processedAt, DateTimeOffset? poisonedAt, string? lastError)
+    {
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var id = OutboxMessageId.Create(host.Clock.UtcNow);
+
+        var committed = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var insert = current.Connection.CreateCommand();
+                insert.Transaction = current.Transaction;
+                insert.CommandText = """
+                    INSERT INTO platform_outbox
+                        (id, sequence, occurred_at, type, payload, tenant, trace_parent, trace_state,
+                         correlation, culture, attempts, next_attempt_at, first_deferred_at, claimed_by,
+                         claimed_at, processed_at, poisoned_at, last_error)
+                    VALUES
+                        (@id, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM platform_outbox), @occurredAt, @type,
+                         @payload, @tenant, @traceParent, NULL, @correlation, @culture, 0, NULL, NULL,
+                         NULL, NULL, @processedAt, @poisonedAt, @lastError);
+                    """;
+                AddParameter(insert, "@id", capability.EncodeIdentifier(id.Value));
+                AddParameter(insert, "@occurredAt", capability.FormatInstant(host.Clock.UtcNow));
+                AddParameter(insert, "@type", "test.prune");
+                AddParameter(insert, "@payload", "{}");
+                AddParameter(insert, "@tenant", TenantId.Implicit.ToString());
+                AddParameter(insert, "@traceParent", "00-1111111111111111111111111111aaaa-2222222222222222-01");
+                AddParameter(insert, "@correlation", "3333333333333333333333333333bbbb");
+                AddParameter(insert, "@culture", string.Empty);
+                AddParameter(insert, "@processedAt", processedAt is { } processed ? capability.FormatInstant(processed) : null);
+                AddParameter(insert, "@poisonedAt", poisonedAt is { } poisoned ? capability.FormatInstant(poisoned) : null);
+                AddParameter(insert, "@lastError", lastError);
+                await insert.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            },
+            CancellationToken.None);
+        Assert.True(committed.IsSuccess);
+        return id;
+    }
+
     private static TestMigrationSource ProductTableSource() => new(
         "OutboxProduct",
         TestMigration.Sql("0001_create", "CREATE TABLE t_outbox_product (id TEXT PRIMARY KEY);"));
