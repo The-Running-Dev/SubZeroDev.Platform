@@ -18,6 +18,10 @@ member — and each is corrected here in the section it touches. Anything the de
 determine is in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocks
 implementation.**
 
+**Amended before S8** to make telemetry implementable without inventing dependencies, public
+configuration or unsupported drop accounting. The provider, queue, redaction, sampling,
+instrumentation and cardinality decisions are recorded in [`90-decisions.md`](90-decisions.md).
+
 ---
 
 ## Types
@@ -432,6 +436,12 @@ public static class PlatformHealthChecks
     public static HealthCheckName OutboxPoisonCount { get; }
     public static HealthCheckName PendingMigrations { get; }
 }
+
+public static class PlatformTelemetry
+{
+    public const string ActivitySourceName = "SubZeroDev.Platform";
+    public const string MeterName = "SubZeroDev.Platform";
+}
 ```
 
 **These names are public surface, not implementation detail.** They appear in the probe body an
@@ -440,6 +450,12 @@ implementer would set them by accident. `Prune` is one registration covering all
 windows — processed rows, poisoned rows and dead host registrations. `OutboxPendingCount` is the
 condition the fifth review added: pending rows are unbounded by decision, and the count on the
 always-on surface is the bound that exists.
+
+**The telemetry source names are the provider-neutral seam.** Persistence creates a child activity
+around every `IUnitOfWork.ExecuteAsync` transaction through `PlatformTelemetry.ActivitySourceName`,
+for both providers, with database provider and operation only — never SQL text, parameter values or
+a connection string. Observability subscribes to that source and to the meter; Persistence does not
+reference an OpenTelemetry or Serilog package.
 
 ### Abstractions — settings fingerprint marker
 
@@ -620,6 +636,7 @@ public sealed record PlatformOptions
     public HostRegistrationOptions HostRegistration { get; init; }
     public HealthOptions Health { get; init; }
     public HostingOptions Hosting { get; init; }
+    public TelemetryOptions Telemetry { get; init; }
 }
 ```
 
@@ -690,6 +707,12 @@ public sealed record HostingOptions
     public int WorkerProbePort { get; init; }
     public bool WorkerProbeLoopbackOnly { get; init; }
 }
+
+public sealed record TelemetryOptions
+{
+    public string LogDirectory { get; init; }
+    public Uri? OtlpEndpoint { get; init; }
+}
 ```
 
 **Every value the design commits to, with its default. Only the two retention windows are required**;
@@ -721,6 +744,15 @@ a wrong value that degrades gets a default, a missing value that corrupts fails 
 | `Hosting.WorkerProbeLoopbackOnly` | `true` | — |
 | `Persistence.SqliteBusyWaitBound` | 5 s | positive |
 | `Persistence.ConnectionString` | **required, no default** | present; parseable by the selected provider |
+| `Telemetry.LogDirectory` | `logs`, resolved beneath the content root | present and non-empty; relative paths resolve beneath the content root |
+| `Telemetry.OtlpEndpoint` | null | when set, an absolute HTTP or HTTPS URI |
+
+**Telemetry has deliberately little configuration surface.** `LogDirectory` changes the directory,
+not the role-specific `<service>-<role>-.jsonl` filename or its UTF-8 JSON Lines format. Daily and
+100 MB rolling, 14-day and 31-file retention, the 10 000-event non-blocking file buffer, fixed 10%
+root sampling, OTLP HTTP/protobuf and the standard signal paths are D3 policy rather than tunable
+properties. A null endpoint starts no exporter and makes no outbound connection. The typed
+`Platform:Telemetry` section is the sole D3 source; `OTEL_EXPORTER_OTLP_*` is not also consumed.
 
 **`PeerAbsenceGrace` is a rolling measure on the observing host's clock from the absence first being
 seen, never a startup-scoped exemption.** A startup grace cannot cover the case the setting exists
@@ -1521,6 +1553,46 @@ public static class PlatformObservabilityExtensions
 Called by both forms of the standard registration call. Exposed separately because Observability is
 usable by a consumer that wants telemetry wiring without a Platform host.
 
+The call installs two branches behind the standard `ILogger` surface. The standard console provider
+remains, while Serilog writes a mandatory UTF-8 JSON Lines file named
+`<service>-<role>-.jsonl`, sharing the file safely between
+instances of one role. It rolls daily and at 100 MB, retains no file older than 14 days and no more
+than 31 files, and uses a 10 000-event asynchronous buffer with `blockWhenFull` disabled. The
+supported async-sink inspector maintains the exact dropped-event count. File creation, write and
+buffer failure cannot fail startup or application work; an emergency console diagnostic is emitted
+once on entry to failure or dropping and once on recovery.
+
+When `Telemetry.OtlpEndpoint` is present, the official OpenTelemetry SDK also exports logs, traces
+and metrics over OTLP HTTP/protobuf to the base URI's standard `v1/logs`, `v1/traces` and
+`v1/metrics` paths. It uses the SDK's bounded batch processors and experimental in-memory retry as
+provided by the pinned 1.17.0 packages, never a disk queue. A package upgrade must explicitly
+revalidate that experimental feature. Authentication headers, client certificates, per-signal
+endpoints and alternate protocols are outside this contract.
+
+Every OTLP resource and every JSONL record carries `service.name`, `service.version`,
+`deployment.environment.name` and bounded `subzerodev.host.role`. A log also carries ambient
+correlation, tenant, culture and actor when present. `service.instance.id` is not a global resource
+attribute. Request correlation is the trace id; dispatch correlation is represented by its span
+link and structured logs rather than by a duplicate unbounded span attribute.
+
+Incoming traces honour their upstream sampled flag. A new root HTTP trace uses deterministic 10%
+trace-id head sampling. `StartLinked` copies the stored origin's sampled decision into the new linked
+dispatch trace through Platform's sampler; all other traces use the official parent-based ratio
+sampler. Error- and latency-based retention is collector-side tail sampling and is not promised by
+the host.
+
+The fixed, non-injectable redaction processor runs before both branches. Non-empty configuration values whose
+case-insensitive key segments include `authorization`, `cookie`, `password`, `secret`, `token`,
+`api-key`, `connection-string` or `client-certificate` become `[REDACTED]` in structured log
+properties and rendered messages, exceptions and nested text, span attributes and events, and
+metric labels. Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or
+connection strings.
+
+Metric attributes pass an allowlist owned by each instrument: host role, HTTP method, route
+template, status, database provider, and closed outcome or signal enums. Raw path and query,
+tenant, correlation, instance, message, event and user identifiers, and arbitrary tag pass-through
+are forbidden.
+
 ### Testing
 
 ```csharp
@@ -1775,11 +1847,14 @@ self-hosted box a database thirty seconds behind the application should not need
 
 ### Observability
 
-**No error type crosses this boundary.** Export failures are absorbed — buffered to a bounded queue,
-retried internally, then dropped with a state-transition log rather than one line per failure. A
-malformed inbound `traceparent` yields `false` from `TryParse` and a fresh root, never a rejected
-request. The design forbids collection from becoming a path by which a caller can fail, so there is
-nothing for a caller to handle.
+**No error type crosses this boundary.** File failures are absorbed by the non-blocking Serilog
+queue, with its supported inspector supplying exact drop counts and one emergency console
+diagnostic on failure-or-dropping entry and recovery. OTLP failures are absorbed by the official
+bounded batch processors and in-memory retry, then dropped; the pinned SDK exposes no supported
+exact dropped-signal counter or queue-transition hook, so Platform promises neither and does not
+manufacture one through a custom processor or parsed internal diagnostics. A malformed inbound
+`traceparent` yields `false` from `TryParse` and a fresh root, never a rejected request. Collection
+never becomes a path by which a caller can fail, so there is nothing for a caller to handle.
 
 ### Testing
 
@@ -1844,6 +1919,12 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 48 | Telemetry export never propagates a failure to a caller | Observability |
 | 49 | No secret appears in any exported log, span attribute or metric label | Observability |
 | 50 | No metric is labelled with an unbounded value | Observability |
+| 51 | Every host writes mandatory role-specific UTF-8 JSON Lines logs to console and file, and a file failure never prevents startup or blocks application work | Observability |
+| 52 | With no OTLP endpoint, no exporter starts and no outbound connection is attempted | Observability |
+| 53 | Every telemetry resource and JSONL record carries the same service name, service version, deployment environment and bounded host role | Observability |
+| 54 | Incoming traces retain the upstream sampling decision; new root HTTP traces use deterministic 10% trace-id sampling; linked dispatch traces retain the stored origin decision | Observability |
+| 55 | Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or connection strings as telemetry | Observability |
+| 56 | Every unit of work creates one provider-neutral child activity carrying provider and operation only | Persistence |
 
 ---
 

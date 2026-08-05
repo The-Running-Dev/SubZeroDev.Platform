@@ -599,6 +599,52 @@ requirement of Hosting, would put a dependency in fact where the graph records n
 The error envelope is wholly derived from the failure and the ambient context, serialized, then
 discarded. Telemetry signals are buffered and **droppable by design** — see *Concurrency*.
 
+**The local log is mandatory; remote export is optional.** Both host roles write structured UTF-8
+JSON Lines to `<content-root>/logs/<service>-<role>-.jsonl` by default, with only the directory
+configurable. The standard console provider remains, while Serilog owns the file path: the file rolls
+daily and at 100 MB, retains no
+more than 31 files and no file older than 14 days, and writes through a 10 000-event asynchronous
+buffer that drops rather than blocks. The role is part of the filename and Serilog's shared-file
+mode permits multiple instances of that role to append safely. File creation, write and buffer
+failures never stop the host and never reach application work; an emergency console diagnostic is
+written once when the sink enters failure or dropping and once when it recovers. The supported
+async-sink inspector supplies the exact file-queue drop count.
+
+**OTLP turns on only when `Platform:Telemetry:OtlpEndpoint` is set.** The value is an absolute HTTP
+or HTTPS base URI; anything else is `ConfigurationError.InvalidSetting` at startup. An absent value
+starts no exporter and makes no outbound connection. A present value enables the official
+OpenTelemetry log, trace and metric exporters using fixed OTLP HTTP/protobuf and the standard
+`v1/logs`, `v1/traces` and `v1/metrics` signal paths. The SDK's experimental in-memory retry is
+enabled while OpenTelemetry is pinned to 1.17.0; its queue is bounded, its retries never use disk,
+and upgrading the package requires this feature to be revisited. Authentication headers, client
+certificates, per-signal endpoints, alternate protocols and a second configuration source through
+`OTEL_EXPORTER_OTLP_*` are out of D3.
+
+**All three signals share one identity and one sanitisation boundary.** Their resource carries
+`service.name`, `service.version`, `deployment.environment.name` and the bounded
+`subzerodev.host.role`; those four fields also appear on every JSONL record. Logs additionally carry
+ambient correlation, tenant, culture and actor when present. `service.instance.id` is deliberately
+not a resource attribute because resources become metric attributes. Request correlation is the
+trace id; dispatch correlation stays in structured logs while the span link represents the origin,
+so no duplicate unbounded correlation attribute is added to a span.
+
+The internal, non-injectable redactor runs before the local and OTLP branches. It discovers secret
+non-empty configuration values by case-insensitive key segments including `authorization`, `cookie`,
+`password`, `secret`, `token`, `api-key`, `connection-string` and `client-certificate`, and replaces
+those values with `[REDACTED]` in structured properties, rendered messages, exceptions and nested
+text, span attributes and events, and metric labels. Platform never captures HTTP headers or
+bodies, event payloads, SQL parameter values or connection strings. This is a fixed safety policy,
+not an extension point.
+
+**Sampling and metric cardinality are fixed policy in D3.** Incoming traces honour the upstream
+sampled flag. A new root HTTP trace uses deterministic trace-id head sampling at 10%. Dispatch starts
+a new linked trace and a small Platform sampler copies the stored origin's sampled decision; every
+other trace uses the official parent-based ratio sampler. Keeping errors or slow traces requires
+tail sampling at a collector and is not promised locally. Each Platform instrument owns an
+allowlist drawn only from host role, HTTP method, route template rather than raw path or query,
+status, database provider, and closed outcome or signal enums. Tenant, correlation, instance,
+message, event and user identifiers — and arbitrary tag pass-through — are forbidden.
+
 ---
 
 ## Module boundaries
@@ -682,10 +728,10 @@ dependency pointing the wrong way that every future check-contributing package w
 
 | Package | Owns | Depends on | Exposes |
 |---|---|---|---|
-| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **current culture**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces and value types only |
+| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **current culture**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract**, **stable activity-source and meter names** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces, value types and well-known names only |
 | **Core** | Default implementations, module registration, ordering, startup validation, typed configuration binding, **background-work registration, ordering and role scoping** | Abstractions | Registration surface, module graph |
-| **Observability** | Telemetry wiring, correlation identity derivation and propagation, **the trace-context contract's implementation**, instrumentation, sampling policy | Abstractions | Configuration surface, correlation derivation and propagation |
-| **Persistence** | Transaction boundary, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message scope reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **redrive and discard**, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher, prune and the registration heartbeat registered as background work** |
+| **Observability** | Telemetry wiring, correlation identity derivation and propagation, **the trace-context contract's implementation**, redaction, instrumentation, sampling policy, mandatory Serilog console/file sinks and optional official OpenTelemetry OTLP exporters | Abstractions | Configuration surface, correlation derivation and propagation |
+| **Persistence** | Transaction boundary, **a provider-neutral child activity around each unit-of-work transaction**, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message scope reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **redrive and discard**, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher, prune and the registration heartbeat registered as background work** |
 | **Hosting** | Host bootstrap for **both host roles**, DI wiring, middleware order, graceful shutdown, health and readiness **endpoints**, request/principal/correlation/tenant/culture scope establishment, **running registered background work in the role each registration declares** | Abstractions, Core, Observability | The standard registration call, in web and worker forms |
 | **Testing** | Test host for both roles, fake clock, fake principal, tenant and culture, capture, deterministic background work, **provider contract tests** | All five | Test host builder |
 
@@ -1205,14 +1251,25 @@ what makes it visible to everyone else.**
 
 ### Telemetry collector unreachable, slow, or absent
 
-**Detected by** the exporter, out of band. **System does:** buffers to a bounded queue, retries with
-backoff internally, then **drops**; logs once on state transition, never per failure. **User sees:**
-nothing — the request path is untouched by construction. **State left behind:** dropped telemetry and
-a count of it.
+**Detected by** the exporter, out of band. **System does:** uses the official bounded batch
+processors and experimental in-memory retry, then **drops** when those bounds are exhausted; a
+successful export is recovery. **User sees:** nothing — the request path is untouched by
+construction. **State left behind:** none. The OpenTelemetry SDK exposes no supported exact
+dropped-signal count or queue-transition hook in the pinned version, so Platform neither invents
+one with a custom processor nor parses internal diagnostic strings.
 
-Absent is not a failure: export is opt-in with console and file as defaults. This is
+Absent is not a failure: export is opt-in with console and file as defaults, no exporter starts and
+no outbound connection is attempted. This is
 [`observability.md`](../docs/docs/observability.md)'s commitment and §2's Game Engine constraint made
 operational — **collection must never become a path by which a game can fail.**
+
+### Mandatory log file unavailable, slow, or saturated
+
+**Detected by** the Serilog file sink and asynchronous-sink inspector, out of band. **System does:**
+drops rather than blocking and writes one emergency console diagnostic on entry to failure or
+dropping and one on recovery. **User sees:** application work continue; the console diagnostic names
+the degraded local sink. **State left behind:** an exact dropped-event count supplied by the
+supported inspector. Failure to create or write the file never fails startup.
 
 ### Health check throws or hangs
 
@@ -1312,7 +1369,7 @@ guaranteed; a log line and the span describing it may export in either order.
 ### What must not happen
 
 **No background work — telemetry export, health probing, dispatch, or prune — may block, slow, or
-fail a request.** Enforced by four choices: the export queue is bounded and drops rather than blocks;
+fail a request.** Enforced by four choices: both telemetry queues are bounded and drop rather than block;
 probe endpoints do not share a pipeline with request handling; dispatch runs in a different process
 entirely; and **every background write is bounded — dispatch claims and marks one row at a time
 under a per-tick budget, prune deletes in bounded batches** — so that under SQLite the worker holds
@@ -1363,6 +1420,13 @@ meaningless rather than dangerous.
 | Peer-absence grace | 60 s, rolling | no | From first observed absence, on the observer's clock — a startup-scoped grace cannot cover the peer's restart; see the scoping paragraph under health |
 | Worker probe port | 5100, **loopback** | no | Any fixed default beats a required setting for a probe surface; loopback because the probe is for the operator, not the network; one per box — a second installation on the same server overrides it |
 | SQLite journal mode | **WAL, required** | — | A property of the file rather than of a host, so two hosts cannot disagree; listed because the contention analysis is false without it |
+| Telemetry log directory | `<content-root>/logs` | no | Mandatory local evidence without requiring an observability stack; only the directory is configurable |
+| Telemetry file rolling | daily and 100 MB | no | Bounds an individual file while preserving a predictable daily sequence |
+| Telemetry file retention | 14 days and at most 31 files | no | Both age and count are bounded; whichever limit is reached first wins |
+| Telemetry file queue | 10 000 events, drop rather than block | no | The Serilog async sink's supported bounded default, with an inspector that exposes exact drops |
+| OTLP endpoint | absent; absolute HTTP/HTTPS when set | no | Absence means no exporter and no outbound path; one base URI configures all three standard signal paths |
+| OTLP protocol and retry | HTTP/protobuf; bounded in-memory retry | no | One fixed deployment contract, with no disk queue and no request-path backpressure |
+| Root trace sample ratio | 10% by trace id | no | Deterministic head sampling bounds routine HTTP volume; upstream and stored dispatch decisions remain authoritative |
 
 ---
 

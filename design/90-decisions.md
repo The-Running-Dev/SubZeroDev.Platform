@@ -22,6 +22,61 @@ requirement under another name.
 Reversibility: cheap internally; the public contract is unchanged. Removing the wrapper would again
 break an implementation the public interface explicitly admits.
 
+### 2026-08-05 — S8 adopts Serilog for mandatory file logging and official OpenTelemetry for OTLP
+Context: S8 promises console and file logs without a collector, but the .NET logging stack has no
+built-in file provider. The existing design also promised traces, metrics and optional OTLP without
+naming packages, versions or a provider-neutral database-instrumentation seam. That left the first
+implementation to choose dependencies and public behaviour by accident.
+Chosen: **Serilog.Extensions.Hosting 10.0.0**, **Serilog.Sinks.File 7.0.0** and
+**Serilog.Sinks.Async 2.1.0** integrate mandatory file logging beside the standard console provider,
+with daily and 100 MB rolling,
+14-day and 31-file retention, shared role-specific files, and a 10 000-event non-blocking buffer
+whose supported inspector exposes exact dropped-event counts. **OpenTelemetry.Extensions.Hosting,
+OpenTelemetry.Exporter.OpenTelemetryProtocol, OpenTelemetry.Instrumentation.AspNetCore,
+OpenTelemetry.Instrumentation.Http and OpenTelemetry.Instrumentation.Runtime**, all **1.17.0**,
+provide traces, metrics, logs and OTLP HTTP/protobuf. The official experimental in-memory retry is
+enabled and accepted for the 0.x Platform surface; it has no disk queue, and an OpenTelemetry
+upgrade must revisit it. Persistence emits one provider-neutral activity around each unit-of-work
+transaction through a stable Abstractions source name, so both database providers have the same
+span without either taking an OpenTelemetry dependency.
+Rejected: **Console-only Microsoft logging** — cannot satisfy mandatory file logging. **A custom
+file provider** — reimplements rolling, retention, multi-process sharing and queue monitoring that a
+mature provider supplies. **NLog** — capable, but adopting two equivalent providers buys no second
+capability; Serilog's file and async sinks directly expose the required sharing and drop inspector.
+**Npgsql.OpenTelemetry** — its database tracing remains experimental and SQLite has no equivalent,
+so taking it would make provider behaviour diverge. **A `DbCommand` proxy** — hand-rolls broad SQL
+instrumentation, creates a parameter-leak boundary, and exceeds S8's unit-of-work requirement.
+**A custom OpenTelemetry batch processor or parsing SDK diagnostic strings** — would manufacture
+exact OTLP drop accounting on unsupported internals. Exact OTLP queue drop counts remain outside D3
+until the SDK exposes a supported metric or hook.
+Reversibility: moderate before publication; expensive once consumers and operators depend on the
+file shape, source names and package behaviour.
+
+### 2026-08-05 — S8 telemetry policy is fixed, typed and non-blocking
+Context: The earlier observability page called an OTLP endpoint a connection string, allowed tenant
+metric labels, always sampled product-specific plugin work, and promised errors and slow traces were
+always kept. The contract named no telemetry options, file policy, redaction boundary, resource
+identity or testable backpressure behaviour. Those claims cannot all be implemented with head
+sampling and the supported OpenTelemetry SDK surface.
+Chosen: add `TelemetryOptions` under `Platform:Telemetry`, with only `LogDirectory` and nullable
+absolute HTTP/HTTPS `OtlpEndpoint`; endpoint absence starts no exporter and makes no outbound
+connection. The fixed policies are UTF-8 JSON Lines, bounded non-blocking local and OTLP queues,
+four shared identity fields, a non-injectable redactor, per-instrument bounded label allowlists,
+upstream sampling decisions honoured, deterministic 10% trace-id sampling for new HTTP roots, and
+the stored origin decision copied to a new linked dispatch trace. Blocking-sink tests use a gate:
+application work must complete while export remains blocked, then export must recover after release.
+Rejected: **Also consuming `OTEL_EXPORTER_OTLP_*`** — creates two configuration sources with an
+unstated precedence. **Exposing Serilog rolling, retention, buffer and sampling knobs** — turns fixed
+D3 safety bounds into a public tuning surface before a deployment needs it. **Authentication
+headers, client certificates, per-signal endpoints or alternate OTLP protocols** — useful later and
+not required by any D3 deployment. **`service.instance.id`, tenant, correlation or other identifiers
+as metric resource attributes or labels** — unbounded cardinality. **Always sampling plugins, errors
+or slow traces in the host** — product policy in the first case and collector-side tail sampling in
+the others. **An injectable redactor** — lets a consumer weaken a safety invariant the package
+claims centrally.
+Reversibility: expensive for the public option and source-name signatures after publication; cheap
+for fixed internal bounds until operators rely on them.
+
 ### 2026-08-05 — Event handlers are reference types throughout the registration contract
 Context: Reconciliation made `AddPlatformEventHandler<TEvent, THandler>` contractual with the
 reference-type constraint required by dependency injection. The same registration triple reaches

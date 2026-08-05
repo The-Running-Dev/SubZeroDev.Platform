@@ -13,16 +13,15 @@ It also established that .NET already provides much of what the six describe.
 
 The **principles, boundaries and package shapes below stand.** The near-term set is now settled at
 six packages by the [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md); each narrow gap must still be
-checked against existing packages before anything is written, as ADR-004 requires. The text is
-otherwise unchanged, because it is a moved specification and this repository does not fork what
-it moves.
+checked against existing packages before anything is written, as ADR-004 requires. The D3 metric-
+label rule below is reconciled to the authoritative contract; the rest remains the moved baseline.
 
 :::
 
 > **Moved from the ecosystem specification staging tree**
 > (`SubZeroDev/Specs/SubZeroDev.Platform/02-platform-specification.md`), which names this repository as its
-> destination. Content is unchanged; only this provenance note and the front matter
-> were added. See [Platform Identity](platform-identity.md) for why it moved.
+> destination. Its D3 observability rule was subsequently reconciled with the authoritative
+> contract. See [Platform Identity](platform-identity.md) for why it moved.
 
 # SubZeroDev.Platform Specification
 
@@ -425,7 +424,7 @@ Default OpenTelemetry integration:
 - metrics
 - service name/version
 - correlation IDs
-- tenant labels only where safe
+- bounded metric labels only; never tenant or other identifiers
 - endpoint metrics
 - database metrics
 - background-job metrics
