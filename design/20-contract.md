@@ -1044,7 +1044,7 @@ public interface IEventHandlerRegistry
 {
     Result<EventHandlerRegistrationError> Register<TEvent, THandler>(EventTypeName type)
         where TEvent : IIntegrationEvent
-        where THandler : IIntegrationEventHandler<TEvent>;
+        where THandler : class, IIntegrationEventHandler<TEvent>;
 
     bool TryResolve(EventTypeName type, out EventHandlerRegistration registration);
 

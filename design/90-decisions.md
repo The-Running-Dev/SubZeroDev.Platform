@@ -4,6 +4,21 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-05 — Event handlers are reference types throughout the registration contract
+Context: Reconciliation made `AddPlatformEventHandler<TEvent, THandler>` contractual with the
+reference-type constraint required by dependency injection. The same registration triple reaches
+`IEventHandlerRegistry.Register<TEvent, THandler>` at startup, but its public signature and the
+deferred registrant still admitted value-type handlers. Review correctly identified the mismatch.
+Chosen: require `THandler : class, IIntegrationEventHandler<TEvent>` at every registration stage.
+The contract and implementation now state the constraint enforced by the supported composition API.
+Rejected: **Leave the registry unconstrained** — permits a theoretical struct handler that cannot
+enter through the supported extension, making the two public routes disagree. **Remove the extension's
+constraint** — the DI registration API requires a reference type and would need a different service
+registration mechanism with no design requirement. **Document the difference as intentional** — it
+would preserve a route that no module can use and turn an inconsistency into policy.
+Reversibility: expensive once third parties compile against the registry; relaxing it later is
+additive, while this tightening rejects a previously compilable struct-handler call.
+
 ### 2026-08-05 — Handler registration is declared at module composition through one public extension
 Context: S4 implemented the design's required explicit name–CLR-event–handler registration, but
 `20-contract.md` specified only `IEventHandlerRegistry`, which does not exist while an
