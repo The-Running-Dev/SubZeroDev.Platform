@@ -4,6 +4,24 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-05 — Outbox staging preserves the public provider transaction seam
+Context: S2 reconciliation made `IProviderCapability` implementable by third-party providers and
+removed casts from its public transaction return to Platform's internal implementation. S4's outbox
+staging reintroduced that cast in `UnitOfWork`; built-in providers returned the internal type, so the
+full test suite passed while any external implementation failed before commit.
+Chosen: wrap the returned `IAmbientTransaction` in Platform's internal `AmbientTransaction`, carrying
+the same intent, connection and transaction handles plus the pending outbox rows. The ambient
+accessor exposes that wrapper while the unit of work is active, and the unit of work reads its own
+staging state without assuming which concrete type the provider returned. A regression test returns
+a transaction implemented only through the public interface.
+Rejected: **Retract third-party provider support** — would weaken the reason the capability and its
+transaction return are public. **Add pending outbox rows to `IAmbientTransaction`** — exposes a
+Platform implementation detail and breaks existing external implementations. **Store staging state
+on the provider-returned object by convention** — recreates the same undocumented concrete-type
+requirement under another name.
+Reversibility: cheap internally; the public contract is unchanged. Removing the wrapper would again
+break an implementation the public interface explicitly admits.
+
 ### 2026-08-05 — Event handlers are reference types throughout the registration contract
 Context: Reconciliation made `AddPlatformEventHandler<TEvent, THandler>` contractual with the
 reference-type constraint required by dependency injection. The same registration triple reaches

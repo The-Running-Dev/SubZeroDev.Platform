@@ -1,3 +1,4 @@
+using System.Data.Common;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
@@ -126,6 +127,25 @@ public sealed class ProviderCapabilityTests
         Assert.Equal(withSpace, withHyphen);
     }
 
+    [Fact]
+    public async Task Unit_of_work_accepts_a_transaction_implemented_only_through_the_public_contract()
+    {
+        var capability = new PublicTransactionCapability(new SqliteProviderCapability(
+            new PersistenceOptions
+            {
+                Provider = PersistenceProvider.Sqlite,
+                ConnectionString = "Data Source=:memory:;Pooling=False",
+            }));
+        var unitOfWork = new UnitOfWork(capability, new AmbientTransactionState(), new FakeOutboxStore());
+
+        var result = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
     private static IProviderCapability CreateCapability(PersistenceProvider provider) => provider switch
     {
         PersistenceProvider.Sqlite => new SqliteProviderCapability(
@@ -134,4 +154,63 @@ public sealed class ProviderCapabilityTests
             new PersistenceOptions { Provider = provider, ConnectionString = "Host=localhost;Database=unused" }),
         _ => throw new NotSupportedException($"No capability for '{provider}'."),
     };
+
+    /// <summary>Delegates every provider operation, but deliberately replaces the concrete
+    /// transaction with one implemented only through the public seam.</summary>
+    private sealed class PublicTransactionCapability(IProviderCapability inner) : IProviderCapability
+    {
+        public PersistenceProvider Provider => inner.Provider;
+
+        public string FormatInstant(DateTimeOffset instant) => inner.FormatInstant(instant);
+
+        public bool TryParseInstant(string stored, out DateTimeOffset instant) =>
+            inner.TryParseInstant(stored, out instant);
+
+        public byte[] EncodeIdentifier(Guid value) => inner.EncodeIdentifier(value);
+
+        public bool TryDecodeIdentifier(ReadOnlySpan<byte> encoded, out Guid value) =>
+            inner.TryDecodeIdentifier(encoded, out value);
+
+        public string MigrationHistoryTable(ModuleName module) => inner.MigrationHistoryTable(module);
+
+        public async Task<Result<IAmbientTransaction, TransactionError>> BeginAsync(
+            TransactionIntent intent,
+            CancellationToken cancellationToken)
+        {
+            var opened = await inner.BeginAsync(intent, cancellationToken);
+            return opened.IsSuccess
+                ? Result<IAmbientTransaction, TransactionError>.Success(new PublicAmbientTransaction(
+                    opened.Value.Intent,
+                    opened.Value.Connection,
+                    opened.Value.Transaction))
+                : Result<IAmbientTransaction, TransactionError>.Failure(opened.Error);
+        }
+
+        public TransactionError Classify(Exception exception) => inner.Classify(exception);
+
+        public Task<Result<OutboxMessageId?, TransactionError>> StampClaimAsync(
+            InstanceId holder,
+            DateTimeOffset now,
+            TimeSpan claimWindow,
+            CancellationToken cancellationToken) =>
+            inner.StampClaimAsync(holder, now, claimWindow, cancellationToken);
+
+        public Task<Result<IMigrationLock, MigrationError>> AcquireMigrationLockAsync(
+            CancellationToken cancellationToken) => inner.AcquireMigrationLockAsync(cancellationToken);
+
+        public Task<Result<ConfigurationError>> AssertStartupPreconditionsAsync(
+            CancellationToken cancellationToken) => inner.AssertStartupPreconditionsAsync(cancellationToken);
+
+        public Task<Result<int, TransactionError>> DeleteBoundedAsync(
+            PruneTarget target,
+            DateTimeOffset olderThan,
+            int batchSize,
+            CancellationToken cancellationToken) =>
+            inner.DeleteBoundedAsync(target, olderThan, batchSize, cancellationToken);
+    }
+
+    private sealed record PublicAmbientTransaction(
+        TransactionIntent Intent,
+        DbConnection Connection,
+        DbTransaction Transaction) : IAmbientTransaction;
 }
