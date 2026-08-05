@@ -24,7 +24,7 @@ public interface IEventHandlerRegistry
     /// <returns>Success, or why the registration was rejected.</returns>
     Result<EventHandlerRegistrationError> Register<TEvent, THandler>(EventTypeName type)
         where TEvent : IIntegrationEvent
-        where THandler : IIntegrationEventHandler<TEvent>;
+        where THandler : class, IIntegrationEventHandler<TEvent>;
 
     /// <summary>Resolves a registration by its stable name — the direction dispatch needs, going
     /// from a stored string to a CLR type.</summary>
@@ -60,7 +60,7 @@ internal sealed class EventHandlerRegistry : IEventHandlerRegistry
 
     public Result<EventHandlerRegistrationError> Register<TEvent, THandler>(EventTypeName type)
         where TEvent : IIntegrationEvent
-        where THandler : IIntegrationEventHandler<TEvent>
+        where THandler : class, IIntegrationEventHandler<TEvent>
     {
         lock (_gate)
         {
@@ -119,7 +119,7 @@ internal interface IEventHandlerRegistrant
 
 internal sealed class EventHandlerRegistrant<TEvent, THandler>(EventTypeName type) : IEventHandlerRegistrant
     where TEvent : IIntegrationEvent
-    where THandler : IIntegrationEventHandler<TEvent>
+    where THandler : class, IIntegrationEventHandler<TEvent>
 {
     public Type HandlerType { get; } = typeof(THandler);
 

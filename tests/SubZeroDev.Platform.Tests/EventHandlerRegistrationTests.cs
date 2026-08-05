@@ -12,6 +12,22 @@ namespace SubZeroDev.Platform.Tests;
 public sealed class EventHandlerRegistrationTests
 {
     [Fact]
+    public void Registry_and_composition_registration_both_require_reference_type_handlers()
+    {
+        var registryHandler = typeof(IEventHandlerRegistry)
+            .GetMethod(nameof(IEventHandlerRegistry.Register))!
+            .GetGenericArguments()[1];
+        var compositionHandler = typeof(PlatformEventHandlerExtensions)
+            .GetMethod(nameof(PlatformEventHandlerExtensions.AddPlatformEventHandler))!
+            .GetGenericArguments()[1];
+
+        Assert.True(registryHandler.GenericParameterAttributes.HasFlag(
+            System.Reflection.GenericParameterAttributes.ReferenceTypeConstraint));
+        Assert.True(compositionHandler.GenericParameterAttributes.HasFlag(
+            System.Reflection.GenericParameterAttributes.ReferenceTypeConstraint));
+    }
+
+    [Fact]
     public async Task A_second_handler_for_an_already_registered_name_aborts_startup_naming_both()
     {
         var thrown = await Assert.ThrowsAsync<PersistenceStartupException>(() =>

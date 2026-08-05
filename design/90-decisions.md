@@ -4,6 +4,38 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-05 — Event handlers are reference types throughout the registration contract
+Context: Reconciliation made `AddPlatformEventHandler<TEvent, THandler>` contractual with the
+reference-type constraint required by dependency injection. The same registration triple reaches
+`IEventHandlerRegistry.Register<TEvent, THandler>` at startup, but its public signature and the
+deferred registrant still admitted value-type handlers. Review correctly identified the mismatch.
+Chosen: require `THandler : class, IIntegrationEventHandler<TEvent>` at every registration stage.
+The contract and implementation now state the constraint enforced by the supported composition API.
+Rejected: **Leave the registry unconstrained** — permits a theoretical struct handler that cannot
+enter through the supported extension, making the two public routes disagree. **Remove the extension's
+constraint** — the DI registration API requires a reference type and would need a different service
+registration mechanism with no design requirement. **Document the difference as intentional** — it
+would preserve a route that no module can use and turn an inconsistency into policy.
+Reversibility: expensive once third parties compile against the registry; relaxing it later is
+additive, while this tightening rejects a previously compilable struct-handler call.
+
+### 2026-08-05 — Handler registration is declared at module composition through one public extension
+Context: S4 implemented the design's required explicit name–CLR-event–handler registration, but
+`20-contract.md` specified only `IEventHandlerRegistry`, which does not exist while an
+`IPlatformModule` receives its `IServiceCollection`. The implementation therefore exposed
+`PlatformEventHandlerExtensions.AddPlatformEventHandler<TEvent, THandler>` without the contract
+naming that public seam; reconciliation found the resulting contract drift.
+Chosen: make the extension part of the contract. It records the triple at composition time, registers
+the handler type for dependency injection, and leaves runtime validation to the startup-owned
+registry. Both roles make the same declaration; only the worker constructs handlers.
+Rejected: **Have modules resolve and call `IEventHandlerRegistry` directly** — no composition-time
+registration path has a registry instance. **Move registration onto `IPlatformModule`** — couples
+every module to Persistence even when it has no events, and broadens the Abstractions contract for a
+Persistence-specific concern. **Keep the extension undocumented** — leaves a public API outside the
+authoritative contract and lets its semantics drift.
+Reversibility: expensive once consumers compile against the extension; removing or relocating it is
+a source-breaking change.
+
 ### 2026-08-05 — Kit upgrade to `9896915`: adopt self-ticking checkboxes and carved-out milestones/projects
 Context: Upgrading the agent kit from `9b8313c` to `9896915`. The kit's *Tracking work* section moved
 from "only issue-opening is carved out of the authorization rule; milestones, projects, and ticking
