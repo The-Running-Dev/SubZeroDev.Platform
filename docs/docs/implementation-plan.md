@@ -39,14 +39,13 @@ Measured, not assumed.
 | Architecture specs | **Version-controlled**, [SubZeroDev.Architecture](https://github.com/The-Running-Dev/SubZeroDev.Architecture), private |
 | This repository | Identity settled ([ADR-001](adr/ADR-001-platform-identity.md)); framework question settled ([ADR-004](adr/ADR-004-framework-build-not-adopt.md)) |
 
-:::caution Platform's scope is smaller than this document was written against
+:::note D3 scope is settled; reuse remains mandatory
 
-Two decisions narrowed it after the fact, and neither is reflected in the D3 stage below.
-[ADR-004](adr/ADR-004-framework-build-not-adopt.md) established that .NET already ships most of
-what the six packages describe, leaving narrow gaps — outbox, tenant filtering, module
-conventions — and then that those gaps should be checked against existing NuGet packages before
-anything is written. **D3 may be three packages, or fewer.** Treat the six below as the boundary
-catalogue it is, not as a build list.
+ADR-004 established that .NET already ships much of what the six packages describe, leaving narrow
+gaps — outbox, tenant filtering, module conventions — and requires those gaps to be checked against
+existing NuGet packages before anything is written. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md)
+settles D3 as **all six packages**, which land together; the check against existing packages remains
+mandatory and is not a licence to hand-roll six.
 
 :::
 
@@ -108,11 +107,10 @@ Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
 [`minimal-platform-packages.md`](minimal-platform-packages.md).
 
-> **The count is provisional.** [ADR-004](adr/ADR-004-framework-build-not-adopt.md) settled that
-> Platform builds its own rather than adopting ABP, and in doing so established that .NET already
-> provides much of what these six describe. The remaining gaps are narrow — outbox, tenant
-> filtering, module conventions — so this stage may be three packages rather than six. The scope
-> belongs to the brief; the boundaries do not change either way.
+> **The count is settled.** The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) commits D3 to all six
+> packages landing together. [ADR-004](adr/ADR-004-framework-build-not-adopt.md) still requires the
+> narrow gaps — outbox, tenant filtering, module conventions — to be evaluated against existing
+> packages before anything is written; six packages is not a licence to hand-roll six.
 
 **Was blocked on** the technology decision — the only stage that was, which is why it was
 taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settles it: .NET, so the
@@ -262,36 +260,37 @@ Recorded so the assumptions are visible rather than implied.
 
 ---
 
-## 8. Open Decisions
+## 8. Decisions and Remaining Questions
 
-Nothing external gates either track now. These three do, and each surfaced during design without
-being settled — recorded here so they are decisions rather than things that quietly get assumed.
+Nothing external gates either track now. The first two decisions below are settled by the brief;
+the contract decision is settled by ADR-005. They remain here to make the planning consequences
+visible rather than quietly assumed.
 
-### 8.1 How much of D3 is actually built
+### 8.1 How much of D3 is built — **decided: six packages**
 
 [ADR-004](adr/ADR-004-framework-build-not-adopt.md) narrowed this twice: .NET already ships most
 of what the six packages describe, and the narrow gaps that remain — transactional outbox, tenant
 column and query filtering, module registration conventions — must each be checked against
 existing NuGet packages before anything is written.
 
-So the range is genuinely wide: **six packages, three, or nearly none.** The honest next step is
-an evaluation of candidate packages against the gaps, and the answer belongs in
-`design/00-brief.md` as scope and non-goals.
+The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) settles D3 at **six packages** — Abstractions,
+Core, Hosting, Persistence, Observability and Testing — and requires them to land together. The
+evaluation against existing packages remains a prerequisite for each narrow gap; it informs whether
+the capability is taken or built, not whether D3 includes the package.
 
-### 8.2 What proves Platform works — **decided: a sample**
+### 8.2 What proves Platform works — **decided: a sample and the G1 edge**
 
-**A sample in `samples/`, run in CI, is the definition of done for D3.** The scope collapse settled
-this: one or two thin packages wiring .NET defaults — telemetry, health, correlation, problem
-details — do not need a real product to demonstrate, and the earlier argument for the G1 edge was
-made when D3 was six packages including Persistence and Testing.
+**A sample in `samples/`, run in CI, is the definition of done for D3; the G1 edge is its first
+genuine external validation.** The brief requires both instruments: the sample now, with its
+requirements derived from the edge's needs, and the edge when it exists. The sample keeps D3
+independent of Track B; the edge challenges the framework-authored proof without delaying D3.
 
 It also keeps Track A genuinely parallel: no cross-repository coupling, and D3 does not wait on G1.
 
 **The known weakness, stated rather than hidden:** a sample is written by the framework's authors,
-so it confirms rather than challenges. The mitigation is to derive its requirements from what the
-G1 edge will actually need, so a real consumer shapes it. When the edge does arrive, it becomes the
-first genuine validation — and any API change it forces is expected, and cheap while Platform is
-still `0.x`.
+so it confirms rather than challenges. Deriving its requirements from the G1 edge and treating that
+edge as the first genuine validation mitigates rather than removes the weakness. Any API change the
+edge forces is expected and cheap while Platform is still `0.x`.
 
 <details>
 <summary>The options as they were weighed, kept for the reasoning</summary>

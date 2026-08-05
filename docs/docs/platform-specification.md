@@ -11,10 +11,11 @@ Boilerplate properly and decided: **no application framework is adopted**, the h
 a per-product choice, and existing NuGet packages are preferred over hand-rolled infrastructure.
 It also established that .NET already provides much of what the six describe.
 
-The **principles, boundaries and package shapes below stand.** What is superseded is the implied
-build list: the near-term count is an open scope question, not the six as stated here. The text
-is otherwise unchanged, because it is a moved specification and this repository does not fork
-what it moves.
+The **principles, boundaries and package shapes below stand.** The near-term set is now settled at
+six packages by the [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md); each narrow gap must still be
+checked against existing packages before anything is written, as ADR-004 requires. The text is
+otherwise unchanged, because it is a moved specification and this repository does not fork what
+it moves.
 
 :::
 

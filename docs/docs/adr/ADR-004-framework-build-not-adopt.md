@@ -156,12 +156,12 @@ interface that wrapped it, which is exactly why §4 asks for the interface to be
 - **Platform stops being a framework every product must use**, and becomes conventions plus the
   contract between products. That is a smaller and better-defended thing than the original
   six-package framing.
-- **The scope of what to build is now the open question, and it is not settled here.** Modern .NET
-  already ships hosting, DI, typed and validated configuration, health and readiness endpoints,
-  OpenTelemetry integration, EF Core migrations and `IHostedService`. Measured against that, the
-  genuine gaps are narrow — a transactional outbox, tenant column and query filtering, and module
-  registration conventions. **Whether the near-term set is six packages or three is a scope
-  decision for the brief**, and `minimal-platform-packages.md` still describes the six.
+- **The scope is settled in the brief, not by this ADR.** Modern .NET already ships hosting, DI,
+  typed and validated configuration, health and readiness endpoints, OpenTelemetry integration, EF
+  Core migrations and `IHostedService`. Measured against that, the genuine gaps are narrow — a
+  transactional outbox, tenant column and query filtering, and module registration conventions.
+  The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) chose all six near-term packages; this ADR's
+  requirement to check each gap against existing packages before writing it remains binding.
 - **The evaluation does not have to be redone.** The coverage map, the licence findings, and the
   per-product weight argument are recorded above precisely so a future reader asking "why not just
   use ABP?" gets an answer rather than a rediscovery.
