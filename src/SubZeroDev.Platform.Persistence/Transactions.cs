@@ -147,7 +147,14 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
             return Result<T, TransactionError>.Failure(opened.Error);
         }
 
-        var transaction = opened.Value;
+        // The capability contract is public so a third-party provider can return its own
+        // IAmbientTransaction implementation. Keep Platform's outbox staging state on an internal
+        // wrapper over the returned handles rather than casting back to Platform's implementation.
+        var providerTransaction = opened.Value;
+        var transaction = new AmbientTransaction(
+            providerTransaction.Intent,
+            providerTransaction.Connection,
+            providerTransaction.Transaction);
         var previous = ambient.Current;
         ambient.Current = transaction;
 
@@ -158,7 +165,7 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
             // Enqueue stages rows rather than writing them, so a failed insert here is reported the
             // same way any other participant's write failure is — rolled back and classified —
             // rather than as a bare exception escaping Enqueue's synchronous call.
-            foreach (var message in ((AmbientTransaction)transaction).PendingOutboxMessages)
+            foreach (var message in transaction.PendingOutboxMessages)
             {
                 var inserted = await outboxStore.InsertAsync(message, cancellationToken).ConfigureAwait(false);
                 if (!inserted.IsSuccess)
