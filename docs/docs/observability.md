@@ -19,9 +19,13 @@ Platform provides the instrumentation; products decide what to instrument.
 
 ## Defaults
 
-The standard registration call configures logs, traces and metrics. Serilog supplies mandatory
-UTF-8 JSON Lines console and file logging through one redaction and buffering boundary, and the
-official OpenTelemetry SDK provides instrumentation and optional OTLP export.
+**Implementation status: S8 is queued.** The following is the S8 contract, not current runtime
+behaviour. Today, `AddPlatformObservability` configures trace-context propagation only; it does
+not add local log sinks, OpenTelemetry instrumentation, or an OTLP exporter.
+
+When S8 ships, the standard registration call will configure logs, traces and metrics. Serilog
+will supply mandatory UTF-8 JSON Lines console and file logging through one redaction and buffering
+boundary, and the official OpenTelemetry SDK will provide instrumentation and optional OTLP export.
 
 Nothing requires a product to write exporter code. A product that wants a collector sets the typed
 `Platform:Telemetry:OtlpEndpoint` URI. When it is absent, no exporter starts and no outbound

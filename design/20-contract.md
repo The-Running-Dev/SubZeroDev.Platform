@@ -636,7 +636,7 @@ public sealed record PlatformOptions
     public HostRegistrationOptions HostRegistration { get; init; }
     public HealthOptions Health { get; init; }
     public HostingOptions Hosting { get; init; }
-    public TelemetryOptions Telemetry { get; init; }
+    public TelemetryOptions Telemetry { get; init; } = new();
 }
 ```
 
@@ -710,7 +710,7 @@ public sealed record HostingOptions
 
 public sealed record TelemetryOptions
 {
-    public string LogDirectory { get; init; }
+    public string LogDirectory { get; init; } = "logs";
     public Uri? OtlpEndpoint { get; init; }
 }
 ```
