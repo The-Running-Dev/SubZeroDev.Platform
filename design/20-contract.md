@@ -1055,6 +1055,15 @@ public interface IEventHandlerRegistry
     void Freeze();
 }
 
+public static class PlatformEventHandlerExtensions
+{
+    public static IServiceCollection AddPlatformEventHandler<TEvent, THandler>(
+        this IServiceCollection services,
+        EventTypeName type)
+        where TEvent : IIntegrationEvent
+        where THandler : class, IIntegrationEventHandler<TEvent>;
+}
+
 public interface IOutboxAdministration
 {
     Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> RedriveAsync(
@@ -1122,6 +1131,13 @@ public interface IMigrationRunner
     Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken);
 }
 ```
+
+**`AddPlatformEventHandler` is the module-composition form of a handler registration.** A module
+only receives `IServiceCollection` while it composes; the runtime `IEventHandlerRegistry` does not
+exist until the host starts. The extension therefore records the same name–event–handler triple and
+registers the handler type for dependency injection. Startup applies the recorded triples to the
+registry and freezes it; only the worker constructs handlers, preserving the web role's declarative
+registration without importing worker-only constructor dependencies.
 
 **A module's migrations reach the runner by the same route background work and health checks
 do** — plain dependency-injection registration, collected as `IEnumerable<IModuleMigrationSource>`.
