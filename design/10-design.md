@@ -600,15 +600,15 @@ The error envelope is wholly derived from the failure and the ambient context, s
 discarded. Telemetry signals are buffered and **droppable by design** — see *Concurrency*.
 
 **The local log is mandatory; remote export is optional.** Both host roles write structured UTF-8
-JSON Lines to `<content-root>/logs/<service>-<role>-.jsonl` by default, with only the directory
-configurable. The standard console provider remains, while Serilog owns the file path: the file rolls
-daily and at 100 MB, retains no
-more than 31 files and no file older than 14 days, and writes through a 10 000-event asynchronous
-buffer that drops rather than blocks. The role is part of the filename and Serilog's shared-file
-mode permits multiple instances of that role to append safely. File creation, write and buffer
+JSON Lines through Serilog to console and to
+`<content-root>/logs/<service>-<role>-.jsonl` by default, with only the directory configurable. Both
+sinks use the same formatter and one 10 000-event asynchronous buffer that drops rather than blocks.
+The file rolls daily and at 100 MB, retains no more than 31 files and no file older than 14 days,
+and the role is part of its filename. Serilog's shared-file mode permits multiple instances of that
+role to append safely. File creation, write and buffer
 failures never stop the host and never reach application work; an emergency console diagnostic is
 written once when the sink enters failure or dropping and once when it recovers. The supported
-async-sink inspector supplies the exact file-queue drop count.
+async-sink inspector supplies the exact local-output queue drop count.
 
 **OTLP turns on only when `Platform:Telemetry:OtlpEndpoint` is set.** The value is an absolute HTTP
 or HTTPS base URI; anything else is `ConfigurationError.InvalidSetting` at startup. An absent value
@@ -628,8 +628,9 @@ not a resource attribute because resources become metric attributes. Request cor
 trace id; dispatch correlation stays in structured logs while the span link represents the origin,
 so no duplicate unbounded correlation attribute is added to a span.
 
-The internal, non-injectable redactor runs before the local and OTLP branches. It discovers secret
-non-empty configuration values by case-insensitive key segments including `authorization`, `cookie`,
+The internal, non-injectable redactor runs before Serilog's console/file sinks and the OTLP branch.
+It discovers secret non-empty configuration values by case-insensitive key segments including
+`authorization`, `cookie`,
 `password`, `secret`, `token`, `api-key`, `connection-string` and `client-certificate`, and replaces
 those values with `[REDACTED]` in structured properties, rendered messages, exceptions and nested
 text, span attributes and events, and metric labels. Platform never captures HTTP headers or

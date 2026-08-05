@@ -19,9 +19,9 @@ Platform provides the instrumentation; products decide what to instrument.
 
 ## Defaults
 
-The standard registration call configures logs, traces and metrics. The standard provider supplies
-console logging, Serilog supplies mandatory UTF-8 JSON Lines file logging, and the official
-OpenTelemetry SDK provides instrumentation and optional OTLP export.
+The standard registration call configures logs, traces and metrics. Serilog supplies mandatory
+UTF-8 JSON Lines console and file logging through one redaction and buffering boundary, and the
+official OpenTelemetry SDK provides instrumentation and optional OTLP export.
 
 Nothing requires a product to write exporter code. A product that wants a collector sets the typed
 `Platform:Telemetry:OtlpEndpoint` URI. When it is absent, no exporter starts and no outbound
@@ -37,11 +37,11 @@ Structured, never interpolated strings. Required fields:
 - correlation, tenant, culture, and actor when present in the ambient operation
 - exception with stack, where present
 
-Each role writes `<service>-<role>-.jsonl`. Files roll daily and at 100 MB, retain no more than 31
-files and no file older than 14 days, and use a 10 000-event asynchronous buffer that drops rather
-than blocks. A file failure cannot fail startup or application work. The console reports one
-transition into failure or dropping and one recovery, while the supported queue inspector supplies
-the exact dropped-event count.
+Each role writes to console and to `<service>-<role>-.jsonl` through one 10 000-event asynchronous
+buffer that drops rather than blocks. Files roll daily and at 100 MB and retain no more than 31
+files and no file older than 14 days. A file failure cannot fail startup or application work. The
+console reports one transition into failure or dropping and one recovery, while the supported queue
+inspector supplies the exact dropped-event count.
 
 ### The rule that matters most
 
@@ -116,9 +116,9 @@ This is small and pays for itself the first time a setting is overridden somewhe
 collector to start. Requiring one would make an observability stack a prerequisite for running a
 homelab tool, which is a disproportionate ask; setting an OTLP endpoint turns it on.
 
-**The provider choices are deliberate.** Serilog supplies the mandatory file provider that the .NET
-logging stack does not include, while the official OpenTelemetry packages own OTLP traces, metrics,
-and logs. Both queues are bounded and non-blocking. The OpenTelemetry retry is in memory only; no
+**The provider choices are deliberate.** Serilog supplies both mandatory local sinks because the
+.NET logging stack does not include a file provider, while the official OpenTelemetry packages own
+OTLP traces, metrics, and logs. Both queues are bounded and non-blocking. The OpenTelemetry retry is in memory only; no
 disk spool is part of D3.
 
 **Sampling is protocol-led rather than product-led.** Upstream and persisted origin decisions are

@@ -4,6 +4,20 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-05 — S8 routes both local log sinks through Serilog
+Context: The recovered S8 amendment kept the standard console provider while assigning only the
+file sink to Serilog, but the same amendment promised one redaction boundary and UTF-8 JSON Lines on
+both local outputs. A provider outside that boundary could satisfy neither promise reliably.
+Chosen: add **Serilog.Sinks.Console 6.1.1** and route both console and file output through Serilog,
+using the same JSON formatter, redactor and 10 000-event non-blocking async buffer. This supersedes
+only the earlier S8 dependency decision's phrase "beside the standard console provider"; its other
+package and policy choices stand.
+Rejected: **Keep the standard console provider** — bypasses the Serilog redaction and formatting
+boundary. **Keep plain-text console output** — contradicts the contract's JSON Lines invariant and
+makes the two mandatory local outputs structurally different. **Build a second console redactor** —
+duplicates the safety boundary and invites drift.
+Reversibility: moderate before publication; expensive once operators parse the console stream.
+
 ### 2026-08-05 — Outbox staging preserves the public provider transaction seam
 Context: S2 reconciliation made `IProviderCapability` implementable by third-party providers and
 removed casts from its public transaction return to Platform's internal implementation. S4's outbox

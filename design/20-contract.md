@@ -749,7 +749,7 @@ a wrong value that degrades gets a default, a missing value that corrupts fails 
 
 **Telemetry has deliberately little configuration surface.** `LogDirectory` changes the directory,
 not the role-specific `<service>-<role>-.jsonl` filename or its UTF-8 JSON Lines format. Daily and
-100 MB rolling, 14-day and 31-file retention, the 10 000-event non-blocking file buffer, fixed 10%
+100 MB rolling, 14-day and 31-file retention, the 10 000-event non-blocking local-output buffer, fixed 10%
 root sampling, OTLP HTTP/protobuf and the standard signal paths are D3 policy rather than tunable
 properties. A null endpoint starts no exporter and makes no outbound connection. The typed
 `Platform:Telemetry` section is the sole D3 source; `OTEL_EXPORTER_OTLP_*` is not also consumed.
@@ -1553,11 +1553,11 @@ public static class PlatformObservabilityExtensions
 Called by both forms of the standard registration call. Exposed separately because Observability is
 usable by a consumer that wants telemetry wiring without a Platform host.
 
-The call installs two branches behind the standard `ILogger` surface. The standard console provider
-remains, while Serilog writes a mandatory UTF-8 JSON Lines file named
-`<service>-<role>-.jsonl`, sharing the file safely between
-instances of one role. It rolls daily and at 100 MB, retains no file older than 14 days and no more
-than 31 files, and uses a 10 000-event asynchronous buffer with `blockWhenFull` disabled. The
+The call installs local Serilog and optional OTLP branches behind the standard `ILogger` surface.
+Serilog writes mandatory UTF-8 JSON Lines to console and to a file named
+`<service>-<role>-.jsonl`, sharing the file safely between instances of one role. Both local sinks
+use the same formatter and one 10 000-event asynchronous buffer with `blockWhenFull` disabled. The
+file rolls daily and at 100 MB and retains no file older than 14 days and no more than 31 files. The
 supported async-sink inspector maintains the exact dropped-event count. File creation, write and
 buffer failure cannot fail startup or application work; an emergency console diagnostic is emitted
 once on entry to failure or dropping and once on recovery.
@@ -1581,7 +1581,8 @@ dispatch trace through Platform's sampler; all other traces use the official par
 sampler. Error- and latency-based retention is collector-side tail sampling and is not promised by
 the host.
 
-The fixed, non-injectable redaction processor runs before both branches. Non-empty configuration values whose
+The fixed, non-injectable redaction processor runs before Serilog's console/file sinks and the OTLP
+branch. Non-empty configuration values whose
 case-insensitive key segments include `authorization`, `cookie`, `password`, `secret`, `token`,
 `api-key`, `connection-string` or `client-certificate` become `[REDACTED]` in structured log
 properties and rendered messages, exceptions and nested text, span attributes and events, and

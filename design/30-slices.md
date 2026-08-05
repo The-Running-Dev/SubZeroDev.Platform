@@ -524,9 +524,9 @@ Touches:
 Depends on: S5.
 
 Acceptance:
-- With no OTLP endpoint configured, the sample logs to console and role-specific UTF-8 JSON Lines
-  files and makes no outbound connection attempt at startup or in steady state — asserted with
-  outbound network blocked, which is the brief's environment rather than a contrivance. The file
+- With no OTLP endpoint configured, the sample writes UTF-8 JSON Lines to console and to
+  role-specific files and makes no outbound connection attempt at startup or in steady state —
+  asserted with outbound network blocked, which is the brief's environment rather than a contrivance. The file
   path, daily and 100 MB rolling, 14-day and 31-file retention, and shared-file mode match the
   contract.
 - `ServiceName` and `ServiceVersion` left unset resolve to the entry assembly's name and
