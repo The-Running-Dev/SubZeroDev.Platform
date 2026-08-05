@@ -511,37 +511,58 @@ Delivers: logs, traces and metrics configured by the standard registration call 
 nowhere by default, and never able to fail a request.
 
 Touches:
-- **Observability** — exporter configuration and opt-in, console and file defaults, service name and
-  version, endpoint and database instrumentation, sampling policy, the bounded export queue and its
-  drop behaviour
-- **Core** — `ServiceName` and `ServiceVersion` derivation from the entry assembly
+- **Abstractions** — `PlatformTelemetry.ActivitySourceName` and `MeterName`, the stable
+  provider-neutral instrumentation names
+- **Observability** — Serilog console/file logging, official OpenTelemetry log/trace/metric wiring,
+  OTLP opt-in, resource identity, redaction, sampling, metric allowlists, bounded queues and their
+  supported failure signals
+- **Persistence** — one provider-neutral child activity around each unit-of-work transaction on
+  both providers
+- **Core** — `TelemetryOptions`, endpoint validation, and service-name and service-version
+  derivation from the entry assembly
 
 Depends on: S5.
 
 Acceptance:
-- With no exporter configured, the sample logs to console and file and makes no outbound connection
-  attempt at startup or in steady state — asserted with outbound network blocked, which is the
-  brief's environment rather than a contrivance.
+- With no OTLP endpoint configured, the sample writes UTF-8 JSON Lines to console and to
+  role-specific files and makes no outbound connection attempt at startup or in steady state —
+  asserted with outbound network blocked, which is the brief's environment rather than a contrivance. The file
+  path, daily and 100 MB rolling, 14-day and 31-file retention, and shared-file mode match the
+  contract.
 - `ServiceName` and `ServiceVersion` left unset resolve to the entry assembly's name and
-  informational version and appear on every exported span and log record.
-- One request produces one server span carrying the correlation; a database call inside it produces
-  a child span.
+  informational version. Service name, service version, deployment environment and host role appear
+  on every OTLP resource and JSONL log record; ambient correlation, tenant, culture and actor appear
+  on logs when present.
+- One request produces one server span whose trace id is the correlation; a unit of work inside it
+  produces one child activity on PostgreSQL and SQLite carrying provider and operation but no SQL,
+  parameter or connection-string data.
 - A dispatched message produces a span whose trace-id differs from the row's stored trace-id and
-  which carries a link to it — a trace reaching from the inbound request through the background job,
-  which is Observability's stated done-criterion.
-- Against an unreachable collector: request latency is unchanged within noise, the export queue is
-  bounded, dropped signals are counted, and exactly one log line is written on the transition into
-  dropping rather than one per failure.
-- A configuration value named as a secret appears in no exported log, span attribute or metric
-  label; no payload content appears in any of them.
-- No metric carries a label whose value is an id, a correlation, a tenant or any other unbounded
-  value.
+  carries a link to it, and copies the row's stored sampled decision. Incoming traces honour the
+  upstream sampled flag; new root HTTP traces are deterministically sampled at 10% by trace id.
+- A test collector blocks behind a gate, enough telemetry is generated to occupy the batch path,
+  and a request completes while the collector call remains blocked. Releasing the gate proves
+  export resumes. The same gate pattern around a blocked or failing file sink proves application
+  work does not wait for file output.
+- Saturating the Serilog async file queue exposes its exact dropped-event count and emits one
+  emergency console diagnostic on entry to failure or dropping and one on recovery. OTLP uses the
+  official bounded batch processors and in-memory retry; recovery is proved by a successful export,
+  without asserting an unsupported exact OTLP drop count or queue-transition log.
+- Configuration values selected by every secret-key segment in the contract become `[REDACTED]` in
+  structured and rendered logs, nested exceptions, span attributes and events, and metric labels.
+  HTTP headers and bodies, event payloads, SQL parameters and connection strings are absent from all
+  signals.
+- Each standard metric accepts only its documented bounded labels. Tests reject tenant,
+  correlation, instance, message, event and user identifiers, raw paths and queries, and arbitrary
+  tag pass-through.
 - With telemetry in place the sample satisfies the brief's **first CI assertion** whole: health,
   readiness, correlation and telemetry all working through the standard registration call alone.
 
 Out of scope: choosing, shipping or operating a collector; dashboards and alert rules; per-product
 semantic conventions — Observability collects and does not interpret; making export synchronous or
-fallible on any path.
+fallible on any path; OTLP authentication headers, client certificates, per-signal endpoints,
+alternate protocols or environment-variable configuration; exact OTLP queue drop accounting until
+the official SDK exposes a supported metric or hook; collector-side tail sampling for errors or slow
+traces; product- or plugin-specific sampling; database-command instrumentation or SQL capture.
 
 ---
 
