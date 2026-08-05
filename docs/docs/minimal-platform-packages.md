@@ -27,7 +27,7 @@ ships much of what these six describe: hosting, DI, typed and validated configur
 and readiness endpoints, OpenTelemetry integration, EF Core migrations, `IHostedService`.
 
 Measured against that, the genuine gaps are narrow — a transactional outbox, tenant column and
-query filtering, and module registration conventions. [`design/00-brief.md`](../../design/00-brief.md)
+query filtering, and module registration conventions. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md)
 settles the near-term set at **six packages**. The *boundaries* below therefore remain the build
 boundaries, while ADR-004's requirement to evaluate existing packages before writing any gap
 continues to bind.

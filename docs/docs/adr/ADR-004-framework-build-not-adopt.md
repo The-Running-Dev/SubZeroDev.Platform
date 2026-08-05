@@ -160,7 +160,7 @@ interface that wrapped it, which is exactly why §4 asks for the interface to be
   typed and validated configuration, health and readiness endpoints, OpenTelemetry integration, EF
   Core migrations and `IHostedService`. Measured against that, the genuine gaps are narrow — a
   transactional outbox, tenant column and query filtering, and module registration conventions.
-  [`design/00-brief.md`](../../../design/00-brief.md) chose all six near-term packages; this ADR's
+  The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) chose all six near-term packages; this ADR's
   requirement to check each gap against existing packages before writing it remains binding.
 - **The evaluation does not have to be redone.** The coverage map, the licence findings, and the
   per-product weight argument are recorded above precisely so a future reader asking "why not just

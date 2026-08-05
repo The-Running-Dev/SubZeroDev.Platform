@@ -43,7 +43,7 @@ Measured, not assumed.
 
 ADR-004 established that .NET already ships much of what the six packages describe, leaving narrow
 gaps — outbox, tenant filtering, module conventions — and requires those gaps to be checked against
-existing NuGet packages before anything is written. [`design/00-brief.md`](../../design/00-brief.md)
+existing NuGet packages before anything is written. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md)
 settles D3 as **all six packages**, which land together; the check against existing packages remains
 mandatory and is not a licence to hand-roll six.
 
@@ -107,7 +107,7 @@ Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
 [`minimal-platform-packages.md`](minimal-platform-packages.md).
 
-> **The count is settled.** [`design/00-brief.md`](../../design/00-brief.md) commits D3 to all six
+> **The count is settled.** The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) commits D3 to all six
 > packages landing together. [ADR-004](adr/ADR-004-framework-build-not-adopt.md) still requires the
 > narrow gaps — outbox, tenant filtering, module conventions — to be evaluated against existing
 > packages before anything is written; six packages is not a licence to hand-roll six.
@@ -273,7 +273,7 @@ of what the six packages describe, and the narrow gaps that remain — transacti
 column and query filtering, module registration conventions — must each be checked against
 existing NuGet packages before anything is written.
 
-[`design/00-brief.md`](../../design/00-brief.md) settles D3 at **six packages** — Abstractions,
+The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) settles D3 at **six packages** — Abstractions,
 Core, Hosting, Persistence, Observability and Testing — and requires them to land together. The
 evaluation against existing packages remains a prerequisite for each narrow gap; it informs whether
 the capability is taken or built, not whether D3 includes the package.
