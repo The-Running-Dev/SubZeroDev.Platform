@@ -80,50 +80,50 @@ Touches:
 Depends on: none.
 
 Acceptance:
-- `AddPlatformWebHost()` is the only Platform call in the sample's `Program.cs`; adding a second
-  mandatory call fails the criterion this slice exists to prove.
-- Liveness returns HTTP 200 with a body enumerating every registered check by name and status. With
-  no Persistence registered the body contains no `PlatformHealthChecks.Database` entry — an absent
-  check reads as absent, not as a passing one.
-- A readiness check returning `Degraded` yields HTTP 200; the same check returning `Unhealthy`
-  yields HTTP 503. Both bodies enumerate the identical entry list.
-- The probe body is `Full` on loopback and in `Development`, `Minimal` elsewhere; the aggregate
-  status and every entry's status are identical between the two, and only `Detail` and `Data`
-  differ.
-- Registering a check with `TouchesExternalDependency = true` and `Kind = Liveness` aborts startup
-  with `ExternalDependencyInLivenessCheck` naming the check.
-- `IModuleRegistry.Resolve` over modules `B` (depends on `A`), `C`, `A` returns `A, C, B`, and
-  returns the same order over the same input presented in a different discovery order.
-- Two modules named `Orders` abort startup with `DuplicateModuleName`; a module depending on
-  `Invoices` when no module provides it aborts with `MissingDependency` naming both; `A → B → A`
+- **S1.1** `AddPlatformWebHost()` is the only Platform call in the sample's `Program.cs`; adding a
+  second mandatory call fails the criterion this slice exists to prove.
+- **S1.2** Liveness returns HTTP 200 with a body enumerating every registered check by name and
+  status. With no Persistence registered the body contains no `PlatformHealthChecks.Database` entry
+  — an absent check reads as absent, not as a passing one.
+- **S1.3** A readiness check returning `Degraded` yields HTTP 200; the same check returning
+  `Unhealthy` yields HTTP 503. Both bodies enumerate the identical entry list.
+- **S1.4** The probe body is `Full` on loopback and in `Development`, `Minimal` elsewhere; the
+  aggregate status and every entry's status are identical between the two, and only `Detail` and
+  `Data` differ.
+- **S1.5** Registering a check with `TouchesExternalDependency = true` and `Kind = Liveness` aborts
+  startup with `ExternalDependencyInLivenessCheck` naming the check.
+- **S1.6** `IModuleRegistry.Resolve` over modules `B` (depends on `A`), `C`, `A` returns `A, C, B`,
+  and returns the same order over the same input presented in a different discovery order.
+- **S1.7** Two modules named `Orders` abort startup with `DuplicateModuleName`; a module depending
+  on `Invoices` when no module provides it aborts with `MissingDependency` naming both; `A → B → A`
   aborts with `CyclicDependency` naming the cycle.
-- Omitting `Outbox:ProcessedRetention` aborts startup with `MissingRequiredSetting` naming the
-  setting **and the configuration source expected to supply it**. `PoisonedRetention` equal to
+- **S1.8** Omitting `Outbox:ProcessedRetention` aborts startup with `MissingRequiredSetting` naming
+  the setting **and the configuration source expected to supply it**. `PoisonedRetention` equal to
   `ProcessedRetention` aborts with `InconsistentSettings` naming both. A
   `Hosting:GracefulShutdownDrainWindow` of `00:10:00` against a `ClaimWindow` of `00:05:00` aborts
   with `InconsistentSettings`. `Outbox:RetryBackoffFactor = 1` aborts with `InvalidSetting` naming
   the constraint. **This is the brief's second CI assertion.**
-- An endpoint that throws returns `ErrorEnvelope` with a stable code and the request's correlation,
-  and no exception text, stack trace or payload content anywhere in the response.
-- Inside a request, `ICurrentCorrelation.Current.TraceId` equals the trace-id of the request's
-  established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`, and
+- **S1.9** An endpoint that throws returns `ErrorEnvelope` with a stable code and the request's
+  correlation, and no exception text, stack trace or payload content anywhere in the response.
+- **S1.10** Inside a request, `ICurrentCorrelation.Current.TraceId` equals the trace-id of the
+  request's established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`, and
   `ICurrentPrincipal.Current` is null. Outside any scope all three throw
   `PlatformContractViolationException` carrying `NoAmbientOperationScope`.
-- A request carrying a well-formed `traceparent` adopts its trace-id as the correlation. A request
-  carrying `traceparent: not-a-traceparent` returns 200 with a fresh root trace, never 400.
-- `IOperationScopeFactory.Begin(TenantId.Implicit, null)` outside any request opens a root trace
-  whose `TraceContext.TraceId` equals the scope's `Correlation.TraceId`.
-- The worker host binds its probes on `127.0.0.1:5100` and is unreachable on the machine's other
-  addresses. With 5100 already bound, startup aborts with `ProbeBindFailed` naming
+- **S1.11** A request carrying a well-formed `traceparent` adopts its trace-id as the correlation. A
+  request carrying `traceparent: not-a-traceparent` returns 200 with a fresh root trace, never 400.
+- **S1.12** `IOperationScopeFactory.Begin(TenantId.Implicit, null)` outside any request opens a root
+  trace whose `TraceContext.TraceId` equals the scope's `Correlation.TraceId`.
+- **S1.13** The worker host binds its probes on `127.0.0.1:5100` and is unreachable on the machine's
+  other addresses. With 5100 already bound, startup aborts with `ProbeBindFailed` naming
   `Hosting:WorkerProbePort`.
-- An `IBackgroundWork` declaring `Worker` ticks in the worker host and never in the web host; one
-  declaring `Both` ticks in both; one declaring no role aborts startup with `NoRoleDeclared`.
-  Hosting invokes the tick on the declared interval, and
+- **S1.14** An `IBackgroundWork` declaring `Worker` ticks in the worker host and never in the web
+  host; one declaring `Both` ticks in both; one declaring no role aborts startup with
+  `NoRoleDeclared`. Hosting invokes the tick on the declared interval, and
   `IPlatformTestHost.RunBackgroundWorkOnceAsync` invokes exactly one.
-- Registration after `Freeze` returns `RegistryFrozen` from all three registries and mutates
-  nothing.
-- CI starts the sample in both roles in a non-`Development` environment and fails if either process
-  exits non-zero or either probe is unreachable.
+- **S1.15** Registration after `Freeze` returns `RegistryFrozen` from all three registries and
+  mutates nothing.
+- **S1.16** CI starts the sample in both roles in a non-`Development` environment and fails if
+  either process exits non-zero or either probe is unreachable.
 
 Out of scope: any database access — the Persistence package does not exist yet, and
 `Persistence:ConnectionString` is validated as present and parseable without anything opening a
@@ -160,47 +160,48 @@ Touches:
 Depends on: S1.
 
 Acceptance:
-- `RunPlatformMigrateModeAsync` against an empty database creates both modules' tables and one
-  migration history table per module, and returns exit status 0. A second run returns 0 and applies
-  nothing.
-- Applying module `B` before module `A`, and `A` before `B`, produce identical applied schemas on
-  both providers.
-- The contract test asserting that no foreign key in the applied schema references a table outside
-  its owner's model passes on both providers, and goes red when a cross-module foreign key is added
-  to a sample module.
-- Two concurrent `RunPlatformMigrateModeAsync` invocations against one store: one applies, the other
-  exits non-zero with `MigrationError.Locked` having applied nothing — including against a store
-  whose schema does not yet exist.
-- 100 identifiers minted at distinct clock instants — the fake clock advanced at least one
+- **S2.1** `RunPlatformMigrateModeAsync` against an empty database creates both modules' tables and
+  one migration history table per module, and returns exit status 0. A second run returns 0 and
+  applies nothing.
+- **S2.2** Applying module `B` before module `A`, and `A` before `B`, produce identical applied
+  schemas on both providers.
+- **S2.3** The contract test asserting that no foreign key in the applied schema references a table
+  outside its owner's model passes on both providers, and goes red when a cross-module foreign key
+  is added to a sample module.
+- **S2.4** Two concurrent `RunPlatformMigrateModeAsync` invocations against one store: one applies,
+  the other exits non-zero with `MigrationError.Locked` having applied nothing — including against a
+  store whose schema does not yet exist.
+- **S2.5** 100 identifiers minted at distinct clock instants — the fake clock advanced at least one
   millisecond between mints — inserted and read back ordered by the identifier column, return in
   mint order on both providers. The same assertion goes red when the SQLite encoder is switched to
   `Guid.ToByteArray()`. No assertion is made about two identifiers minted within one millisecond.
-- Rows stamped `2026-08-03T12:00:00.1000000Z` and `2026-08-03T12:00:00.1500000Z` sort in that order
-  on both providers, and `WHERE created_at <= @now` with `@now` bound as
+- **S2.6** Rows stamped `2026-08-03T12:00:00.1000000Z` and `2026-08-03T12:00:00.1500000Z` sort in
+  that order on both providers, and `WHERE created_at <= @now` with `@now` bound as
   `2026-08-03T12:00:00.1200000Z` returns exactly the first — the comparand written by the same
   capability formatter as the column. The assertion goes red against a formatter that trims trailing
   zeros.
-- One `ExecuteAsync(TransactionIntent.Write, …)` writing a row in each module leaves both rows on
-  success and neither on a thrown failure, on both providers — **including when the second module
-  writes through a raw `DbCommand` enlisted via `IAmbientTransactionAccessor`** rather than opening
-  its own connection. Two connections would leave one row.
-- Every product row carries `tenant = TenantId.Implicit`, `created_at` from `IClock` with
+- **S2.7** One `ExecuteAsync(TransactionIntent.Write, …)` writing a row in each module leaves both
+  rows on success and neither on a thrown failure, on both providers — **including when the second
+  module writes through a raw `DbCommand` enlisted via `IAmbientTransactionAccessor`** rather than
+  opening its own connection. Two connections would leave one row.
+- **S2.8** Every product row carries `tenant = TenantId.Implicit`, `created_at` from `IClock` with
   `Offset == TimeSpan.Zero`, and `created_by` null when there is no principal. The soft-delete
   columns exist on the opted-in table and on no other.
-- A SQLite file in `journal_mode=delete` aborts startup with `UnsupportedJournalMode`; the same file
-  in WAL starts.
-- Against a store whose schema is absent, readiness reports `Degraded` with `PendingMigrations`
-  naming the absent schema — never `Unhealthy`, and no exception escapes a check. **`Database`
-  answers reachability only and stays healthy here**, because a reachable store with no tables is
-  reachable, and in D3 Platform owns no table of its own until S3 — so there is nothing for
-  `Database` to find missing that `PendingMigrations` does not already report. Corrected during
-  S2's reconcile: the original criterion had `Database` citing the same cause, which would make two
-  checks restate one verdict and is the second source of truth this design rejects elsewhere.
-- Applied migrations the host never registered report `Degraded` naming them as `Surplus`, and the
-  host keeps serving.
-- The contract-test suite goes red against a deliberately broken `IProviderCapability` — one whose
-  instant formatter trims and whose identifier encoder uses platform byte order. **This is the
-  brief's fourth CI assertion.**
+- **S2.9** A SQLite file in `journal_mode=delete` aborts startup with `UnsupportedJournalMode`; the
+  same file in WAL starts.
+- **S2.10** Against a store whose schema is absent, readiness reports `Degraded` with
+  `PendingMigrations` naming the absent schema — never `Unhealthy`, and no exception escapes a
+  check. **`Database` answers reachability only and stays healthy here**, because a reachable store
+  with no tables is reachable, and in D3 Platform owns no table of its own until S3 — so there is
+  nothing for `Database` to find missing that `PendingMigrations` does not already report. Corrected
+  during S2's reconcile: the original criterion had `Database` citing the same cause, which would
+  make two checks restate one verdict and is the second source of truth this design rejects
+  elsewhere.
+- **S2.11** Applied migrations the host never registered report `Degraded` naming them as `Surplus`,
+  and the host keeps serving.
+- **S2.12** The contract-test suite goes red against a deliberately broken `IProviderCapability` —
+  one whose instant formatter trims and whose identifier encoder uses platform byte order. **This is
+  the brief's fourth CI assertion.**
 
 Out of scope: the outbox table and both `StampClaimAsync` and `DeleteBoundedAsync`, which arrive
 with their consumers in S5 and S6; tenant **query filters**, which the brief makes a binding non-goal
@@ -229,31 +230,32 @@ Touches:
 Depends on: S2.
 
 Acceptance:
-- Starting the sample web host writes exactly one row with `role = Web`, its instance, started-at,
-  heartbeat-at and fingerprint. Each heartbeat interval updates heartbeat-at and no other column.
-- A host started against a store with no schema does not fail: the heartbeat returns
+- **S3.1** Starting the sample web host writes exactly one row with `role = Web`, its instance,
+  started-at, heartbeat-at and fingerprint. Each heartbeat interval updates heartbeat-at and no
+  other column.
+- **S3.2** A host started against a store with no schema does not fail: the heartbeat returns
   `TransactionError.Unavailable`, retries at its ordinary interval, and the row appears within one
   interval of migrate mode running. No bespoke startup retry exists.
-- With only the web host running in a non-`Development` environment, readiness reports `Degraded` on
-  `PeerHost` naming the missing `Worker` role once the absence has persisted for
+- **S3.3** With only the web host running in a non-`Development` environment, readiness reports
+  `Degraded` on `PeerHost` naming the missing `Worker` role once the absence has persisted for
   `PeerAbsenceGrace`; within the grace it does not. In `Development` it never degrades and the entry
   is informational.
-- Advancing the fake clock by `2 × HeartbeatInterval` with no beat leaves the peer live; `4 ×` plus
-  the grace degrades. A peer that returns inside the grace degrades nothing.
-- Two hosts in one store differing on `Outbox:ProcessedRetention` both report `Degraded` on
+- **S3.4** Advancing the fake clock by `2 × HeartbeatInterval` with no beat leaves the peer live; `4
+  ×` plus the grace degrades. A peer that returns inside the grace degrades nothing.
+- **S3.5** Two hosts in one store differing on `Outbox:ProcessedRetention` both report `Degraded` on
   `SettingsFingerprint` naming the peer instance. Two hosts differing only on
   `Outbox:DispatchInterval` do not — it is not `[Fingerprinted]`.
-- Two hosts pointed at different SQLite files each report `Degraded` on `PeerHost` while each
-  individually serves and each is individually configured correctly.
-- Graceful shutdown deletes the host's own row; the surviving peer sees the absence at once and
-  degrades only after the rolling grace measured on its own clock.
-- `ISettingsFingerprint.Compute` over identical `PlatformOptions` returns identical strings in two
-  separate processes. Asserted by reflection over every property of `PlatformOptions`: the value
-  changes when a `[Fingerprinted]` property changes and does not change when any other does.
-- Two hosts of the same role on one machine hold different `InstanceId`s, and a restarted host holds
-  a different one from the row it replaced.
-- A dead instance's stale fingerprint never contradicts a live one's — peer and fingerprint checks
-  consider live rows only.
+- **S3.6** Two hosts pointed at different SQLite files each report `Degraded` on `PeerHost` while
+  each individually serves and each is individually configured correctly.
+- **S3.7** Graceful shutdown deletes the host's own row; the surviving peer sees the absence at once
+  and degrades only after the rolling grace measured on its own clock.
+- **S3.8** `ISettingsFingerprint.Compute` over identical `PlatformOptions` returns identical strings
+  in two separate processes. Asserted by reflection over every property of `PlatformOptions`: the
+  value changes when a `[Fingerprinted]` property changes and does not change when any other does.
+- **S3.9** Two hosts of the same role on one machine hold different `InstanceId`s, and a restarted
+  host holds a different one from the row it replaced.
+- **S3.10** A dead instance's stale fingerprint never contradicts a live one's — peer and
+  fingerprint checks consider live rows only.
 
 Out of scope: pruning dead registration rows — every retention window lands together in S6; any
 outbox condition on readiness (S6); reacting to a detected split beyond reporting it, since no host
@@ -287,53 +289,54 @@ Touches:
 Depends on: S2.
 
 Acceptance:
-- An endpoint writing a domain row and calling `Enqueue(new OrderPlaced(…))` leaves one product row
-  and one outbox row after commit, and neither after a rollback, on both providers.
-- `Enqueue` returns the id synchronously, before the transaction commits, and the committed row's
-  `id` equals the returned value.
-- `Enqueue` with no ambient transaction throws `PlatformContractViolationException` carrying
-  `NoAmbientTransaction`; with no ambient operation scope, `NoAmbientOperationScope`; with an event
-  type no registration bound to a name, `UnregisteredEventType`. Nothing is written in any of the
-  three cases. **All three are provider contract tests.**
-- The stored row carries: `type` equal to the registered literal and unchanged after the CLR class
-  is renamed; `tenant` from the ambient scope; `trace_parent` the complete traceparent **including
-  trace flags**; `trace_state` when the origin carried one and null otherwise; `correlation` equal
-  to `ICurrentCorrelation.Current.TraceId`; `culture` equal to `ICurrentCulture.Current`; `attempts`
-  0; and every dispatch-state column null.
-- An event enqueued inside a scope opened with culture `bg` stores `bg`, and a handler dispatching it
-  in a **worker process started under a different operating-system culture** observes `bg` from
-  `ICurrentCulture.Current`. The assertion goes red when the dispatcher reads the ambient
+- **S4.1** An endpoint writing a domain row and calling `Enqueue(new OrderPlaced(…))` leaves one
+  product row and one outbox row after commit, and neither after a rollback, on both providers.
+- **S4.2** `Enqueue` returns the id synchronously, before the transaction commits, and the committed
+  row's `id` equals the returned value.
+- **S4.3** `Enqueue` with no ambient transaction throws `PlatformContractViolationException`
+  carrying `NoAmbientTransaction`; with no ambient operation scope, `NoAmbientOperationScope`; with
+  an event type no registration bound to a name, `UnregisteredEventType`. Nothing is written in any
+  of the three cases. **All three are provider contract tests.**
+- **S4.4** The stored row carries: `type` equal to the registered literal and unchanged after the
+  CLR class is renamed; `tenant` from the ambient scope; `trace_parent` the complete traceparent
+  **including trace flags**; `trace_state` when the origin carried one and null otherwise;
+  `correlation` equal to `ICurrentCorrelation.Current.TraceId`; `culture` equal to
+  `ICurrentCulture.Current`; `attempts` 0; and every dispatch-state column null.
+- **S4.5** An event enqueued inside a scope opened with culture `bg` stores `bg`, and a handler
+  dispatching it in a **worker process started under a different operating-system culture** observes
+  `bg` from `ICurrentCulture.Current`. The assertion goes red when the dispatcher reads the ambient
   `CultureInfo.CurrentCulture` instead of the row — which is the defect the column exists to prevent
   and is invisible whenever the two happen to agree.
-- A follow-up event enqueued by that handler stores `bg` unchanged, at any depth — culture propagates
-  like `correlation`, not like `trace_parent`.
-- Inside a request, `ICurrentCulture.Current` equals `CultureTag.Invariant` **even when the request
-  carries an `Accept-Language` header** — nothing in D3 resolves culture, and a test sending one
-  proves the absence rather than assuming it. Outside any scope it throws
+- **S4.6** A follow-up event enqueued by that handler stores `bg` unchanged, at any depth — culture
+  propagates like `correlation`, not like `trace_parent`.
+- **S4.7** Inside a request, `ICurrentCulture.Current` equals `CultureTag.Invariant` **even when the
+  request carries an `Accept-Language` header** — nothing in D3 resolves culture, and a test sending
+  one proves the absence rather than assuming it. Outside any scope it throws
   `PlatformContractViolationException` carrying `NoAmbientOperationScope`, as the other three
   accessors do.
-- A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new CultureTag("bg"))`
-  yields `ICurrentCulture.Current` of `bg`, and the same call omitting the argument yields
-  `CultureTag.Invariant` — the invariant being the empty tag is what makes the omitted case correct
-  rather than merely convenient.
-- The check constraints hold: `claimed_by` and `claimed_at` are null together, `attempts >= 0`, and
-  `poisoned_at` set implies `last_error` non-null. **No constraint makes `processed_at` and
+- **S4.8** A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new
+  CultureTag("bg"))` yields `ICurrentCulture.Current` of `bg`, and the same call omitting the
+  argument yields `CultureTag.Invariant` — the invariant being the empty tag is what makes the
+  omitted case correct rather than merely convenient.
+- **S4.9** The check constraints hold: `claimed_by` and `claimed_at` are null together, `attempts >=
+  0`, and `poisoned_at` set implies `last_error` non-null. **No constraint makes `processed_at` and
   `poisoned_at` mutually exclusive** — all four combinations are legal and each names a state.
-- `OutboxMessage.State` returns `Pending` for a freshly inserted row, and `DueAt` returns
+- **S4.10** `OutboxMessage.State` returns `Pending` for a freshly inserted row, and `DueAt` returns
   `OccurredAt` while `NextAttemptAt` is null.
-- A second handler registration for a registered `EventTypeName` aborts startup with
+- **S4.11** A second handler registration for a registered `EventTypeName` aborts startup with
   `DuplicateHandlerForType` naming the type and both handlers. A second `EventTypeName` for a bound
   CLR type aborts with `DuplicateNameForEventType`. A handler whose constructor dependency cannot be
   resolved aborts **worker** startup with `HandlerNotConstructible` naming the handler and the
   missing dependency, and does not fail the web host — which registers the same triple in order to
   enqueue.
-- A payload written under one provider deserializes under the other and back. A stored payload
-  carrying an unknown member deserializes without error; an enum round-trips as its string name; a
-  type that gained an optional field reads rows written before it, and a type that has not gained it
-  reads rows written after.
-- The pinned serializer options are not resolvable from the container and no converter can be
-  registered — asserted by attempting both.
-- `IEventCapture.Enqueued` records the id, type, tenant, correlation and instant of every enqueue.
+- **S4.12** A payload written under one provider deserializes under the other and back. A stored
+  payload carrying an unknown member deserializes without error; an enum round-trips as its string
+  name; a type that gained an optional field reads rows written before it, and a type that has not
+  gained it reads rows written after.
+- **S4.13** The pinned serializer options are not resolvable from the container and no converter can
+  be registered — asserted by attempting both.
+- **S4.14** `IEventCapture.Enqueued` records the id, type, tenant, correlation and instant of every
+  enqueue.
 
 Out of scope: dispatch, claiming and every dispatch-state write (S5); redrive and discard (S7);
 fan-out — a second handler for a type is a startup failure by design, not a gap to close; an
@@ -362,46 +365,47 @@ Touches:
 Depends on: S3, S4.
 
 Acceptance:
-- Three enqueued events and one dispatch tick: all three handlers ran and all three rows are in the
-  `Processed` state.
-- With `DispatchTickBudget = 2` and five eligible rows, one tick dispatches exactly two.
-- The sample's web process is killed after its domain transaction commits and before any dispatch
-  tick runs. The row survives; after restart the worker's next tick delivers it and the handler
-  observes the event. **This is the brief's third CI assertion and Persistence's stated
+- **S5.1** Three enqueued events and one dispatch tick: all three handlers ran and all three rows
+  are in the `Processed` state.
+- **S5.2** With `DispatchTickBudget = 2` and five eligible rows, one tick dispatches exactly two.
+- **S5.3** The sample's web process is killed after its domain transaction commits and before any
+  dispatch tick runs. The row survives; after restart the worker's next tick delivers it and the
+  handler observes the event. **This is the brief's third CI assertion and Persistence's stated
   done-criterion.**
-- A handler returning `HandlerError.Transient` sets `attempts` to 1, `next_attempt_at` to now plus
-  30 s, records `last_error`, and leaves the row `Pending`. The row is not claimed by a tick before
-  that instant and is claimed by one at it, with the fake clock supplying both.
-- Attempts 1 through 12 under base 30 s, factor 2 and cap 6 h produce a non-decreasing backoff that
-  reaches and holds the cap; the twelfth failure sets `poisoned_at` with `last_error` non-null, and
-  no later tick claims the row.
-- `HandlerError.Permanent` poisons on the first failure, leaving `attempts` at 1 rather than burning
-  the remaining eleven.
-- An exception escaping a handler is treated as `Transient` and consumes one attempt.
-- A row whose `type` resolves to no handler is deferred: the claim is released, `first_deferred_at`
-  is stamped, `next_attempt_at` is set one fixed minute ahead, and `attempts` stays 0. A second
-  deferral leaves `first_deferred_at` unchanged. A row still unresolvable at
+- **S5.4** A handler returning `HandlerError.Transient` sets `attempts` to 1, `next_attempt_at` to
+  now plus 30 s, records `last_error`, and leaves the row `Pending`. The row is not claimed by a
+  tick before that instant and is claimed by one at it, with the fake clock supplying both.
+- **S5.5** Attempts 1 through 12 under base 30 s, factor 2 and cap 6 h produce a non-decreasing
+  backoff that reaches and holds the cap; the twelfth failure sets `poisoned_at` with `last_error`
+  non-null, and no later tick claims the row.
+- **S5.6** `HandlerError.Permanent` poisons on the first failure, leaving `attempts` at 1 rather
+  than burning the remaining eleven.
+- **S5.7** An exception escaping a handler is treated as `Transient` and consumes one attempt.
+- **S5.8** A row whose `type` resolves to no handler is deferred: the claim is released,
+  `first_deferred_at` is stamped, `next_attempt_at` is set one fixed minute ahead, and `attempts`
+  stays 0. A second deferral leaves `first_deferred_at` unchanged. A row still unresolvable at
   `first_deferred_at + 24 h` is poisoned — measured from first deferral, so a row whose
   `occurred_at` is three days old still gets the full window.
-- A row whose payload does not deserialize takes the same deferral path and increments nothing.
-- With registered migrations unapplied, a dispatch tick claims nothing, stamps nothing and
+- **S5.9** A row whose payload does not deserialize takes the same deferral path and increments
+  nothing.
+- **S5.10** With registered migrations unapplied, a dispatch tick claims nothing, stamps nothing and
   increments nothing.
-- Two dispatchers ticking concurrently against one eligible row: exactly one receives it and the
-  other receives nothing, on both providers. **A provider contract test.**
-- A dispatch-state write from a holder whose claim was reclaimed returns `ClaimLost`, changes no
-  column, and is counted as duplicate-delivery evidence rather than escalated. The row keeps the
-  state the reclaiming dispatcher left. **A provider contract test.**
-- A claim older than `ClaimWindow` is picked up by the ordinary claim query, with no separate
-  reclaim pass running.
-- Inside a handler: `ICurrentCorrelation.Current.TraceId` equals the row's `correlation` column,
-  `ICurrentTenant.Current` equals the row's tenant, `ICurrentPrincipal.Current` is null, and the
-  active trace is a **new** trace carrying a link to the stored one and the stored sampled flag —
-  its trace-id differs from the stored traceparent's.
-- Request → event → follow-up → follow-up: all four rows carry the originating request's correlation
-  unchanged, while each follow-up's stored `trace_parent` carries the trace-id of the link that
-  enqueued it.
-- Graceful shutdown stops claiming immediately, releases claims not yet started, finishes an
-  in-flight message inside the 30 s drain window, and abandons one still running when the window
+- **S5.11** Two dispatchers ticking concurrently against one eligible row: exactly one receives it
+  and the other receives nothing, on both providers. **A provider contract test.**
+- **S5.12** A dispatch-state write from a holder whose claim was reclaimed returns `ClaimLost`,
+  changes no column, and is counted as duplicate-delivery evidence rather than escalated. The row
+  keeps the state the reclaiming dispatcher left. **A provider contract test.**
+- **S5.13** A claim older than `ClaimWindow` is picked up by the ordinary claim query, with no
+  separate reclaim pass running.
+- **S5.14** Inside a handler: `ICurrentCorrelation.Current.TraceId` equals the row's `correlation`
+  column, `ICurrentTenant.Current` equals the row's tenant, `ICurrentPrincipal.Current` is null, and
+  the active trace is a **new** trace carrying a link to the stored one and the stored sampled flag
+  — its trace-id differs from the stored traceparent's.
+- **S5.15** Request → event → follow-up → follow-up: all four rows carry the originating request's
+  correlation unchanged, while each follow-up's stored `trace_parent` carries the trace-id of the
+  link that enqueued it.
+- **S5.16** Graceful shutdown stops claiming immediately, releases claims not yet started, finishes
+  an in-flight message inside the 30 s drain window, and abandons one still running when the window
   closes — leaving that row to claim expiry.
 
 Out of scope: prune and retention (S6); redrive and discard (S7); any ordering assertion — the
@@ -429,32 +433,32 @@ Touches:
 Depends on: S3, S5.
 
 Acceptance:
-- One prune tick deletes a processed row older than `ProcessedRetention` and leaves one younger;
-  deletes a poisoned row and a discarded row only past `PoisonedRetention`; and **never deletes a
-  pending row of any age**.
-- One prune tick deletes a host registration row whose heartbeat is older than
+- **S6.1** One prune tick deletes a processed row older than `ProcessedRetention` and leaves one
+  younger; deletes a poisoned row and a discarded row only past `PoisonedRetention`; and **never
+  deletes a pending row of any age**.
+- **S6.2** One prune tick deletes a host registration row whose heartbeat is older than
   `HostRegistration:RetentionWindow` and leaves a live one — the three `PruneTarget` values are one
   registration.
-- With 1 200 eligible rows and `PruneBatchSize = 500`, no single delete statement removes more than
-  500 rows.
-- Pruning a poisoned row logs at warning naming the row.
-- Two workers ticking prune concurrently: one acquires the lease and runs; the other's
+- **S6.3** With 1 200 eligible rows and `PruneBatchSize = 500`, no single delete statement removes
+  more than 500 rows.
+- **S6.4** Pruning a poisoned row logs at warning naming the row.
+- **S6.5** Two workers ticking prune concurrently: one acquires the lease and runs; the other's
   `AcquireAsync` returns `LeaseError.Held` and it skips the run entirely rather than waiting.
-- A holder whose `RenewAsync` returns `LeaseError.Lost` aborts its run rather than continuing on the
-  assumption it still holds.
-- A lease whose `expires_at` has passed is acquired by a second holder, and the original holder's
-  next renewal returns `Lost`.
-- `OutboxBacklogAge` degrades when the oldest pending row's `DueAt` is more than
+- **S6.6** A holder whose `RenewAsync` returns `LeaseError.Lost` aborts its run rather than
+  continuing on the assumption it still holds.
+- **S6.7** A lease whose `expires_at` has passed is acquired by a second holder, and the original
+  holder's next renewal returns `Lost`.
+- **S6.8** `OutboxBacklogAge` degrades when the oldest pending row's `DueAt` is more than
   `Health:BacklogAgeThreshold` in the past, and stays healthy for each of: ten rows deferred one
   minute ahead, ten rows backing off six hours ahead, and one row whose `occurred_at` is three days
   old but whose `next_attempt_at` is now. A worker stopped for ten minutes with due rows degrades
   it.
-- A poisoned row of any age degrades `OutboxPoisonCount`; a discarded row does not. Neither returns
-  `Unhealthy`, and one poisoned message never fails readiness's wire status.
-- `PendingCountThreshold + 1` pending rows degrade `OutboxPendingCount`; `PendingCountThreshold - 1`
-  do not. Poisoned, processed and discarded rows are not counted.
-- Every one of these checks self-guards on an absent schema, reporting `Degraded` citing the schema
-  rather than throwing.
+- **S6.9** A poisoned row of any age degrades `OutboxPoisonCount`; a discarded row does not. Neither
+  returns `Unhealthy`, and one poisoned message never fails readiness's wire status.
+- **S6.10** `PendingCountThreshold + 1` pending rows degrade `OutboxPendingCount`;
+  `PendingCountThreshold - 1` do not. Poisoned, processed and discarded rows are not counted.
+- **S6.11** Every one of these checks self-guards on an absent schema, reporting `Degraded` citing
+  the schema rather than throwing.
 
 Out of scope: redrive and discard (S7); a retention window for pending rows — the design forbids
 one, since pruning an undispatched row is the message loss the outbox exists to prevent;
@@ -464,7 +468,7 @@ instead.
 ---
 
 ## S7 — Redrive and discard
-**Status:** in progress
+**Status:** shipped · [#40](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/40)
 
 Delivers: an operator recovers or retires poisoned rows, per id and in bulk by type, without editing
 the database by hand.
@@ -478,25 +482,26 @@ Touches:
 Depends on: S5, S6.
 
 Acceptance:
-- `RedriveAsync` over a poisoned row clears `poisoned_at`, sets `attempts` to 0, clears
+- **S7.1** `RedriveAsync` over a poisoned row clears `poisoned_at`, sets `attempts` to 0, clears
   `first_deferred_at`, `claimed_by` and `claimed_at`, sets `next_attempt_at` to now, and returns
   `Applied`. The next dispatch tick claims and delivers it.
-- A row poisoned with `next_attempt_at` six hours ahead is delivered by the next tick after
+- **S7.2** A row poisoned with `next_attempt_at` six hours ahead is delivered by the next tick after
   redrive — not six hours later.
-- Immediately after redriving a row whose `occurred_at` is three days old, `OutboxBacklogAge` is not
-  degraded: the past-due age measures from the recovery.
-- `RedriveAsync` over an id that no longer exists returns `NotFound`; over a discarded row (both
-  marks set) returns `NotPoisoned` and changes nothing; over a pending row returns `NotPoisoned`.
-- A forty-id call where one row was pruned returns thirty-nine `Applied` and one `NotFound` as a
-  **successful** result, not a failed operation.
-- `DiscardAsync` sets `processed_at`, keeps `poisoned_at`, and appends the reason to `last_error`.
-  The row leaves `OutboxPoisonCount`, still prunes on the poison window, and is refused by a
-  subsequent redrive.
-- `RedriveByTypeAsync` over 500 poisoned rows of one type returns 500 and leaves rows of every other
-  type untouched; `DiscardByTypeAsync` likewise.
-- `ListPoisonedAsync(limit: 10)` returns at most ten rows, all in the `Poisoned` state and none
-  discarded.
-- No HTTP endpoint, console command or UI invokes any of these, on either host.
+- **S7.3** Immediately after redriving a row whose `occurred_at` is three days old,
+  `OutboxBacklogAge` is not degraded: the past-due age measures from the recovery.
+- **S7.4** `RedriveAsync` over an id that no longer exists returns `NotFound`; over a discarded row
+  (both marks set) returns `NotPoisoned` and changes nothing; over a pending row returns
+  `NotPoisoned`.
+- **S7.5** A forty-id call where one row was pruned returns thirty-nine `Applied` and one `NotFound`
+  as a **successful** result, not a failed operation.
+- **S7.6** `DiscardAsync` sets `processed_at`, keeps `poisoned_at`, and appends the reason to
+  `last_error`. The row leaves `OutboxPoisonCount`, still prunes on the poison window, and is
+  refused by a subsequent redrive.
+- **S7.7** `RedriveByTypeAsync` over 500 poisoned rows of one type returns 500 and leaves rows of
+  every other type untouched; `DiscardByTypeAsync` likewise.
+- **S7.8** `ListPoisonedAsync(limit: 10)` returns at most ten rows, all in the `Poisoned` state and
+  none discarded.
+- **S7.9** No HTTP endpoint, console command or UI invokes any of these, on either host.
 
 Out of scope: an administrative endpoint, console or UI — the design excludes one from D3 and it is
 not smuggled in through the sample; redriving a processed or pending row; editing a payload as part
@@ -505,7 +510,7 @@ of a redrive; a bulk operation keyed on anything other than `EventTypeName`.
 ---
 
 ## S8 — Telemetry
-**Status:** queued
+**Status:** in progress
 
 Delivers: logs, traces and metrics configured by the standard registration call alone, exporting
 nowhere by default, and never able to fail a request.
@@ -519,25 +524,26 @@ Touches:
 Depends on: S5.
 
 Acceptance:
-- With no exporter configured, the sample logs to console and file and makes no outbound connection
-  attempt at startup or in steady state — asserted with outbound network blocked, which is the
-  brief's environment rather than a contrivance.
-- `ServiceName` and `ServiceVersion` left unset resolve to the entry assembly's name and
+- **S8.1** With no exporter configured, the sample logs to console and file and makes no outbound
+  connection attempt at startup or in steady state — asserted with outbound network blocked, which
+  is the brief's environment rather than a contrivance.
+- **S8.2** `ServiceName` and `ServiceVersion` left unset resolve to the entry assembly's name and
   informational version and appear on every exported span and log record.
-- One request produces one server span carrying the correlation; a database call inside it produces
-  a child span.
-- A dispatched message produces a span whose trace-id differs from the row's stored trace-id and
-  which carries a link to it — a trace reaching from the inbound request through the background job,
-  which is Observability's stated done-criterion.
-- Against an unreachable collector: request latency is unchanged within noise, the export queue is
-  bounded, dropped signals are counted, and exactly one log line is written on the transition into
-  dropping rather than one per failure.
-- A configuration value named as a secret appears in no exported log, span attribute or metric
-  label; no payload content appears in any of them.
-- No metric carries a label whose value is an id, a correlation, a tenant or any other unbounded
-  value.
-- With telemetry in place the sample satisfies the brief's **first CI assertion** whole: health,
-  readiness, correlation and telemetry all working through the standard registration call alone.
+- **S8.3** One request produces one server span carrying the correlation; a database call inside it
+  produces a child span.
+- **S8.4** A dispatched message produces a span whose trace-id differs from the row's stored
+  trace-id and which carries a link to it — a trace reaching from the inbound request through the
+  background job, which is Observability's stated done-criterion.
+- **S8.5** Against an unreachable collector: request latency is unchanged within noise, the export
+  queue is bounded, dropped signals are counted, and exactly one log line is written on the
+  transition into dropping rather than one per failure.
+- **S8.6** A configuration value named as a secret appears in no exported log, span attribute or
+  metric label; no payload content appears in any of them.
+- **S8.7** No metric carries a label whose value is an id, a correlation, a tenant or any other
+  unbounded value.
+- **S8.8** With telemetry in place the sample satisfies the brief's **first CI assertion** whole:
+  health, readiness, correlation and telemetry all working through the standard registration call
+  alone.
 
 Out of scope: choosing, shipping or operating a collector; dashboards and alert rules; per-product
 semantic conventions — Observability collects and does not interpret; making export synchronous or
@@ -558,20 +564,20 @@ references; **docs/** — the published reference.
 Depends on: S1–S8.
 
 Acceptance:
-- `dotnet pack` produces six packages, each carrying its doc-comment XML, and the build fails when
-  any public type or member lacks a doc comment.
-- CI publishes the six to GitHub Packages as a private feed and the sample restores them from it
-  with authentication — proving pack, publish and authenticated restore without spending the
+- **S9.1** `dotnet pack` produces six packages, each carrying its doc-comment XML, and the build
+  fails when any public type or member lacks a doc comment.
+- **S9.2** CI publishes the six to GitHub Packages as a private feed and the sample restores them
+  from it with authentication — proving pack, publish and authenticated restore without spending the
   unreserved public identifiers.
-- Every assertion in S1–S8 runs a second time against the sample built on the restored packages
-  rather than on project references, and passes.
-- The generated API reference contains every public type in all six packages. A public type added
-  without doc comments fails the reference build, and the release job does not run when the
+- **S9.3** Every assertion in S1–S8 runs a second time against the sample built on the restored
+  packages rather than on project references, and passes.
+- **S9.4** The generated API reference contains every public type in all six packages. A public type
+  added without doc comments fails the reference build, and the release job does not run when the
   reference build fails.
-- No shipped package declares a dependency on Testing — asserted against the produced package
-  manifests, since Testing refuses to be a development dependency of anything shipped.
-- The published version is a 0.x version, and the release records that the API is explicitly
-  unstable.
+- **S9.5** No shipped package declares a dependency on Testing — asserted against the produced
+  package manifests, since Testing refuses to be a development dependency of anything shipped.
+- **S9.6** The published version is a 0.x version, and the release records that the API is
+  explicitly unstable.
 
 Out of scope: publishing to nuget.org or reserving the public identifiers — the brief leaves them
 unspent deliberately; any stability or compatibility promise beyond 0.x; release-note automation;

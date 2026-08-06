@@ -4,6 +4,50 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-06 — Acceptance criteria carry stable ids, and all nine slice issues migrate to the fenced shape
+Context: `/track` compares a slice against its issue on **criterion id, never prose**, and closes an
+issue when every `Done when` box is ticked. Neither side could support either operation: no
+`Acceptance:` bullet in `30-slices.md` carried an id, and none of the nine slice issues (#15–#23) had
+a checkbox or an `<!-- agent:start -->` fence — each body was the slice section copied verbatim. So a
+criterion could be added, removed or renumbered and no run of `/track` would see it, and S8 and S9
+could never be closed by the command that owns closing them. The gap has a dated origin already in
+this log: the `2026-08-04 — Kit catch-up install` entry names "the human-first fenced-issue shape,
+stable criterion ids" among the incoming kit's additions. The kit was installed; the existing issues
+and this document were never migrated to it.
+Chosen: number every `Acceptance:` bullet `S<n>.<m>`, contiguous from 1 per slice — 102 across the
+nine — and rewrite all nine issue bodies into the narrative + `Done when` + fenced-agent-block shape,
+including the seven already closed. Prose is untouched: the transform was scripted and verified by
+stripping the ids back out and diffing against `HEAD`, which came back identical. Ids are positional
+and permanent; a future criterion appends rather than renumbering, since renumbering silently
+repoints an existing checkbox at different work.
+Rejected: **Migrate S8 and S9 only**, leaving the seven closed issues as the historical record of how
+those slices were actually tracked — the smaller change, and the one recommended; declined because it
+leaves the closed set unauditable by id, which is the only comparison `/track` performs.
+**Ids in the document alone**, so future issues inherit them — helps no slice that exists, since all
+nine already have issues. **Accept the gap** — makes `30-slices.md` and its `**Status:**` marker the
+doneness signal in place of the tracker, contradicting `AGENTS.md`, *Tracking work*.
+Reversibility: cheap for the document — one revert. Expensive for the issues: a rewritten body
+replaces what was there, and the seven closed ones have no other copy of their original text.
+
+### 2026-08-06 — S7's status marker is corrected on merge, and S8 advances to `in progress`
+Context: PR #40 merged S7 and closed #21, but `40796bc` touched eight source and test files and not
+`design/30-slices.md`, so the marker stayed `in progress` with no PR link while every shipped slice
+before it carried `shipped · [#PR]`. `site/src/roadmap/roadmapData.ts` parses that line, so the
+public roadmap was showing a merged slice as in-flight. Found by `/track`, which reports marker drift
+but does not resolve it.
+Chosen: S7 to `shipped · [#40]`, and S8 from `queued` to `in progress`. The second half was not the
+initial recommendation — leaving S8 `queued` looked more honest, since nobody has started it — and
+that recommendation was wrong on a checkable fact: `build/Test-SliceStatusMarkers.ps1:97` and
+`roadmapData.ts:101` both require at least one `in progress` slice whenever any slice is `queued`,
+so the combination fails the documentation gate and the site build. The invariant defines
+`in progress` as the head of the queue rather than a claim that work has begun, which is what makes
+advancing S8 correct rather than merely required.
+Rejected: **Relax the invariant** in both the script and the parser — costs the gate whose stated
+purpose is failing a pull request that merges a slice without updating its marker, which is precisely
+the miss that produced this drift. **Leave the marker** — keeps the public roadmap wrong and returns
+the same finding on the next `/track` run.
+Reversibility: cheap. Two lines.
+
 ### 2026-08-05 — Outbox staging preserves the public provider transaction seam
 Context: S2 reconciliation made `IProviderCapability` implementable by third-party providers and
 removed casts from its public transaction return to Platform's internal implementation. S4's outbox
