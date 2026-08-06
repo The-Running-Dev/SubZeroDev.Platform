@@ -14,18 +14,22 @@ could never be closed by the command that owns closing them. The gap has a dated
 this log: the `2026-08-04 — Kit catch-up install` entry names "the human-first fenced-issue shape,
 stable criterion ids" among the incoming kit's additions. The kit was installed; the existing issues
 and this document were never migrated to it.
-Chosen: number every `Acceptance:` bullet `S<n>.<m>`, contiguous from 1 per slice — 102 across the
+Chosen: number every `Acceptance:` bullet `S<n>.<m>`, contiguous from 1 per slice — 103 across the
 nine — and rewrite all nine issue bodies into the narrative + `Done when` + fenced-agent-block shape,
 including the seven already closed. Prose is untouched: the transform was scripted and verified by
-stripping the ids back out and diffing against `HEAD`, which came back identical. Ids are positional
-and permanent; a future criterion appends rather than renumbering, since renumbering silently
-repoints an existing checkbox at different work.
+stripping the ids back out and diffing against the pre-change file, which came back identical. Ids
+are positional and permanent; a future criterion appends rather than renumbering, since renumbering
+silently repoints an existing checkbox at different work.
 Rejected: **Migrate S8 and S9 only**, leaving the seven closed issues as the historical record of how
 those slices were actually tracked — the smaller change, and the one recommended; declined because it
 leaves the closed set unauditable by id, which is the only comparison `/track` performs.
 **Ids in the document alone**, so future issues inherit them — helps no slice that exists, since all
 nine already have issues. **Accept the gap** — makes `30-slices.md` and its `**Status:**` marker the
 doneness signal in place of the tracker, contradicting `AGENTS.md`, *Tracking work*.
+Known cost, accepted: the count is a moving target. S8 gained a ninth criterion in #44 while this
+change was being prepared, which is exactly why the ids are generated from the document rather than
+transcribed — but it also means any id list quoted outside `30-slices.md`, including in an issue,
+is a copy that can go stale. That is what the `@ <sha>` pin on each issue exists to expose.
 Reversibility: cheap for the document — one revert. Expensive for the issues: a rewritten body
 replaces what was there, and the seven closed ones have no other copy of their original text.
 
@@ -48,6 +52,20 @@ the miss that produced this drift. **Leave the marker** — keeps the public roa
 the same finding on the next `/track` run.
 Reversibility: cheap. Two lines.
 
+### 2026-08-05 — S8 routes both local log sinks through Serilog
+Context: The recovered S8 amendment kept the standard console provider while assigning only the
+file sink to Serilog, but the same amendment promised one redaction boundary and UTF-8 JSON Lines on
+both local outputs. A provider outside that boundary could satisfy neither promise reliably.
+Chosen: add **Serilog.Sinks.Console 6.1.1** and route both console and file output through Serilog,
+using the same JSON formatter, redactor and 10 000-event non-blocking async buffer. This supersedes
+only the earlier S8 dependency decision's phrase "beside the standard console provider"; its other
+package and policy choices stand.
+Rejected: **Keep the standard console provider** — bypasses the Serilog redaction and formatting
+boundary. **Keep plain-text console output** — contradicts the contract's JSON Lines invariant and
+makes the two mandatory local outputs structurally different. **Build a second console redactor** —
+duplicates the safety boundary and invites drift.
+Reversibility: moderate before publication; expensive once operators parse the console stream.
+
 ### 2026-08-05 — Outbox staging preserves the public provider transaction seam
 Context: S2 reconciliation made `IProviderCapability` implementable by third-party providers and
 removed casts from its public transaction return to Platform's internal implementation. S4's outbox
@@ -65,6 +83,61 @@ on the provider-returned object by convention** — recreates the same undocumen
 requirement under another name.
 Reversibility: cheap internally; the public contract is unchanged. Removing the wrapper would again
 break an implementation the public interface explicitly admits.
+
+### 2026-08-05 — S8 adopts Serilog for mandatory file logging and official OpenTelemetry for OTLP
+Context: S8 promises console and file logs without a collector, but the .NET logging stack has no
+built-in file provider. The existing design also promised traces, metrics and optional OTLP without
+naming packages, versions or a provider-neutral database-instrumentation seam. That left the first
+implementation to choose dependencies and public behaviour by accident.
+Chosen: **Serilog.Extensions.Hosting 10.0.0**, **Serilog.Sinks.File 7.0.0** and
+**Serilog.Sinks.Async 2.1.0** integrate mandatory file logging beside the standard console provider,
+with daily and 100 MB rolling,
+14-day and 31-file retention, shared role-specific files, and a 10 000-event non-blocking buffer
+whose supported inspector exposes exact dropped-event counts. **OpenTelemetry.Extensions.Hosting,
+OpenTelemetry.Exporter.OpenTelemetryProtocol, OpenTelemetry.Instrumentation.AspNetCore,
+OpenTelemetry.Instrumentation.Http and OpenTelemetry.Instrumentation.Runtime**, all **1.17.0**,
+provide traces, metrics, logs and OTLP HTTP/protobuf. The official experimental in-memory retry is
+enabled and accepted for the 0.x Platform surface; it has no disk queue, and an OpenTelemetry
+upgrade must revisit it. Persistence emits one provider-neutral activity around each unit-of-work
+transaction through a stable Abstractions source name, so both database providers have the same
+span without either taking an OpenTelemetry dependency.
+Rejected: **Console-only Microsoft logging** — cannot satisfy mandatory file logging. **A custom
+file provider** — reimplements rolling, retention, multi-process sharing and queue monitoring that a
+mature provider supplies. **NLog** — capable, but adopting two equivalent providers buys no second
+capability; Serilog's file and async sinks directly expose the required sharing and drop inspector.
+**Npgsql.OpenTelemetry** — its database tracing remains experimental and SQLite has no equivalent,
+so taking it would make provider behaviour diverge. **A `DbCommand` proxy** — hand-rolls broad SQL
+instrumentation, creates a parameter-leak boundary, and exceeds S8's unit-of-work requirement.
+**A custom OpenTelemetry batch processor or parsing SDK diagnostic strings** — would manufacture
+exact OTLP drop accounting on unsupported internals. Exact OTLP queue drop counts remain outside D3
+until the SDK exposes a supported metric or hook.
+Reversibility: moderate before publication; expensive once consumers and operators depend on the
+file shape, source names and package behaviour.
+
+### 2026-08-05 — S8 telemetry policy is fixed, typed and non-blocking
+Context: The earlier observability page called an OTLP endpoint a connection string, allowed tenant
+metric labels, always sampled product-specific plugin work, and promised errors and slow traces were
+always kept. The contract named no telemetry options, file policy, redaction boundary, resource
+identity or testable backpressure behaviour. Those claims cannot all be implemented with head
+sampling and the supported OpenTelemetry SDK surface.
+Chosen: add `TelemetryOptions` under `Platform:Telemetry`, with only `LogDirectory` and nullable
+absolute HTTP/HTTPS `OtlpEndpoint`; endpoint absence starts no exporter and makes no outbound
+connection. The fixed policies are UTF-8 JSON Lines, bounded non-blocking local and OTLP queues,
+four shared identity fields, a non-injectable redactor, per-instrument bounded label allowlists,
+upstream sampling decisions honoured, deterministic 10% trace-id sampling for new HTTP roots, and
+the stored origin decision copied to a new linked dispatch trace. Blocking-sink tests use a gate:
+application work must complete while export remains blocked, then export must recover after release.
+Rejected: **Also consuming `OTEL_EXPORTER_OTLP_*`** — creates two configuration sources with an
+unstated precedence. **Exposing Serilog rolling, retention, buffer and sampling knobs** — turns fixed
+D3 safety bounds into a public tuning surface before a deployment needs it. **Authentication
+headers, client certificates, per-signal endpoints or alternate OTLP protocols** — useful later and
+not required by any D3 deployment. **`service.instance.id`, tenant, correlation or other identifiers
+as metric resource attributes or labels** — unbounded cardinality. **Always sampling plugins, errors
+or slow traces in the host** — product policy in the first case and collector-side tail sampling in
+the others. **An injectable redactor** — lets a consumer weaken a safety invariant the package
+claims centrally.
+Reversibility: expensive for the public option and source-name signatures after publication; cheap
+for fixed internal bounds until operators rely on them.
 
 ### 2026-08-05 — Event handlers are reference types throughout the registration contract
 Context: Reconciliation made `AddPlatformEventHandler<TEvent, THandler>` contractual with the

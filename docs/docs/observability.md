@@ -5,8 +5,10 @@ sidebar_label: Observability
 
 > **Moved from the ecosystem specification staging tree**
 > (`SubZeroDev/Specs/SubZeroDev.Platform/11-observability.md`), which names this repository as its
-> destination. Content is unchanged; only this provenance note and the front matter
-> were added. See [Platform Identity](platform-identity.md) for why it moved.
+> destination. It was subsequently reconciled with the D3 design and contract; the exact D3
+> settings and invariants are canonical in
+> [the repository contract](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md). See
+> [Platform Identity](platform-identity.md) for why it moved.
 
 # Observability
 
@@ -17,31 +19,44 @@ Platform provides the instrumentation; products decide what to instrument.
 
 ## Defaults
 
-OpenTelemetry for logs, traces, and metrics, with service name and version, correlation IDs, and
-resource attributes configured once at host startup.
+**Implementation status: S8 is queued.** The following is the S8 contract, not current runtime
+behaviour. Today, `AddPlatformObservability` configures trace-context propagation only; it does
+not add local log sinks, OpenTelemetry instrumentation, or an OTLP exporter.
 
-Nothing here should require a product to write exporter configuration. A product that wants
-OTLP to a collector sets a connection string; a local developer gets console output and no
-collector.
+When S8 ships, the standard registration call will configure logs, traces and metrics. Serilog
+will supply mandatory UTF-8 JSON Lines console and file logging through one redaction and buffering
+boundary, and the official OpenTelemetry SDK will provide instrumentation and optional OTLP export.
+
+Nothing requires a product to write exporter code. A product that wants a collector sets the typed
+`Platform:Telemetry:OtlpEndpoint` URI. When it is absent, no exporter starts and no outbound
+connection is attempted. The only local-log setting is `Platform:Telemetry:LogDirectory`, which
+defaults to `<content-root>/logs`.
 
 ## Logs
 
 Structured, never interpolated strings. Required fields:
 
 - timestamp, level, message template, and named properties
-- correlation ID
-- tenant, where tenancy is enabled
-- actor, where a request context exists
+- service name, service version, deployment environment, and bounded host role
+- correlation, tenant, culture, and actor when present in the ambient operation
 - exception with stack, where present
+
+Each role writes to console and to `<service>-<role>-.jsonl` through one 10 000-event asynchronous
+buffer that drops rather than blocks. Files roll daily and at 100 MB and retain no more than 31
+files and no file older than 14 days. A file failure cannot fail startup or application work. The
+console reports one transition into failure or dropping and one recovery, while the supported queue
+inspector supplies the exact dropped-event count.
 
 ### The rule that matters most
 
-**Secrets never reach a log, at any level, including `trace`.** Redaction is configured centrally on
-known secret field names, authorization headers, request bodies for auth endpoints, and nested
-exception causes.
+**Secrets never reach a log, at any level, including `trace`.** A fixed internal processor finds
+non-empty secret configuration values from case-insensitive key segments such as `authorization`, `cookie`,
+`password`, `secret`, `token`, `api-key`, `connection-string`, and `client-certificate`, and replaces
+those values with `[REDACTED]` in structured properties, rendered messages, exceptions and nested
+text. The same processor runs before local and OTLP output.
 
-Redaction is a backstop, not permission to log freely. It catches the field named `token`; it cannot
-catch a token concatenated into a message string.
+Platform never captures HTTP headers or bodies, event payloads, SQL parameter values, or connection
+strings. Redaction is a backstop, not permission to log freely.
 
 ### Level guidance
 
@@ -57,24 +72,27 @@ catch a token concatenated into a message string.
 
 ## Traces
 
-A trace spans a request end to end. Platform propagates W3C trace context across process boundaries,
-which is what lets a control-plane request and a plugin container appear on the same trace.
+A trace spans a request end to end. Platform propagates W3C trace context across the outbox boundary.
+Dispatch starts a new trace linked to the stored origin rather than continuing it, and preserves the
+origin's sampled decision.
 
 Span attributes must carry no secrets and no unbounded values — an artifact digest belongs on a span,
 an artifact body does not.
+
+Incoming traces honour the upstream sampled flag. New root HTTP traces use deterministic 10% trace-id
+head sampling. Errors and slow traces are not automatically retained in-process; that requires
+collector-side tail sampling. Persistence emits one provider-neutral child activity around each
+unit-of-work transaction for both database providers, with provider and operation only and no SQL.
 
 ## Metrics
 
 Platform supplies the primitives and standard host, HTTP, database, and background-job metrics.
 Products define their own domain metrics.
 
-Two rules that prevent an expensive mistake:
-
-- **Cardinality is bounded.** Never label a metric with an execution ID, a correlation ID, an
-  artifact digest, or anything else unbounded. This is the single most common way to make a metrics
-  backend fall over, and it is difficult to undo once dashboards depend on the labels.
-- **Tenant labels only where safe.** Tenant count is bounded, so tenant is an acceptable label;
-  a tenant _name_ may be sensitive, so the label is the ID.
+**Cardinality is bounded by an allowlist per instrument.** Platform metrics may use host role, HTTP
+method, route template rather than raw path or query, status, database provider, and closed outcome
+or signal enums. Tenant, correlation, instance, message, event, and user identifiers are forbidden,
+as is arbitrary tag pass-through.
 
 ## Health
 
@@ -102,10 +120,11 @@ This is small and pays for itself the first time a setting is overridden somewhe
 collector to start. Requiring one would make an observability stack a prerequisite for running a
 homelab tool, which is a disproportionate ask; setting an OTLP endpoint turns it on.
 
-**Sampling is split by workload, because the two have opposite characteristics.** Plugin executions
-are low-volume, long-running, and are the main thing anyone traces — they are **always sampled**.
-HTTP and background-job traces are high-volume and individually uninteresting, so they are
-ratio-sampled at 10%, with errors and traces exceeding a latency threshold always kept.
+**The provider choices are deliberate.** Serilog supplies both mandatory local sinks because the
+.NET logging stack does not include a file provider, while the official OpenTelemetry packages own
+OTLP traces, metrics, and logs. Both queues are bounded and non-blocking. The OpenTelemetry retry is in memory only; no
+disk spool is part of D3.
 
-Uniform sampling would be the mistake here: at any ratio low enough to control HTTP volume, the
-executions worth diagnosing would be discarded most of the time.
+**Sampling is protocol-led rather than product-led.** Upstream and persisted origin decisions are
+honoured, while new HTTP roots use a fixed 10% trace-id ratio. Platform makes no special promise for
+plugins, errors, or slow traces; those are workload or collector policies outside this repository.
