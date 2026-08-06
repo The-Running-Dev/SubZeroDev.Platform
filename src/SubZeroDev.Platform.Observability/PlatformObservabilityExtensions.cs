@@ -142,6 +142,7 @@ public static class PlatformObservabilityExtensions
             builder.Logging.AddOpenTelemetry(logging =>
             {
                 logging.SetResourceBuilder(resourceBuilder);
+                logging.AddProcessor(new RedactingLogRecordProcessor());
                 logging.AddOtlpExporter(otlp => ConfigureOtlp(otlp, endpoint, "v1/logs"));
             });
         }
