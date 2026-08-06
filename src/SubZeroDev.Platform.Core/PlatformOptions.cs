@@ -48,6 +48,22 @@ public sealed record PlatformOptions
 
     /// <summary>Shutdown and probe-surface settings.</summary>
     public HostingOptions Hosting { get; init; } = new();
+
+    /// <summary>Log-file location and optional OTLP export target.</summary>
+    public TelemetryOptions Telemetry { get; init; } = new();
+}
+
+/// <summary>Log-file location and optional OTLP export target. Everything else about telemetry
+/// (rolling, retention, buffering, redaction, sampling) is fixed policy, not a setting — see
+/// <c>design/90-decisions.md</c>, "S8 telemetry policy is fixed, typed and non-blocking".</summary>
+public sealed record TelemetryOptions
+{
+    /// <summary>Where role-specific JSON Lines log files are written.</summary>
+    public string LogDirectory { get; init; } = "logs";
+
+    /// <summary>The OTLP HTTP/protobuf collector endpoint. Absent by default: with no endpoint
+    /// configured, no exporter starts and no outbound connection is attempted.</summary>
+    public Uri? OtlpEndpoint { get; init; }
 }
 
 /// <summary>Provider selection and connection.</summary>

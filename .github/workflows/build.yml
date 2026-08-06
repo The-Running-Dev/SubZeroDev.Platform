@@ -26,6 +26,19 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
 
+      # S8.1: with no OTLP endpoint configured (the sample's appsettings.json carries none), the
+      # standard registration call must start no exporter and attempt no outbound connection —
+      # neither at startup nor in steady state. Blocking every non-loopback destination before the
+      # sample runs is what makes that an enforced fact rather than an assumption: if telemetry ever
+      # tried to reach a collector, the run below would hang or fail against a firewall, not merely
+      # "happen not to notice" a missing endpoint. Loopback stays open, since curl/dotnet talk to the
+      # sample and to each other on 127.0.0.1 throughout the rest of this job.
+      - name: Block non-loopback egress for the sample run
+        run: |
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -p tcp --dport 4317 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 4318 -j REJECT
+
       # The sample runs both roles in a non-development environment, so CI exercises the real
       # checks rather than the development carve-outs.
       - name: Run the sample in both roles

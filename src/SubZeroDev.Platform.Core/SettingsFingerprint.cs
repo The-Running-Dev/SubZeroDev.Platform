@@ -88,11 +88,17 @@ internal sealed class SettingsFingerprint : ISettingsFingerprint
     }
 
     /// <summary>Whether a property's type is a further Platform-authored settings record to recurse
-    /// into, rather than a leaf value. Every settings record is a reference type; every leaf value
-    /// <see cref="FormatValue"/> knows how to render is a value type or <see cref="string"/> — so
-    /// excluding those two leaves exactly the nested records, and a future settings record needs no
-    /// change here to be reached.</summary>
-    private static bool IsNestedSettings(Type type) => type.IsClass && type != typeof(string);
+    /// into, rather than a leaf value. Every settings record is a reference type declared beside
+    /// <see cref="PlatformOptions"/> itself; every leaf value <see cref="FormatValue"/> knows how to
+    /// render is a value type or <see cref="string"/>. Restricting recursion to this namespace (not
+    /// merely "any class but string") is deliberate: an unattributed reference-typed leaf from the
+    /// base class library — <see cref="Uri"/>, an array — is not a settings record, and walking one
+    /// can recurse forever (an <see cref="Array"/>'s own <c>SyncRoot</c> returns the array itself).
+    /// A future settings record needs no change here to be reached, since it lives in this
+    /// namespace by construction; a leaf of any other type is simply omitted from the fingerprint,
+    /// which is correct for a value nothing requires two peers to agree on.</summary>
+    private static bool IsNestedSettings(Type type) =>
+        type.IsClass && type != typeof(string) && type.Namespace == typeof(PlatformOptions).Namespace;
 
     private static string? FormatValue(object? value) => value switch
     {
