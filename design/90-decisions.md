@@ -4,6 +4,185 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — The sample round-trip script becomes PowerShell, signalling through libc
+Context: S9 added `build/Test-SampleRoundTrip.sh`, the only non-PowerShell script in `build/` against
+`AGENTS.md` *House conventions* — "PowerShell Core for scripts". It is the script that proves the
+brief's first and third CI assertions, and it is shared by `build.yml` and `release.yml`'s
+verify-restore job.
+Chosen: **convert it to `Test-SampleRoundTrip.ps1`** and delete the bash original; both workflow call
+sites now read `pwsh ./build/Test-SampleRoundTrip.ps1`, matching how `Test-ApiReference.ps1` and
+`Test-PackageManifests.ps1` are already invoked. This was **not** the recommendation — keeping the
+script and logging the exception was, on the grounds that rewriting a working script a green release
+depends on spends risk for consistency nobody executes. Overridden deliberately: the convention is
+absolute as written, and one exception in the directory is what makes the next one arguable.
+The one thing PowerShell cannot express, stated because it bounds what the conversion achieved:
+**SIGTERM has no PowerShell or .NET API.** `Stop-Process` and `Process.Kill()` both send SIGKILL on
+Unix, and TERM-versus-KILL is the entire mechanism of this script — the worker is asked to shut down
+gracefully and must exit zero, and the web host is SIGKILLed so that nothing in its memory can bridge
+the commit to the dispatch. Both signals therefore go through a P/Invoke to libc's `kill(2)` via
+`Add-Type`, which keeps them symmetrical and legible beside each other. The script is Linux-only, as
+the bash version already was.
+What the conversion also bought, unlooked-for: `Invoke-RestMethod` parses the order response, which
+retires the `python3 -c 'import json'` hop, so the runner needs one fewer thing. `sqlite3` is still
+required, and `processed_at` is still read from the table rather than grepped from a log, for the
+reason recorded at that step.
+Rejected: **Keep the bash script and log the exception** — the recommendation, declined above.
+**Amend `AGENTS.md` to exempt CI-only scripts** from the PowerShell convention — one line instead of a
+rewrite, and it relaxes a standing instruction for a single file, which is broader than the case that
+prompted it. **Shell out to `/bin/sh -c "kill -TERM …"`** for the signal — shorter than the P/Invoke
+and it would leave the script depending on a POSIX shell for the one thing it converted away from,
+which is the letter of the convention without its substance.
+Known cost, not yet discharged: **the port is unproven.** The bash version is green on the release
+commit; this one has been syntax-checked and reasoned through, and nothing has executed it. Two
+things are most likely to bite — `Start-Process` cannot point stdout and stderr at one file, so each
+stream now has its own log and the failure handler dumps six files rather than three; and
+`ASPNETCORE_URLS` is set and then removed around the web host's start, because `Start-Process`
+snapshots the environment and the worker must not inherit it. The next CI run on these workflows is
+the verification, and until it passes this entry is the record that it has not.
+Reversibility: cheap — the bash script is one `git revert` away in history, and reverting means one
+line in each of two workflows.
+
+### 2026-08-08 — The five things S9 took or set, none of which had been logged
+Context: S9 merged in `473920d` and released `v0.1.0`, and this log's newest entry was 2026-08-06.
+`AGENTS.md` requires an entry naming the alternatives whenever a dependency is taken, and
+[ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4 requires one when a package is
+passed over. S9 took a tool, chose a registry, pinned a version scheme and invented two mechanisms,
+and logged none of it. **This is the second occurrence of exactly this miss** — the 2026-08-03 entry
+"The six dependencies S2 took, none of which had been logged" is the same backfill, found the same
+way, by a reconcile rather than by review.
+Chosen, as five parts of one release decision:
+**(1) docfx 2.78.5**, installed as a global tool in the `api-reference` job and required on `PATH` by
+`build/Test-ApiReference.ps1`. It is the reference generator for .NET with no equivalent that reads
+XML doc comments and produces a static site; a version is pinned rather than floating so a tool
+update cannot change what the release gate accepts.
+**(2) GitHub Packages as the .NET feed**, `nuget.pkg.github.com/<owner>/index.json`, authenticated
+with the workflow's own `GITHUB_TOKEN`. The brief leaves the public nuget.org identifiers deliberately
+unspent, and S9.2's whole purpose is to prove pack, publish and *authenticated* restore without
+spending them — a private feed is the only shape that does both.
+[ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md) already governs naming on this
+registry, so this settles which registry rather than which name.
+**(3) `VersionPrefix 0.1.0`** in `src/Directory.Build.props`, with the version otherwise taken from
+the tag. This is what makes S9.6's claim true rather than asserted: `build/Test-PackageManifests.ps1`
+fails any package whose major version is not 0, so the unstable-API promise is enforced by the pack
+gate instead of by a sentence in a release note.
+**(4) `UsePlatformPackages`**, an MSBuild condition in both samples and the test project selecting
+`PackageReference` over `ProjectReference`, with `PlatformPackageVersion` supplying the version. It is
+the mechanism S9.3 rests on: the same sample and the same suite run against restored packages, with
+no second sample to keep in step with the first.
+**(5) `PublicApiLister`**, a throwaway console app that reflects over the six built assemblies, with
+**reflection rather than the generated XML doc file as the source of truth.** The XML file lists any
+type carrying a doc comment, including internal ones a contributor documented anyway, so it
+over-counts "public" and would let the S9.4 comparison pass against a reference legitimately missing
+nothing — a gate that cannot fail.
+Rejected: **A hand-maintained public-API list** — no tool at all, and it is a second copy of the API
+that drifts the first time someone adds a type without updating it, which is the failure S9.4 exists
+to catch. **Parsing the generated XML doc file** — no extra project, and it over-counts as above.
+**Publishing to nuget.org** — spends identifiers the brief holds deliberately, and proves nothing
+about authenticated restore. **A floating docfx version** — one less thing to bump, and it lets a tool
+release change the release gate's verdict with no commit. **A second sample built against packages** —
+avoids the MSBuild condition, and it is the duplicated-consumer maintenance S9.3's one-sample
+approach exists to refuse.
+Known cost, accepted, and it is the point of writing this down: **these alternatives are
+reconstructed after the fact.** The scripts and workflow carry their own reasoning in header comments
+— unusually good ones — and this entry draws on those rather than on a record made while choosing. A
+backfilled rejection is weaker evidence than a contemporaneous one, because the alternatives that
+were genuinely considered and the ones that are merely defensible now read identically.
+Reversibility: **expensive for (2) and (3)** once a consumer restores from the feed or reads a version
+as a compatibility signal. Cheap for (1), (4) and (5) — a generator, a build condition and a test
+utility, none of which any shipped package references.
+
+### 2026-08-08 — Two joint settings constraints the binder already enforced become contractual
+Context: The same reconcile found `PlatformOptionsBinder` rejecting `PeerAbsenceGrace <
+HeartbeatInterval` and `RetryBackoffCap < RetryBackoffBase`, both as `InconsistentSettings`. Neither
+was in the contract: `PeerAbsenceGrace`'s validation read "non-negative", the cap's read as a
+single-setting `>= RetryBackoffBase`, and the `InconsistentSettings` row named only the retention and
+drain-window pairs. The error code is public surface — S1.8 asserts codes by name — so the tables had
+to match the code in one direction or the other.
+Chosen: **the contract adopts both, as `InconsistentSettings`.** The grace floor is the substantive
+half and the code is right about it: a grace shorter than one heartbeat elapses before the peer's next
+beat can land, so `PeerHost` degrades on a host that is working, and zero — legal under "non-negative"
+— turns a rolling grace into no grace on the surface this design elected as always-on. Both settings
+tables now state the joint constraint, the `InconsistentSettings` row names four pairs rather than
+two, and the reasoning sits beside `PeerAbsenceGrace` where an implementer reads it.
+Rejected: **Relax the code to match the contract** — restores `PeerAbsenceGrace = 0` as legal and
+reintroduces the false-degrade above, contradicting invariant 47's own rolling-grace argument.
+**Keep the grace floor and reclassify the cap check as `InvalidSetting`** — keeps the Validation
+column meaning exactly one thing, and it makes two structurally identical joint checks report under
+two different codes, so an operator cannot predict which they will see. Both constraints are
+properties of a pair, and `InconsistentSettings` is the code that says so.
+Known cost, accepted: `PeerAbsenceGrace = 0` is no longer a legal configuration. Nothing can be
+relying on it — no release ships a value for it — but it is a narrowing of a documented range rather
+than a clarification, and this entry is where that shows.
+Reversibility: cheap in the documents; tightening a validated range is the direction that breaks a
+consumer, which is why it is worth taking at 0.x rather than later.
+
+### 2026-08-08 — Prune ticks hourly, unconfigurably, and the drain rate becomes a stated commitment
+Context: The same reconcile found `PruneWork.Interval` hard-coded to one hour, with a code comment
+reasoning about it and no mention anywhere in `10-design.md`'s *Settings inventory* — which names
+every other cadence, and which the design says Hosting invokes ticks on. A tick also issues exactly
+one bounded delete per target, so the default drain rate is 500 rows per target per hour. That sat
+against the design's own worst case for prune: "a worker returning after days down, or a retention
+window shortened, leaves an **arbitrarily large** backlog to delete." A million-row backlog is
+eighty-three days at that rate, and nothing said so.
+Chosen: **keep the code and state what it commits to.** *Settings inventory* gains two rows — the
+interval, marked not configurable, and the drain rate as an explicit consequence — and the
+"arbitrarily large backlog" paragraph now says the bound resolves that case by *spreading* it rather
+than absorbing it, with the arithmetic and the reason slow is acceptable: a row awaiting prune is
+inert, no readiness condition counts processed or discarded rows, and a poisoned row stays queryable
+the whole time. The limit this rules out is stated too — a prune keeping pace with a heavy poison
+source — and the poison-count condition is named as the surface that already reports it. The contract
+gets a parallel note beside the journal-mode one, since the interval is not a bindable setting.
+Rejected: **Drain each target to completion within one tick** — clears a large backlog in one pass,
+and it trades the property the bound exists for: an unbounded number of bounded statements is a
+longer aggregate hold on SQLite's single write lock than this design priced, and invariant 23's
+"every background write is bounded" would need rewording to stay true. **Add `Outbox:PruneInterval`**
+— consistent with every other cadence, and it puts public configuration surface at 0.x on a knob no
+deployment has asked for; it would also still need the drain-rate note, since the rate is the product
+of two settings and not obvious from either.
+Known cost, accepted: the rate is now a commitment that can be wrong, which is what *Settings
+inventory* is for. If a consumer ever needs a faster prune the honest fix is the setting, not a
+quietly changed constant.
+Reversibility: cheap. The interval is one line in `Prune.cs`; promoting it to a setting later is
+additive.
+
+### 2026-08-08 — Platform publishes no instrument in D3; the metric guarantee is the allowlist, not the redactor
+Context: Reconciling the tree against the design found that no Platform code constructs a `Meter` or
+an instrument — there is no `new Meter`, no `CreateCounter` and no `CreateHistogram` anywhere in
+`src/`. `PlatformTelemetry.MeterName` is public and Observability subscribes to it with `.AddMeter`,
+so the name looked implemented from every angle a gate can see: it carries a doc comment, it appears
+in the API reference, and S8.8's allowlist assertion passes — against
+`http.server.request.duration`, a built-in ASP.NET Core instrument. Three design sentences depended
+on an instrument that does not exist: poisoning "raising a metric", worker-down's "the metric still
+exists for anyone exporting", and "each Platform instrument owns an allowlist". Separately, the
+redactor runs over Serilog events, OTLP log records and spans and over no metric — while the design,
+the contract, invariant 49 and S8.7 all named metric labels as inside its boundary.
+Chosen: **correct the documents.** `MeterName` is stated as a reserved name with no publisher in D3,
+subscribed so that publishing later is additive; the metric labels D3 exports come from the
+instrumentation packages and are governed by the allowlist, which is named as the load-bearing
+mechanism rather than as defence behind a redaction pass that never ran. Redaction's stated scope
+narrows to logs and spans. The poison and backlog conditions cite the readiness checks that actually
+carry them. Invariant 49 splits into its two mechanisms — redaction for logs and spans, the closed
+label set for metrics — and 50 says what it is asserted against. S8.7 loses its metric clause and
+points at S8.8; no criterion is renumbered.
+Why the allowlist is the stronger half, stated because the reverse reading is the intuitive one:
+redaction filters values a signal happened to carry, while an allowlist decides which labels may
+exist at all. A closed set drawn from host role, method, route template, status, provider and closed
+enums has nowhere for a secret to arrive, so a redaction pass over it has nothing to find.
+Rejected: **Build the two instruments and a metrics redaction processor**, making every sentence true
+as written — the option that leaves the design untouched. Declined because it adds public telemetry
+surface at 0.x for no consumer, and reopens S8 after both its slice and the `v0.1.0` release have
+shipped, against *One slice at a time*. The design's own health section already argues a metric is
+not a mitigation on an installation that exports nowhere by default, which is why every operational
+condition was routed through readiness — so the metrics were the weaker half of its own case, and
+building them to satisfy a sentence inverts that argument.
+**Correct the documents and open an issue for the instruments** — keeps the intent as intent; declined
+as a second record of one decision when no consumer has asked for the instruments and the reservation
+already states the direction.
+Known cost, accepted: `MeterName` stays public surface with no publisher, which is exactly the shape
+that made this invisible. What changes is that it now says so.
+Reversibility: cheap. Adding an instrument later is additive and needs no consumer change, which is
+what the reservation buys; the document edits are one revert.
+
 ### 2026-08-06 — Acceptance criteria carry stable ids, and all nine slice issues migrate to the fenced shape
 Context: `/track` compares a slice against its issue on **criterion id, never prose**, and closes an
 issue when every `Done when` box is ticked. Neither side could support either operation: no

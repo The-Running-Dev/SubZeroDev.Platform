@@ -633,18 +633,38 @@ It discovers secret non-empty configuration values by case-insensitive key segme
 `authorization`, `cookie`,
 `password`, `secret`, `token`, `api-key`, `connection-string` and `client-certificate`, and replaces
 those values with `[REDACTED]` in structured properties, rendered messages, exceptions and nested
-text, span attributes and events, and metric labels. Platform never captures HTTP headers or
+text, and span attributes and events. Platform never captures HTTP headers or
 bodies, event payloads, SQL parameter values or connection strings. This is a fixed safety policy,
 not an extension point.
+
+**Metric labels are outside the redactor, and the allowlist below is what keeps them clean
+instead.** Redaction is a filter over values a signal happened to carry; a label allowlist is a
+statement of which labels may exist at all, and the second is the stronger guarantee where it
+applies. A closed set drawn from host role, HTTP method, route template, status, provider and closed
+enums has nowhere for a secret to arrive, so a redaction pass over it would have nothing to find —
+and stating redaction as the mechanism there would leave the real one, the allowlist, looking like
+defence in depth rather than the load-bearing part.
 
 **Sampling and metric cardinality are fixed policy in D3.** Incoming traces honour the upstream
 sampled flag. A new root HTTP trace uses deterministic trace-id head sampling at 10%. Dispatch starts
 a new linked trace and a small Platform sampler copies the stored origin's sampled decision; every
 other trace uses the official parent-based ratio sampler. Keeping errors or slow traces requires
-tail sampling at a collector and is not promised locally. Each Platform instrument owns an
-allowlist drawn only from host role, HTTP method, route template rather than raw path or query,
+tail sampling at a collector and is not promised locally. Every exported instrument's labels are
+drawn only from host role, HTTP method, route template rather than raw path or query,
 status, database provider, and closed outcome or signal enums. Tenant, correlation, instance,
 message, event and user identifiers — and arbitrary tag pass-through — are forbidden.
+
+**Platform authors no instrument of its own in D3, and the allowlist therefore governs the
+instrumentation packages' metrics rather than Platform's.** `PlatformTelemetry.MeterName` is
+established as the stable name a later Platform instrument will publish under, and Observability
+subscribes to it so that adding one is additive; nothing publishes to it yet. What the metric
+pipeline carries in D3 is the official ASP.NET Core, HTTP and runtime instrumentation, and the
+allowlist is asserted against those. **No operational condition depends on a Platform metric** —
+that is the point of routing every one of them through readiness, and it is what makes the absence
+a scoping decision rather than a gap. A metric is not a mitigation on an installation that exports
+nowhere by default, which the health section already argues at length; declaring instruments here
+in order to satisfy a sentence would put public telemetry surface at 0.x ahead of a consumer for
+it.
 
 ---
 
@@ -680,9 +700,11 @@ one layer further down and harder to see.
 **Trace context crossing the outbox is propagation, and propagation is Observability's.** Persistence
 stamps a traceparent and tracestate, parses them back at dispatch, and starts a new linked trace
 honouring the stored sampling flags — every one of which the resolution above assigns to
-Observability, performed in a package with no edge to it. So **the W3C parse, format and link
+Observability, performed in a package with no edge to it. So **the W3C parse, root-start and link
 operations are a contract in Abstractions that Observability implements**, and Persistence calls the
-contract. The alternative — Persistence handling W3C strings itself against the runtime — puts trace
+contract. **Formatting is not among them**, because the scope's fourth member already holds the
+established context: a handle returns the `TraceContext` it started, the scope carries it, and every
+stamping site reads it from there rather than asking for the current one to be rendered. The alternative — Persistence handling W3C strings itself against the runtime — puts trace
 handling in two packages that can drift apart on the one value this design promises stays greppable
 end to end.
 
@@ -729,7 +751,7 @@ dependency pointing the wrong way that every future check-contributing package w
 
 | Package | Owns | Depends on | Exposes |
 |---|---|---|---|
-| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **current culture**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/format/link contract**, **stable activity-source and meter names** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces, value types and well-known names only |
+| **Abstractions** | Result and error types, clock, current principal, current tenant, **current correlation**, **current culture**, **the operation-scope contract that establishes them, trace context included**, module contract, event and **event-handler** contracts, **health check contract**, **background-work contract**, **trace-context parse/root-start/link contract**, **stable activity-source and meter names** | The BCL, and the dependency-injection abstractions the module contract's signature requires | Interfaces, value types and well-known names only |
 | **Core** | Default implementations, module registration, ordering, startup validation, typed configuration binding, **background-work registration, ordering and role scoping** | Abstractions | Registration surface, module graph |
 | **Observability** | Telemetry wiring, correlation identity derivation and propagation, **the trace-context contract's implementation**, redaction, instrumentation, sampling policy, mandatory Serilog console/file sinks and optional official OpenTelemetry OTLP exporters | Abstractions | Configuration surface, correlation derivation and propagation |
 | **Persistence** | Transaction boundary, **a provider-neutral child activity around each unit-of-work transaction**, per-module migrations, provider abstraction, outbox and dispatcher, **handler resolution and per-message scope reconstruction**, leases, **host registration**, audit fields, soft delete, tenant column | Abstractions, Core | Transaction abstraction, outbox enqueue, lease acquisition, **redrive and discard**, **readiness checks for peer presence, backlog age, poison count and pending migrations**, **dispatcher, prune and the registration heartbeat registered as background work** |
@@ -923,6 +945,18 @@ is what made it easy to overlook: on SQLite it competes for the same single writ
 worst case is the largest of anything here — a worker returning after days down, or a retention
 window shortened, leaves an arbitrarily large backlog to delete while the web process needs that
 lock for every request.
+
+**The bound resolves that worst case by spreading it, not by absorbing it, and the arithmetic is
+worth stating.** A tick issues one bounded delete per target, so a backlog clears at the batch size
+per target per interval — the two numbers in *Settings inventory* — rather than in one pass. The
+worst case above therefore costs days of ordinary hourly ticks instead of one long hold on the write
+lock, which is the trade this bound exists to make. It is only a sound trade because a row awaiting
+prune is inert: processed and discarded rows are never read again, a poisoned row stays queryable
+the whole time, and no readiness condition counts any of them. Nothing degrades while the backlog
+drains slowly, so slowly is the right speed. **What this rules out is a prune expected to keep pace
+with a heavy poison source** — 12 000 rows a target per day at the defaults, against a poison
+retention window measured in days; past that the row count grows, and the poison-count readiness
+condition is already the surface that says so.
 
 **The trigger is a timer, not a signal from the writer.** With the writer in the web process and the
 dispatcher in the worker, an in-process signal cannot reach it, and a cross-process one would need a
@@ -1206,7 +1240,9 @@ marked, the message is delivered twice. That is at-least-once working as specifi
 
 **Detected by** the dispatcher. **System does:** records the error, increments attempts, sets the
 next attempt with exponential backoff, moves on. After a bounded attempt count the message is
-**poisoned** — no longer retried, marked with a poison time, raising a metric.
+**poisoned** — no longer retried, marked with a poison time, and counted by the poison-count
+readiness condition. Not a metric: nothing in D3 publishes one, and a poisoned row that only a
+collector could see is invisible on the installation this design centres.
 **Partial failure:** one poisoned message must not stop the queue and **must not fail readiness**;
 taking an installation out of rotation over one bad message is worse than the bad message.
 **State left behind:** the row, queryable, with its last error, until its poison retention window
@@ -1247,8 +1283,11 @@ readiness with the missing peer and the backlog age named. Nothing dispatches.
 **This is the failure mode the two-process split creates**, and it is silent from the web side. An
 earlier draft made an age-of-oldest-undispatched-row *metric* the only mitigation, which was no
 mitigation at all: telemetry export is opt-in, droppable, and absent by default on exactly the
-offline homelab this deployment targets. The metric still exists for anyone exporting; **readiness is
-what makes it visible to everyone else.**
+offline homelab this deployment targets. **Readiness is the whole mitigation, and no metric exists
+beside it** — that draft's replacement kept a sentence saying the metric survived for anyone
+exporting, which was never true of any code and would have sent an operator looking for a signal
+nothing publishes. If a Platform instrument arrives later it reports this condition second, never
+first.
 
 ### Telemetry collector unreachable, slow, or absent
 
@@ -1410,6 +1449,8 @@ meaningless rather than dangerous.
 | Deferral retry interval | 1 min, fixed | no | Resolution flips when the deploy finishes; polling faster buys nothing |
 | Dispatch per-tick budget | 20 | no | Rows are claimed and marked one at a time; the budget bounds a tick, not a claim — see *Control flow* |
 | Prune batch size | 500 | no | The same bound; larger because a delete is cheaper than a dispatch |
+| Prune timer interval | 1 h, **not configurable** | no | The three windows it prunes against are hours to days wide, so nothing is served by pruning oftener — and unlike the dispatch interval, no latency depends on it. The one cadence here with no setting, because no deployment can want a different one without also wanting a different retention window |
+| Prune drain rate | batch size per target per interval | — | **A consequence, stated because it is not obvious:** a tick issues one bounded delete per target, so the default clears 500 processed, 500 poisoned and 500 dead registrations an hour — 12 000 each per day |
 | Dispatch timer interval | 5 s | no | The latency floor for async work; idle polling at this scale is noise |
 | SQLite busy-wait bound | 5 s | no | Longer than any bounded batch holds the lock, shorter than a probe timeout |
 | Graceful-shutdown drain window | 30 s | no | Longer than a typical handler, far shorter than the claim window that backstops it |
@@ -1418,7 +1459,7 @@ meaningless rather than dangerous.
 | Registration retention window | 7 days | no | Dead rows are forensic breadcrumbs, then noise |
 | Backlog-age threshold | 5 min | no | The claim window's twin: past due longer than this means dispatch is absent or wedged, not merely busy — measured past due, per *Outbox row states* |
 | Pending-count threshold | 100 000 | no | Orders beyond any routine backlog at the stated scale, far short of the disk; it means days of worker absence, not a busy hour |
-| Peer-absence grace | 60 s, rolling | no | From first observed absence, on the observer's clock — a startup-scoped grace cannot cover the peer's restart; see the scoping paragraph under health |
+| Peer-absence grace | 60 s, rolling; **at least one heartbeat interval** | no | From first observed absence, on the observer's clock — a startup-scoped grace cannot cover the peer's restart; see the scoping paragraph under health. Floored at a heartbeat because a shorter grace elapses before the peer's next beat can land, degrading a host that is working |
 | Worker probe port | 5100, **loopback** | no | Any fixed default beats a required setting for a probe surface; loopback because the probe is for the operator, not the network; one per box — a second installation on the same server overrides it |
 | SQLite journal mode | **WAL, required** | — | A property of the file rather than of a host, so two hosts cannot disagree; listed because the contention analysis is false without it |
 | Telemetry log directory | `<content-root>/logs` | no | Mandatory local evidence without requiring an observability stack; only the directory is configurable |

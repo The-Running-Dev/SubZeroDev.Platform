@@ -272,8 +272,6 @@ system and no evaluation of eligibility, claim expiry or lease expiry reaches th
 ```csharp
 public interface ITraceContextCodec
 {
-    TraceContext FormatCurrent();
-
     bool TryParse(string traceParent, string? traceState, out TraceContext result);
 
     ITraceHandle StartRoot(string activityName);
@@ -287,12 +285,20 @@ public interface ITraceHandle : IDisposable
 }
 ```
 
-**Parse, format, root-start and link are Observability's operations declared in Abstractions**,
+**Parse, root-start and link are Observability's operations declared in Abstractions**,
 because two packages with no edge to Observability perform them: Persistence stamps the row, reads
 it back, and starts the linked trace per dispatched message, and the operation-scope primitive's
 origination path starts a root. `StartLinked` starts a **new** trace linked to the stored one and
 honours the origin's sampling flags; it never continues the origin's trace. `StartRoot` is
 origination, not fabrication — the scope that calls it *is* the origin.
+
+**There is no format-current operation, and the reason is structural rather than an omission.** A
+previous derivation carried `FormatCurrent()`, on the reasoning that stamping a row needs the
+current context as a `traceparent` string. It does not: both handles above return the
+`TraceContext` they established, the scope stores it as its fourth member, and every stamping site
+reads it from there. So no caller can exist that holds an ambient trace it cannot already read
+back — which is what the fourth member bought. Adding the member later is additive if a consumer
+ever wants to format a context this contract did not establish.
 
 **Both handles expose the established `TraceContext`** because the caller needs it: the dispatcher
 populates the scope's fourth member from it, which is what makes a follow-up row's stored
@@ -456,6 +462,15 @@ around every `IUnitOfWork.ExecuteAsync` transaction through `PlatformTelemetry.A
 for both providers, with database provider and operation only — never SQL text, parameter values or
 a connection string. Observability subscribes to that source and to the meter; Persistence does not
 reference an OpenTelemetry or Serilog package.
+
+**`MeterName` is a reserved name with no publisher in D3, and that is stated rather than left to be
+discovered.** No Platform code constructs a `Meter` or an instrument; Observability subscribes to the
+name so that publishing to it later is additive and needs no consumer change. The metrics D3 actually
+exports come from the official ASP.NET Core, HTTP and runtime instrumentation. Nothing in this
+contract's operational surface depends on a Platform metric — every condition an operator acts on is
+a readiness check, which is what makes the reservation honest rather than a promise. `MeterName` is
+public for the same reason `ActivitySourceName` is: a consumer wiring its own exporter needs the
+name, whether or not Platform has published to it yet.
 
 ### Abstractions — settings fingerprint marker
 
@@ -726,7 +741,7 @@ a wrong value that degrades gets a default, a missing value that corrupts fails 
 | `Outbox.PoisonAttemptCount` | 12 | `>= 1` |
 | `Outbox.RetryBackoffBase` | 30 s | positive |
 | `Outbox.RetryBackoffFactor` | 2 | `> 1` |
-| `Outbox.RetryBackoffCap` | 6 h | `>= RetryBackoffBase` |
+| `Outbox.RetryBackoffCap` | 6 h | positive; **jointly, `>= RetryBackoffBase`** |
 | `Outbox.DeferralAge` | 24 h | positive |
 | `Outbox.DeferralRetryInterval` | 1 min, fixed — no backoff | positive |
 | `Outbox.DispatchTickBudget` | 20 | `>= 1` |
@@ -735,7 +750,7 @@ a wrong value that degrades gets a default, a missing value that corrupts fails 
 | `Lease.Duration` | 5 min | positive |
 | `HostRegistration.HeartbeatInterval` | 15 s | positive |
 | `HostRegistration.RetentionWindow` | 7 days | positive |
-| `HostRegistration.PeerAbsenceGrace` | 60 s, **rolling** | non-negative |
+| `HostRegistration.PeerAbsenceGrace` | 60 s, **rolling** | non-negative; **jointly, at least `HeartbeatInterval`** |
 | `HostRegistration.PeerLivenessThreshold` | **derived**, `3 × HeartbeatInterval` | no setter, so the two cannot disagree |
 | `Health.BacklogAgeThreshold` | 5 min | positive |
 | `Health.PendingCountThreshold` | 100 000 | `>= 1` |
@@ -757,6 +772,20 @@ properties. A null endpoint starts no exporter and makes no outbound connection.
 **`PeerAbsenceGrace` is a rolling measure on the observing host's clock from the absence first being
 seen, never a startup-scoped exemption.** A startup grace cannot cover the case the setting exists
 for: the surviving web host watching a routine worker restart is long past its own startup.
+
+**It has a floor of one `HeartbeatInterval`, which "non-negative" alone did not give it.** A grace
+shorter than a heartbeat degrades `PeerHost` on a host that is working perfectly: the grace elapses
+before the peer's next beat can possibly land, so the surface reports a split that a single interval
+would have resolved. Zero is the worst case and was legal under the previous wording — it turns a
+rolling grace into no grace at all, on the one surface this design elected as always-on. Validated
+jointly, and named as `InconsistentSettings` because the constraint belongs to the pair rather than
+to either value.
+
+**The prune interval is not a setting either, and it is the only cadence that is not.** One hour,
+fixed: the three windows prune runs against are hours to days wide, and no latency depends on it the
+way it depends on `Outbox:DispatchInterval`. A tick issues one bounded delete per target, so
+`Outbox:PruneBatchSize` and that interval together fix the drain rate — see *Settings inventory* in
+[`10-design.md`](10-design.md), where both the value and its consequence are recorded.
 
 **SQLite's journal mode is not a setting.** WAL is required and is a property of the file rather
 than of a host, so two hosts cannot disagree on it. Persistence asserts it on open and fails startup
@@ -1502,7 +1531,10 @@ public static class PlatformHostExtensions
     public static IHostApplicationBuilder AddPlatformWorkerHost(this IHostApplicationBuilder builder);
 
     public static IEndpointRouteBuilder MapPlatformProbes(this IEndpointRouteBuilder endpoints);
+}
 
+public static class PlatformMigrationExtensions
+{
     public static Task<int> RunPlatformMigrateModeAsync(
         this IHostApplicationBuilder builder,
         CancellationToken cancellationToken);
@@ -1534,7 +1566,9 @@ third host role.
 
 **It is grouped under this heading and does not ship in Hosting.** Migrate mode needs the migration
 runner, which is Persistence's, and Hosting has no edge to Persistence — so the method is declared in
-the Persistence package, in a static class of its own, sharing this namespace. That is the same idiom
+the Persistence package, in a static class of its own — `PlatformMigrationExtensions`, named in the
+block above rather than folded into `PlatformHostExtensions`, which an earlier derivation did and
+which contradicted this very paragraph — sharing this namespace. That is the same idiom
 `Microsoft.EntityFrameworkCore` uses for `AddDbContext`, which extends
 `Microsoft.Extensions.DependencyInjection`'s type from a different assembly than the one declaring
 it. The call site is unchanged and the grouping above is by capability rather than by assembly, which
@@ -1585,14 +1619,18 @@ The fixed, non-injectable redaction processor runs before Serilog's console/file
 branch. Non-empty configuration values whose
 case-insensitive key segments include `authorization`, `cookie`, `password`, `secret`, `token`,
 `api-key`, `connection-string` or `client-certificate` become `[REDACTED]` in structured log
-properties and rendered messages, exceptions and nested text, span attributes and events, and
-metric labels. Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or
+properties and rendered messages, exceptions and nested text, and span attributes and events.
+Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or
 connection strings.
 
-Metric attributes pass an allowlist owned by each instrument: host role, HTTP method, route
+**Metric labels are not redacted; they are allowlisted, which is the stronger of the two.** Every
+exported metric's labels come from a closed set: host role, HTTP method, route
 template, status, database provider, and closed outcome or signal enums. Raw path and query,
 tenant, correlation, instance, message, event and user identifiers, and arbitrary tag pass-through
-are forbidden.
+are forbidden. A closed set has nowhere for a secret to arrive, so a redaction pass over it would
+have nothing to find, and naming redaction as the mechanism here would misdescribe which half
+carries the guarantee. In D3 the allowlist governs the instrumentation packages' instruments, since
+Platform publishes none of its own.
 
 ### Testing
 
@@ -1727,7 +1765,7 @@ Carried by `PlatformContractViolationException`. Never returned.
 |---|---|---|---|
 | `MissingRequiredSetting` | A setting with no default is absent — the two retention windows, the connection string | No | Fails startup, naming the setting **and the configuration source expected to supply it** |
 | `InvalidSetting` | A value is present but outside its permitted range, or a connection string is unparseable | No | Fails startup, naming the setting and the constraint |
-| `InconsistentSettings` | Two settings are individually valid and jointly not — poison retention not longer than processed, drain window not shorter than the claim window | No | Fails startup, naming both settings |
+| `InconsistentSettings` | Two settings are individually valid and jointly not. Four pairs: poison retention not longer than processed; drain window not shorter than the claim window; **retry backoff cap shorter than its base**; **peer-absence grace shorter than the heartbeat interval** | No | Fails startup, naming both settings |
 | `UnsupportedJournalMode` | The SQLite file is open in any mode other than WAL | No | Fails startup. The contention analysis this design rests on is false outside WAL |
 
 ### Core — `HealthCheckRegistrationError`
@@ -1792,9 +1830,15 @@ in `OutboxAdministrationResult`, because "one of the forty rows you named was pr
 a failure of the operation. A lost claim on a dispatch-state write is likewise an outcome — `ClaimLost` —
 counted as duplicate-delivery evidence, never escalated.
 
-### Persistence — `HandlerError`
+### Abstractions — `HandlerError`
 
 Returned by a handler. Both variants consume an attempt.
+
+**It is Abstractions', not Persistence', and the dependency graph leaves no choice.**
+`IIntegrationEventHandler<TEvent>.HandleAsync` returns `Result<HandlerError>` and that interface is in
+Abstractions, which has no edge to Persistence — so a product writes a handler against Abstractions
+alone, which is the property that makes Abstractions a separate package. `DispatchError` below is
+genuinely Persistence', because only the dispatcher raises it.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
@@ -1918,8 +1962,8 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 46 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
 | 47 | Peer absence is informational in the development environment; elsewhere it degrades only once it has persisted for the rolling grace window, measured on the observing host's clock from the absence first being seen | Hosting |
 | 48 | Telemetry export never propagates a failure to a caller | Observability |
-| 49 | No secret appears in any exported log, span attribute or metric label | Observability |
-| 50 | No metric is labelled with an unbounded value | Observability |
+| 49 | No secret appears in any exported log or span attribute — by redaction; and none can appear in a metric label, because labels are allowlisted rather than filtered | Observability |
+| 50 | No metric is labelled with an unbounded value. Platform publishes no instrument in D3, so this is asserted against the instrumentation packages' instruments | Observability |
 | 51 | Every host writes mandatory role-specific UTF-8 JSON Lines logs to console and file, and a file failure never prevents startup or blocks application work | Observability |
 | 52 | With no OTLP endpoint, no exporter starts and no outbound connection is attempted | Observability |
 | 53 | Every telemetry resource and JSONL record carries the same service name, service version, deployment environment and bounded host role | Observability |
