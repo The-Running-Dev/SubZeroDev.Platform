@@ -1,11 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <ItemGroup>
+  <!-- See SubZeroDev.Platform.Sample.Web.csproj for what UsePlatformPackages/PlatformPackageVersion
+       switch. The web sample itself stays a ProjectReference always: it is not a shipped package,
+       and OrderPlaced/OrderPlacedHandler must be the identical CLR types in both roles. -->
+  <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
+  </ItemGroup>
 
-    <!-- Shares OrderPlaced/OrderPlacedHandler with the web sample: both roles must register the
-         identical CLR types under the identical name, so the event and handler have one home. -->
+  <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
+    <PackageReference Include="SubZeroDev.Platform.Hosting" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Persistence" Version="$(PlatformPackageVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SubZeroDev.Platform.Sample.Web\SubZeroDev.Platform.Sample.Web.csproj" />
   </ItemGroup>
 

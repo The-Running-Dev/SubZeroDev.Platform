@@ -1,0 +1,200 @@
+name: Release
+
+# S9: packs the six shipped packages, publishes them to GitHub Packages as a private feed, restores
+# and reruns the sample and the full test suite against those restored packages rather than the
+# source tree, builds the API reference, and only then cuts the GitHub release. Triggers on a
+# version tag rather than every push to main -- S9.6 ties the published version to the tag, and
+# `dotnet pack`/`push` are not something every ordinary merge should repeat.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to release (e.g. v0.2.0) -- for a manual rerun against an existing tag'
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      # S9.6: the published version is 0.x -- checked here, before anything is packed or published,
+      # rather than trusted implicitly from the tag.
+      - name: Derive and validate the package version
+        id: version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^0\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$tag' is not a 0.x version -- the API stays explicitly unstable (S9.6)."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # S9.4: the API reference build is its own job, and every job below that ships or verifies a
+  # release depends on it -- a public type without a doc comment fails CS1591 here (see
+  # build/Test-ApiReference.ps1) and the release job never runs.
+  api-reference:
+    needs: version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install docfx
+        run: dotnet tool install --global docfx --version 2.78.5
+
+      - name: Build the API reference
+        run: pwsh ./build/Test-ApiReference.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-reference
+          path: artifacts/api-reference
+
+  # S9.1, S9.5: packs the six and checks the produced manifests before anything is published.
+  pack:
+    needs: [version, api-reference]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack and check the six package manifests
+        run: pwsh ./build/Test-PackageManifests.ps1 -Version ${{ needs.version.outputs.version }}
+
+      - name: Pack for publish
+        run: dotnet pack SubZeroDev.Platform.slnx -c Release -o nupkgs -p:Version=${{ needs.version.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkgs
+          path: nupkgs/*.nupkg
+
+  # S9.2: publishes the six to GitHub Packages as a private feed, authenticated with the workflow's
+  # own token against this repository's own package scope -- no separate PAT to hold or rotate.
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkgs
+          path: nupkgs
+
+      - name: Publish to GitHub Packages
+        run: |
+          dotnet nuget push "nupkgs/*.nupkg" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate
+
+  # S9.2's other half and S9.3: the sample restores the packages just published, with
+  # authentication, and every S1-S8 assertion runs again against it.
+  verify-restore:
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Add the GitHub Packages source
+        run: |
+          dotnet nuget add source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --name github \
+            --username "${{ github.repository_owner }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --store-password-in-clear-text
+
+      # UsePlatformPackages switches the sample's and the test project's Platform references from
+      # ProjectReference to PackageReference (see the two samples' csproj and
+      # tests/SubZeroDev.Platform.Tests.csproj) -- Testing's own package dependencies already carry
+      # Hosting, Persistence, Observability, Core and Abstractions transitively, so this covers all
+      # six.
+      - name: Restore against the published packages
+        run: >
+          dotnet restore SubZeroDev.Platform.slnx
+          -p:UsePlatformPackages=true -p:PlatformPackageVersion=${{ needs.version.outputs.version }}
+
+      - name: Build against the published packages
+        run: >
+          dotnet build SubZeroDev.Platform.slnx --no-restore -c Release
+          -p:UsePlatformPackages=true -p:PlatformPackageVersion=${{ needs.version.outputs.version }}
+
+      # S9.3: the full suite, not just the sample's round trip.
+      - name: Run the full test suite against the restored packages
+        run: dotnet test SubZeroDev.Platform.slnx --no-build -c Release --verbosity normal
+
+      - name: Block outbound OTLP ports for the sample run
+        run: |
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -p tcp --dport 4317 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 4318 -j REJECT
+
+      - name: Run the sample in both roles, against the restored packages
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+        run: bash ./build/Test-SampleRoundTrip.sh
+
+  # S9.6: the release itself records the API as explicitly unstable.
+  github-release:
+    needs: [version, verify-restore, api-reference]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkgs
+          path: nupkgs
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-reference
+          path: api-reference
+
+      - name: Archive the API reference
+        run: (cd api-reference && zip -r ../api-reference.zip .)
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.version.outputs.tag }}" \
+            nupkgs/*.nupkg api-reference.zip \
+            --title "${{ needs.version.outputs.tag }}" \
+            --notes "SubZeroDev.Platform ${{ needs.version.outputs.version }}. The API is pre-1.0 and explicitly unstable: breaking changes are permitted between releases and are recorded here, per the brief's Lifespan reconciliation." \
+            --repo "${{ github.repository }}"

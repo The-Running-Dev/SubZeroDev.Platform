@@ -1,8 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <ItemGroup>
+  <!-- The ordinary build references Platform's projects directly. Passing
+       -p:UsePlatformPackages=true (and -p:PlatformPackageVersion=<version>) switches these two to
+       the packages CI just published, so S9.2/S9.3 rerun the sample and its round-trip assertions
+       against the restored packages rather than the source tree, without a second sample to
+       maintain. -->
+  <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
+    <PackageReference Include="SubZeroDev.Platform.Hosting" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Persistence" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
   <PropertyGroup>

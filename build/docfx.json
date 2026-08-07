@@ -1,0 +1,44 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../src",
+          "files": [
+            "SubZeroDev.Platform.Abstractions/SubZeroDev.Platform.Abstractions.csproj",
+            "SubZeroDev.Platform.Core/SubZeroDev.Platform.Core.csproj",
+            "SubZeroDev.Platform.Hosting/SubZeroDev.Platform.Hosting.csproj",
+            "SubZeroDev.Platform.Observability/SubZeroDev.Platform.Observability.csproj",
+            "SubZeroDev.Platform.Persistence/SubZeroDev.Platform.Persistence.csproj",
+            "SubZeroDev.Platform.Testing/SubZeroDev.Platform.Testing.csproj"
+          ]
+        }
+      ],
+      "dest": "../artifacts/api-metadata",
+      "properties": {
+        "TargetFramework": "net10.0",
+        "Configuration": "Release"
+      },
+      "disableGitFeatures": false,
+      "disableDefaultFilter": false
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": ["**.yml", "index.md"],
+        "src": "../artifacts/api-metadata",
+        "dest": "api"
+      },
+      {
+        "files": ["index.md", "toc.yml"]
+      }
+    ],
+    "dest": "../artifacts/api-reference",
+    "globalMetadata": {
+      "_appTitle": "SubZeroDev.Platform API reference",
+      "_appName": "SubZeroDev.Platform",
+      "_disableContribution": true
+    }
+  }
+}
