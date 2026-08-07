@@ -46,15 +46,18 @@ param(
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 
+# Named LibcSignal, not PosixSignal: System.Runtime.InteropServices.PosixSignal is a real .NET
+# type, and a short type name that collides with one in a loaded assembly is resolved by
+# PowerShell, not by this script. The built-in is an enum whose members are SIG-prefixed and which
+# has no kill method, so when it wins the collision every call here fails with "does not contain a
+# method named 'kill'". Fully qualified DllImport, so the interop namespace is not imported at all.
 Add-Type -TypeDefinition @'
-using System.Runtime.InteropServices;
-
-public static class PosixSignal
+public static class LibcSignal
 {
     public const int Term = 15;
     public const int Kill = 9;
 
-    [DllImport("libc", SetLastError = true)]
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
     public static extern int kill(int pid, int sig);
 }
 '@
@@ -84,7 +87,7 @@ function Stop-Quietly {
     param([System.Diagnostics.Process] $Process)
 
     if ($null -eq $Process -or $Process.HasExited) { return }
-    try { [void][PosixSignal]::kill($Process.Id, [PosixSignal]::Kill) } catch { }
+    try { [void][LibcSignal]::kill($Process.Id, [LibcSignal]::Kill) } catch { }
 }
 
 function Assert-Ok {
@@ -111,7 +114,7 @@ function Send-Signal {
         [int] $Signal
     )
 
-    if ([PosixSignal]::kill($Process.Id, $Signal) -ne 0) {
+    if ([LibcSignal]::kill($Process.Id, $Signal) -ne 0) {
         Assert-Ok "kill($($Process.Id), $Signal) failed."
     }
 }
@@ -192,7 +195,7 @@ Write-Host "Both roles served their probes in $env:ASPNETCORE_ENVIRONMENT."
 
 # Stop dispatch before committing the order. The web process is then killed rather than shut down,
 # proving the durable row -- not process memory -- bridges commit to delivery.
-Send-Signal $worker ([PosixSignal]::Term)
+Send-Signal $worker ([LibcSignal]::Term)
 $workerStatus = Wait-ForExitStatus $worker
 if ($workerStatus -ne 0) { Assert-Ok "the first worker exited with status $workerStatus" }
 
@@ -210,7 +213,7 @@ catch {
 $orderId = $order.orderId
 if ([string]::IsNullOrWhiteSpace($orderId)) { Assert-Ok 'the committed order response carried no id' }
 
-Send-Signal $web ([PosixSignal]::Kill)
+Send-Signal $web ([LibcSignal]::Kill)
 $webStatus = Wait-ForExitStatus $web
 if ($webStatus -eq 0) { Assert-Ok 'the web process was expected to be killed' }
 
@@ -245,6 +248,6 @@ if (-not $delivered) { Assert-Ok 'the committed outbox row was not delivered aft
 Write-Host "The outbox row survived process death and dispatched order $orderId after restart."
 
 # SIGTERM is the ordinary shutdown signal, and a graceful worker exits zero on it.
-Send-Signal $worker ([PosixSignal]::Term)
+Send-Signal $worker ([LibcSignal]::Term)
 $workerStatus = Wait-ForExitStatus $worker
 if ($workerStatus -ne 0) { Assert-Ok "the restarted worker exited with status $workerStatus" }
