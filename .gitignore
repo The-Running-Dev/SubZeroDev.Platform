@@ -10,6 +10,7 @@ node_modules/
 # directories instead, and never re-add a bare `build/`.
 dist/
 artifacts/
+nupkgs/
 bin/
 obj/
 *.tsbuildinfo

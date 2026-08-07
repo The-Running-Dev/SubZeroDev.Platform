@@ -19,8 +19,17 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- S9.3: every assertion in S1-S8 lives in this project, and Testing's own package dependencies
+       (S9.5's nuspec graph) already carry Hosting, Persistence, Observability, Core and
+       Abstractions transitively, so switching this one reference is enough to rerun the whole
+       suite against the packages release.yml just published, rather than the source tree. See
+       samples/SubZeroDev.Platform.Sample.Web.csproj for the same UsePlatformPackages switch. -->
+  <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Testing\SubZeroDev.Platform.Testing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
+    <PackageReference Include="SubZeroDev.Platform.Testing" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
   <ItemGroup>
