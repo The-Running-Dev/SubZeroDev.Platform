@@ -1,5 +1,17 @@
 namespace SubZeroDev.Platform.Abstractions;
 
+/// <summary>Platform's own telemetry identity names. Public surface: they are the source and meter
+/// names an exporter or a third-party instrument subscribes to.</summary>
+public static class PlatformTelemetry
+{
+    /// <summary>The name of Platform's own <see cref="System.Diagnostics.ActivitySource"/>, shared by
+    /// every span Platform starts so one OpenTelemetry subscription sees all of them.</summary>
+    public const string ActivitySourceName = "SubZeroDev.Platform";
+
+    /// <summary>The name of Platform's own meter, shared by every standard metric Platform emits.</summary>
+    public const string MeterName = "SubZeroDev.Platform";
+}
+
 /// <summary>Platform's own background-work names. Public surface, not implementation detail: they
 /// are the handles a test invokes a single tick by.</summary>
 public static class PlatformBackgroundWork

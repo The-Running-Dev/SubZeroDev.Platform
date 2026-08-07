@@ -45,7 +45,7 @@ public sealed class SettingsFingerprintTests
             var options = Baseline();
             var target = owner(options);
             var original = property.GetValue(target);
-            property.SetValue(target, Perturb(original));
+            property.SetValue(target, Perturb(original, property.PropertyType));
 
             var perturbedHash = fingerprint.Compute(options);
             var isFingerprinted = property.GetCustomAttribute<FingerprintedAttribute>() is not null;
@@ -92,17 +92,27 @@ public sealed class SettingsFingerprintTests
         }
     }
 
-    private static object Perturb(object? value) => value switch
+    private static object Perturb(object? value, Type type)
     {
-        TimeSpan span => span + TimeSpan.FromTicks(1),
-        double number => number + 1,
-        long number => number + 1,
-        int number => number + 1,
-        bool flag => !flag,
-        string text => text + "-changed",
-        Enum named => NextEnumValue(named),
-        _ => throw new NotSupportedException($"No perturbation known for '{value?.GetType()}'."),
-    };
+        // Uri is nullable and reference-typed, so it needs the leaf's declared type rather than the
+        // (possibly null) value to pick a perturbation.
+        if (type == typeof(Uri))
+        {
+            return value is Uri current ? new Uri(current, "changed") : new Uri("https://changed.example/");
+        }
+
+        return value switch
+        {
+            TimeSpan span => span + TimeSpan.FromTicks(1),
+            double number => number + 1,
+            long number => number + 1,
+            int number => number + 1,
+            bool flag => !flag,
+            string text => text + "-changed",
+            Enum named => NextEnumValue(named),
+            _ => throw new NotSupportedException($"No perturbation known for '{value?.GetType()}'."),
+        };
+    }
 
     private static object NextEnumValue(Enum value) =>
         Enum.GetValues(value.GetType())

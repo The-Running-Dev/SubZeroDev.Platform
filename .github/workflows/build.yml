@@ -26,6 +26,20 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
 
+      # S8.1: with no OTLP endpoint configured (the sample's appsettings.json carries none), the
+      # standard registration call must start no exporter and attempt no outbound connection —
+      # neither at startup nor in steady state. Rejecting the two OTLP ports before the sample runs
+      # is what makes that an enforced fact rather than an assumption: if telemetry ever tried to
+      # reach a collector on either, the run below would hang or fail against a firewall, not merely
+      # "happen not to notice" a missing endpoint. Loopback stays open, since curl/dotnet talk to the
+      # sample and to each other on 127.0.0.1 throughout the rest of this job; nothing else in this
+      # job makes outbound calls, so a narrower reject than a default-deny is sufficient here.
+      - name: Block outbound OTLP ports for the sample run
+        run: |
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -p tcp --dport 4317 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 4318 -j REJECT
+
       # The sample runs both roles in a non-development environment, so CI exercises the real
       # checks rather than the development carve-outs.
       - name: Run the sample in both roles
@@ -105,8 +119,16 @@ jobs:
           ) > worker-restart.log 2>&1 &
           worker=$!
 
+          # Queried from the outbox table itself rather than grepped from worker-restart.log:
+          # the log line is real evidence of dispatch, but it reaches that file through Serilog's
+          # async sink (WriteTo.Async, by design non-blocking per S8) and then through this
+          # process's redirected stdout, so its on-disk appearance can lag well behind the
+          # dispatch it reports. processed_at is written by the same transaction that runs the
+          # handler, so it is set the instant delivery actually commits.
           for attempt in $(seq 1 30); do
-            if grep -F "Order $order_id placed" worker-restart.log > /dev/null 2>&1; then
+            processed_at=$(sqlite3 "$root/shared-sample.db" \
+              "SELECT processed_at FROM platform_outbox WHERE type = 'sample.order-placed' AND json_extract(payload, '\$.orderId') = '$order_id';")
+            if [ -n "$processed_at" ]; then
               break
             fi
             kill -0 $worker 2>/dev/null || fail "the restarted worker exited before dispatch"

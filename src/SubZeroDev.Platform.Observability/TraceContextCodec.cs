@@ -7,17 +7,26 @@ namespace SubZeroDev.Platform.Observability;
 /// declared in Abstractions because two packages with no edge to Observability perform them.</summary>
 internal sealed class TraceContextCodec : ITraceContextCodec
 {
-    /// <summary>Platform's own activity source. Named here so an exporter can subscribe to it.</summary>
-    internal const string ActivitySourceName = "SubZeroDev.Platform";
-
-    private static readonly ActivitySource Source = new(ActivitySourceName);
+    private static readonly ActivitySource Source = new(PlatformTelemetry.ActivitySourceName);
 
     public bool TryParse(string traceParent, string? traceState, out TraceContext result) =>
         TraceContext.TryParse(traceParent, traceState, out result);
 
     public ITraceHandle StartRoot(string activityName)
     {
-        var activity = Source.StartActivity(activityName, ActivityKind.Internal);
+        // Adopting whichever Activity is already ambient (the default behaviour of an
+        // ActivitySource.StartActivity overload with no explicit parent) is what makes an inbound
+        // request with no upstream traceparent share its trace id with ASP.NET Core's own server
+        // span — S8.3's "one request, one server span" claim depends on that. But "the scope that
+        // calls this is the origin" (see IOperationScopeFactory.Begin's own doc) promises a fresh,
+        // independent trace, not implicit nesting under whatever the ambient Activity happens to be
+        // — so when that ambient Activity already came from this same source (another still-open
+        // Platform origin scope, not an externally-started one such as ASP.NET Core's), this call
+        // passes an explicit empty parent instead, the same way StartLinked always does, to force a
+        // genuinely new root rather than silently becoming that scope's child.
+        var activity = Activity.Current?.Source.Name == PlatformTelemetry.ActivitySourceName
+            ? Source.StartActivity(activityName, ActivityKind.Internal, parentContext: default)
+            : Source.StartActivity(activityName, ActivityKind.Internal);
 
         // With no listener there is no Activity, and there is still a trace: the context is what
         // the row and the scope are stamped from, so it is minted here either way. Unsampled is the

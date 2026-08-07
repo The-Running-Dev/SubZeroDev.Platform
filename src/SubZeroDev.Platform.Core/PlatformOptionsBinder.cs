@@ -57,6 +57,9 @@ internal static class PlatformOptionsBinder
         var probePort = reader.Int32("Hosting:WorkerProbePort", 5100, Between(1, 65_535));
         var loopbackOnly = reader.Boolean("Hosting:WorkerProbeLoopbackOnly", true);
 
+        var logDirectory = reader.OptionalString("Telemetry:LogDirectory") ?? "logs";
+        var otlpEndpoint = reader.AbsoluteHttpUri("Telemetry:OtlpEndpoint");
+
         if (reader.Error is { } error)
         {
             return Result<PlatformOptions, ConfigurationError>.Failure(error);
@@ -141,6 +144,11 @@ internal static class PlatformOptionsBinder
                 GracefulShutdownDrainWindow = drainWindow,
                 WorkerProbePort = probePort,
                 WorkerProbeLoopbackOnly = loopbackOnly,
+            },
+            Telemetry = new TelemetryOptions
+            {
+                LogDirectory = logDirectory,
+                OtlpEndpoint = otlpEndpoint,
             },
         });
     }
@@ -296,6 +304,27 @@ internal static class PlatformOptionsBinder
 
             Fail(ConfigurationError.InvalidSetting(Key(path), "must be true or false"));
             return fallback;
+        }
+
+        /// <summary>Reads an optional absolute <c>http</c>/<c>https</c> URI. Absent is valid — it
+        /// means no OTLP exporter starts. Present-but-malformed is not, so a typo cannot silently
+        /// disable export.</summary>
+        internal Uri? AbsoluteHttpUri(string path)
+        {
+            var raw = Raw(path);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            if (Uri.TryCreate(raw, UriKind.Absolute, out var parsed)
+                && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+            {
+                return parsed;
+            }
+
+            Fail(ConfigurationError.InvalidSetting(Key(path), "must be an absolute http or https URI"));
+            return null;
         }
 
         private TimeSpan ParseTimeSpan(

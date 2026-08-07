@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 
@@ -115,6 +116,13 @@ internal static class ProviderCapabilityFactory
 internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransactionState ambient, IOutboxStore outboxStore)
     : IUnitOfWork
 {
+    // A bare System.Diagnostics.ActivitySource, never an OpenTelemetry package reference — see
+    // design/90-decisions.md, "S8 adopts Serilog for mandatory file logging and official
+    // OpenTelemetry for OTLP": Persistence must stay instrumentation-agnostic, and Observability
+    // subscribes to this stable name so both database providers get the same span without either
+    // taking an OpenTelemetry dependency.
+    private static readonly ActivitySource Source = new(PlatformTelemetry.ActivitySourceName);
+
     public async Task<Result<TransactionError>> ExecuteAsync(
         TransactionIntent intent,
         Func<CancellationToken, Task> work,
@@ -140,6 +148,14 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
+
+        // Started before the transaction opens and stopped in the finally below, so the span covers
+        // connect failures too, not just a successful transaction. No SQL text, parameter value or
+        // connection string is ever a tag here — only the provider name and whether the unit of work
+        // intends to read or write.
+        using var activity = Source.StartActivity("platform.persistence.unit-of-work", ActivityKind.Client);
+        activity?.SetTag("db.system", ProviderName(capability.Provider));
+        activity?.SetTag("operation", intent == TransactionIntent.Write ? "write" : "read");
 
         var opened = await capability.BeginAsync(intent, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
@@ -226,4 +242,11 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
             await transaction.Connection.DisposeAsync().ConfigureAwait(false);
         }
     }
+
+    private static string ProviderName(PersistenceProvider provider) => provider switch
+    {
+        PersistenceProvider.PostgreSql => "postgresql",
+        PersistenceProvider.Sqlite => "sqlite",
+        _ => provider.ToString(),
+    };
 }
