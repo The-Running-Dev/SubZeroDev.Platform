@@ -168,7 +168,7 @@ jobs:
       - name: Run the sample in both roles, against the restored packages
         env:
           ASPNETCORE_ENVIRONMENT: Production
-        run: bash ./build/Test-SampleRoundTrip.sh
+        run: pwsh ./build/Test-SampleRoundTrip.ps1
 
   # S9.6: the release itself records the API as explicitly unstable.
   github-release:

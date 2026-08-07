@@ -41,10 +41,10 @@ jobs:
           sudo iptables -A OUTPUT -p tcp --dport 4318 -j REJECT
 
       # The sample runs both roles in a non-development environment, so CI exercises the real
-      # checks rather than the development carve-outs. build/Test-SampleRoundTrip.sh is shared with
+      # checks rather than the development carve-outs. build/Test-SampleRoundTrip.ps1 is shared with
       # release.yml's verify-restore job (S9.2/S9.3), which runs the identical script against the
       # sample built from the published packages instead of these project references.
       - name: Run the sample in both roles
         env:
           ASPNETCORE_ENVIRONMENT: Production
-        run: bash ./build/Test-SampleRoundTrip.sh
+        run: pwsh ./build/Test-SampleRoundTrip.ps1

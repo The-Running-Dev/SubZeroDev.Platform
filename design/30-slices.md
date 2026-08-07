@@ -510,7 +510,7 @@ of a redrive; a bulk operation keyed on anything other than `EventTypeName`.
 ---
 
 ## S8 — Telemetry
-**Status:** in progress
+**Status:** shipped · [#46](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/46)
 
 Delivers: logs, traces and metrics configured by the standard registration call alone, exporting
 nowhere by default, and never able to fail a request.
@@ -554,8 +554,9 @@ Acceptance:
   the official bounded batch processors and in-memory retry; recovery is proved by a successful
   export, without asserting an unsupported exact OTLP drop count or queue-transition log.
 - **S8.7** Configuration values selected by every secret-key segment in the contract become
-  `[REDACTED]` in structured and rendered logs, nested exceptions, span attributes and events, and
-  metric labels. HTTP headers and bodies, event payloads, SQL parameters and connection strings are
+  `[REDACTED]` in structured and rendered logs, nested exceptions, and span attributes and events.
+  Metric labels are not redacted — S8.8's allowlist is what constrains them, per the contract. HTTP
+  headers and bodies, event payloads, SQL parameters and connection strings are
   absent from all signals.
 - **S8.8** Each standard metric accepts only its documented bounded labels. Tests reject tenant,
   correlation, instance, message, event and user identifiers, raw paths and queries, and arbitrary
@@ -574,7 +575,7 @@ traces; product- or plugin-specific sampling; database-command instrumentation o
 ---
 
 ## S9 — Pack, publish, consume, and the API reference
-**Status:** queued
+**Status:** shipped · [#48](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/48)
 
 Delivers: the six packages publish to a private GitHub Packages feed, the sample restores them from
 it, and the generated API reference gates the release.
