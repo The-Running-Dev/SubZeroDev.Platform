@@ -1,12 +1,12 @@
 # Contract — the minimal package set (D3)
 
 **Document status:** Contract. Derived from [`10-design.md`](10-design.md). Authoritative for the
-packages it describes; [`platform-identity.md`](../docs/docs/platform-identity.md) stays
+packages it describes; [`platform-identity.md`](../../docs/docs/platform-identity.md) stays
 authoritative for what this repository is.
 
 C# with nullable reference types enabled. Types and signatures only. Package grouping is by heading
 rather than namespace declaration — package naming belongs to
-[ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md), not here.
+[ADR-003](../../docs/docs/adr/ADR-003-package-scopes-and-registries.md), not here.
 
 **Re-derived in full** from the design as it stands after its **fifth** adversarial review, not
 patched from the previous derivation, per the standing decision in

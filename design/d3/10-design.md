@@ -4,7 +4,7 @@
 re-derived, not patched.
 
 Package boundaries and done-criteria are owned by
-[`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §2 and are not restated
+[`minimal-platform-packages.md`](../../docs/docs/minimal-platform-packages.md) §2 and are not restated
 here. This document decides what that document leaves open: what is persisted and in what shape,
 which package owns each concern where two of them overlap, and what happens when each of it fails.
 
@@ -14,7 +14,7 @@ paths), **two processes** per installation (a web host, and a worker host owning
 work), and **no outbound network** at startup or in steady state.
 
 **Licensing is named in the brief and is not designed here, deliberately.**
-[`implementation-plan.md`](../docs/docs/implementation-plan.md) §5 places Licensing in D5, alongside
+[`implementation-plan.md`](../../docs/docs/implementation-plan.md) §5 places Licensing in D5, alongside
 Identity, Billing and Audit. The brief's mention of it is a **constraint on what D3 may depend on**,
 not a capability D3 builds: because the licence verifies locally on a per-installation basis, no
 dependency may require the network. That constraint is discharged rather than deferred — nothing in
@@ -315,7 +315,7 @@ registration call is additive and breaks nothing. The reverse is not, which is w
 direction to take at 0.x.
 
 **The serialiser is `System.Text.Json`, with a Platform-pinned options instance that is not
-injectable.** [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4's check: the
+injectable.** [ADR-004](../../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §4's check: the
 runtime already ships it and it covers the gap whole, so a serialisation dependency would fill
 nothing.
 
@@ -791,7 +791,7 @@ a module against Abstractions alone, which is the property that makes Abstractio
 package at all.
 
 **What the rule was protecting survives intact**, which is why widening it is not a concession:
-[`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §2 states the criterion
+[`minimal-platform-packages.md`](../../docs/docs/minimal-platform-packages.md) §2 states the criterion
 as **no dependency on any other Platform package**, and a consumer compiling against Abstractions
 alone. Both still hold. §2's reason — that Abstractions is the one package a product may depend on
 without inheriting a runtime choice — holds too: the dependency-injection *abstractions* are
@@ -889,7 +889,7 @@ sample ──► Hosting, Persistence, …
 Persistence on Abstractions and Core; Hosting on those plus Observability; Testing is a sink nothing
 references. No package appears on both sides of any edge.
 
-**Platform never depends on a product**, per [`platform-identity.md`](../docs/docs/platform-identity.md)
+**Platform never depends on a product**, per [`platform-identity.md`](../../docs/docs/platform-identity.md)
 §1 — a reference from Platform to the Automator or the Game Engine is a build failure, not a review
 comment. The sample sits on the consumer side of the arrow.
 
@@ -1017,7 +1017,7 @@ follow links; the correlation serves the console-and-file installation that cann
 same value everywhere except across this boundary, and this is the only place they are permitted to
 differ.
 
-This refines rather than contradicts [`observability.md`](../docs/docs/observability.md), whose
+This refines rather than contradicts [`observability.md`](../../docs/docs/observability.md), whose
 end-to-end trace commitment concerns **synchronous** propagation across process boundaries. The
 outbox is asynchronous by construction.
 
@@ -1329,7 +1329,7 @@ one with a custom processor nor parses internal diagnostic strings.
 
 Absent is not a failure: export is opt-in with console and file as defaults, no exporter starts and
 no outbound connection is attempted. This is
-[`observability.md`](../docs/docs/observability.md)'s commitment and §2's Game Engine constraint made
+[`observability.md`](../../docs/docs/observability.md)'s commitment and §2's Game Engine constraint made
 operational — **collection must never become a path by which a game can fail.**
 
 ### Mandatory log file unavailable, slow, or saturated
