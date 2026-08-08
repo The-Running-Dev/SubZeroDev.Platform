@@ -4,6 +4,56 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — The probe-caching rule becomes invariant 57; the prune warning stays out of the table
+Context: The same verification pass found two design statements the contract's `Invariants` table did
+not carry, both already honoured by the code: `10-design.md`'s "a report is derived per probe and
+never cached", and its "pruning one [poisoned row] logs at warning". Neither is a contradiction, so
+the question was only which belongs in a table whose stated shape is statements that must hold at all
+times.
+Chosen: **the probe-caching rule, as invariant 57, owner Hosting.** It holds continuously and its
+violation is consequential — a cached report puts stale data on readiness, which this design
+deliberately elected as the always-on operational surface in place of metrics nobody exports. Nothing
+downstream could otherwise check a future refactor against it.
+Rejected — **adding the prune warning as invariant 58.** Declined, and recorded here rather than
+dropped: it is an event-time behaviour, not a statement true at every instant, and admitting it would
+loosen what the table means for every future reader deciding whether their statement belongs in it.
+It is a known omission, retained: the code logs it at `Outbox.cs`, the design commits to it, and no
+consumer contracts on it. **Revisit if** an operator surface ever depends on that log line.
+Rejected — **carrying neither.** The probe-caching property would then be asserted only by the design
+and satisfied only by the current implementation, which is Finding 1's shape one severity lower.
+Reversibility: cheap. One appended row; no signature, schema or persisted shape changes.
+
+### 2026-08-08 — Development-environment auto-migration stays a design promise, and becomes `Unresolved` 8 rather than an invented surface
+Context: A second `/contract` verification pass, reading both documents in full, found a promise the
+previous pass did not: `10-design.md` says twice — *Control flow* §1 and *Failure modes* — that
+migration application is "automatic only in the development environment". `20-contract.md` names only
+`RunPlatformMigrateModeAsync`, no slice criterion in `30-slices.md` covers the automatic path, and in
+the tree `IMigrationRunner.ApplyAsync` has exactly one caller, `MigrateMode.cs`. So the design
+promises a behaviour that neither the contract nor the code carries, and the contract's silence is
+what kept it invisible through nine slices and two reconciles.
+Chosen: **the design is right and the work is unbuilt.** The clauses stay; the gap is recorded as
+`20-contract.md` *Unresolved* **8**, naming the four things the design does not determine — which
+package invokes it (Hosting cannot reach the runner, so only `AddPlatformPersistence` can), whether
+it is a registration side effect or an opt-in, what a failed automatic application does under a
+taxonomy that prices only the manual operation's failure, and whether it takes the provider-native
+migration lock that two concurrently starting development hosts would need. A bullet under `## Open`
+carries it to `/track`. **A contract amendment settling those four comes before any slice.**
+Rejected — **dropping the two clauses from `10-design.md`**, which was this pass's recommendation:
+the design's own argument against migrate-on-start ("the least controlled moment available", and two
+processes racing themselves) applies in development too, nine slices shipped without it, and
+restoring the clause later is additive. Declined on the owner's call — the promise is wanted, and a
+document that quietly retracts a convenience because nobody built it teaches the next reader that
+design statements expire by neglect.
+Rejected — **writing the surface into `20-contract.md` now.** It is the one thing this command
+forbids: the design names the concept and not its construction, so a signature written here would be
+four silent decisions wearing a contract's authority, and the `Unresolved` section exists precisely
+to hold that shape until it is decided.
+Rejected — **re-deriving `20-contract.md` around it.** Same reasoning as the entry below: the
+`Unresolved` numbering is load-bearing for `30-slices.md`, this log and nine closed slice issues, and
+appending item 8 perturbs no existing anchor while a regeneration risks all of them.
+Reversibility: cheap. One appended `Unresolved` item, one `Open` bullet, two preamble sentences; no
+type, signature, schema, invariant or persisted shape changes, and no code is affected.
+
 ### 2026-08-08 — The contract is not re-derived; three statements that had become false are corrected instead
 Context: `/contract` run against `10-design.md`. The command writes `20-contract.md`, and the design's
 own closing paragraph instructed it to: the fifth adversarial review's entry ended "the contract
@@ -601,6 +651,15 @@ Rejected: **Add the kit's version anyway, since the user approved it in general*
 Reversibility: cheap
 
 ## Open
+- **Development-environment automatic migration application is promised and was never built.**
+  [`10-design.md`](10-design.md) says in *Control flow* §1 and again in *Failure modes* that
+  application is automatic in the development environment; nothing implements it —
+  `IMigrationRunner.ApplyAsync`'s only caller is `RunPlatformMigrateModeAsync` — and no slice
+  criterion ever covered it. **The surface is undetermined**, so a contract amendment settling the
+  four questions in [`20-contract.md`](20-contract.md) *Unresolved* 8 — owning package, trigger,
+  failure behaviour, and whether it takes the provider-native migration lock — comes before any
+  slice. Until then a developer's inner loop runs migrate mode explicitly, exactly as an operator
+  does.
 - **Two automated-review findings are valid, not fixed here, and now raised upstream** — [Docs-Template#62](https://github.com/The-Running-Dev/Docs-Template/issues/62) (mutable tag) and [Docs-Template#63](https://github.com/The-Running-Dev/Docs-Template/issues/63) (traversal). Both sit in files installed **byte-identical** from `ghcr.io/the-running-dev/docs-template` (verified by diffing against the image), and both were already tracked in `SubZeroDev.GameEngine`'s `TODO.md`.
   1. `docs-ci.yml` and `docs-deploy.yml` run in `ghcr.io/the-running-dev/docs-template:latest`, a **mutable tag** — the same commit can start failing after an image update, and past failures are hard to reproduce.
   2. `Test-Documentation.ps1`'s `Get-DocumentationFile` recurses the whole tree before applying `ExcludedSegments`, so excluded trees are still walked. Performance only.
