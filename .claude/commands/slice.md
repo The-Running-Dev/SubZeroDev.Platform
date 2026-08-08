@@ -42,9 +42,9 @@ Sequence:
 4. Implement against the contract signatures exactly. No signature drift, no added parameters, no widened return types.
 5. Run the tests. Run the full suite, not just the new tests.
 6. **Commit, then push.** Stage by named path — never `git add -A`, `git add .`, or a bare directory (`AGENTS.md`, *Git and delivery*).
-7. **Open the pull request as a draft.** Carved out of the authorization rule the same as pushing the branch (`AGENTS.md`, *Git and delivery*) — a draft requests no review and blocks no merge, so it needs no sign-off. Title it from the slice name; the body can be minimal, since `/pr` writes the real description once `/verify` has run in this same session. Check for an existing open PR on this branch first and do not open a second one.
+7. **Open the pull request. Never as a draft.** Carved out of the authorization rule the same as pushing the branch (`AGENTS.md`, *Git and delivery*). Title it from the slice name; the body can be minimal, since `/pr` writes the real description in this same session and runs the gates and the review threads after it. Check for an existing open PR on this branch first and do not open a second one.
 8. **Tick the `Done when` boxes** on the matching issue for every id this run confirms met. Carved out the same way (`AGENTS.md`, *Tracking work*) — the report in step 9 and the tick are the same claim now, not two.
-9. Report **by criterion id**: which are met, which are not and why, anything you had to decide that the contract did not determine, and the branch name and draft PR URL.
+9. Report **by criterion id**: which are met, which are not and why, anything you had to decide that the contract did not determine, and the branch name and PR URL.
 
 Stop conditions — halt and report rather than proceeding:
 

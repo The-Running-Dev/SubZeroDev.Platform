@@ -5,9 +5,9 @@ title: ''
 labels: bug
 ---
 
-**Symptom** — one sentence someone else would recognise.
+**Symptom** — one sentence someone else would recognise, told as what happened, not as a diagnosis: what you were doing, what you expected, what happened instead.
 
-Observed on <branch, version, or environment>. Expected <what>, got <what>.
+Observed on <branch, version, or environment>.
 
 ### Reproduce
 

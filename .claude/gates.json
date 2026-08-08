@@ -1,0 +1,22 @@
+{
+  "manifestHash": "f120f58229c57d98684248013ca0116654a30f264e466f0c2734e335d566c32e",
+  "generated": "2026-08-08",
+  "gates": [
+    {
+      "name": "dotnet build",
+      "command": "dotnet build --no-restore --configuration Release"
+    },
+    {
+      "name": "dotnet test",
+      "command": "dotnet test --no-build --configuration Release --verbosity normal"
+    },
+    {
+      "name": "Test-Documentation",
+      "command": "pwsh -File build/Test-Documentation.ps1"
+    },
+    {
+      "name": "Test-SliceStatusMarkers",
+      "command": "pwsh -File build/Test-SliceStatusMarkers.ps1"
+    }
+  ]
+}
