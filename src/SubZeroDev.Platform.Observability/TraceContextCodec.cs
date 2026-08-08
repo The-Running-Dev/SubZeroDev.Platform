@@ -22,11 +22,29 @@ internal sealed class TraceContextCodec : ITraceContextCodec
         // independent trace, not implicit nesting under whatever the ambient Activity happens to be
         // — so when that ambient Activity already came from this same source (another still-open
         // Platform origin scope, not an externally-started one such as ASP.NET Core's), this call
-        // passes an explicit empty parent instead, the same way StartLinked always does, to force a
-        // genuinely new root rather than silently becoming that scope's child.
-        var activity = Activity.Current?.Source.Name == PlatformTelemetry.ActivitySourceName
-            ? Source.StartActivity(activityName, ActivityKind.Internal, parentContext: default)
-            : Source.StartActivity(activityName, ActivityKind.Internal);
+        // detaches from the ambient Activity for the duration of the start. A default
+        // ActivityContext parent is not "no parent" to StartActivity — it is treated as invalid and
+        // Activity.Current is substituted right back in, which is why passing parentContext: default
+        // alone did not stop the nesting. Clearing Activity.Current itself is the only way to force
+        // a genuinely new root rather than silently becoming that scope's child.
+        Activity? activity;
+        if (Activity.Current?.Source.Name == PlatformTelemetry.ActivitySourceName)
+        {
+            var ambient = Activity.Current;
+            Activity.Current = null;
+            try
+            {
+                activity = Source.StartActivity(activityName, ActivityKind.Internal);
+            }
+            finally
+            {
+                Activity.Current = ambient;
+            }
+        }
+        else
+        {
+            activity = Source.StartActivity(activityName, ActivityKind.Internal);
+        }
 
         // With no listener there is no Activity, and there is still a trace: the context is what
         // the row and the scope are stamped from, so it is minted here either way. Unsampled is the
