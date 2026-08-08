@@ -4,6 +4,42 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — ADR-004's architecture reading happens after the fact, and finds two gaps rather than a defect
+Context: [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §3 names three things to
+read closely in ABP **before** the thin equivalents are written — its module lifecycle and
+dependency-graph validation, its outbox, and its tenancy query filters. D3 shipped all nine slices
+without a single log entry citing any of them, which under that ADR's own reuse clause is
+indistinguishable from having skipped it. The third was moot: tenancy query filters are a brief
+non-goal, deferred to D5. The other two were read against ABP 10.6's documentation on 2026-08-08,
+after the code existed.
+Chosen: **Record the reading now, change no shipped code, and route what it found to the tracker.**
+Two findings, and neither is a defect in what D3 built:
+1. **No consumer-side idempotency, where ABP has an inbox.** ABP pairs `OutgoingEventRecord` with
+   `IncomingEventRecord`, retaining processed ids so a redelivered message is dropped before the
+   handler runs. Platform's dispatcher names the same exposure and stops there — `ObserveClaimedWriteAsync`
+   logs "duplicate delivery is possible" on a lost claim. At-least-once is a *logged decision*, so
+   this is not drift; but the contract offers handlers no dedupe seam, which makes idempotency a
+   problem every consumer solves privately and inconsistently.
+2. **`IPlatformModule` has one lifecycle hook where ABP has seven.** `Register(IServiceCollection)`
+   is the whole surface. ABP's `PreConfigureServices` exists so a module can shape options a later
+   module reads, and `OnApplicationInitialization`/`OnApplicationShutdown` give a module a built
+   `IServiceProvider` and a shutdown path. Platform modules have none of these, so anything needing
+   a built provider is pushed into `IBackgroundWork` or the host's own startup.
+Two places the comparison **confirmed** Platform, which is why this is not a report of shortfalls:
+its **claim-by-portable-conditional-update** is better suited than ABP's distributed lock around a
+batch — the lock is what forces ABP's blocking `Retry` policy, and one-row-at-a-time claiming needs
+no lock to be multi-process safe; and holding the dispatcher **while migrations are pending** has no
+ABP equivalent.
+Rejected: **Amend `IPlatformModule` or add an inbox table now** — both change a published contract
+after D3 is packaged and released at v0.1.0, for no consumer that has asked; the extraction guard
+says the second consumer earns the abstraction, and the G1 edge is the one that will. **Log the
+reading as done and record nothing** — leaves an empty log next to hand-written infrastructure,
+which ADR-004 names explicitly as the signal that its reuse clause was skipped. **Reopen ADR-004** —
+nothing found changes the build-not-adopt verdict, which rests on per-product weight, not coverage.
+Reversibility: cheap — both findings are additive to a 0.x API that is explicitly unstable.
+
+---
+
 ### 2026-08-08 — The sample round-trip script becomes PowerShell, signalling through libc
 Context: S9 added `build/Test-SampleRoundTrip.sh`, the only non-PowerShell script in `build/` against
 `AGENTS.md` *House conventions* — "PowerShell Core for scripts". It is the script that proves the
@@ -444,6 +480,13 @@ Reversibility: cheap
   **Why not fix them here.** The installer keeps these files byte-identical to the template precisely so re-running it picks up upstream fixes; editing them makes this repository silently miss every future one, which is a worse failure mode than a mutable tag on a docs site. The fix belongs in `docs-template`. **Revisit when** that project ships a pin mechanism, or if a mutable-tag drift actually bites here.
 - **`main` is protected** — both documentation checks required and strict (branch must be current), pull request required at 0 approvals so solo work is not blocked, review threads must be resolved, force-pushes and deletions blocked. Modelled on `SubZeroDev.GameEngine`, with one deliberate difference: that repository's `CLAUDE.md` claims `required_review_thread_resolution` is on, and its API says otherwise — enabled here anyway, because the automated reviewer leaves threads.
   **GitHub Pages is already enabled** and needs nothing — `build_type: workflow`, custom domain `platform.subzerodev.com`, `protected_domain_state: verified`. An earlier entry here said it was not enabled; that was asserted from the deploy workflow being newly installed rather than checked against the API, and it was wrong. `status` is `null` only because no deploy has run yet, which is expected — `docs-deploy.yml` triggers on push to `main`.
+- **A feature/capability toggle seam, and what a licence gates.** The brief licenses **per installation** and ADR-004 names the commercial layer as the part that is genuinely ours, but nothing states how a licence turns a capability off. ABP has a `Features` system for exactly this join. Named here because no document in this repository claims it — not [`platform-identity.md`](../docs/docs/platform-identity.md) §4, not [`application-modules.md`](../docs/docs/application-modules.md) §2. **Decide before D5 designs billing**, since entitlements without a toggle seam is half a mechanism.
+- **Runtime settings, as distinct from startup configuration.** Platform binds configuration at startup and fails loudly on a bad value — that is a different thing from a setting a running system changes, layered per tenant or per user and persisted. ABP separates `IConfiguration` from `ISettingProvider` deliberately. Unclaimed in every document. **The cost of not deciding** is that the Automator builds it privately and it becomes an extraction argument later rather than a design one now.
+- **Soft delete as a contributed column.** Tenancy query filtering is a brief non-goal deferred to D5, but soft delete was never named anywhere and is not the same question. It rides the seam `Persistence/Columns.cs` already implements — Platform contributes columns to product tables — so the mechanism exists and only the convention is missing.
+- **Optimistic concurrency as a contributed column.** Same seam as the bullet above, one more column and a conflict error. The brief states the web and worker hosts "may overlap briefly during a restart, so nothing may assume a single process", which is the condition that makes this worth a decision rather than an assumption.
+- **Seeding has callers but no infrastructure.** [`20-contract.md`](20-contract.md) § *ambient operation context* and [`10-design.md`](10-design.md) both reference "a seeder" as a caller that opens its own scope explicitly, and the `NoAmbientOperationScope` error's remedy names one. Nothing in Platform provides one. Either Platform owns a seeding contract beside `IMigrationRunner`, or the documents should stop implying it does.
+- **No consumer-side idempotency seam, where ABP has an inbox.** From the ADR-004 reading logged above. `OutboxDispatcher` names the exposure — a lost claim makes duplicate delivery possible — and at-least-once is a logged decision, so this is not drift. But every consumer solves idempotency privately and inconsistently until the contract offers a seam. **Earned by the G1 edge**, which is the second consumer the extraction guard asks for.
+- **`IPlatformModule` has one lifecycle hook where ABP has seven.** From the same reading. `Register(IServiceCollection)` is the whole surface: no pre-configure phase for a module to shape options a later module reads, and no initialization or shutdown phase with a built `IServiceProvider`. Anything needing a built provider is pushed into `IBackgroundWork` or the host's own startup today. **A public-contract change**, so it waits for a consumer that has actually hit the limit rather than an anticipated one.
 
 ---
 
