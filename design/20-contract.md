@@ -829,7 +829,7 @@ public sealed record ErrorEnvelope(string Code, CorrelationId Correlation);
 **Two fields, and the design determines exactly these two.** The envelope carries a stable error code
 and the correlation identity, **never exception text and never payload content**. The correlation is
 what ties it to the log line that does carry the detail — which is the whole reason the design
-insisted on a single greppable value. The wire format is [Unresolved](#unresolved).
+insisted on a single greppable value. The wire format is resolved at [Unresolved 3](#unresolved).
 
 ---
 
@@ -1723,7 +1723,8 @@ the fake clock supplies the instants the tick compares against, and no timing-de
 contains a wall-clock wait.
 
 **The provider contract tests must assert at least the following**, which the design names
-individually. Their invocation surface is [Unresolved](#unresolved); what they assert is not.
+individually. Their invocation surface is resolved at [Unresolved 7](#unresolved); what they assert
+is fixed here.
 
 | Assertion | What it catches |
 |---|---|

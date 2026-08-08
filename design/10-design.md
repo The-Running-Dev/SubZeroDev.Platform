@@ -1362,7 +1362,8 @@ database is at a known point, not a partial one.
 
 **Detected by** parsing. **System does:** ignores it and mints fresh context; never rejects the
 request, because a broken upstream header is not the caller's fault. **State left behind:** a trace
-that is a new root, counted rather than logged per occurrence.
+that is a new root, neither counted nor logged per occurrence — Platform authors no instrument of
+its own in D3, so there is nothing here to count with.
 
 ---
 
@@ -1699,5 +1700,4 @@ mint-order test was unsatisfiable at the resolution version 7 actually has. The 
 on the recommendation: migrate-mode exclusion moved to a provider-native lock; the pending backlog
 is reported and never refused; the converter extension point is cut; and a persistence-less host is
 supported with its guarantees scoped and its probe body enumerating what is registered. Every
-finding is dispositioned in the section it touches; nothing from this review is parked here. The
-contract predates this revision and contradicts it — it must be re-derived before any slice runs.
+finding is dispositioned in the section it touches; nothing from this review is parked here.
