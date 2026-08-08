@@ -5,7 +5,10 @@
 > **Provenance of this draft:** the decisions below were taken by me in answer to direct questions
 > on 2026-08-08 and transcribed. The *Problem* statement and the *Environment* section are drafted
 > from this repository's own documents and the engine's published surface, and need my words before
-> they are binding.
+> they are binding. The last eight *Non-goals*, the last five Stage 1 criteria, the last two Stage 2
+> criteria and the whole *Both stages* block were drafted by a model on 2026-08-08 at my
+> instruction, from a `/brief-check` of this file — they close stated gaps and take no decision I
+> had not already implied, but they are in its words, not mine, until I have read them back.
 
 ## Problem
 
@@ -41,7 +44,8 @@ here because the brief is where scope binds:
    The edge is Platform's first consumer outside `samples/`.
 
 The stages are ordered — the byte-identity proof exists before the edge does — and the edge does
-not gate G2.
+not gate G2. Both stages are inside G1's definition of done: G2 may begin the moment Stage 1 is
+green, but G1 does not close until the edge criteria are met.
 
 **The wire is JSON over HTTP with version-pathed schema URLs, and MCP is a projection of it.**
 Both surfaces are generated from one operation table held as data. The engine's specified tenth
@@ -52,6 +56,10 @@ surfaces, never a rewrite.
 ADR-005 was waiting on: `mcp-tool-contract.md` moves to `SubZeroDev.ServiceContract`, the engine's
 `09-clients.md` link is updated in the same change, and the wire schema is generated from the
 engine's types per ADR-005 Rule 2 — a hand-written schema "just for now" is how Rule 2 gets lost.
+The generator lives in `SubZeroDev.ServiceContract` and publishes the schema as a consumable
+artifact; the workload depends on that rather than generating a copy of its own. The named cost is
+a cross-repository release path that does not exist yet — accepted, because a contract home whose
+contents nothing consumes is a document, not a boundary.
 
 ## Non-goals
 
@@ -66,7 +74,9 @@ The binding list. Everything here is out of scope for every agent until this fil
 - **Tenancy, billing, metering, catalogue, publishing.** G4 and later.
 - **A raw-state endpoint, under any name.** Not staged — permanent. The projection boundary
   survives the transport: responses carry a projected `Scene`, never the envelope, and no hosted
-  endpoint returns engine state. Not for caching, not for debugging.
+  endpoint returns engine state. Not for caching, not for debugging. The byte-identity proof's
+  in-process serialization of the store is not an exception: it is not an endpoint, and building
+  one to serve it would be.
 - **A tenth game operation invented here.** A hosting need the store does not meet is a new store
   operation *in the engine* plus a coverage-checklist row, never transport-side logic. The account
   operations a hosted service will eventually need (`list_saves`, `delete_account`) are the
@@ -74,6 +84,24 @@ The binding list. Everything here is out of scope for every agent until this fil
 - **Edge scope creep.** The edge terminates transport, routes, traces, and serves probes. No
   authorization, no persistence, no rate-limiting sophistication. A widened edge is G3 pulled
   into G1, losing G1's virtue as the cheapest informative failure.
+- **`previewAction`, or any change to engine behaviour.** The specified tenth operation arrives
+  with `world-graph`, not here. G1's only deliverable into the engine is the coverage-checklist
+  column; a behaviour change made to ease hosting is transport-side logic wearing a different hat.
+- **A human-facing interface.** No front end, no playground, no operator console. G1's audience is
+  a test suite and a trace.
+- **Reachability beyond trusted-local.** No public exposure, no transport security, no
+  cross-origin access. Designing for a caller who cannot reach the deployment is G3 arriving early.
+- **Performance work.** No latency or throughput target, no load test, no benchmark. G1 answers
+  whether the bytes match, not how fast they arrive.
+- **Serving more than one wire version at once.** Version-pathed URLs are required so a second
+  version *can* exist later. A second version existing now is not.
+- **Deployment machinery.** No container images, no release publishing of the workload, no process
+  supervision. Two processes started by hand is the whole of G1's operations story.
+- **Session lifecycle management.** No eviction, no expiry, no quotas, no size limits. Sessions are
+  lost on restart and bounded by my own use of them; anything cleverer is G2 sizing a store it does
+  not have yet.
+- **Observability beyond the single trace.** No metrics, no dashboards, no log aggregation, no
+  alerting. One trace across the language boundary is Stage 2's evidence, not the first of a set.
 
 ## Definition of done
 
@@ -81,7 +109,11 @@ The binding list. Everything here is out of scope for every agent until this fil
 
 - The engine's own invariant, with a third client: the same arc, the same seed, the same counting
   `IdSource` and the same choices, played through the **hosted transport**, serialize
-  **byte-identically** to the in-process run.
+  **byte-identically** to the in-process run. **Two comparisons, asserted separately:** the hosted
+  service's own serialization of its store at the end of the replay, against the in-process run —
+  the engine invariant surviving hosting; and the projected responses of the two runs against each
+  other — the wire being deterministic. Neither alone answers §5. The first reaches around the
+  wire; the second proves only that the projection is stable.
 - **The gate has failed at least once.** A deliberately perturbed run — one action reordered, or
   one response substituted — goes red. A byte-identity suite that has never failed is not known to
   compare anything.
@@ -92,6 +124,18 @@ The binding list. Everything here is out of scope for every agent until this fil
   and a test proves the table is the only source: removing a row breaks both.
 - `mcp-tool-contract.md` lives in `SubZeroDev.ServiceContract`, the engine's `09-clients.md` links
   to it there, and the wire schema is generated, not authored.
+- **Misuse has a defined answer.** A malformed payload, an unknown session, and an unsupported wire
+  version each produce a specified, tested response. A surface whose behaviour under misuse is
+  undefined is not a wire — and whatever is chosen here, G2's persistence and G3's principals
+  inherit.
+- **The projection boundary is gated, not merely promised.** A test asserts that no hosted endpoint
+  returns the envelope. It is the one non-goal declared permanent; it is the one most worth a gate.
+- **Real responses validate against the generated schema.** Both surfaces deriving from the one
+  table does not make the schema true of what the service actually sends.
+- **One operation is carried out through the MCP projection end-to-end.** Proving the projection is
+  generated is not proving it works.
+- **The workload reads the contract from `SubZeroDev.ServiceContract`, not a local copy.** A
+  contract that lives in the right repository but is consumed from the wrong one has moved nothing.
 
 **Stage 2 — the edge:**
 
@@ -101,6 +145,21 @@ The binding list. Everything here is out of scope for every agent until this fil
 - The edge is composed by **nothing but Platform's standard registration call** — health,
   readiness, correlation and telemetry included. Bespoke wiring here would fail D3's own
   done-criterion at its first consumer outside `samples/`.
+- **The probes are exercised by a test**, and readiness's meaning when the Node service is
+  unreachable is decided and asserted. A probe nobody has watched fail is the byte-identity suite's
+  problem in another costume.
+- **Stage 1's single-hop replay is still green after the edge lands.** Two hops passing is not
+  evidence that one still does.
+
+**Both stages:**
+
+- **The evidence runs in CI from a fresh clone**, not only on my machine. A proof that exists once,
+  on one working copy, is an anecdote.
+- **A gate fails the build if a Platform package references `workloads/game-service/`.** Decision 1
+  states the dependency rule; a rule with no gate is a comment.
+- **The repository tells a reader how to start both processes, replay the byte-identity proof, and
+  regenerate the contract.** G2 begins by rerunning G1's proof; it should not begin by
+  reconstructing it.
 
 ## Environment
 
