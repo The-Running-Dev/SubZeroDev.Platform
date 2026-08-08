@@ -1235,7 +1235,8 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     protected abstract Task<(string Tenant, string CreatedAt, string? CreatedBy)> ReadAuditRowAsync(string connectionString, string id);
 }
 
-/// <summary>Contract assertion `20-contract.md:1732`: the payload format is the serialiser's, not
+/// <summary>Contract assertion "a payload written under one provider deserializes under the other",
+/// in `20-contract.md`'s provider-contract-tests table: the payload format is the serialiser's, not
 /// the provider's. Enqueues under SQLite, then carries the exact stored payload text into a fresh
 /// row inserted under PostgreSQL and deserializes it there — proving the text one provider wrote is
 /// meaningful to the other with no provider-specific step in between.</summary>

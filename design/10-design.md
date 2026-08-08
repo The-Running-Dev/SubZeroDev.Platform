@@ -39,15 +39,20 @@ storage is per provider.
 | Identifier | 16-byte blob | 16-byte blob |
 | Sequence | 64-bit identity | 64-bit, app-allocated |
 | Instant | ISO-8601 UTC text | ISO-8601 UTC text |
-| Tenant | 16-byte blob | 16-byte blob |
+| Tenant | text | text |
 | Payload | text | text |
 | Text | text | text |
 
-**One portable DDL runs on both providers**, not a PostgreSQL-native schema with a SQLite
-translation — Identifier, Tenant, Instant and Payload store as blob or text on both. Chosen and
-costed at [2026-08-03 "Reconciling S2: the capability seam was not implementable, and four values
-it set", item (6)](90-decisions.md); see the 2026-08-08 entry for the tenant and payload columns,
-which that decision did not name and which drifted from this table unnoticed until now.
+**One migration source generates both providers' DDL**, not a PostgreSQL-native schema with a
+separate SQLite translation — but the two providers' generated text is not identical: the
+identifier and sequence columns substitute a provider-native type keyword (`BLOB`/`BYTEA`,
+`INTEGER`/`BIGINT GENERATED ... AS IDENTITY`), the one branch this table exists to describe. Every
+other column, tenant and payload included, is declared and bound as `TEXT` unconditionally, with no
+per-provider branch at all — never blob, on either provider. Identifier and Instant are chosen and
+costed at [2026-08-03 "Reconciling S2: the capability seam was not implementable, and four values it
+set", item (6)](90-decisions.md); Payload was already text on both and needed no decision. See the
+2026-08-08 entry for what that decision did not name and how this table stood in front of it stale
+until now.
 
 **The identifier's SQLite encoding is pinned to RFC 4122 network byte order**, not the platform
 `Guid` byte order, whose little-endian first three fields scramble precisely the bytes a version-7

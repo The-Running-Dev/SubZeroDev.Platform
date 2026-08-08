@@ -9,17 +9,25 @@ Context: `/reconcile` against `10-design.md` and `20-contract.md` after the D3 p
 2026-08-03 "Reconciling S2: the capability seam was not implementable, and four values it set" entry
 already settled identifier and instant columns as text/blob on both providers rather than native
 `uuid`/`timestamptz` on PostgreSQL — but that decision named only those two logical types. The
-design's logical-type table still read `uuid`/`timestamptz`/`json`, tenant and payload had drifted
-the same way underneath it with nothing to catch either, and three more places in both documents had
+design's logical-type table still read `uuid`/`timestamptz`/`json`, and two more rows in the same
+table were wrong for reasons the S2 decision does not cover: payload had drifted from native `json`
+the same way identifier and instant had, and tenant's row claimed a 16-byte blob it has never been on
+either provider — the code binds it as plain text throughout. Nothing caught either, and three more
+places in both documents had
 independently gone stale: the sequence mechanism, the lease-renewal paragraph, the startup heartbeat
 timing, and where `MapPlatformProbes` and invariant 8 actually apply. One behavioural gap sat beside
 them: `DispatchError.MigrationsPending` has existed since S2 and was never constructed.
 Chosen, as eleven parts of one reconcile:
 
 **Doc corrections — the code was right, the doc was wrong, in every case below:**
-1. `10-design.md`'s logical-type table: PostgreSQL is blob/text for Identifier, Tenant, Instant and
-   Payload, extending the 2026-08-03 S2 decision to the two columns — tenant and payload — it never
-   named, matching the one portable DDL the code has run on both providers since S2.
+1. `10-design.md`'s logical-type table: PostgreSQL is blob for Identifier and text for Tenant,
+   Instant and Payload — Tenant was never blob on either provider, a table row this reconcile first
+   assumed by pattern-matching against Identifier and then corrected against `PlatformOutboxMigration`
+   itself, which declares `tenant TEXT NOT NULL` unconditionally. The one migration source generates
+   provider-specific DDL only for the identifier and sequence columns (`BLOB`/`BYTEA`,
+   `INTEGER`/`BIGINT GENERATED ... AS IDENTITY`); every other column, including tenant and payload,
+   is literal `TEXT` with no per-provider branch — extending the 2026-08-03 S2 decision's
+   identifier/instant scope to a table that had also drifted on a column that decision never touched.
 2. `10-design.md`'s sequence mechanism: app-allocated `MAX(sequence) + 1` on SQLite — a rowid alias
    is unavailable because the primary key is `id`, not `sequence` — and a `BIGINT` identity column on
    PostgreSQL. The reuse-after-prune consequence was already right; only the mechanism was described
@@ -45,12 +53,14 @@ Chosen, as eleven parts of one reconcile:
    forbade exactly that.
 
 **Code:**
-9. `OutboxDispatcher.cs:40` now logs the pending-migration hold under `DispatchError.MigrationsPending`
-   (`Errors.cs:211`), constructed for the first time since it was defined at S2. Behaviour was already
-   correct — claim nothing, stamp nothing — the gap was purely observability.
-10. `PersistenceIntegrationTests.cs` gained the two contract-mandated assertions
-    (`20-contract.md:1724`, `:1732`) that had no test: `Id` unique across a drain, prune-to-empty,
-    insert cycle; and a payload written under one provider deserializing under the other.
+9. `OutboxDispatcher.TickAsync`'s pending-migration branch now logs the hold under
+   `DispatchError.MigrationsPending` (`Errors.cs:211`), constructed for the first time since it was
+   defined at S2. Behaviour was already correct — claim nothing, stamp nothing — the gap was purely
+   observability. Cited by member name, not line number, since the line moves with every edit near it.
+10. `PersistenceIntegrationTests.cs` gained the two contract-mandated assertions — the `Id` uniqueness
+    row and the cross-provider payload row in `20-contract.md`'s provider-contract-tests table — that
+    had no test: `Id` unique across a drain, prune-to-empty, insert cycle; and a payload written under
+    one provider deserializing under the other.
 
 **Found unlogged, recorded rather than corrected — nothing here contradicted either document, so
 nothing above changed for these:**
@@ -71,11 +81,11 @@ nothing above changed for these:**
     restated here only because this is the first entry to log the three siblings above beside it, not
     because anything about it changed.
 
-Rejected: **Native PostgreSQL types for tenant and payload**, leaving the S2 decision's blob/text
-rule scoped to identifier and instant alone — matches what the table said before this reconcile, and
-the code has never been written that way; taking it now would mean a migration and a second
-`IProviderCapability` bind path for two columns that already work correctly, spent to make the
-table's stale claim true instead of fixing the table. **Leaving `OutboxDispatcher`'s migration hold
+Rejected: **Native PostgreSQL types for tenant and payload** — `uuid` for tenant, `json` for
+payload — matching what the table said before this reconcile; the code has never been written that
+way for either column, and taking it now would mean a migration and a second `IProviderCapability`
+bind path for two columns that already work correctly as text, spent to make the table's stale claim
+true instead of fixing the table. **Leaving `OutboxDispatcher`'s migration hold
 silent** — cheaper, and it is exactly the gap invariant 21 depends on an operator noticing without a
 log line. **Leaving invariant 8 as written and treating the other five call sites as an implicit,
 unstated exception** — shorter, and it is the same failure this whole entry exists to correct one
