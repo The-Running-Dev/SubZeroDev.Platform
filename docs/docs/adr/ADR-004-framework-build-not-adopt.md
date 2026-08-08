@@ -25,7 +25,9 @@ Two candidates were evaluated against the near-term package set.
 ### What the evaluation found
 
 **ABP Framework covers most of it.** Against the six near-term packages, verified from its
-documentation rather than recalled:
+documentation rather than recalled. **The coverage map below was re-verified against ABP 10.6 on
+2026-08-08**; state the version whenever it is checked again, because a map with no version cannot
+be told apart from a stale one:
 
 | Package | Its done-criterion | ABP |
 |---|---|---|
@@ -45,7 +47,9 @@ Boilerplate is **MIT**. ABP's own guidance is that commercial and closed-source 
 including SaaS; consuming it as packages carries no publication obligation, while *modifying ABP
 itself* requires publishing those modifications under LGPL. Since this decision adopts neither as a
 dependency, none of that binds — it is recorded so the evaluation does not have to be redone. Note
-separately that ABP Commercial is a distinct paid product; some modules sit behind it.
+separately that the paid tier — **branded ABP Pro**, and called ABP Commercial when this ADR was
+first written — is a distinct product; some modules sit behind it, as does the tooling around the
+framework (ABP Studio, ABP Suite, the CLI).
 
 **ASP.NET Boilerplate is not a lighter alternative.** It self-describes as "a full application
 framework" with DDD/NLayer architecture, conventional DI, repository and Unit of Work patterns,
