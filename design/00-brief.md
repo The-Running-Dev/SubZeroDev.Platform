@@ -5,10 +5,7 @@
 > **Provenance of this draft:** the decisions below were taken by me in answer to direct questions
 > on 2026-08-08 and transcribed. The *Problem* statement and the *Environment* section are drafted
 > from this repository's own documents and the engine's published surface, and need my words before
-> they are binding. The last eight *Non-goals*, the last five Stage 1 criteria, the last two Stage 2
-> criteria and the whole *Both stages* block were drafted by a model on 2026-08-08 at my
-> instruction, from a `/brief-check` of this file — they close stated gaps and take no decision I
-> had not already implied, but they are in its words, not mine, until I have read them back.
+> they are binding.
 
 ## Problem
 
