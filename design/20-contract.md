@@ -15,8 +15,8 @@ The previous derivation contradicted that revision in six places the decision lo
 correlation column, the redrive semantics, the capability's migration lock, the cut converter
 extension point, the tick-shaped background-work contract, and the operation scope's fourth
 member — and each is corrected here in the section it touches. Anything the design still does not
-determine is in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocks
-implementation.**
+determine is in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocked any of
+D3's nine slices**; the one open item names work D3 never built.
 
 **Amended before S8** to make telemetry implementable without inventing dependencies, public
 configuration or unsupported drop accounting. The provider, queue, redaction, sampling,
@@ -1985,14 +1985,15 @@ Each is written to be assertable, with the module responsible for maintaining it
 ## Unresolved
 
 Values the design did not determine, each of which sets something a future reader would ask "why?"
-about. **All seven are now resolved** — 2, 3 and 4 in S1, 6 and 7 in S2, and 1 and 5 ahead of S3, so
-that slice implements against a contract with nothing left to invent. Every one has its reasoning,
-its rejected alternatives and its cost in [`90-decisions.md`](90-decisions.md); none of it is
-restated here.
+about. **Seven of the eight are resolved** — 2, 3 and 4 in S1, 6 and 7 in S2, and 1 and 5 ahead of
+S3, so those slices implemented against a contract with nothing left to invent. **8 is open**, and
+it blocks nothing that shipped: it names a behaviour the design promises and D3 never built. Every
+resolved one has its reasoning, its rejected alternatives and its cost in
+[`90-decisions.md`](90-decisions.md); none of it is restated here.
 
 **A new entry belongs here whenever the design names a concept without naming its construction.**
-The section is not finished because it is currently empty of open items — it is the place that
-question goes, and an empty list is what it looks like between them.
+That is what 8 is, and it is why it is here rather than settled by whoever writes the first line of
+it.
 
 **Resolved items keep their number and are struck through rather than removed**, because
 [`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) both cite these by number and
@@ -2047,3 +2048,26 @@ renumbering would silently break every reference.
    store from a container per test class and a database per test; SQLite's from a temp file. A third
    party runs the suite against a provider of their own by adding a subclass. See
    [`90-decisions.md`](90-decisions.md).
+
+8. **How development-environment automatic migration application is invoked, and which package owns
+   it.** [`10-design.md`](10-design.md) states twice — in *Control flow* §1 and again in *Failure
+   modes* — that application is a separate explicit operation, **automatic only in the development
+   environment**. `RunPlatformMigrateModeAsync` is the explicit operation and this contract has
+   always named it; the automatic path has no surface here and none in the tree, where
+   `IMigrationRunner.ApplyAsync` has exactly one caller. Four things the design does not determine,
+   each of which a first implementer would otherwise settle silently:
+   - **Which package invokes it.** Hosting has no edge to Persistence, so the standard registration
+     call cannot reach the runner; `AddPlatformPersistence` is the only call that can, which makes
+     this a startup side effect of a package whose registration currently has none.
+   - **Whether it is a side effect of registration or an opt-in**, given that the design's stated
+     objection to migrating on start — the least controlled moment available — is an argument the
+     development environment does not answer on its own.
+   - **What a failed automatic application does.** The design's own taxonomy has misconfiguration
+     fail startup and unavailability start and report not-ready; an auto-apply failure is neither,
+     and *Failure modes* prices the manual operation's failure only.
+   - **Whether it takes the provider-native migration lock.** Two development hosts start
+     concurrently — the case the design cites against migrate-on-start — so either it takes the same
+     lock migrate mode does, or it reintroduces exactly the race that lock exists to close.
+
+   Tracked under `## Open` in [`90-decisions.md`](90-decisions.md). **A contract amendment settling
+   these four comes before any slice**, per the rule this section exists to enforce.
