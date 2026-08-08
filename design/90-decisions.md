@@ -4,6 +4,42 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — The contract is not re-derived; three statements that had become false are corrected instead
+Context: `/contract` run against `10-design.md`. The command writes `20-contract.md`, and the design's
+own closing paragraph instructed it to: the fifth adversarial review's entry ended "the contract
+predates this revision and contradicts it — it must be re-derived before any slice runs." That
+sentence was true when written and has not been true since. `20-contract.md` was re-derived in full
+against exactly that revision — its preamble names the six contradictions it closed — and all nine
+slices then ran against the result, which the `Unresolved` items themselves record by citing S1, S2
+and "ahead of S3" as where each was settled. Reading both documents in full found no signature the
+design determines and the contract omits, and no place the two contradict. So the deliverable was a
+verification, not a rewrite.
+Chosen, as three corrections of statements that had become false:
+1. `10-design.md`'s fifth-review paragraph drops the re-derivation instruction. It is a standing
+   instruction to redo work that has been done, in the one document a `/contract` session reads first.
+2. `20-contract.md`:832 and :1726 point at `Unresolved` **3** and **7** as resolved rather than
+   asserting the error envelope's wire format and the contract tests' invocation surface are still
+   open. Both items are struck through and settled; only the referring sentences had not caught up.
+3. `10-design.md`'s malformed-correlation-header failure mode says the new root is **neither counted
+   nor logged** per occurrence. It said "counted rather than logged", which the same document
+   falsifies 685 lines earlier: Platform authors no instrument of its own in D3. The contract was
+   already on the correct side of this — invariant 42 promises only that the request does not fail —
+   so nothing in `20-contract.md` moved for it.
+Rejected — re-deriving `20-contract.md` because the command says to write it. It would be churn
+against a document `30-slices.md`, this log and nine closed slice issues all cite by section and by
+numbered item, and the `Unresolved` numbering is explicitly load-bearing: that section states resolved
+items keep their number and are struck through rather than removed, precisely because renumbering
+silently breaks every citation. A regeneration that reproduced the same content would still risk
+perturbing those anchors for no gain.
+Rejected — declaring a Platform counter so "counted" becomes true. It puts public telemetry surface
+at 0.x ahead of any consumer asking for it, which the design rejects at length in the section that
+establishes the no-instrument rule, and it would need a contract amendment for an instrument no
+operational condition depends on.
+Rejected — leaving all three. Each is a document asserting something about itself or its sibling that
+is no longer so, and the first one actively instructs the next session to redo settled work.
+Reversibility: cheap. Three prose corrections; no type, signature, schema, invariant or persisted
+shape changes, and no code is affected.
+
 ### 2026-08-08 — Reconciling D3's physical types: eight stale doc corrections, one dispatch log gap, and four unlogged values
 Context: `/reconcile` against `10-design.md` and `20-contract.md` after the D3 packages shipped. The
 2026-08-03 "Reconciling S2: the capability seam was not implementable, and four values it set" entry
