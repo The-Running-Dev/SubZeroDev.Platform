@@ -651,15 +651,6 @@ Rejected: **Add the kit's version anyway, since the user approved it in general*
 Reversibility: cheap
 
 ## Open
-- **Development-environment automatic migration application is promised and was never built.**
-  [`10-design.md`](10-design.md) says in *Control flow* §1 and again in *Failure modes* that
-  application is automatic in the development environment; nothing implements it —
-  `IMigrationRunner.ApplyAsync`'s only caller is `RunPlatformMigrateModeAsync` — and no slice
-  criterion ever covered it. **The surface is undetermined**, so a contract amendment settling the
-  four questions in [`20-contract.md`](20-contract.md) *Unresolved* 8 — owning package, trigger,
-  failure behaviour, and whether it takes the provider-native migration lock — comes before any
-  slice. Until then a developer's inner loop runs migrate mode explicitly, exactly as an operator
-  does.
 - **Two automated-review findings are valid, not fixed here, and now raised upstream** — [Docs-Template#62](https://github.com/The-Running-Dev/Docs-Template/issues/62) (mutable tag) and [Docs-Template#63](https://github.com/The-Running-Dev/Docs-Template/issues/63) (traversal). Both sit in files installed **byte-identical** from `ghcr.io/the-running-dev/docs-template` (verified by diffing against the image), and both were already tracked in `SubZeroDev.GameEngine`'s `TODO.md`.
   1. `docs-ci.yml` and `docs-deploy.yml` run in `ghcr.io/the-running-dev/docs-template:latest`, a **mutable tag** — the same commit can start failing after an image update, and past failures are hard to reproduce.
   2. `Test-Documentation.ps1`'s `Get-DocumentationFile` recurses the whole tree before applying `ExcludedSegments`, so excluded trees are still walked. Performance only.
