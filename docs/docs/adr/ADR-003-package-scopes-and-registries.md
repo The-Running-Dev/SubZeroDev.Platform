@@ -73,7 +73,7 @@ one part of this that expires.
   prefix — but *not published* is not *not owned*, an npm organisation can be held without
   publishing, and the container namespace needs authentication to check at all. Only signing
   in settles it. The operational state and the four actions are tracked in
-  `design/d3/90-decisions.md`.
+  [issue #81](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/81).
 
 ## Alternatives considered
 

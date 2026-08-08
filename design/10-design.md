@@ -27,7 +27,8 @@ nothing here may be designed as though an untrusted caller arrives.
 > 1. **`previewAction` is already merged on the engine's `main`, unreleased.** The published
 >    `@the-running-dev/game-engine` 0.4.0 carries **nine** store operations; the engine's `main`
 >    carries **ten**, and its `SessionStore` doc comment already reads *"ten operations, ten MCP
->    tools"*. The `world-graph` kind is itself already exported from 0.4.0. **Resolved:** S1 cuts its
+>    tools"*. The `world-graph` kind is likewise `main`-only — nothing of it
+>    exists at the 0.4.0 tag. **Resolved:** S1 cuts its
 >    release from `main`, so G1 pins a **ten**-operation engine and the table is ten rows.
 >    `previewAction` is consumed, never authored here — which is what the brief's non-goal forbids.
 > 2. **The engine's API coverage checklist already has four client columns** — text client, MCP tool,

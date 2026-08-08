@@ -110,8 +110,9 @@ table of operations produces a versioned package anything can consume, and the b
 refuses when the table and the engine disagree — so a contract that describes an engine nobody is
 running cannot be published in the first place.
 
-Repository: **`SubZeroDev.ServiceContract`**, with one file moved out of `SubZeroDev.GameEngine` and
-one link updated there in the same change.
+Repository: **`SubZeroDev.ServiceContract`**, with one file moved out of this repository's
+`docs/docs/` — ADR-005 already moved it out of `SubZeroDev.GameEngine` — and inbound links updated
+in this repository and the engine's in the same change.
 
 Touches:
 - **The authored row set** — `AuthoredRow` values, one per exported `SessionStore` method: the
@@ -126,8 +127,10 @@ Touches:
 - **`GenerationError`** — all nine variants
 - **The publish path** — the package published under its own semantic version, resolvable by a
   consumer that pins it
-- **`mcp-tool-contract.md`** — moved here; the engine's `design/10-design.md` link updated so the
-  generated `09-clients.md` points at its new home
+- **`mcp-tool-contract.md`** — moved here from this repository's `docs/docs/`, with that copy
+  retired and its inbound links (`docs/docs/index.md`, `docs/docs/game-engine-as-a-service.md`)
+  repointed; the engine's `design/10-design.md` link updated so the generated `09-clients.md`
+  points at its new home
 
 Depends on: S1.
 
@@ -139,8 +142,8 @@ Acceptance:
   a row whose `storeMethod` the engine does not declare fails with `ArityMismatch` naming the row.
   **No artifact is written on either** — the output directory is byte-identical before and after.
 - **S2.3** Deleting one entry from the status mapping fails with `ErrorCodeUncovered` naming the code.
-  Adding an entry for a code that is neither a declared engine code nor one of the three transport
-  codes fails the same gate.
+  Adding an entry for a code that is neither a declared engine code nor a member of
+  `TransportErrorCode` fails the same gate.
 - **S2.4** A response schema emitted without `additionalProperties: false` at any object level fails
   with `ResponseSchemaOpen` naming the schema; a response shape resolving to the engine's envelope
   type fails with `EnvelopeReachable`. **These two are the permanent non-goal's static gate.** A
@@ -164,8 +167,11 @@ Acceptance:
   refused by the registry rather than overwriting.
 - **S2.10** Running the generator twice over an unchanged row set and an unchanged engine produces
   byte-identical artifacts.
-- **S2.11** `mcp-tool-contract.md` is in this repository, and the engine's generated `09-clients.md`
-  links to it there with no dead link left behind. Both edits are in one change set.
+- **S2.11** `mcp-tool-contract.md` lives in `SubZeroDev.ServiceContract` and nowhere else: the
+  Platform copy at `docs/docs/mcp-tool-contract.md` is retired, Platform's inbound links
+  (`docs/docs/index.md`, `docs/docs/game-engine-as-a-service.md`) point at the new home, and the
+  engine's generated `09-clients.md` links to it there. No dead link is left behind, and each
+  repository's edits are one change set.
 
 Out of scope: the workload consuming the package — that is S3, and the criterion "the workload reads
 the contract from ServiceContract, not a local copy" is asserted there; a hand-written schema of any

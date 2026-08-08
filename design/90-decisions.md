@@ -420,3 +420,21 @@ callers.
 ## Open
 
 _(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
+
+---
+
+## Index — decisions whose home is elsewhere
+
+Reasoning, consequences and rejected alternatives live in the linked document, never here —
+*Single ownership* in `AGENTS.md`. Effort-scoped decisions from completed efforts live in their
+archive's own index (see [`d3/90-decisions.md`](d3/90-decisions.md)); the rows here are the
+permanent ones every effort inherits.
+
+| Decision | Home |
+|---|---|
+| Platform is a framework plus optional application modules | [ADR-006](../docs/docs/adr/ADR-006-application-modules.md) |
+| Boundary contracts are projected, not authored; they get their own repository | [ADR-005](../docs/docs/adr/ADR-005-service-contract.md) |
+| Platform is built in-house, with ABP as an architecture reference | [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) |
+| Package scope is per-registry, not one global name | [ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md) |
+| Platform is .NET, and the product boundary is a process boundary | [ADR-002](../docs/docs/adr/ADR-002-implementation-technology.md) |
+| `SubZeroDev.Platform` is the framework, not the game product | [ADR-001](../docs/docs/adr/ADR-001-platform-identity.md) |

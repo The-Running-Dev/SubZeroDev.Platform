@@ -108,6 +108,11 @@ contract owns is the *mapping's* completeness against that set, asserted at gene
 **`TransportErrorCode` is closed and is the contract's own**, because no engine concept corresponds
 to any of the three. The fourth code the design describes — the generic code on an unhandled
 failure — is unnamed by the design and is [Unresolved 2](#unresolved); so are the edge's two.
+Until 2 resolves, `WireErrorCode` cannot represent the `InternalFailure` body's `code`: naming the
+workload's generic code makes it this union's fourth member, and invariant 2 and S2.3's gate track
+the union's membership rather than a count, so the mapping gains that code's `500` entry in the
+same change. The edge's two are `EdgeError`'s own — their statuses are fixed in its table, and
+they enter neither this union nor the mapping.
 
 **`HttpStatus` is the closed set the workload can return.** The edge adds `503` and `504` on its own
 account and returns nothing else the workload did not produce.
@@ -956,7 +961,7 @@ Each is written to be assertable, with the module responsible for maintaining it
 | # | Invariant | Owner |
 |---|---|---|
 | 1 | The row set exactly covers the exported `SessionStore` interface's methods — no method without a row, no row without a method | Generator |
-| 2 | Every `SessionStoreErrorCode` the engine declares and each of the three transport codes appears exactly once in the status mapping, and the mapping has no other entry | Generator |
+| 2 | Every `SessionStoreErrorCode` the engine declares and every member of `TransportErrorCode` appears exactly once in the status mapping, and the mapping has no other entry | Generator |
 | 3 | Every response schema is closed at every object level, and none resolves to the engine's envelope type | Generator |
 | 3a | Every request schema is closed at every object level, so a narrowed request field cannot be re-supplied and no undeclared member reaches the store | Generator |
 | 4 | `httpPath` equals its row's `operation`, for every row | Generator |
@@ -1073,6 +1078,13 @@ timed-out workload. Each is a wire-visible string a client renders and never par
 a contract value rather than an implementation detail — and there are three of them, so a first
 implementer would settle three names silently. `WireError`'s `InternalFailure` row and both
 `EdgeError` variants point here.
+
+Resolving this amends declarations that are otherwise closed, by design rather than by accident:
+the workload's code becomes `TransportErrorCode`'s fourth member — before that, `WireErrorCode`
+cannot represent the `InternalFailure` body's `code` at all — and invariant 2 then requires its
+`500` entry in the status mapping, since the invariant tracks the union's membership. The edge's
+two codes are `EdgeError`'s own: their statuses are fixed in its table, and they enter neither
+`WireErrorCode` nor the mapping.
 
 ### 3. The JSON Schema dialect the generated schema set declares
 

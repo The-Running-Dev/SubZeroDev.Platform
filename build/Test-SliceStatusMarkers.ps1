@@ -8,7 +8,7 @@
 .DESCRIPTION
     A separate script rather than an addition to Test-Documentation.ps1
     deliberately: that file is installed byte-identical from
-    ghcr.io/the-running-dev/docs-template (see design/90-decisions.md), and
+    ghcr.io/the-running-dev/docs-template (see design/d3/90-decisions.md), and
     this repository's own established practice is not to hand-edit installed
     template files, so that re-running the installer keeps picking up
     upstream fixes. This script is repository-owned and runs alongside

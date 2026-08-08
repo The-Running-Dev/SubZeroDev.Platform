@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   assertConsistent,
@@ -188,7 +191,7 @@ describe("assertConsistent — the invariants Test-SliceStatusMarkers.ps1 also c
   });
 });
 
-describe("the real design/d3/30-slices.md — the assertion that survives every future merge", () => {
+describe("the archived design/d3/30-slices.md — the ledger the site renders (issue #80)", () => {
   it("parses without throwing, and every slice carries a recognised status", () => {
     expect(slices.length).toBeGreaterThan(0);
     for (const slice of slices) {
@@ -205,5 +208,36 @@ describe("the real design/d3/30-slices.md — the assertion that survives every 
 
   it("does not throw assertConsistent against its own current state", () => {
     expect(() => assertConsistent(slices)).not.toThrow();
+  });
+});
+
+describe("the active design/30-slices.md — the assertion that survives every future merge", () => {
+  // The app imports the archived d3 ledger (issue #80), so import-time
+  // assertions no longer guard the active effort's file. This test does:
+  // a G1 slice edit that drops a status or a 'Depends on:' line fails here,
+  // at the causing commit, instead of surfacing when #80 repoints the import.
+  const activeRaw = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)).replace(
+        /[\\/]src[\\/]roadmap$/,
+        "",
+      ),
+      "..",
+      "design",
+      "30-slices.md",
+    ),
+    "utf8",
+  );
+
+  it("parses without throwing, and every slice carries a recognised status", () => {
+    const active = parseSlices(activeRaw);
+    expect(active.length).toBeGreaterThan(0);
+    for (const slice of active) {
+      expect(["shipped", "in-progress", "queued"]).toContain(slice.status);
+    }
+  });
+
+  it("does not throw assertConsistent against its current state", () => {
+    expect(() => assertConsistent(parseSlices(activeRaw))).not.toThrow();
   });
 });

@@ -4,7 +4,7 @@ namespace SubZeroDev.Platform.Observability;
 
 /// <summary>The fixed, non-injectable redaction boundary. Not configurable: the contract requires
 /// one safety boundary every local and OTLP signal passes through, and an injectable variant would
-/// let a consumer weaken it. See <c>design/90-decisions.md</c>, "S8 telemetry policy is fixed, typed
+/// let a consumer weaken it. See <c>design/d3/90-decisions.md</c>, "S8 telemetry policy is fixed, typed
 /// and non-blocking".</summary>
 internal static class Redaction
 {

@@ -22,8 +22,9 @@ fail informatively.
 ## Who it is for
 
 Me, as the operator of the first hosted engine deployment — and the engine itself, whose client
-contract gains its fifth client and whose coverage checklist gains its fifth column. (Four exist
-already: text client, MCP tool, simulation kind, browser demo.)
+contract gains its fourth client and whose coverage checklist gains its fifth column. (Four columns
+exist already — text client, MCP tool, simulation kind, browser demo — and the engine counts the
+simulation kind as its first two clients driven a second time, not a client of its own.)
 
 No player, creator, or third-party developer is served by G1 directly. That is deliberate: G1 is
 infrastructure proof, and pretending otherwise would smuggle G3's account surface and G4's
@@ -51,7 +52,8 @@ Both surfaces are generated from one operation table held as data. The engine's 
 pins, so the table starts at ten rows, and the same rule governs the eleventh whenever it arrives.
 
 **The ServiceContract repository is populated as a G1 slice.** G1 is the first real boundary
-ADR-005 was waiting on: `mcp-tool-contract.md` moves to `SubZeroDev.ServiceContract`, the engine's
+ADR-005 was waiting on: `mcp-tool-contract.md` moves from this repository's `docs/docs/` to
+`SubZeroDev.ServiceContract`, the engine's
 `09-clients.md` link is updated in the same change, and the wire schema is generated from the
 engine's types per ADR-005 Rule 2 — a hand-written schema "just for now" is how Rule 2 gets lost.
 The generator lives in `SubZeroDev.ServiceContract` and publishes the schema as a consumable
@@ -75,7 +77,7 @@ The binding list. Everything here is out of scope for every agent until this fil
   endpoint returns engine state. Not for caching, not for debugging. The byte-identity proof's
   in-process serialization of the store is not an exception: it is not an endpoint, and building
   one to serve it would be.
-- **A tenth game operation invented here.** A hosting need the store does not meet is a new store
+- **An eleventh game operation invented here.** A hosting need the store does not meet is a new store
   operation *in the engine* plus a coverage-checklist row, never transport-side logic. The account
   operations a hosted service will eventually need (`list_saves`, `delete_account`) are the
   account surface — G3's, and never merged with the game surface.

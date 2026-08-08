@@ -147,7 +147,7 @@ public static class PlatformHostExtensions
     /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex
     /// characters from <see cref="RandomNumberGenerator"/>. Uniqueness and restart-freshness come
     /// from the random suffix alone, so neither process-id reuse nor a clock adjustment can break
-    /// either. Resolved ahead of S3 — see design/90-decisions.md.</summary>
+    /// either. Resolved ahead of S3 — see design/d3/90-decisions.md.</summary>
     private static InstanceId CreateInstanceId()
     {
         Span<byte> suffix = stackalloc byte[4];

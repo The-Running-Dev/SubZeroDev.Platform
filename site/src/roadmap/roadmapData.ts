@@ -84,10 +84,13 @@ function parseStatus(id: string, text: string): SliceStatus {
 
 /**
  * Fails the internal-consistency invariants build/Test-SliceStatusMarkers.ps1
- * also checks at the repository level: exactly one 'in progress' slice
- * whenever any slice is unshipped, and every queued slice ordered after
- * every shipped one. Exported so both the app and its tests can assert it
- * without duplicating the rule.
+ * also checks at the repository level — each tool against the ledger it
+ * targets: the script validates the active design/30-slices.md, while this
+ * module parses the archived design/d3/30-slices.md (issue #80). The rules:
+ * exactly one 'in progress' slice whenever any slice is unshipped, and every
+ * queued slice ordered after every shipped one. Exported so the app, its
+ * tests, and the active-ledger test can assert it without duplicating the
+ * rule.
  */
 export function assertConsistent(slices: readonly Slice[]): void {
   const inProgress = slices.filter((s) => s.status === "in-progress");

@@ -55,7 +55,7 @@ public sealed record PlatformOptions
 
 /// <summary>Log-file location and optional OTLP export target. Everything else about telemetry
 /// (rolling, retention, buffering, redaction, sampling) is fixed policy, not a setting — see
-/// <c>design/90-decisions.md</c>, "S8 telemetry policy is fixed, typed and non-blocking".</summary>
+/// <c>design/d3/90-decisions.md</c>, "S8 telemetry policy is fixed, typed and non-blocking".</summary>
 public sealed record TelemetryOptions
 {
     /// <summary>Where role-specific JSON Lines log files are written.</summary>

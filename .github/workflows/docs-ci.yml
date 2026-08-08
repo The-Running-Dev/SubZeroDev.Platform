@@ -51,11 +51,11 @@ jobs:
     # Not inside the DocumentationGate block above, deliberately: that block is
     # located by its markers and removed whole by setup-docs.ps1 -SkipGate, and
     # Test-Documentation.ps1 is installed byte-identical from the docs-template
-    # image (design/90-decisions.md) -- this repository's practice is not to
+    # image (design/d3/90-decisions.md) -- this repository's practice is not to
     # hand-edit that file, so re-running the installer keeps picking up
     # upstream fixes. This check is repository-owned and lives in its own job
     # instead, checking design/30-slices.md's Status markers stay consistent --
-    # see build/Test-SliceStatusMarkers.ps1 and design/40-site.md.
+    # see build/Test-SliceStatusMarkers.ps1 and design/d3/40-site.md.
     slice-status-markers:
         name: Slice status markers
         runs-on: ubuntu-latest

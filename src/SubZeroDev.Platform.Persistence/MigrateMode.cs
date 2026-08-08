@@ -10,7 +10,7 @@ using SubZeroDev.Platform.Persistence;
 // Microsoft.Extensions.DependencyInjection.IServiceCollection from a different assembly than the
 // one that declares it. Hosting.csproj keeps zero reference to Persistence; a product calls
 // `builder.RunPlatformMigrateModeAsync(...)` exactly as the contract states it, and gets this
-// method because it references both packages. See design/90-decisions.md, 2026-08-03.
+// method because it references both packages. See design/d3/90-decisions.md, 2026-08-03.
 namespace SubZeroDev.Platform.Hosting;
 
 /// <summary>Migrate mode: the one-shot command that applies every registered module's pending
