@@ -370,6 +370,33 @@ Rejected: binding all interfaces — the ordinary default, and it makes "no publ
 of the network the process happens to be on rather than of the process.
 Reversibility: cheap
 
+### 2026-08-08 — G1 pins the engine release S1 cuts from `main`: ten operations, not nine
+
+Context: [`10-design.md`](10-design.md)'s open question 1 asked whether G1 pins 0.4.0 with nine store
+operations or the release carrying `previewAction` with ten, and recommended 0.4.0 so the arity gate
+would fire for real on the next bump. Deriving the slices made that answer unavailable: **S1.5
+requires a *released* engine carrying `RecordIdSource`, and 0.4.0 carries no such port.** The pinned
+version is therefore necessarily the one S1 cuts, and the only real choice was its base. The
+scheduling was wrong too — the slices document listed the question against S2, one slice after the
+release that settles it.
+Chosen: S1 cuts from the engine's `main`, decided by Ben. `previewAction` is already merged there, so
+G1 pins a ten-operation engine, the operation table is ten rows, and the coverage column S5 delivers
+has ten ticks and no blank. `previewAction` is **consumed, never authored here** — the brief's
+non-goal forbids writing engine behaviour, not routing an operation the pinned engine exports, and
+refusing to route it would fail the arity gate rather than honour the non-goal. The brief's non-goal
+and its wire paragraph both now say so.
+Rejected: **backporting the seam onto the 0.4.0 tag** — preserves the design's stated preference of
+nine rows and leaves the arity gate a real future event, at the cost of a release branch off a tag in
+the engine repository and a coverage column with nine ticks and one blank against a ten-row
+checklist, which is exactly the question open question 2 could not answer. The arity gate is already
+proven deliberately by S2.2, so a real bump is not the only evidence it works. **Deferring to the S1
+implementer** — correct about where the question belongs, but it is one fact with one answer and
+leaving it open would have S1 stop on its first action.
+Cost, stated rather than hidden: G1's surface carries an operation the effort did not ask for, and
+the ten-row table is pinned to an engine release that does not exist yet.
+Reversibility: cheap while the contract is pre-1.0 — dropping to nine rows is a row deletion and a
+regeneration.
+
 ## Open
 
 _(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_

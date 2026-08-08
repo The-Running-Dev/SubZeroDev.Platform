@@ -1079,9 +1079,10 @@ blocks the first line of the workload's dependency declaration.
 leaving any signature above undetermined, and are recorded here so the coupling is visible when they
 are answered.
 
-- **Question 1 — which engine version G1 pins.** It sets the row set's contents, which are data in
-  the published artifact rather than a type here. Pinning 0.4.0 makes nine rows; the next release
-  makes ten. Either way `OperationRow` is unchanged and invariant 1 fires on the bump.
+- **~~Question 1 — which engine version G1 pins.~~ Resolved 2026-08-08: the release S1 cuts from the
+  engine's `main`, carrying ten operations.** It sets the row set's contents, which are data in the
+  published artifact rather than a type here, so `OperationRow` is unchanged either way. The table is
+  **ten** rows, and invariant 1 is asserted against a ten-method `SessionStore`.
 - **Question 5 — whether the shutdown dump is inside the permanent non-goal.** This contract takes
   the design's reading. If it is reversed, `StoreSerializationHandle`, `DeterminismDump`,
   `writeDeterminismDump`, `readDeterminismDump`, `DumpReadError` and invariants 14 and 16 are removed,
@@ -1093,7 +1094,7 @@ are answered.
 
 ## Additions requiring a decision-log entry
 
-Five things above are not stated by the design and are not derivable from it. Each is small,
+Six things above are not stated by the design and are not derivable from it. Each is small,
 mechanical, and named here rather than left for a reader to discover in the code.
 
 1. **`Outcome<T, E>` as the TypeScript error channel.** The design specifies error *semantics* and no

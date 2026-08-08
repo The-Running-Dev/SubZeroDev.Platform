@@ -22,7 +22,8 @@ fail informatively.
 ## Who it is for
 
 Me, as the operator of the first hosted engine deployment — and the engine itself, whose client
-contract gains its third client and whose coverage checklist gains its third column.
+contract gains its fifth client and whose coverage checklist gains its fifth column. (Four exist
+already: text client, MCP tool, simulation kind, browser demo.)
 
 No player, creator, or third-party developer is served by G1 directly. That is deliberate: G1 is
 infrastructure proof, and pretending otherwise would smuggle G3's account surface and G4's
@@ -45,9 +46,9 @@ not gate G2. Both stages are inside G1's definition of done: G2 may begin the mo
 green, but G1 does not close until the edge criteria are met.
 
 **The wire is JSON over HTTP with version-pathed schema URLs, and MCP is a projection of it.**
-Both surfaces are generated from one operation table held as data. The engine's specified tenth
-operation (`previewAction`, arriving with `world-graph`) must land as a table entry in both
-surfaces, never a rewrite.
+Both surfaces are generated from one operation table held as data. The engine's tenth operation
+(`previewAction`) is a table entry in both surfaces and never a rewrite — it is in the release G1
+pins, so the table starts at ten rows, and the same rule governs the eleventh whenever it arrives.
 
 **The ServiceContract repository is populated as a G1 slice.** G1 is the first real boundary
 ADR-005 was waiting on: `mcp-tool-contract.md` moves to `SubZeroDev.ServiceContract`, the engine's
@@ -81,9 +82,13 @@ The binding list. Everything here is out of scope for every agent until this fil
 - **Edge scope creep.** The edge terminates transport, routes, traces, and serves probes. No
   authorization, no persistence, no rate-limiting sophistication. A widened edge is G3 pulled
   into G1, losing G1's virtue as the cheapest informative failure.
-- **`previewAction`, or any change to engine behaviour.** The specified tenth operation arrives
-  with `world-graph`, not here. A behaviour change made to ease hosting is transport-side logic
-  wearing a different hat. **One carve-out, decided 2026-08-08:** the engine gains a
+- **Authoring `previewAction`, or any change to engine behaviour.** The specified tenth operation is
+  the engine's to write, not this effort's. A behaviour change made to ease hosting is transport-side
+  logic wearing a different hat. **Consuming it is not the same thing**, and as of 2026-08-08 G1
+  does: `previewAction` is already merged on the engine's `main`, the release S1 cuts carries it, and
+  the operation table therefore has ten rows rather than nine. Not building it is the binding rule;
+  refusing to route an operation the pinned engine exports would fail the arity gate instead.
+  **One carve-out, decided 2026-08-08:** the engine gains a
   host-suppliable source for session and save ids on its session composition root, defaulting to
   what it does today. It changes no game and cannot — those ids never enter game state, which is
   the engine's own stated reason for minting them where it does — and without it the byte-identity
@@ -110,8 +115,9 @@ The binding list. Everything here is out of scope for every agent until this fil
 
 **Stage 1 — the Node service:**
 
-- The engine's own invariant, with a third client: the same arc, the same seed, the same counting
-  `IdSource` and the same choices, played through the **hosted transport**, serialize
+- The engine's own invariant, with a fifth client: the same arc, the same seed, the same counting
+  `IdSource`, the same counting record-id source and the same choices, played through the **hosted
+  transport**, serialize
   **byte-identically** to the in-process run. **Two comparisons, asserted separately:** the hosted
   service's own serialization of its store at the end of the replay, against the in-process run —
   the engine invariant surviving hosting; and the projected responses of the two runs against each
@@ -121,7 +127,7 @@ The binding list. Everything here is out of scope for every agent until this fil
   one response substituted — goes red. A byte-identity suite that has never failed is not known to
   compare anything.
 - Every store operation is exercised through the hosted surface, and the engine's API coverage
-  checklist gains its third column — **delivered as a PR against `SubZeroDev.GameEngine`**, opened
+  checklist gains its fifth column — **delivered as a PR against `SubZeroDev.GameEngine`**, opened
   by the slice that produced the evidence.
 - Both surfaces — HTTP JSON and the MCP projection — are generated from the one operation table,
   and a test proves the table is the only source: removing a row breaks both.

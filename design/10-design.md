@@ -19,20 +19,21 @@ steady state requires outbound network; and **trusted-local reachability** — n
 nothing here may be designed as though an untrusted caller arrives.
 
 > **Three facts verified against the published engine and the engine's own repository, which the
-> brief states differently.** They change no decision the brief took, and they sharpen two. They are
-> stated here because the design must be correct against what exists, and they are raised for
-> adjudication in [Open questions](#open-questions) rather than reconciled here.
+> brief stated differently.** They changed no decision the brief took, and they sharpened two. They
+> are stated here because the design must be correct against what exists. **The first two are now
+> adjudicated** — the brief carries the correction, and the resolutions are recorded in
+> [`90-decisions.md`](90-decisions.md), 2026-08-08.
 >
 > 1. **`previewAction` is already merged on the engine's `main`, unreleased.** The published
 >    `@the-running-dev/game-engine` 0.4.0 carries **nine** store operations; the engine's `main`
 >    carries **ten**, and its `SessionStore` doc comment already reads *"ten operations, ten MCP
->    tools"*. The brief treats the tenth as arriving later with `world-graph`. The `world-graph` kind
->    is itself already exported from 0.4.0. So the tenth operation is not a hypothetical the table
->    must survive one day — it is the next engine release, and the table's arity gate (below) will
->    fire on the version bump.
+>    tools"*. The `world-graph` kind is itself already exported from 0.4.0. **Resolved:** S1 cuts its
+>    release from `main`, so G1 pins a **ten**-operation engine and the table is ten rows.
+>    `previewAction` is consumed, never authored here — which is what the brief's non-goal forbids.
 > 2. **The engine's API coverage checklist already has four client columns** — text client, MCP tool,
->    simulation kind, browser demo — over ten rows, every box ticked. The brief's "third column" is
->    the hosted transport's column, and it is the fifth.
+>    simulation kind, browser demo — over ten rows, every box ticked. **Resolved:** the hosted
+>    transport's is the **fifth**, the brief says so, and because G1 pins the ten-operation engine the
+>    column has ten ticks and no blank row.
 > 3. **`09-clients.md` is generated**, from the engine repository's own `design/10-design.md`. The
 >    PR that adds the hosted column edits that source, not the rendered document.
 
@@ -131,19 +132,27 @@ Two properties of that split matter downstream:
 - **Nothing on these records is derived by the workload.** The workload allocates no id, computes no
   sequence, and stamps no field. Every value is the engine's.
 
-Identity: session id and save id, both minted by the engine's `IdSource` port. Lifecycle: created on
+Identity: session id and save id, both minted by the engine's **`RecordIdSource`** port — the seam G1
+adds, and the reason S1 exists. The engine mints these with `crypto.randomUUID()` behind no seam
+today; `IdSource` is an `EngineHost` port and governs `gameId` and `seed` only, not these. The
+consequence of the gap and the decision to close it are in [`90-decisions.md`](90-decisions.md),
+2026-08-08, and the port's shape is [`20-contract.md`](20-contract.md)'s. Lifecycle: created on
 `createSession`/`loadGame`, mutated in place on `submitAction`, never evicted, lost on restart. There
 is no expiry, no quota and no size limit — the brief's non-goal, and the reason is that a limit sized
 against no measurement is a number G2 would have to relitigate.
 
 ### In-memory — the determinism profile
 
-Startup configuration selecting which implementations of the engine's `IdSource` and `Clock` ports the
-composition supplies, and, when the replay profile is selected, the path to write the store's canonical
-serialization to at graceful shutdown.
+Startup configuration selecting which implementations of the engine's `IdSource`, `RecordIdSource` and
+`Clock` ports the composition supplies, and, when the replay profile is selected, the path to write the
+store's canonical serialization to at graceful shutdown.
 
-**Default profile:** the engine's random `IdSource` and real clock; no dump path; nothing written.
-**Replay profile:** a counting `IdSource` from a stated start and a fixed clock; a dump path.
+**Default profile:** the engine's random `IdSource`, no `RecordIdSource` — so the engine mints record
+ids as it does today — and a real clock; no dump path; nothing written.
+**Replay profile:** the engine's exported counting `IdSource`, a counting `RecordIdSource` on
+independent counters, and a fixed clock; a dump path. Neither counting source takes a starting value:
+the engine's `createCountingIds()` counts from zero and accepts no argument, and G1's
+`RecordIdSource` matches it rather than inventing a second convention.
 
 Three constraints, and each exists to stop this becoming something else:
 
@@ -169,9 +178,11 @@ names.
 
 ### Committed fixture — the replay
 
-A campaign id, a fixed seed, the counting `IdSource`'s starting value, and an ordered action list that
-exercises **every** row in the operation table. Committed to the repository, because a proof whose input
-is generated per run compares two things nobody has read.
+A campaign id, a fixed seed, and an ordered action list that exercises **every** row in the operation
+table. No counter start: both counting sources begin at zero and take no argument. Because the record
+ids are reproducible, a step may name a session or save id an earlier step returned, as a literal.
+Committed to the repository, because a proof whose input is generated per run compares two things
+nobody has read.
 
 Its companion, also committed, is **the golden transcript**: the canonically-encoded responses of the
 in-process run, in order. It is an output of the proof and an input to it — regenerated deliberately,
@@ -197,7 +208,7 @@ absence was decided.
 | **HTTP surface** | Routing, request validation, response validation, canonical encoding, status mapping | Contract, Dispatch | The versioned JSON wire |
 | **MCP surface** | The tool list and tool invocation | Contract, Dispatch | The MCP projection |
 | **Probes** | Liveness and readiness for the workload | Nothing but Composition's readiness | Two endpoints |
-| **Proof harness** *(test-scope)* | The fixture, the two comparisons, the perturbations | Composition's serialization handle, and the HTTP surface **as a client over a real socket** | Nothing — it is a leaf |
+| **Proof harness** *(test-scope)* | The fixture, the two comparisons, the perturbations | Composition's serialization handle, Dispatch (run 1), and the HTTP surface **as a client over a real socket** (run 2) | Nothing — it is a leaf |
 
 **Dependency direction:**
 
@@ -209,12 +220,13 @@ absence was decided.
            │              └────────── MCP surface
            │
       Proof harness ──(as an HTTP client, over the wire)──→ HTTP surface
+                    ──(run 1, in-process)───────────────→ Dispatch
 ```
 
 Acyclic, and confirmed by inspection: Contract depends on nothing local; Composition depends on Contract
 and the engine; Dispatch depends on both; the two surfaces depend on Dispatch and Contract and on each
-other not at all; the harness depends on Composition and on the HTTP surface but nothing depends on the
-harness.
+other not at all; the harness depends on Composition, on Dispatch and on the HTTP surface but nothing
+depends on the harness.
 
 **Two edges deliberately absent, and each is gated rather than promised:**
 
@@ -262,7 +274,7 @@ whole point and is unaffected. A rule with no gate is a comment.
 package. Assert the contract's recorded engine version equals the resolved engine package's version; a
 mismatch aborts startup with a named error rather than serving a wire the schemas do not describe. Build
 the engine, the content registry, the in-memory persistence and profile store, and the session store, with
-the profile's `IdSource` and `Clock`. Build the HTTP routes and the MCP tool list **from the table, at this
+the profile's `IdSource`, `RecordIdSource` and `Clock`. Build the HTTP routes and the MCP tool list **from the table, at this
 moment** — both surfaces are constructed from the same in-memory row set, not from generated source. Bind
 the listener. Report live, then ready.
 
@@ -317,10 +329,13 @@ would fail it.
 
 Two runs, then two comparisons that are asserted separately because neither answers §5 alone.
 
-**Run 1, in-process.** Compose the engine and store directly with the replay profile's counting `IdSource`
-and fixed clock. Play the fixture's action list against the store. Collect each operation's returned value,
-canonically encoded, as the transcript. At the end, read every session and save blob from the supplied
-persistence, ordered by id.
+**Run 1, in-process.** Compose the engine and store directly with the replay profile's counting sources
+and fixed clock. Play the fixture's action list **through the same dispatcher the surfaces use**, not
+against the store directly: the store returns `SaveHandle` and the wire returns `{ saveId }`, so a run
+that called the store would diverge from run 2 on `save-game` before any determinism defect could.
+Only the transport differs between the two runs. Collect each operation's returned value, canonically
+encoded, as the transcript. At the end, read every session and save blob from the supplied persistence,
+ordered by id.
 
 **Run 2, hosted.** Start the workload **as a real process** under the replay profile. Play the identical
 action list through the HTTP wire, strictly sequentially — each response fully read before the next request
@@ -653,21 +668,26 @@ not one service. It also makes G1's operations story three processes, against th
 ## Open questions
 
 Each of these needs information the brief does not give, and each changes something concrete.
+**Resolved questions keep their number and are struck through rather than removed**, because
+[`20-contract.md`](20-contract.md) and [`30-slices.md`](30-slices.md) cite these by number and
+renumbering would silently break every reference.
 
-1. **Which engine version does G1 pin — 0.4.0 with nine operations, or the release carrying
-   `previewAction` with ten?** `previewAction` is merged on the engine's `main` and unreleased; the brief treats it as
-   a later arrival and lists "`previewAction`, or any change to engine behaviour" as a non-goal, which reads as *not
-   built here* rather than *not consumed here*. Pinning 0.4.0 makes the table nine rows and the arity gate fires on the
-   next bump — which is the mechanism proving itself, and a good outcome. Pinning the next release makes G1's coverage
-   column complete against the engine's current surface. **My recommendation: pin 0.4.0.** G1's virtue is being the
-   cheapest informative failure, and a ten-row table against an unreleased engine trades that for a coverage column
-   that will need regenerating anyway.
+### ~~1. Which engine version does G1 pin~~
 
-2. **Which column does the hosted transport add to the engine's coverage checklist, and is the PR against the engine's
-   `design/10-design.md`?** The checklist already has four client columns over ten rows, and the rendered
-   `09-clients.md` is generated from the engine repository's design document. The brief says "third column". If G1 pins
-   0.4.0 (question 1), the hosted column has nine ticks and one blank against a ten-row table, and whether a blank row
-   is acceptable in that checklist is the engine's rule to state, not mine.
+**Resolved 2026-08-08, by Ben: S1 cuts its release from the engine's `main`, so G1 pins a
+ten-operation engine.** 0.4.0 was never available — [S1](30-slices.md#s1--session-and-save-ids-the-host-can-supply)
+requires a *released* engine carrying `RecordIdSource`, and 0.4.0 carries no such port, so the pinned
+version is necessarily the one S1 cuts and the only real choice was its base. The table is ten rows;
+`previewAction` is consumed, never authored here. The reasoning and the rejected alternative are in
+[`90-decisions.md`](90-decisions.md).
+
+### ~~2. Which column does the hosted transport add to the engine's coverage checklist~~
+
+**Resolved 2026-08-08 by question 1.** It is the **fifth** — the checklist already carries text
+client, MCP tool, simulation kind and browser demo — and the brief now says so. Because G1 pins the
+ten-operation engine, the column has ten ticks and no blank row, so the "is a blank row acceptable"
+question does not arise. The PR edits the engine's `design/10-design.md`, from which `09-clients.md`
+is generated, not the rendered document.
 
 3. **Does `SubZeroDev.ServiceContract`'s "depends on nothing" survive a generator that reads the engine's types?** The
    contract repository's rule 5 states the property flatly. The generator the brief places there must resolve

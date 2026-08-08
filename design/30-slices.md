@@ -37,13 +37,13 @@ gets a `90-decisions.md` entry from that slice.
 
 | Question | Needed before |
 |---|---|
-| Design Q1 — which engine version G1 pins: 0.4.0 with nine operations, or the release carrying `previewAction` with ten | **S2**. It is the row set's contents |
+| ~~Design Q1 — which engine version G1 pins~~ | **Resolved 2026-08-08.** S1 cuts from engine `main`; G1 pins ten operations. See [`90-decisions.md`](90-decisions.md) |
 | Design Q3 — whether ServiceContract's "depends on nothing" governs the published artifact or also the generator's build inputs | **S2**. It is a cross-repository rule edit |
 | Contract Unresolved 3 — the JSON Schema dialect the generated set declares | **S2**. It fixes which validator the workload can use |
 | Contract Unresolved 4 — the contract package's published name and registry | **S2**. It is the first line of the workload's dependency declaration |
 | Contract Unresolved 2 — the workload's generic internal-failure code | **S3**. It is a wire-visible string |
 | Design Q5 — whether the shutdown serialization dump is inside the permanent non-goal | **S4**. If it is, S4 does not exist and S5's comparison A narrows |
-| Design Q2 — the shape of the hosted column in the engine's coverage checklist, and whether a blank row is acceptable there | **S5**. It is the engine's rule, not this repository's |
+| ~~Design Q2 — the shape of the hosted column, and whether a blank row is acceptable there~~ | **Resolved 2026-08-08 by Q1.** It is the fifth column, with ten ticks and no blank row |
 | Design Q4 — whether comparison B is in-process against hosted, or two hosted runs | **S5**. One golden transcript satisfies both readings; what the criterion is understood to assert is not the same question |
 | Contract Unresolved 2 — the edge's unreachable and timed-out codes | **S7**. Two more wire-visible strings |
 | Design Q6 — whether the edge covers the MCP surface | **S7**. Leaving it open hands G3 a surface that bypasses the authorization point |
@@ -70,7 +70,9 @@ Touches:
 - **The session store** — the module-local id minting, which now calls the supplied source when one
   is present
 - **The engine's own suite** — the assertions below
-- **The engine's release** — a published version carrying the seam in its type declarations
+- **The engine's release** — a published version carrying the seam in its type declarations, **cut
+  from the engine's `main`**, so it carries the already-merged `previewAction` and G1 pins a
+  ten-operation engine (decided 2026-08-08; see [`90-decisions.md`](90-decisions.md))
 
 Depends on: none.
 
@@ -88,13 +90,15 @@ Acceptance:
   save written — asserted with a counting source. No other engine path consumes the source.
 - **S1.5** A released engine version carries `RecordIdSource` in its published type declarations, and
   a consumer resolving that version from the registry can supply one without reaching into the
-  engine's internals.
+  engine's internals. It is cut from `main`, so its exported `SessionStore` declares **ten**
+  operations — the count S2's arity gate is asserted against.
 
-Out of scope: `previewAction` and every other change to engine behaviour — the brief's non-goal
-carries one carve-out and this is it; widening the existing `IdSource`, which governs `gameId` and
-`seed` and is a different category; the coverage-checklist column, which is S5's PR because S5 is
-what produces its evidence; exporting a counting `RecordIdSource` implementation, which the workload
-composes for itself in S4.
+Out of scope: **authoring** `previewAction` or any other change to engine behaviour — the brief's
+non-goal carries one carve-out and this is it; the operation ships in this release because it is
+already merged, and S1 neither writes nor modifies it. Widening the existing `IdSource`, which
+governs `gameId` and `seed` and is a different category; the coverage-checklist column, which is S5's
+PR because S5 is what produces its evidence; exporting a counting `RecordIdSource` implementation,
+which the workload composes for itself in S4.
 
 ---
 
@@ -353,8 +357,10 @@ Acceptance:
   after a green suite. Regeneration is an explicit act, reviewed as a diff.
 - **S5.11** Both runs and both comparisons execute in CI from a fresh clone, with no artifact carried
   in from a previous run.
-- **S5.12** A PR is open against `SubZeroDev.GameEngine` adding the hosted transport's column to the
-  coverage checklist, with one tick per operation the replay exercised and no tick for one it did not.
+- **S5.12** A PR is open against `SubZeroDev.GameEngine` adding the hosted transport's column — the
+  **fifth** — to the coverage checklist, with one tick per operation the replay exercised. Because
+  G1 pins the ten-operation release and the fixture covers every row (S5.1), the column is complete:
+  ten ticks, no blank. A blank would mean S5.1 failed.
 
 Out of scope: any endpoint serving the serialization, however named; an ignore-list, a normalization
 or an options parameter on either comparison — a byte-identity suite that can be told what to skip
@@ -535,6 +541,5 @@ Acceptance:
 
 Out of scope: a human-facing interface of any kind — no front end, no playground, no operator console;
 deployment machinery, container images and process supervision, which two hand-started processes are
-the whole of; the public site's roadmap rendering, which is an L-track question already recorded as
-open in `90-decisions.md`; the human-facing guide, which is `/make-human-docs`'s output and not a
-slice's.
+the whole of; the public site's roadmap rendering, which is an L-track question tracked as issue #80;
+the human-facing guide, which is `/make-human-docs`'s output and not a slice's.

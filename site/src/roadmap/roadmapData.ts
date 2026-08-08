@@ -131,7 +131,7 @@ export type NonGoal = {
 };
 
 /**
- * design/00-brief.md's Non-goals section, hand-authored: the brief's prose
+ * design/d3/00-brief.md's Non-goals section, hand-authored: the brief's prose
  * is not machine-parseable the way 30-slices.md's headings are, and these
  * four are a closed, stable list — closing a non-goal is a brief amendment,
  * not something a slice merge changes.
