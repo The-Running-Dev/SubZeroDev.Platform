@@ -72,15 +72,25 @@ public sealed class TelemetryExportTests
                 // Occupies the batch path: enough spans to guarantee at least one batch export
                 // attempt reaches the (currently gated) collector once the exporter's scheduled
                 // delay elapses.
+                //
+                // Every request carries a sampled `traceparent`, and that is what makes "guarantee"
+                // true rather than likely. An unparented root falls through PlatformSampler to a 10%
+                // TraceIdRatioBasedSampler, so twenty bare requests produce no sampled span at all on
+                // 0.9^20 — about one run in eight — and the exporter then has nothing to send, no
+                // request reaches the gate, and this test times out for a reason that has nothing to
+                // do with what it asserts. ParentBasedSampler honours a recorded parent, so a sampled
+                // traceparent makes the span set deterministic. Traces are the only signal that can
+                // arrive inside the window: metrics export on a 60-second reader, and Serilog is
+                // installed with `writeToProviders: false`, so the OTLP log pipeline sees nothing.
                 for (var i = 0; i < 20; i++)
                 {
-                    (await client.GetAsync("/", CancellationToken.None)).EnsureSuccessStatusCode();
+                    (await client.SendAsync(SampledRequest(), CancellationToken.None)).EnsureSuccessStatusCode();
                 }
 
                 await gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
                 var stopwatch = Stopwatch.StartNew();
-                var response = await client.GetAsync("/", CancellationToken.None);
+                var response = await client.SendAsync(SampledRequest(), CancellationToken.None);
                 stopwatch.Stop();
 
                 Assert.True(response.IsSuccessStatusCode);
@@ -134,6 +144,17 @@ public sealed class TelemetryExportTests
         {
             File.Delete(blockingFile);
         }
+    }
+
+    /// <summary>A GET carrying a well-formed, <em>sampled</em> W3C <c>traceparent</c> — flags <c>01</c>.
+    /// Each call mints a fresh trace-id so the requests stay distinct traces rather than siblings.</summary>
+    private static HttpRequestMessage SampledRequest()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/");
+        request.Headers.TryAddWithoutValidation(
+            "traceparent",
+            $"00-{ActivityTraceId.CreateRandom()}-{ActivitySpanId.CreateRandom()}-01");
+        return request;
     }
 
     private static async Task<string> ReadEventuallyAsync(string logDirectory, string mustContain)
