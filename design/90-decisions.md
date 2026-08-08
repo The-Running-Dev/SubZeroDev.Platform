@@ -4,6 +4,42 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — ADR-004's architecture reading happens after the fact, and finds two gaps rather than a defect
+Context: [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §3 names three things to
+read closely in ABP **before** the thin equivalents are written — its module lifecycle and
+dependency-graph validation, its outbox, and its tenancy query filters. D3 shipped all nine slices
+without a single log entry citing any of them, which under that ADR's own reuse clause is
+indistinguishable from having skipped it. The third was moot: tenancy query filters are a brief
+non-goal, deferred to D5. The other two were read against ABP 10.6's documentation on 2026-08-08,
+after the code existed.
+Chosen: **Record the reading now, change no shipped code, and route what it found to the tracker.**
+Two findings, and neither is a defect in what D3 built:
+1. **No consumer-side idempotency, where ABP has an inbox.** ABP pairs `OutgoingEventRecord` with
+   `IncomingEventRecord`, retaining processed ids so a redelivered message is dropped before the
+   handler runs. Platform's dispatcher names the same exposure and stops there — `ObserveClaimedWriteAsync`
+   logs "duplicate delivery is possible" on a lost claim. At-least-once is a *logged decision*, so
+   this is not drift; but the contract offers handlers no dedupe seam, which makes idempotency a
+   problem every consumer solves privately and inconsistently.
+2. **`IPlatformModule` has one lifecycle hook where ABP has seven.** `Register(IServiceCollection)`
+   is the whole surface. ABP's `PreConfigureServices` exists so a module can shape options a later
+   module reads, and `OnApplicationInitialization`/`OnApplicationShutdown` give a module a built
+   `IServiceProvider` and a shutdown path. Platform modules have none of these, so anything needing
+   a built provider is pushed into `IBackgroundWork` or the host's own startup.
+Two places the comparison **confirmed** Platform, which is why this is not a report of shortfalls:
+its **claim-by-portable-conditional-update** is better suited than ABP's distributed lock around a
+batch — the lock is what forces ABP's blocking `Retry` policy, and one-row-at-a-time claiming needs
+no lock to be multi-process safe; and holding the dispatcher **while migrations are pending** has no
+ABP equivalent.
+Rejected: **Amend `IPlatformModule` or add an inbox table now** — both change a published contract
+after D3 is packaged and released at v0.1.0, for no consumer that has asked; the extraction guard
+says the second consumer earns the abstraction, and the G1 edge is the one that will. **Log the
+reading as done and record nothing** — leaves an empty log next to hand-written infrastructure,
+which ADR-004 names explicitly as the signal that its reuse clause was skipped. **Reopen ADR-004** —
+nothing found changes the build-not-adopt verdict, which rests on per-product weight, not coverage.
+Reversibility: cheap — both findings are additive to a 0.x API that is explicitly unstable.
+
+---
+
 ### 2026-08-08 — The sample round-trip script becomes PowerShell, signalling through libc
 Context: S9 added `build/Test-SampleRoundTrip.sh`, the only non-PowerShell script in `build/` against
 `AGENTS.md` *House conventions* — "PowerShell Core for scripts". It is the script that proves the
