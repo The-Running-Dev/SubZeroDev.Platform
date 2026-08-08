@@ -82,8 +82,14 @@ The binding list. Everything here is out of scope for every agent until this fil
   authorization, no persistence, no rate-limiting sophistication. A widened edge is G3 pulled
   into G1, losing G1's virtue as the cheapest informative failure.
 - **`previewAction`, or any change to engine behaviour.** The specified tenth operation arrives
-  with `world-graph`, not here. G1's only deliverable into the engine is the coverage-checklist
-  column; a behaviour change made to ease hosting is transport-side logic wearing a different hat.
+  with `world-graph`, not here. A behaviour change made to ease hosting is transport-side logic
+  wearing a different hat. **One carve-out, decided 2026-08-08:** the engine gains a
+  host-suppliable source for session and save ids on its session composition root, defaulting to
+  what it does today. It changes no game and cannot — those ids never enter game state, which is
+  the engine's own stated reason for minting them where it does — and without it the byte-identity
+  criterion below is unachievable rather than merely hard, because three operations return a fresh
+  random id in every run. G1's deliverables into the engine are therefore two: that seam, and the
+  coverage-checklist column.
 - **A human-facing interface.** No front end, no playground, no operator console. G1's audience is
   a test suite and a trace.
 - **Reachability beyond trusted-local.** No public exposure, no transport security, no

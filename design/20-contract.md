@@ -14,12 +14,11 @@ Types and signatures only. No package names and no namespace declarations — th
 identity is [Unresolved 4](#unresolved), and the edge's placement is
 [`90-decisions.md`](90-decisions.md)'s.
 
-> **Three of this contract's signatures are blocked, and the block is in the engine rather than in
-> the design.** The design states that session and save ids are minted by the engine's `IdSource`
-> port; the engine mints them with `crypto.randomUUID()` and exposes no seam for them. Every
-> signature that does not depend on that stands below and is complete. The three that do are in
-> **[Unresolved 1](#unresolved)**, which also carries the evidence and a recommendation. Nothing has
-> been invented around it.
+> **This contract depends on one engine change, decided 2026-08-08.** The design states that session
+> and save ids are minted by the engine's `IdSource` port; the engine mints them with
+> `crypto.randomUUID()` behind no seam, which made the response comparison unachievable for three
+> rows. G1 adds the seam — see [*The engine seam G1 adds*](#the-engine-seam-g1-adds) — and
+> [Unresolved 1](#unresolved) records what was blocked and what unblocked it.
 
 ---
 
@@ -204,6 +203,28 @@ engine does this contract describe?" from the artifact alone.
 **One `wireVersion` per artifact.** Serving two at once is a binding non-goal; the member exists so
 the path prefix has a single stated source, not so a set can grow.
 
+### The engine seam G1 adds
+
+```ts
+export interface RecordIdSource {
+  newSessionId(): string;
+  newSaveId(): string;
+}
+```
+
+**Declared in the engine and supplied by the host**, as an optional member of the session layer's
+composition root alongside `clock`, `persistence` and `profiles`. Omitted, the engine's present
+behaviour is unchanged: `crypto.randomUUID()` for both.
+
+**It is permitted by the engine's own rule** — a host may supply anything that cannot change
+`serialize()` output, and a session id and a save id never enter `GameState`, which is the engine's
+own stated reason for minting them where it does. It is a second port beside `IdSource` rather than a
+widening of it, because `IdSource` supplies `gameId` and `seed`, which *are* serialized inputs, and
+one port covering both would put two categories behind one name.
+
+**This is a G1 deliverable into the engine**, and the second one — the coverage-checklist column is
+the other. Without it the Stage 1 byte-identity criterion is unachievable rather than merely hard.
+
 ### Workload — configuration and the determinism profile
 
 ```ts
@@ -242,7 +263,10 @@ neither comparison and exists to keep the run free of a wall clock rather than t
 
 **The replay profile has no counting-`IdSource` start value**, and the design's "from a stated start"
 is not satisfiable: the engine's exported `createCountingIds()` takes no argument and counts from
-zero. See [Unresolved 1](#unresolved).
+zero. The replay profile supplies that source unchanged, and a counting `RecordIdSource` on the same
+terms — independent counters, each from zero, no argument. Two fixtures that count from different
+starts prove nothing a single start does not, and a start value is one more thing two runs can
+disagree about.
 
 **`otlpEndpoint` is nullable and null is normal.** Null means no exporter is constructed and no
 outbound connection is attempted — not a disabled exporter, and not a default endpoint.
@@ -409,9 +433,13 @@ transcripts structurally different things that happen to be compared.
 **`ReplayFixture.steps` covers every row in the table**, asserted by the harness rather than by
 inspection: the set of operations the steps name equals the set the table declares.
 
-**`ReplayFixture` carries no counting-`IdSource` start value**, for the reason under
-[Unresolved 1](#unresolved). Whether a step may name an id an earlier step returned is settled there
-too, and it is why this type is listed but the harness's run signatures below are conditional.
+**`ReplayFixture` carries no counting-`IdSource` start value**, for the reason given with the replay
+profile.
+
+**`ReplayStep.arguments` is literal, including ids.** A step following `create-session` names the
+session id that call returned, written out in the fixture — which is possible only because the
+replay profile's `RecordIdSource` makes it the same string in every run. A fixture that captured ids
+at run time would be a harness that reproduces itself rather than a committed input two runs share.
 
 ### Edge — options, forwarding, and readiness
 
@@ -659,6 +687,22 @@ the harness reads as an empty dump.
 ### Proof harness — test scope
 
 ```ts
+export interface HostedTarget {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, ShutdownError>>;
+  readDump(): Promise<Outcome<StoreSerializationSnapshot, DumpReadError>>;
+}
+
+export function runInProcess(
+  fixture: ReplayFixture,
+  contract: ContractPackage,
+): Promise<Outcome<RunResult, ReplayError>>;
+
+export function runHosted(
+  fixture: ReplayFixture,
+  target: HostedTarget,
+): Promise<Outcome<RunResult, ReplayError>>;
+
 export function compareSerializations(
   expected: StoreSerializationSnapshot,
   actual: StoreSerializationSnapshot,
@@ -679,8 +723,20 @@ export function readDeterminismDump(
 and the absence of one is deliberate — an ignore-list is how a byte-identity suite stops comparing
 anything.
 
-**The two run signatures — the in-process run and the hosted run — are blocked**, and are in
-[Unresolved 1](#unresolved) rather than guessed at here.
+**`runInProcess` composes the engine and store directly and drives them through a `Dispatcher`.** It
+does not call the store's methods itself: the row's projection and canonical encoding are the same
+code both runs use, and only the transport differs. A run that called the store directly would
+diverge from the hosted run on `save-game` before any determinism defect could.
+
+**`HostedTarget` is what makes one harness serve both stages.** `baseAddress` is the workload in
+Stage 1 and the edge in Stage 2; `shutdown` and `readDump` address the workload in both, because the
+dump is a file the workload writes rather than a value read out of its memory. That separation is the
+whole reason the dump was paid for.
+
+**`runHosted` sends strictly sequentially**, each response fully read before the next request. It
+exposes no concurrency option — pipelining would let two actions reach one session in an order the
+fixture did not specify, and the failure would present as a byte-identity break in a harness that
+caused it.
 
 ### The edge — .NET
 
@@ -847,12 +903,18 @@ this design becomes conditional.
 | `DuplicateOperationId` | Two rows share an `OperationId` or an `McpToolName` | No | Fails the contract build, naming both |
 | `EngineResolutionFailed` | The engine package cannot be resolved for projection | No | Fails the contract build, naming the package and the registry. **Nothing retries automatically** — a silent retry over an authentication failure records a credential problem as flakiness |
 
-### The harness — `DumpReadError`
+### The harness — `DumpReadError`, `ReplayError`
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `DumpAbsent` | No dump exists at the configured path after shutdown | No | Fails the comparison. An absent dump is never read as an empty one |
-| `DumpMalformed` | The dump cannot be parsed | No | Fails the comparison |
+| Type | Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|---|
+| `DumpReadError` | `DumpAbsent` | No dump exists at the configured path after shutdown | No | Fails the comparison. An absent dump is never read as an empty one |
+| `DumpReadError` | `DumpMalformed` | The dump cannot be parsed | No | Fails the comparison |
+| `ReplayError` | `CoverageIncomplete` | The fixture's operation set is not equal to the table's row set | No | Fails the suite, naming the operations on each side. This is what makes "every store operation is exercised through the hosted surface" checkable by counting |
+| `ReplayError` | `UnknownOperationInFixture` | A step names an operation with no row | No | Fails the suite, naming the step |
+| `ReplayError` | `StepFailed` | A step produced an error outcome the fixture did not declare | No | Fails the suite, naming the step and the code. A replay whose steps fail is not a replay |
+| `ReplayError` | `TransportFailure` | The hosted client could not complete a request | No | Fails the suite. **No retry** — a retried step is a second action |
+| `ReplayError` | `Shutdown` | Carries a `ShutdownError` | No | Fails the suite |
+| `ReplayError` | `DumpRead` | Carries a `DumpReadError` | No | Fails the suite |
 
 ### The edge — `EdgeError`
 
@@ -892,7 +954,9 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 9 | No `$ref` or `$id` is dereferenced over the network, at generation or at run time | Generator, Contract |
 | 10 | `ContractPackage.engineVersion` equals the version the schemas were projected from | Generator |
 | 11 | The workload's resolved engine package version equals `ContractPackage.engineVersion`, or the process does not start | Composition |
-| 12 | The workload allocates no id, computes no sequence and stamps no field on a session or save record; every value is the engine's | Composition |
+| 12 | The workload computes no sequence and stamps no field on a session or save record; every value is the engine's. The one thing it supplies is `RecordIdSource`, which the engine calls — and only under the replay profile | Composition |
+| 12a | With the default determinism profile, no `RecordIdSource` is supplied and the engine's own minting applies unchanged | Composition |
+| 12b | Under the replay profile, session and save ids are the same strings in every run, which is what makes comparison A's id ordering reproducible and the fixture's literal ids writable | Composition |
 | 13 | No correlation, trace id, or other host metadata is written into a session record or into any canonical serialization | Composition |
 | 14 | With the default determinism profile, no dump is written and no dump path exists to write to | Composition |
 | 15 | The determinism profile is startup configuration only — never a request field, never a header, never a route segment | Composition, HTTP surface, MCP surface |
@@ -933,11 +997,25 @@ Each is written to be assertable, with the module responsible for maintaining it
 ## Unresolved
 
 Values and signatures the design does not determine. **Each blocks something concrete**, and none is
-guessed at above.
+guessed at above. **1 is resolved and nothing above is now held back**; 2, 3 and 4 are open, and each
+names a value a first implementer would otherwise settle silently.
 
-### 1. Session and save ids are not deterministic, and the design says they are
+**Resolved items keep their number and are struck through rather than removed**, because
+[`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) will cite these by number and
+renumbering would silently break every reference.
 
-**The design states** (*Data model*, in-memory session and save records): *"Identity: session id and
+### ~~1. Session and save ids are not deterministic, and the design says they are~~
+
+**Resolved 2026-08-08, by Ben: the engine gains the seam.** G1 delivers a host-suppliable
+`RecordIdSource` on the engine's session composition root, defaulting to today's
+`crypto.randomUUID()`, and the brief's engine-behaviour non-goal carries a carve-out naming it. See
+[*The engine seam G1 adds*](#the-engine-seam-g1-adds); the reasoning and the rejected alternatives
+are in [`90-decisions.md`](90-decisions.md) and are not restated here. The signatures this held back
+— `runInProcess`, `runHosted`, `HostedTarget` and literal ids in `ReplayStep.arguments` — are
+declared above. **The evidence that forced it is kept below**, because it is the reason a
+cross-repository change entered an effort whose virtue is being cheap.
+
+**The design stated** (*Data model*, in-memory session and save records): *"Identity: session id and
 save id, both minted by the engine's `IdSource` port."*
 
 **The engine does not do this.** In the engine's session store, `sessionId` and `saveId` come from a
@@ -968,22 +1046,12 @@ start"*, and the fixture carries *"the counting `IdSource`'s starting value"*. T
 `ReplayFixture` above therefore carry no start value, which is the only reading consistent with the
 engine as published.
 
-**Signatures held back until this is answered:** the harness's two run entry points — the in-process
-run and the hosted run — and whether `ReplayStep.arguments` may contain a run-time-captured id.
-
-**My recommendation: change the engine.** Add a host-suppliable source for session and save ids to
-the session layer's composition root, defaulting to the current `crypto.randomUUID()`. It is
-permitted by the engine's own rule — a host may supply anything that cannot change `serialize()`
-output, and these ids never enter `GameState`, which the engine states in the same comment. It is the
-only option that keeps the Stage 1 done-criterion literal. **The cost is that the brief's non-goal
-"`previewAction`, or any change to engine behaviour" has to be read as not covering it, or amended** —
-the brief already contemplates a G1 deliverable into the engine, but a coverage-checklist column only.
-
-**The alternatives, and what each gives up.** Excluding session and save ids from the transcript
-comparison is a normalization, and the design refuses normalization by name. Restricting the fixture
-to one session and no saves makes comparison A's ordering trivial but leaves comparison B failing on
-`create-session`. Comparing transcripts after substituting ids positionally is comparison B with an
-ignore-list, which is how a byte-identity suite stops comparing anything.
+**What it cost to resolve it this way**, stated rather than hidden: a cross-repository engine change
+inside the effort whose virtue is being the cheapest informative failure, and an amendment to a
+binding non-goal. Both were accepted because the alternatives each removed something the brief calls
+load-bearing — excluding ids from the transcript comparison is a normalization the design refuses by
+name; restricting the fixture to one session leaves comparison B failing on `create-session` and
+stops the fixture exercising every row.
 
 ### 2. The three transport-only error codes the design describes but does not name
 
@@ -1043,7 +1111,10 @@ mechanical, and named here rather than left for a reader to discover in the code
    cross-repository change this contract does not have the standing to make.
 4. **`DeterminismDump` ordering comes from the encoding.** The design says *"keyed by id, in id
    order"*; writing the dump with `canonicalEncode`, whose members sort ascending by code unit, makes
-   the ordering a property of the encoder rather than a step. Conditional on Unresolved 1, which is
-   what makes ordering by id reproducible in the first place.
+   the ordering a property of the encoder rather than a step. It is reproducible only because
+   Unresolved 1's resolution makes the ids themselves reproducible.
 5. **The listener binds loopback by default** (invariant 46). Implied by trusted-local reachability
    and by the brief's non-goal on exposure, stated by neither.
+6. **`RecordIdSource`'s name and shape.** A second port beside `IdSource`, with two members rather
+   than one, and no counter start. The engine repository owns the final naming; this contract names
+   it so the G1 slices and the engine PR are describing one thing.

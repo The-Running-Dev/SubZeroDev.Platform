@@ -271,6 +271,38 @@ or a registration record — real enforcement, but it is G2's host-registration 
 early for a deployment shape that is one hand-started process.
 Reversibility: cheap
 
+### 2026-08-08 — G1 adds one engine seam: a host-suppliable source for session and save ids
+
+Context: `10-design.md` states that session and save ids are minted by the engine's `IdSource` port.
+Deriving the contract against the engine found that false — `sessionId` and `saveId` come from a
+module-local `mintId()` calling `crypto.randomUUID()`, and neither `SessionHost` nor
+`InMemorySessionStoreOptions` carries an `IdSource` at all; `IdSource` is an `EngineHost` port
+governing `gameId` and `seed`. The consequence is not cosmetic: `createSession` and `loadGame` return
+`SessionHandle { sessionId, scene }` and `saveGame` returns `{ saveId }`, so three of the table's rows
+carry a fresh UUID in every run and comparison B — byte-identical projected responses — cannot hold
+for them against any committed golden transcript. Comparison A's "ordered by id" is a random order
+across runs once more than one session or save exists, and a fixture cannot name a session id an
+earlier step returned.
+Chosen: change the engine, decided by Ben. G1 delivers a second port, `RecordIdSource`
+(`newSessionId`, `newSaveId`), as an optional member of the session layer's composition root,
+defaulting to today's `crypto.randomUUID()` so present behaviour is unchanged when it is omitted. It
+is permitted by the engine's own rule — a host may supply anything that cannot change `serialize()`
+output, and these ids never enter `GameState`, which the engine states in the same comment that
+explains why it mints them where it does. It is a second port rather than a widening of `IdSource`
+because `gameId` and `seed` are serialized inputs and these are store metadata; one port over both
+would put two categories behind one name.
+Rejected: excluding session and save ids from the transcript comparison — cheapest and needs no
+cross-repository work, but it is an ignore-list, and the design refuses normalization by name;
+once one exists the suite's claim to compare anything weakens. Restricting the fixture to one session
+and no saves — makes comparison A's ordering trivial, but leaves comparison B failing on
+`create-session` and stops the fixture exercising every row, which is its own done-criterion.
+Re-running `/design` against the engine's actual surface — correct if this were one of several
+findings, but it is one fact with one answer, and the design's other decisions are unaffected by it.
+Cost, stated rather than hidden: a cross-repository engine change inside the effort whose virtue is
+being the cheapest informative failure, and an amendment to the binding non-goal on engine behaviour.
+G1's deliverables into the engine become two — this seam and the coverage-checklist column.
+Reversibility: expensive — a published engine port is a compatibility promise
+
 ### 2026-08-08 — The Node workload's error channel is a result union, not thrown errors
 
 Context: `20-contract.md` requires an enumerated error type per module and forbids bare exceptions
