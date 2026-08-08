@@ -27,7 +27,7 @@ ships much of what these six describe: hosting, DI, typed and validated configur
 and readiness endpoints, OpenTelemetry integration, EF Core migrations, `IHostedService`.
 
 Measured against that, the genuine gaps are narrow — a transactional outbox, tenant column and
-query filtering, and module registration conventions. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md)
+query filtering, and module registration conventions. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/00-brief.md)
 settles the near-term set at **six packages**. The *boundaries* below therefore remain the build
 boundaries, while ADR-004's requirement to evaluate existing packages before writing any gap
 continues to bind.
@@ -300,7 +300,7 @@ decorators over the unit of work.
 .NET defaults consistently (telemetry, health, problem details, correlation) and, if a shared
 contract type is genuinely needed, an abstractions package beneath it.
 
-That was a scope proposal for `design/00-brief.md`. The brief chose all six packages; this
+That was a scope proposal for `design/d3/00-brief.md`. The brief chose all six packages; this
 evaluation remains relevant because ADR-004 still requires every narrow gap to be checked against
 existing packages before it is written.
 

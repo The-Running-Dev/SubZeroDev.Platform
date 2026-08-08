@@ -188,7 +188,7 @@ describe("assertConsistent — the invariants Test-SliceStatusMarkers.ps1 also c
   });
 });
 
-describe("the real design/30-slices.md — the assertion that survives every future merge", () => {
+describe("the real design/d3/30-slices.md — the assertion that survives every future merge", () => {
   it("parses without throwing, and every slice carries a recognised status", () => {
     expect(slices.length).toBeGreaterThan(0);
     for (const slice of slices) {

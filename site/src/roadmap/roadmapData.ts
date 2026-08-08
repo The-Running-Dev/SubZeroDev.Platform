@@ -1,4 +1,4 @@
-import slicesRaw from "../../../design/30-slices.md?raw";
+import slicesRaw from "../../../design/d3/30-slices.md?raw";
 
 export type SliceStatus = "shipped" | "in-progress" | "queued";
 
@@ -18,10 +18,10 @@ const DEPENDS_RE = /^Depends on:\s*(.+)$/m;
 const PR_LINK_RE = /\[#(\d+)]\((https:\/\/\S+?)\)/;
 
 /**
- * Parses design/30-slices.md's own headings and Status lines. Throws rather
+ * Parses design/d3/30-slices.md's own headings and Status lines. Throws rather
  * than returning an empty or partial result on any malformed input — an
  * empty roadmap or a silently-SCHEDULED slice is exactly the failure mode
- * this function exists to make impossible. See design/40-site.md, "Derived
+ * this function exists to make impossible. See design/d3/40-site.md, "Derived
  * content".
  */
 export function parseSlices(raw: string): Slice[] {

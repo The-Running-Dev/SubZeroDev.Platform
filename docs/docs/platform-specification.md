@@ -12,7 +12,7 @@ a per-product choice, and existing NuGet packages are preferred over hand-rolled
 It also established that .NET already provides much of what the six describe.
 
 The **principles, boundaries and package shapes below stand.** The near-term set is now settled at
-six packages by the [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md); each narrow gap must still be
+six packages by the [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/00-brief.md); each narrow gap must still be
 checked against existing packages before anything is written, as ADR-004 requires. The D3 metric-
 label rule below is reconciled to the authoritative contract; the rest remains the moved baseline.
 
