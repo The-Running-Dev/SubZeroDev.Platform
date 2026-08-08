@@ -4,6 +4,25 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — The probe-caching rule becomes invariant 57; the prune warning stays out of the table
+Context: The same verification pass found two design statements the contract's `Invariants` table did
+not carry, both already honoured by the code: `10-design.md`'s "a report is derived per probe and
+never cached", and its "pruning one [poisoned row] logs at warning". Neither is a contradiction, so
+the question was only which belongs in a table whose stated shape is statements that must hold at all
+times.
+Chosen: **the probe-caching rule, as invariant 57, owner Hosting.** It holds continuously and its
+violation is consequential — a cached report puts stale data on readiness, which this design
+deliberately elected as the always-on operational surface in place of metrics nobody exports. Nothing
+downstream could otherwise check a future refactor against it.
+Rejected — **adding the prune warning as invariant 58.** Declined, and recorded here rather than
+dropped: it is an event-time behaviour, not a statement true at every instant, and admitting it would
+loosen what the table means for every future reader deciding whether their statement belongs in it.
+It is a known omission, retained: the code logs it at `Outbox.cs`, the design commits to it, and no
+consumer contracts on it. **Revisit if** an operator surface ever depends on that log line.
+Rejected — **carrying neither.** The probe-caching property would then be asserted only by the design
+and satisfied only by the current implementation, which is Finding 1's shape one severity lower.
+Reversibility: cheap. One appended row; no signature, schema or persisted shape changes.
+
 ### 2026-08-08 — Development-environment auto-migration stays a design promise, and becomes `Unresolved` 8 rather than an invented surface
 Context: A second `/contract` verification pass, reading both documents in full, found a promise the
 previous pass did not: `10-design.md` says twice — *Control flow* §1 and *Failure modes* — that

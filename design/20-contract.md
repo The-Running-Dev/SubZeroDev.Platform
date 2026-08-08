@@ -1979,6 +1979,7 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 54 | Incoming traces retain the upstream sampling decision; new root HTTP traces use deterministic 10% trace-id sampling; linked dispatch traces retain the stored origin decision | Observability |
 | 55 | Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or connection strings as telemetry | Observability |
 | 56 | Every unit of work creates one provider-neutral child activity carrying provider and operation only | Persistence |
+| 57 | A health report is derived per probe and never cached; two probes of the same kind evaluate their checks afresh | Hosting |
 
 ---
 
