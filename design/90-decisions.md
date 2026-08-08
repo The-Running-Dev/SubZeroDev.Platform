@@ -271,6 +271,73 @@ or a registration record — real enforcement, but it is G2's host-registration 
 early for a deployment shape that is one hand-started process.
 Reversibility: cheap
 
+### 2026-08-08 — The Node workload's error channel is a result union, not thrown errors
+
+Context: `20-contract.md` requires an enumerated error type per module and forbids bare exceptions
+and string errors. The design specifies error *semantics* for the workload and names no carrier for
+them; D3's `Result<T, TError>` is C#, in a package the Node workload cannot reach.
+Chosen: `Outcome<T, E>` — a discriminated union on `ok`, carrying a typed error value on the failure
+arm. Every boundary in the workload and the generator returns one. The single exception is the
+engine's own `SessionStoreError`, which is thrown because no `SessionStore` signature has an error
+channel; Dispatch catches it at the boundary and converts it, and it never travels further.
+Rejected: thrown typed errors throughout — idiomatic in Node and cheaper to write, but the failure
+set of a function stops being visible in its signature, which is the whole point of the contract's
+error-semantics section. Mirroring D3's `Result` shape member-for-member — a false kinship between
+two languages that share no code.
+Reversibility: expensive once every module boundary returns one
+
+### 2026-08-08 — The in-process replay run drives Dispatch, not the store directly
+
+Context: the design has run 1 "play the fixture's action list against the store" and asserts both
+runs' transcripts against one committed golden file. Those two statements are only jointly true if
+run 1 applies the row's projection and canonical encoding — the store returns `SaveHandle`, the wire
+returns `{ saveId }`, so a run 1 that called the store directly would diverge from run 2 on
+`save-game` before any determinism defect could.
+Chosen: run 1 composes the engine and store directly and drives them through the same `Dispatcher`
+the surfaces use. Only the transport differs between the two runs.
+Rejected: run 1 calling the store and the harness re-applying the narrowings — a second
+implementation of the projection inside the thing that is meant to be checking it. A per-run golden
+file — two files, and comparison B stops being one artifact carrying both claims.
+Reversibility: cheap
+
+### 2026-08-08 — The workload implements the engine's canonical serialization rule itself
+
+Context: the wire is "encoded canonically" and comparison B is a byte comparison, so the workload
+needs a canonical encoder. The engine has one — `canonicalStringify`, keys sorted, no insignificant
+whitespace, undefined-valued members dropped, non-finite numbers and `bigint` rejected — and does
+**not** export it from its public surface.
+Chosen: the workload implements the same rule, and `20-contract.md` states the rule beside
+`canonicalEncode` so an implementer reads it rather than inferring it.
+Rejected: the engine exporting its encoder — one home for the rule and the right answer, but a
+cross-repository change the contract has no standing to make, and G1's only agreed deliverable into
+the engine is the coverage-checklist column. `JSON.stringify` — key order follows insertion order,
+which follows code paths, so two runs can differ for no reason the proof is looking for.
+Cost, stated rather than hidden: two copies of one rule, which this repository's own standing
+instruction calls a promise they will diverge. The mitigation is that comparison B fails loudly if
+they ever do, and it fails on the same suite that exists to fail.
+Reversibility: cheap — the copy disappears the day the engine exports its own
+
+### 2026-08-08 — The determinism dump's id ordering is a property of its encoding
+
+Context: the design specifies the dump as "the blobs, keyed by id, in id order" without saying what
+produces the order.
+Chosen: the dump is written with the same canonical encoder the wire uses, whose object members sort
+ascending by code unit — so "in id order" follows from the encoding rather than from a sort the
+writer must remember to apply.
+Rejected: an explicit sort before writing — equivalent output, and one more step that can be omitted
+without any test noticing until the dump has more than one entry.
+Reversibility: cheap
+
+### 2026-08-08 — The workload's listener binds loopback unless configured otherwise
+
+Context: the brief's non-goal forbids reachability beyond trusted-local, and the design states
+trusted-local reachability as one of its four shaping facts. Neither says what the listener binds.
+Chosen: loopback by default, overridable by explicit configuration. It is the same shape D3 already
+uses for the worker's probe port.
+Rejected: binding all interfaces — the ordinary default, and it makes "no public exposure" a property
+of the network the process happens to be on rather than of the process.
+Reversibility: cheap
+
 ## Open
 
 - The public site's roadmap renders `design/d3/30-slices.md` (the archived D3 set) since the
