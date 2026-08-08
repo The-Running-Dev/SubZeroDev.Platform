@@ -7,7 +7,7 @@ sidebar_label: Observability
 > (`SubZeroDev/Specs/SubZeroDev.Platform/11-observability.md`), which names this repository as its
 > destination. It was subsequently reconciled with the D3 design and contract; the exact D3
 > settings and invariants are canonical in
-> [the repository contract](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md). See
+> [the repository contract](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/20-contract.md). See
 > [Platform Identity](platform-identity.md) for why it moved.
 
 # Observability

@@ -1,1919 +1,956 @@
-# Contract — the minimal package set (D3)
+# Contract — one session, over the wire, then the edge (G1)
 
 **Document status:** Contract. Derived from [`10-design.md`](10-design.md). Authoritative for the
-packages it describes; [`platform-identity.md`](../docs/docs/platform-identity.md) stays
-authoritative for what this repository is.
+artifacts and modules it describes; [`00-brief.md`](00-brief.md) stays authoritative for scope and
+non-goals, and [`platform-identity.md`](../docs/docs/platform-identity.md) for what this repository
+is.
 
-C# with nullable reference types enabled. Types and signatures only. Package grouping is by heading
-rather than namespace declaration — package naming belongs to
-[ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md), not here.
+Two languages, because G1 has two processes. **TypeScript** with `strict` for the contract package,
+its generator, and the Node workload. **C#** with nullable reference types enabled for the .NET
+edge, which composes on the types [`d3/20-contract.md`](d3/20-contract.md) already declares and
+declares nothing of its own that duplicates one.
 
-**Re-derived in full** from the design as it stands after its **fifth** adversarial review, not
-patched from the previous derivation, per the standing decision in
-[`90-decisions.md`](90-decisions.md) that a contract is re-derived and diffed rather than patched.
-The previous derivation contradicted that revision in six places the decision log named — the
-correlation column, the redrive semantics, the capability's migration lock, the cut converter
-extension point, the tick-shaped background-work contract, and the operation scope's fourth
-member — and each is corrected here in the section it touches. Anything the design still does not
-determine is in **[Unresolved](#unresolved)** rather than invented. **Nothing there blocked any of
-D3's nine slices**; the one open item names work D3 never built.
+Types and signatures only. No package names and no namespace declarations — the contract package's
+identity is [Unresolved 4](#unresolved), and the edge's placement is
+[`90-decisions.md`](90-decisions.md)'s.
 
-**Amended before S8** to make telemetry implementable without inventing dependencies, public
-configuration or unsupported drop accounting. The provider, queue, redaction, sampling,
-instrumentation and cardinality decisions are recorded in [`90-decisions.md`](90-decisions.md).
+> **This contract depends on one engine change, decided 2026-08-08.** The design states that session
+> and save ids are minted by the engine's `IdSource` port; the engine mints them with
+> `crypto.randomUUID()` behind no seam, which made the response comparison unachievable for three
+> rows. G1 adds the seam — see [*The engine seam G1 adds*](#the-engine-seam-g1-adds) — and
+> [Unresolved 1](#unresolved) records what was blocked and what unblocked it.
 
 ---
 
 ## Types
 
-### Abstractions — identifiers and constrained values
+### Contract package — identifiers and constrained values
 
-```csharp
-public readonly record struct TenantId(Guid Value)
-{
-    public static TenantId Implicit { get; }
-    public static bool TryParse(string candidate, out TenantId result);
-}
+```ts
+export type OperationId = string & { readonly __brand: "OperationId" };
 
-public readonly record struct CorrelationId(string TraceId)
-{
-    public static bool TryParse(string candidate, out CorrelationId result);
-}
+export type StoreMethodName = string & { readonly __brand: "StoreMethodName" };
 
-public readonly record struct TraceContext(string TraceParent, string? TraceState)
-{
-    public string TraceId { get; }
-    public bool Sampled { get; }
-    public static bool TryParse(string traceParent, string? traceState, out TraceContext result);
-}
+export type McpToolName = string & { readonly __brand: "McpToolName" };
 
-public readonly record struct CultureTag
-{
-    public CultureTag(string value);
-    public string Value { get; }
-    public static CultureTag Invariant { get; }
-    public static bool TryParse(string candidate, out CultureTag result);
-}
+export type HttpPathSegment = string & { readonly __brand: "HttpPathSegment" };
 
-public readonly record struct InstanceId(string Value);
+export type WireVersion = string & { readonly __brand: "WireVersion" };
 
-public readonly record struct ModuleName(string Value);
+export type SchemaRef = string & { readonly __brand: "SchemaRef" };
 
-public readonly record struct EventTypeName(string Value);
+export type SemanticVersion = string & { readonly __brand: "SemanticVersion" };
 
-public readonly record struct HealthCheckName(string Value);
+export type CanonicalJson = string & { readonly __brand: "CanonicalJson" };
 
-public readonly record struct BackgroundWorkName(string Value);
+export type CorrelationId = string & { readonly __brand: "CorrelationId" };
 ```
 
-**Invariants carried by these types, not by their callers.** `TenantId.Implicit` is `Guid.Empty` —
-the well-known all-zero sentinel. `CorrelationId.TraceId` is 32 lowercase hex characters and never
-all-zero. `TraceContext.TraceParent` is a complete W3C `traceparent` **including trace flags**, from
-which `Sampled` and `TraceId` are read, and `TraceState` is the W3C `tracestate` when the origin
-carried one; the design requires both to travel with the row so the sampling decision and any vendor
-sampler state cross the boundary. `ModuleName`, `EventTypeName`, `HealthCheckName` and
-`BackgroundWorkName` are non-empty, trimmed, and case-sensitively unique within their registry.
+**Invariants carried by these types, not by their callers.** `OperationId` is non-empty, lowercase
+kebab-case, and unique within one table. `StoreMethodName` is a member name of the engine's exported
+`SessionStore` interface at the contract's recorded engine version — the arity gate is what makes
+that true, and it is the reason this is a branded string rather than `keyof SessionStore`: the
+published artifact carries no type dependency on the engine. `McpToolName` is lowercase snake_case
+and unique within one table. `HttpPathSegment` is derived, and equals its row's `OperationId`
+verbatim — the operation id is already the path's spelling, so the mechanical derivation is
+identity, and any other rule would be a second name for one thing. `WireVersion` matches `v` followed
+by a positive decimal integer with no leading zero. `SchemaRef` is an absolute `https` URL whose path
+contains the contract's major version; **it is an identifier and is never dereferenced**, at build
+time or at run time. `SemanticVersion` is a complete `MAJOR.MINOR.PATCH` with optional pre-release.
+`CanonicalJson` is the output of `canonicalEncode` and nothing else. `CorrelationId` is 32 lowercase
+hexadecimal characters, never all-zero — the same constraint
+[`d3/20-contract.md`](d3/20-contract.md) puts on Platform's own, so the two processes name one value
+the same way.
 
-**`CultureTag` is deliberately non-positional so its all-zero representation can be invariant.**
-The default representation has no backing string, but `Value` projects it as `string.Empty` and
-never returns null; `Invariant` returns that same representation, and constructing from
-`string.Empty` normalizes to it. Therefore `default(CultureTag) == CultureTag.Invariant`, rather
-than merely meaning the same thing by convention. That is what lets culture join the scope as an
-optional parameter without every existing call site changing, and it means no code path can hold a
-`CultureTag` that means nothing. A non-empty value is a BCP-47 language tag, and `TryParse` accepts
-exactly what `CultureInfo.GetCultureInfo` will later resolve — Platform stores the tag and never the
-`CultureInfo`, because the tag is what a column can hold and what survives a process boundary.
+```ts
+export type JsonPrimitive = string | number | boolean | null;
 
-**`TraceContext` exposes its own `TraceId` and no `Correlation` member.** The previous derivation
-derived the correlation from the stored trace context, and the design has since falsified that: it
-is right for exactly one hop, because in a dispatched handler the ambient trace is the new linked
-trace, not the origin's. Correlation is its own persisted value — see the outbox row — and the two
-part company only across outbox dispatch.
+export type JsonValue = JsonPrimitive | readonly JsonValue[] | JsonObject;
 
-### Abstractions — host role
-
-```csharp
-public enum HostRole { Web, Worker }
-
-[Flags]
-public enum HostRoles { Web = 1, Worker = 2, Both = Web | Worker }
-```
-
-**`HostRole` is what a host *is*; `HostRoles` is what a background-work registration *declares*.**
-They are separate because the registration heartbeat declares `Both` while no host is ever both.
-Migrate mode is a one-shot command, not a third role.
-
-### Abstractions — result and error
-
-```csharp
-public abstract record PlatformError(string Code)
-{
-    public abstract bool IsRetryable { get; }
-}
-
-public readonly struct Result<T, TError> where TError : PlatformError
-{
-    public bool IsSuccess { get; }
-    public T Value { get; }
-    public TError Error { get; }
-
-    public static Result<T, TError> Success(T value);
-    public static Result<T, TError> Failure(TError error);
-
-    public TOut Match<TOut>(Func<T, TOut> onSuccess, Func<TError, TOut> onFailure);
-}
-
-public readonly struct Result<TError> where TError : PlatformError
-{
-    public bool IsSuccess { get; }
-    public TError Error { get; }
-
-    public static Result<TError> Success();
-    public static Result<TError> Failure(TError error);
-}
-
-public sealed class PlatformContractViolationException : Exception
-{
-    public PlatformError Error { get; }
+export interface JsonObject {
+  readonly [member: string]: JsonValue;
 }
 ```
 
-**Accessing `Value` on a failure, or `Error` on a success, throws.** That is one of exactly three
-places an exception is correct: it is a defect in the caller, not a runtime condition.
+**`JsonValue` is the widest type anything on the wire may hold**, and it is closed: no `unknown`, no
+`any`, no `object`. A value the engine returns that is not a `JsonValue` cannot be encoded, and
+`canonicalEncode` rejects it rather than coercing it.
 
-**`PlatformContractViolationException` is the second**, and it exists because the design requires
-enqueue to *throw* a named error when there is no ambient transaction, no ambient operation scope,
-or no registration binding the event type to a stable name. It carries a `PlatformError` so the code
-is stable and enumerable rather than a message string.
+```ts
+export type ValidatedArguments = JsonObject & { readonly __brand: "ValidatedArguments" };
+```
 
-**`PlatformStartupException` is the third, and it is a different kind of thing from the other two.**
-Both of those are defects at a call site; this one is a fatal condition at host build time. The
-design says "aborts startup with a named error" of nine separate conditions — a missing setting, an
-inconsistent pair, a cyclic module graph, an external dependency in a liveness check, background
-work declaring no role, a probe port already bound — and every one of them produces a
-`PlatformError` value. A value is not throwable, so until this existed there was nothing for a host
-to abort *with*, and the brief's second CI assertion asserts exactly that abort. Startup is the one
-place a `Result` cannot serve: `AddPlatformWebHost` returns the builder, the failure surfaces at
-build or start, and the runtime's own contract there is an exception. See *Hosting — startup
-failure*.
+**`ValidatedArguments` is produced by request-schema validation and by nothing else.** It is the one
+type Dispatch accepts, which is what makes "the engine is never reached on a malformed payload"
+structural rather than a sequencing convention.
 
-### Abstractions — ambient operation context
+### Contract package — error codes and status
 
-```csharp
-public interface IClock
-{
-    DateTimeOffset UtcNow { get; }
+```ts
+export type EngineErrorCode = string & { readonly __brand: "EngineErrorCode" };
+
+export type TransportErrorCode =
+  | "malformed_payload"
+  | "unsupported_version"
+  | "unknown_operation";
+
+export type WireErrorCode = EngineErrorCode | TransportErrorCode;
+
+export type HttpStatus = 200 | 400 | 404 | 409 | 500 | 503;
+```
+
+**`EngineErrorCode` is branded rather than enumerated, and that is the only way to state it once.**
+The closed set is the engine's `SessionStoreErrorCode`, declared in the engine and re-declared
+nowhere: a union copied here would be a second home for the engine's own vocabulary, and the
+error-coverage gate exists precisely because a copy cannot be trusted to stay equal. What the
+contract owns is the *mapping's* completeness against that set, asserted at generation.
+
+**`TransportErrorCode` is closed and is the contract's own**, because no engine concept corresponds
+to any of the three. The fourth code the design describes — the generic code on an unhandled
+failure — is unnamed by the design and is [Unresolved 2](#unresolved); so are the edge's two.
+Until 2 resolves, `WireErrorCode` cannot represent the `InternalFailure` body's `code`: naming the
+workload's generic code makes it this union's fourth member, and invariant 2 and S2.3's gate track
+the union's membership rather than a count, so the mapping gains that code's `500` entry in the
+same change. The edge's two are `EdgeError`'s own — their statuses are fixed in its table, and
+they enter neither this union nor the mapping.
+
+**`HttpStatus` is the closed set the workload can return.** The edge adds `503` and `504` on its own
+account and returns nothing else the workload did not produce.
+
+```ts
+export interface StatusMappingEntry {
+  readonly code: WireErrorCode;
+  readonly status: HttpStatus;
 }
 
-public interface IOperationScope : IDisposable
-{
-    CorrelationId Correlation { get; }
-    TenantId Tenant { get; }
-    ClaimsPrincipal? Principal { get; }
-    TraceContext Trace { get; }
-    CultureTag Culture { get; }
-}
-
-public interface IOperationScopeFactory
-{
-    IOperationScope Begin(
-        TenantId tenant,
-        ClaimsPrincipal? principal,
-        CultureTag culture = default);
-
-    IOperationScope Begin(
-        TraceContext established,
-        CorrelationId correlation,
-        TenantId tenant,
-        ClaimsPrincipal? principal,
-        CultureTag culture = default);
-}
-
-public interface IOperationScopeAccessor
-{
-    IOperationScope? Current { get; }
-}
-
-public interface ICurrentTenant
-{
-    TenantId Current { get; }
-}
-
-public interface ICurrentPrincipal
-{
-    ClaimsPrincipal? Current { get; }
-}
-
-public interface ICurrentCorrelation
-{
-    CorrelationId Current { get; }
-}
-
-public interface ICurrentCulture
-{
-    CultureTag Current { get; }
+export interface StatusMapping {
+  readonly entries: readonly StatusMappingEntry[];
 }
 ```
 
-**The scope carries five members, and trace context is the fourth.** The row demands a traceparent,
-and the sanctioned explicit-scope path — a seeder or migrate-mode utility opening its scope in one
-line — had no stated source for one until the design made the scope primitive establish it.
+**There is no default branch and no fallback entry**, and the type is a list rather than a partial
+record for that reason: a lookup that misses is a failed gate, not a `500`.
 
-**The two `Begin` overloads are the two establishment cases.** The first is **origination**: a scope
-opened with nothing inbound starts a real root trace through the trace-context contract, and the
-correlation *is* that root's trace-id — the true statement that this scope is the origin, the same
-claim an inbound request with no traceparent makes. The second takes both values explicitly, because
-its two callers already hold them: Hosting passes the adopted-or-minted request context with the
-correlation equal to its trace-id, and Persistence's dispatcher passes the **new linked trace** with
-the correlation **from the row's correlation column** — the one boundary where the two values are
-permitted to differ. What stays rejected is the *implicit* version: a scope nobody visibly opened,
-minting an origin nobody chose.
+### Contract package — the operation table
 
-**`IOperationScopeAccessor.Current` is the only member that can be null**, and it is what makes
-"there is no ambient scope" detectable. The four accessors are meaningful only inside a scope:
-outside one they throw `PlatformContractViolationException` with `NoAmbientOperationScope`, which is
-what keeps "correlation is always present, tenant is always present" true as written rather than
-quietly returning a default.
+```ts
+export type NarrowingSide = "request" | "response";
 
-**`ICurrentCorrelation.Current` is a `CorrelationId`, not a `TraceContext`.** They are the same value
-everywhere except across outbox dispatch, where the trace changes and the correlation does not — so
-the accessor returns the value that does not change, and it propagates unchanged through any depth
-of derived events.
-
-**`ICurrentTenant.Current` is non-nullable and in D3 always returns `TenantId.Implicit`.** Nothing
-resolves a tenant from host, header or claim — the brief's binding non-goal. The interface exists so
-the column has a supplier, not so tenancy can be turned on.
-
-**`ICurrentPrincipal.Current` is nullable and frequently null.** Identity is D5; a worker dispatching
-a message has no principal and must not be given a fabricated anonymous one.
-
-**`ICurrentCulture.Current` is non-nullable and defaults to `CultureTag.Invariant`, and in D3
-Platform never resolves it.** Nothing reads `Accept-Language`, a header, a claim or a stored
-preference — that is D4's, with Notifications. The interface exists so the outbox column has a
-supplier, exactly as `ICurrentTenant` exists so the tenant column has one. **The difference from
-tenancy, and the reason this is worth carrying now rather than later:** a product *may* set culture
-explicitly when it opens a scope, whereas the tenant is pinned to `TenantId.Implicit` by a binding
-non-goal. So the value is useful the day a consumer has two languages, without D3 having built
-localization.
-
-**Why culture is a scope member at all, when the runtime already has `CultureInfo.CurrentCulture`.**
-That ambient is a thread and async-flow property, and dispatch crosses neither — the row is written
-in the web host and dispatched by the worker, in a different process, minutes later, under whatever
-culture that process was started with. A value that has to survive that boundary has to be *on the
-row*, and a value on the row needs a supplier at enqueue that is not a thread static. The runtime's
-ambient stays the right thing to *render* with; it is the wrong thing to *carry* with.
-
-**`IClock.UtcNow` always has `Offset == TimeSpan.Zero`.** Every persisted instant originates here,
-and so does every instant bound as a SQL comparand, so a fake clock controls every timestamp in the
-system and no evaluation of eligibility, claim expiry or lease expiry reaches the database clock.
-
-### Abstractions — trace-context contract
-
-```csharp
-public interface ITraceContextCodec
-{
-    bool TryParse(string traceParent, string? traceState, out TraceContext result);
-
-    ITraceHandle StartRoot(string activityName);
-
-    ITraceHandle StartLinked(TraceContext origin, string activityName);
+export interface NarrowedField {
+  readonly side: NarrowingSide;
+  readonly field: string;
 }
 
-public interface ITraceHandle : IDisposable
-{
-    TraceContext Context { get; }
+export interface AuthoredRow {
+  readonly operation: OperationId;
+  readonly storeMethod: StoreMethodName;
+  readonly mcpTool: McpToolName;
+  readonly narrowings: readonly NarrowedField[];
+  readonly reachableErrors: readonly WireErrorCode[];
+}
+
+export interface OperationRow extends AuthoredRow {
+  readonly httpPath: HttpPathSegment;
+  readonly requestShape: SchemaRef;
+  readonly responseShape: SchemaRef;
 }
 ```
 
-**Parse, root-start and link are Observability's operations declared in Abstractions**,
-because two packages with no edge to Observability perform them: Persistence stamps the row, reads
-it back, and starts the linked trace per dispatched message, and the operation-scope primitive's
-origination path starts a root. `StartLinked` starts a **new** trace linked to the stored one and
-honours the origin's sampling flags; it never continues the origin's trace. `StartRoot` is
-origination, not fabrication — the scope that calls it *is* the origin.
+**The two interfaces are the authored/derived split made structural.** `AuthoredRow` is what a
+human writes and reviews; `OperationRow` is what generation emits, and the three added members are
+exactly the derived ones. Nothing can author a `requestShape`, and nothing can derive an `mcpTool`.
 
-**There is no format-current operation, and the reason is structural rather than an omission.** A
-previous derivation carried `FormatCurrent()`, on the reasoning that stamping a row needs the
-current context as a `traceparent` string. It does not: both handles above return the
-`TraceContext` they established, the scope stores it as its fourth member, and every stamping site
-reads it from there. So no caller can exist that holds an ambient trace it cannot already read
-back — which is what the fourth member bought. Adding the member later is additive if a consumer
-ever wants to format a context this contract did not establish.
+**`NarrowedField.field` names a top-level member** of the store method's argument object or of its
+result — the design's two worked examples, `audience` dropped from the request and `savedAtSeq`
+dropped from the response, are both top-level, and a nested narrowing is not implied by anything the
+design says. A narrowing naming a member the engine's declaration does not have fails generation.
 
-**Both handles expose the established `TraceContext`** because the caller needs it: the dispatcher
-populates the scope's fourth member from it, which is what makes a follow-up row's stored
-traceparent the link's — while the correlation column keeps the origin's value.
+**A row's narrowings are the table's and both surfaces inherit them.** There is no per-surface
+narrowing type, and its absence is the contract's expression of the design's second decision.
 
-**`TryParse` never throws and never fails a request.** A malformed inbound header yields `false` and
-a fresh context.
+### Contract package — the generated schema set
 
-### Abstractions — module contract
+```ts
+export type SchemaDialect = string & { readonly __brand: "SchemaDialect" };
 
-```csharp
-public interface IPlatformModule
-{
-    ModuleName Name { get; }
-    IReadOnlyCollection<ModuleName> DependsOn { get; }
-    void Register(IServiceCollection services);
+export interface JsonSchemaDocument {
+  readonly $id: SchemaRef;
+  readonly $schema: SchemaDialect;
+  readonly [keyword: string]: JsonValue | undefined;
 }
 ```
 
-**A module is composed before the container exists**, so it must be registered as a type or an
-instance ahead of the standard registration call, and a type registration needs a public
-parameterless constructor — nothing can be injected into one. A factory registration or a
-constructor requiring arguments aborts startup with `HostStartupError.Registration`.
+**Every response schema is closed** — `additionalProperties` is `false` at every object level — and
+no response schema resolves to the engine's envelope type. Both are asserted at generation, and
+together they are the static half of the projection-boundary gate.
 
-### Abstractions — event and handler contracts
+**Every request schema is closed on the same terms**, asserted at generation. A request member the
+row's shape does not declare is a `malformed_payload`, never a tolerated extra — which is what makes
+a request narrowing irreversible from the wire (a dropped `audience` cannot be re-supplied) and the
+determinism profile unreachable by any caller.
 
-```csharp
-public interface IIntegrationEvent;
+**The dialect is one value for the whole set**, and which value it is is
+[Unresolved 3](#unresolved).
 
-public interface IIntegrationEventHandler<in TEvent> where TEvent : IIntegrationEvent
-{
-    Task<Result<HandlerError>> HandleAsync(TEvent @event, CancellationToken cancellationToken);
+### Contract package — the artifact
+
+```ts
+export interface ContractPackage {
+  readonly contractVersion: SemanticVersion;
+  readonly engineVersion: SemanticVersion;
+  readonly wireVersion: WireVersion;
+  readonly operations: readonly OperationRow[];
+  readonly schemas: readonly JsonSchemaDocument[];
+  readonly statusMapping: StatusMapping;
 }
 ```
 
-**`IIntegrationEvent` is a marker and carries no `TypeName`.** The stable name is supplied by an
-explicit registration call, because dispatch must get from a stored string to a CLR type in order to
-deserialize and has no instance to ask — the instance is what deserialization produces. An instance
-member could not answer the question that matters.
+**`engineVersion` is the exact version the schemas were projected from**, and it is what the
+workload's startup assertion compares against the engine package it actually resolved. It is a
+member of the artifact rather than a build annotation because a reader must be able to answer "which
+engine does this contract describe?" from the artifact alone.
 
-**A handler returns a result rather than throwing.** The dispatcher distinguishes a handled failure
-from a defect, and only the former participates in the attempt-and-backoff cycle. An exception that
-escapes a handler is treated as `HandlerError.Transient`.
+**One `wireVersion` per artifact.** Serving two at once is a binding non-goal; the member exists so
+the path prefix has a single stated source, not so a set can grow.
 
-**Exactly one handler may be registered per `EventTypeName`**, enforced at startup by the handler
-registry. Every dispatch-state column is per row, so N handlers behind one row would share one retry
-budget and one poison verdict.
+### The engine seam G1 adds
 
-### Abstractions — health contract
-
-```csharp
-public enum HealthStatus { Healthy, Degraded, Unhealthy }
-
-public enum HealthCheckKind { Liveness, Readiness }
-
-public enum HealthCheckCriticality { Required, Optional }
-
-public enum HealthReportDetail { Full, Minimal }
-
-public interface IHealthCheck
-{
-    HealthCheckName Name { get; }
-    HealthCheckKind Kind { get; }
-    HealthCheckCriticality Criticality { get; }
-    TimeSpan Timeout { get; }
-    bool TouchesExternalDependency { get; }
-
-    Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken);
-}
-
-public sealed record HealthCheckResult(
-    HealthStatus Status,
-    string? Detail,
-    IReadOnlyDictionary<string, string> Data);
-
-public sealed record HealthReport(
-    HealthStatus Aggregate,
-    IReadOnlyList<HealthReportEntry> Entries);
-
-public sealed record HealthReportEntry(
-    HealthCheckName Name,
-    HealthStatus Status,
-    TimeSpan Duration,
-    string? Detail,
-    IReadOnlyDictionary<string, string> Data);
-```
-
-**`TouchesExternalDependency` exists so registration can reject it.** The design enforces the
-liveness rule at registration rather than by convention, and a check cannot be interrogated for this
-after the fact — it has to declare.
-
-**A report enumerates every registered check, at either detail level.** That is what keeps the
-persistence-less host honest: split detection, backlog age, poison visibility and the migration
-comparison are all contributed by Persistence, a host composed without it has none of them, and an
-absent check must read as absent in the body rather than being indistinguishable from a passing one.
-
-**`HealthReportDetail` is the body-narrowing switch, not a status switch.** `Minimal` renders the
-aggregate and each entry's name and status; `Full` adds `Detail` and `Data`. The status is identical
-either way, so nothing consuming the probe programmatically changes behaviour.
-
-### Abstractions — background work contract
-
-```csharp
-public interface IBackgroundWork
-{
-    BackgroundWorkName Name { get; }
-    HostRoles Roles { get; }
-    TimeSpan Interval { get; }
-    bool RequiresLease { get; }
-
-    Task TickAsync(CancellationToken cancellationToken);
+```ts
+export interface RecordIdSource {
+  newSessionId(): string;
+  newSaveId(): string;
 }
 ```
 
-**The contract is tick-shaped, and that is what makes Testing's determinism providable.** One
-invocation of `TickAsync` is one tick — a dispatch pass under its budget, one prune batch, one
-heartbeat — and **Hosting owns the timers** that invoke ticks on the declared interval. A loop that
-hid its schedule inside itself would be a loop Hosting could not run in the role it declares, and no
-fake clock drives a real timer — determinism needs the schedule and the clock separated, so the test
-host replaces the one and controls the other.
+**Declared in the engine and supplied by the host**, as an optional member of the session layer's
+composition root alongside `clock`, `persistence` and `profiles`. Omitted, the engine's present
+behaviour is unchanged: `crypto.randomUUID()` for both.
 
-**`Roles` is what lets Hosting start Persistence's dispatcher without depending on Persistence, and
-lets the web host run Persistence's registration heartbeat through the same channel.** The heartbeat
-declares `Both`; the dispatcher and the prune pass declare `Worker`.
+**It is permitted by the engine's own rule** — a host may supply anything that cannot change
+`serialize()` output, and a session id and a save id never enter `GameState`, which is the engine's
+own stated reason for minting them where it does. It is a second port beside `IdSource` rather than a
+widening of it, because `IdSource` supplies `gameId` and `seed`, which *are* serialized inputs, and
+one port covering both would put two categories behind one name.
 
-**Work declaring `RequiresLease` must be idempotent.** The lease reduces duplicate runs; it does not
-prevent them, and nothing here fences a stalled holder.
+**This is a G1 deliverable into the engine**, and the second one — the coverage-checklist column is
+the other. Without it the Stage 1 byte-identity criterion is unachievable rather than merely hard.
 
-### Abstractions — well-known names
+### Workload — configuration and the determinism profile
 
-```csharp
-public static class PlatformBackgroundWork
-{
-    public static BackgroundWorkName OutboxDispatch { get; }
-    public static BackgroundWorkName Prune { get; }
-    public static BackgroundWorkName HostRegistrationHeartbeat { get; }
+```ts
+export interface ListenEndpoint {
+  readonly host: string;
+  readonly port: number;
 }
 
-public static class PlatformHealthChecks
-{
-    public static HealthCheckName Database { get; }
-    public static HealthCheckName PeerHost { get; }
-    public static HealthCheckName SettingsFingerprint { get; }
-    public static HealthCheckName OutboxBacklogAge { get; }
-    public static HealthCheckName OutboxPendingCount { get; }
-    public static HealthCheckName OutboxPoisonCount { get; }
-    public static HealthCheckName PendingMigrations { get; }
+export interface DefaultDeterminismProfile {
+  readonly kind: "default";
 }
 
-public static class PlatformTelemetry
-{
-    public const string ActivitySourceName = "SubZeroDev.Platform";
-    public const string MeterName = "SubZeroDev.Platform";
+export interface ReplayDeterminismProfile {
+  readonly kind: "replay";
+  readonly fixedInstant: string;
+  readonly dumpPath: string;
+}
+
+export type DeterminismProfile = DefaultDeterminismProfile | ReplayDeterminismProfile;
+
+export interface WorkloadConfiguration {
+  readonly listen: ListenEndpoint;
+  readonly determinism: DeterminismProfile;
+  readonly otlpEndpoint: string | null;
 }
 ```
 
-**These names are public surface, not implementation detail.** They appear in the probe body an
-operator reads and are the handles `RunBackgroundWorkOnceAsync` takes, so leaving them to the first
-implementer would set them by accident. `Prune` is one registration covering all three retention
-windows — processed rows, poisoned rows and dead host registrations. `OutboxPendingCount` is the
-condition the fifth review added: pending rows are unbounded by decision, and the count on the
-always-on surface is the bound that exists.
+**The discriminated union is what makes "with the default profile, no dump is written" a type-level
+fact.** `dumpPath` exists only on the replay member, so no code path holds a default profile with a
+dump path, and the assertion the design demands is over a value that cannot be constructed the wrong
+way.
 
-**The telemetry source names are the provider-neutral seam.** Persistence creates a child activity
-around every `IUnitOfWork.ExecuteAsync` transaction through `PlatformTelemetry.ActivitySourceName`,
-for both providers, with database provider and operation only — never SQL text, parameter values or
-a connection string. Observability subscribes to that source and to the meter; Persistence does not
-reference an OpenTelemetry or Serilog package.
+**`fixedInstant` is what the replay profile's `Clock.now()` returns**, unchanging, as an ISO-8601
+instant. It reaches only the host-owned record fields, which the dump excludes — so it constrains
+neither comparison and exists to keep the run free of a wall clock rather than to be compared.
 
-**`MeterName` is a reserved name with no publisher in D3, and that is stated rather than left to be
-discovered.** No Platform code constructs a `Meter` or an instrument; Observability subscribes to the
-name so that publishing to it later is additive and needs no consumer change. The metrics D3 actually
-exports come from the official ASP.NET Core, HTTP and runtime instrumentation. Nothing in this
-contract's operational surface depends on a Platform metric — every condition an operator acts on is
-a readiness check, which is what makes the reservation honest rather than a promise. `MeterName` is
-public for the same reason `ActivitySourceName` is: a consumer wiring its own exporter needs the
-name, whether or not Platform has published to it yet.
+**The replay profile has no counting-`IdSource` start value**, and the design's "from a stated start"
+is not satisfiable: the engine's exported `createCountingIds()` takes no argument and counts from
+zero. The replay profile supplies that source unchanged, and a counting `RecordIdSource` on the same
+terms — independent counters, each from zero, no argument. Two fixtures that count from different
+starts prove nothing a single start does not, and a start value is one more thing two runs can
+disagree about.
 
-### Abstractions — settings fingerprint marker
+**`otlpEndpoint` is nullable and null is normal.** Null means no exporter is constructed and no
+outbound connection is attempted — not a disabled exporter, and not a default endpoint.
 
-```csharp
-[AttributeUsage(AttributeTargets.Property)]
-public sealed class FingerprintedAttribute : Attribute;
-```
+### Workload — request context
 
-**A setting is fingerprinted when two hosts disagreeing on it changes what happens to rows they
-share** — when it decides outcomes, not merely timing. The attribute is what makes that membership
-checkable rather than a list maintained in prose next to a hash function.
-
-### Persistence — outbox message
-
-```csharp
-public readonly record struct OutboxMessageId(Guid Value)
-{
-    public static OutboxMessageId Create(DateTimeOffset at);
-}
-
-public enum OutboxMessageState { Pending, Processed, Poisoned, Discarded }
-
-public sealed record OutboxMessage
-{
-    public required OutboxMessageId Id { get; init; }
-    public required long Sequence { get; init; }
-    public required DateTimeOffset OccurredAt { get; init; }
-    public required EventTypeName Type { get; init; }
-    public required string Payload { get; init; }
-    public required TenantId Tenant { get; init; }
-    public required TraceContext TraceContext { get; init; }
-    public required CorrelationId Correlation { get; init; }
-    public required CultureTag Culture { get; init; }
-    public required int Attempts { get; init; }
-    public DateTimeOffset? NextAttemptAt { get; init; }
-    public DateTimeOffset? FirstDeferredAt { get; init; }
-    public InstanceId? ClaimedBy { get; init; }
-    public DateTimeOffset? ClaimedAt { get; init; }
-    public DateTimeOffset? ProcessedAt { get; init; }
-    public DateTimeOffset? PoisonedAt { get; init; }
-    public string? LastError { get; init; }
-
-    public OutboxMessageState State { get; }
-    public DateTimeOffset DueAt { get; }
+```ts
+export interface RequestContext {
+  readonly operation: OperationId;
+  readonly wireVersion: WireVersion;
+  readonly inboundTraceParent: string | null;
+  readonly correlation: CorrelationId;
 }
 ```
 
-**`Id` is the identity — a version-7 UUID minted app-side at enqueue from `IClock`.** It exists
-before the insert, survives a database restore, sorts in mint order on both providers, and is the
-dedupe key at-least-once delivery offers handlers. **Mint order means millisecond order, and the tie
-is unspecified** — version 7 carries its time at millisecond resolution, the runtime generator keeps
-no counter within a tick, and anything paging by the id must tolerate ties.
+**`correlation` is derived and never supplied.** It is the trace-id of the adopted-or-minted trace
+context; a malformed `inboundTraceParent` yields a fresh root and a fresh correlation, and never a
+failed request. Nothing on this type is persisted, and nothing on it reaches a session record.
 
-**`Correlation` is a column of its own, because the traceparent stops carrying it after one hop.** A
-handler that enqueues a follow-up event is the ordinary case, and at that moment the ambient trace is
-the dispatch's new linked trace — so the follow-up row's stored traceparent carries the link's
-trace-id, not the origin's. The column is stamped from the ambient correlation at enqueue and
-propagates unchanged through any depth of derived events, while the stored trace context keeps the
-one job it can still do: the link.
+**The MCP surface builds the same context without a version path.** A tool call carries no
+`/v<n>/` segment, so `wireVersion` is the artifact's own `wireVersion` — the contract carries
+exactly one, which is what makes the assignment a lookup rather than a negotiation. `correlation`
+is derived by the same rule, from the trace context adopted or minted for the MCP request, and
+`inboundTraceParent` is whatever the MCP HTTP transport carried, or null.
 
-**`Culture` is a column for the same reason `Correlation` is, and propagates the same way.** It is
-stamped from the ambient scope at enqueue and travels unchanged through any depth of derived events —
-a follow-up raised by a handler still knows which language the originating actor was using, because
-that fact is not recoverable anywhere else once the request is over. **It is the originating culture,
-never the recipient's.** A recipient's preferred language is a preference lookup at render time and
-belongs to Notifications in D4; the two are different values and collapsing them loses the case that
-forced the column, which is a recipient with no user record at all — a shared inbox, an operations
-channel, a printer. `CultureTag.Invariant` is a legal and common value and means "the actor expressed
-no preference", not "unknown".
+### Workload — dispatch
 
-**`Sequence` is claim order and nothing else.** It is provider-allocated, and on SQLite its values
-are reused after a drain and prune. Nothing downstream may treat it as durable or as an identity;
-anything needing a cursor across time uses `Id`.
+```ts
+export type DispatchOutcome =
+  | { readonly kind: "result"; readonly value: JsonValue }
+  | { readonly kind: "error"; readonly code: EngineErrorCode };
 
-**`State` is derived, never stored.** The four states are predicates over the two mark columns, and
-a discriminator column was rejected as a second source of truth:
-
-| State | Predicate | Prunes on | Counts toward |
-|---|---|---|---|
-| `Pending` | `ProcessedAt` null, `PoisonedAt` null | never | backlog age, pending count |
-| `Processed` | `ProcessedAt` set, `PoisonedAt` null | processed window | nothing |
-| `Poisoned` | `PoisonedAt` set, `ProcessedAt` null | poison window | poison count |
-| `Discarded` | both set | poison window | nothing |
-
-**`DueAt` is the due predicate made a member**: `NextAttemptAt` when set, `OccurredAt` while it is
-null. A row is **eligible** when it is `Pending`, due, and either unclaimed or holding a claim older
-than the claim window. Expired claims are eligible by that predicate alone, which is why there is no
-separate reclaim pass. The claim query, the deferral re-check and redrive all derive from this one
-statement — the instant-format rules exist to make exactly this comparison correct in SQL.
-
-**Backlog age measures time past due, never time since occurred.** Age-since-occurred manufactures
-"worker down" out of three routine states — a deferred row during an upgrade, a backing-off row
-behind a failing handler, and a bulk-redriven row whose `OccurredAt` is days old. A dispatcher that
-is working keeps its backlog young *by acting on it*; a dead or mispointed one lets due rows age.
-
-### Persistence — background work lease
-
-```csharp
-public sealed record BackgroundWorkLease
-{
-    public required BackgroundWorkName Name { get; init; }
-    public required InstanceId Holder { get; init; }
-    public required DateTimeOffset AcquiredAt { get; init; }
-    public required DateTimeOffset ExpiresAt { get; init; }
+export interface Dispatcher {
+  invoke(operation: OperationId, args: ValidatedArguments): Promise<DispatchOutcome>;
 }
 ```
 
-### Persistence — host registration
+**`DispatchOutcome` carries no status, no headers and no encoding**, and that absence is what makes
+the MCP surface a second consumer rather than a second wire.
 
-```csharp
-public sealed record HostRegistration
-{
-    public required HostRole Role { get; init; }
-    public required InstanceId Instance { get; init; }
-    public required DateTimeOffset StartedAt { get; init; }
-    public required DateTimeOffset HeartbeatAt { get; init; }
-    public required string SettingsFingerprint { get; init; }
+**`value` is already projected to the row's response shape.** Projection is Dispatch's, not each
+surface's — if it were each surface's, the row's narrowings would be applied twice and "MCP inherits
+the wire's narrowings" would be a convention instead of a mechanism.
+
+**The error arm carries an `EngineErrorCode` only.** A transport code cannot originate in Dispatch,
+because everything the three transport codes describe is decided before Dispatch is entered.
+
+### Workload — the store-serialization handle
+
+```ts
+export interface StoredBlob {
+  readonly id: string;
+  readonly blob: string;
+}
+
+export interface StoreSerializationSnapshot {
+  readonly sessions: readonly StoredBlob[];
+  readonly saves: readonly StoredBlob[];
+}
+
+export interface StoreSerializationHandle {
+  snapshot(): Promise<StoreSerializationSnapshot>;
+}
+
+export interface DeterminismDump {
+  readonly sessions: Readonly<Record<string, string>>;
+  readonly saves: Readonly<Record<string, string>>;
 }
 ```
 
-**Never read by the host that wrote it.** Its only consumer is the other role's readiness check, and
-its whole purpose is that a host writing to the wrong database registers itself *there*, so its
-absence from the right one is detectable from the side that is positioned to notice.
+**`blob` is the engine's canonical serialization and nothing around it** — no `createdAt`, no
+`updatedAt`, no `attemptCounter`, no `audience`, no `profileId`, no `savedAtSeq`. The host-owned
+record fields are excluded because they are outside the engine's serialization boundary, not because
+they are noisy.
 
-### Persistence — migration status
+**`DeterminismDump` is keyed by id** and is written with `canonicalEncode`, whose key ordering is
+what makes "in id order" a property of the encoding rather than a step the writer must remember.
 
-```csharp
-public sealed record ModuleMigrationStatus(
-    ModuleName Module,
-    IReadOnlyList<string> Pending,
-    IReadOnlyList<string> Surplus);
-```
+**Neither surface's module graph may name `StoreSerializationHandle`.** That is asserted as a
+dependency-direction test, and it is the structural half of the projection-boundary gate.
 
-**`Surplus` is migrations applied that this host never registered** — the normal state of a
-not-yet-restarted process once migrate mode has run. It reports degraded on the same check as
-`Pending`, because the comparison is symmetric and only one direction was previously stated.
+### Workload — probes and the error envelope
 
-### Persistence — columns contributed to product tables
+```ts
+export type ProbeStatus = "healthy" | "unhealthy";
 
-```csharp
-public interface ITenantOwned
-{
-    TenantId Tenant { get; }
+export interface ProbeResult {
+  readonly status: ProbeStatus;
 }
 
-public interface IAuditable
-{
-    DateTimeOffset CreatedAt { get; }
-    string? CreatedBy { get; }
-    DateTimeOffset? ModifiedAt { get; }
-    string? ModifiedBy { get; }
+export interface ProbeSurface {
+  liveness(): ProbeResult;
+  readiness(): ProbeResult;
 }
 
-public interface ISoftDeletable
-{
-    bool IsDeleted { get; }
-    DateTimeOffset? DeletedAt { get; }
-    string? DeletedBy { get; }
+export interface WireErrorBody {
+  readonly code: WireErrorCode;
+  readonly correlation: CorrelationId;
 }
 ```
 
-**`ITenantOwned` is not optional; `ISoftDeletable` is opt-in per table.** A soft delete nobody asked
-for silently changes the meaning of every query against that table.
+**`WireErrorBody` has two members and the design determines exactly these two** — the same envelope
+discipline Platform applies on its own side, so the two hops do not disagree about what an error body
+may contain. **Never exception text and never payload content.** The detail goes to the log line the
+correlation identifies.
 
-### Core — configuration root
+**The workload's liveness does not consult the store**, and its readiness reports healthy once both
+surfaces are built and the listener is bound.
 
-```csharp
-public sealed record PlatformOptions
-{
-    public string? ServiceName { get; init; }
-    public string? ServiceVersion { get; init; }
-    public string Environment { get; }
-    public HostRole Role { get; }
+### Workload — the transport envelope
 
-    public required PersistenceOptions Persistence { get; init; }
-    public required OutboxOptions Outbox { get; init; }
-    public LeaseOptions Lease { get; init; }
-    public HostRegistrationOptions HostRegistration { get; init; }
-    public HealthOptions Health { get; init; }
-    public HostingOptions Hosting { get; init; }
-    public TelemetryOptions Telemetry { get; init; } = new();
+```ts
+export type HttpHeaders = ReadonlyMap<string, string>;
+
+export interface WireRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly headers: HttpHeaders;
+  readonly body: Uint8Array;
+}
+
+export interface WireResponse {
+  readonly status: HttpStatus;
+  readonly headers: HttpHeaders;
+  readonly body: Uint8Array;
 }
 ```
 
-**`ServiceName` and `ServiceVersion` are derived from the entry assembly when unset**, which is why
-neither is `required`.
+**Bodies are bytes on both sides.** A response the surface produced as `CanonicalJson` is the bytes
+of that string; nothing between the encoder and the socket re-encodes, because comparison B is a byte
+comparison and a re-encoding would be invisible until it broke it.
 
-**`Environment` and `Role` have no setter and are not bindable from configuration.** Environment is
-derived from the host — a service must not be able to declare itself production in a file that
-shipped from a developer's machine — and the role is fixed by which form of the registration call
-the host made.
+### Proof harness — fixture, transcript, comparisons
 
-**`PersistenceProvider` is Core's, because `PlatformOptions` is Core's.** It names which provider a
-host is configured for, which makes it a setting rather than part of the provider abstraction.
-Persistence depends on Core, so `IProviderCapability.Provider` and `WithProvider` reach it freely;
-grouping it under Persistence would have put a required member of a Core record in a package Core
-may not reference, and Core → Persistence is an edge the dependency graph forbids.
-
-```csharp
-public enum PersistenceProvider { PostgreSql, Sqlite }
-
-public sealed record PersistenceOptions
-{
-    public required PersistenceProvider Provider { get; init; }
-    public required string ConnectionString { get; init; }
-    public TimeSpan SqliteBusyWaitBound { get; init; }
+```ts
+export interface ReplayStep {
+  readonly operation: OperationId;
+  readonly arguments: JsonObject;
 }
 
-public sealed record OutboxOptions
-{
-    [Fingerprinted] public required TimeSpan ProcessedRetention { get; init; }
-    [Fingerprinted] public required TimeSpan PoisonedRetention { get; init; }
-    [Fingerprinted] public TimeSpan ClaimWindow { get; init; }
-    [Fingerprinted] public int PoisonAttemptCount { get; init; }
-    [Fingerprinted] public TimeSpan RetryBackoffBase { get; init; }
-    [Fingerprinted] public double RetryBackoffFactor { get; init; }
-    [Fingerprinted] public TimeSpan RetryBackoffCap { get; init; }
-    [Fingerprinted] public TimeSpan DeferralAge { get; init; }
-
-    public TimeSpan DeferralRetryInterval { get; init; }
-    public int DispatchTickBudget { get; init; }
-    public int PruneBatchSize { get; init; }
-    public TimeSpan DispatchInterval { get; init; }
+export interface ReplayFixture {
+  readonly campaignId: string;
+  readonly seed: string;
+  readonly steps: readonly ReplayStep[];
 }
 
-public sealed record LeaseOptions
-{
-    [Fingerprinted] public TimeSpan Duration { get; init; }
+export type Transcript = readonly CanonicalJson[];
+
+export interface Divergence {
+  readonly locator: string;
+  readonly expected: string;
+  readonly actual: string;
 }
 
-public sealed record HostRegistrationOptions
-{
-    public TimeSpan HeartbeatInterval { get; init; }
-    public TimeSpan RetentionWindow { get; init; }
-    public TimeSpan PeerAbsenceGrace { get; init; }
-
-    public TimeSpan PeerLivenessThreshold { get; }
+export interface ComparisonResult {
+  readonly matched: boolean;
+  readonly firstDivergence: Divergence | null;
 }
 
-public sealed record HealthOptions
-{
-    public TimeSpan BacklogAgeThreshold { get; init; }
-    public long PendingCountThreshold { get; init; }
-}
-
-public sealed record HostingOptions
-{
-    public TimeSpan GracefulShutdownDrainWindow { get; init; }
-    public int WorkerProbePort { get; init; }
-    public bool WorkerProbeLoopbackOnly { get; init; }
-}
-
-public sealed record TelemetryOptions
-{
-    public string LogDirectory { get; init; } = "logs";
-    public Uri? OtlpEndpoint { get; init; }
+export interface RunResult {
+  readonly transcript: Transcript;
+  readonly serialization: StoreSerializationSnapshot;
 }
 ```
 
-**Every value the design commits to, with its default. Only the two retention windows are required**;
-a wrong value that degrades gets a default, a missing value that corrupts fails the host.
+**`Transcript` is a list of encoded values and carries no status.** Run 1 has no HTTP status to
+carry, and both runs are asserted against one golden file — so a status member would make the two
+transcripts structurally different things that happen to be compared.
 
-| Setting | Default | Validation |
-|---|---|---|
-| `Outbox.ProcessedRetention` | **required, no default** | present; positive |
-| `Outbox.PoisonedRetention` | **required, no default** | present; positive; **strictly greater than `ProcessedRetention`** |
-| `Outbox.ClaimWindow` | 5 min | positive |
-| `Outbox.PoisonAttemptCount` | 12 | `>= 1` |
-| `Outbox.RetryBackoffBase` | 30 s | positive |
-| `Outbox.RetryBackoffFactor` | 2 | `> 1` |
-| `Outbox.RetryBackoffCap` | 6 h | positive; **jointly, `>= RetryBackoffBase`** |
-| `Outbox.DeferralAge` | 24 h | positive |
-| `Outbox.DeferralRetryInterval` | 1 min, fixed — no backoff | positive |
-| `Outbox.DispatchTickBudget` | 20 | `>= 1` |
-| `Outbox.PruneBatchSize` | 500 | `>= 1` |
-| `Outbox.DispatchInterval` | 5 s | positive |
-| `Lease.Duration` | 5 min | positive |
-| `HostRegistration.HeartbeatInterval` | 15 s | positive |
-| `HostRegistration.RetentionWindow` | 7 days | positive |
-| `HostRegistration.PeerAbsenceGrace` | 60 s, **rolling** | non-negative; **jointly, at least `HeartbeatInterval`** |
-| `HostRegistration.PeerLivenessThreshold` | **derived**, `3 × HeartbeatInterval` | no setter, so the two cannot disagree |
-| `Health.BacklogAgeThreshold` | 5 min | positive |
-| `Health.PendingCountThreshold` | 100 000 | `>= 1` |
-| `Hosting.GracefulShutdownDrainWindow` | 30 s | positive; less than `Outbox.ClaimWindow` |
-| `Hosting.WorkerProbePort` | 5100 | valid port |
-| `Hosting.WorkerProbeLoopbackOnly` | `true` | — |
-| `Persistence.SqliteBusyWaitBound` | 5 s | positive |
-| `Persistence.ConnectionString` | **required, no default** | present; parseable by the selected provider |
-| `Telemetry.LogDirectory` | `logs`, resolved beneath the content root | present and non-empty; relative paths resolve beneath the content root |
-| `Telemetry.OtlpEndpoint` | null | when set, an absolute HTTP or HTTPS URI |
+**`ReplayFixture.steps` covers every row in the table**, asserted by the harness rather than by
+inspection: the set of operations the steps name equals the set the table declares.
 
-**Telemetry has deliberately little configuration surface.** `LogDirectory` changes the directory,
-not the role-specific `<service>-<role>-.jsonl` filename or its UTF-8 JSON Lines format. Daily and
-100 MB rolling, 14-day and 31-file retention, the 10 000-event non-blocking local-output buffer, fixed 10%
-root sampling, OTLP HTTP/protobuf and the standard signal paths are D3 policy rather than tunable
-properties. A null endpoint starts no exporter and makes no outbound connection. The typed
-`Platform:Telemetry` section is the sole D3 source; `OTEL_EXPORTER_OTLP_*` is not also consumed.
+**`ReplayFixture` carries no counting-`IdSource` start value**, for the reason given with the replay
+profile.
 
-**`PeerAbsenceGrace` is a rolling measure on the observing host's clock from the absence first being
-seen, never a startup-scoped exemption.** A startup grace cannot cover the case the setting exists
-for: the surviving web host watching a routine worker restart is long past its own startup.
+**`ReplayStep.arguments` is literal, including ids.** A step following `create-session` names the
+session id that call returned, written out in the fixture — which is possible only because the
+replay profile's `RecordIdSource` makes it the same string in every run. A fixture that captured ids
+at run time would be a harness that reproduces itself rather than a committed input two runs share.
 
-**It has a floor of one `HeartbeatInterval`, which "non-negative" alone did not give it.** A grace
-shorter than a heartbeat degrades `PeerHost` on a host that is working perfectly: the grace elapses
-before the peer's next beat can possibly land, so the surface reports a split that a single interval
-would have resolved. Zero is the worst case and was legal under the previous wording — it turns a
-rolling grace into no grace at all, on the one surface this design elected as always-on. Validated
-jointly, and named as `InconsistentSettings` because the constraint belongs to the pair rather than
-to either value.
-
-**The prune interval is not a setting either, and it is the only cadence that is not.** One hour,
-fixed: the three windows prune runs against are hours to days wide, and no latency depends on it the
-way it depends on `Outbox:DispatchInterval`. A tick issues one bounded delete per target, so
-`Outbox:PruneBatchSize` and that interval together fix the drain rate — see *Settings inventory* in
-[`10-design.md`](10-design.md), where both the value and its consequence are recorded.
-
-**SQLite's journal mode is not a setting.** WAL is required and is a property of the file rather
-than of a host, so two hosts cannot disagree on it. Persistence asserts it on open and fails startup
-if the file is in any other mode — the contention analysis in the design is false without it.
-
-### Core — module descriptor
+### Edge — options, forwarding, and readiness
 
 ```csharp
-public sealed record ModuleDescriptor(
-    ModuleName Name,
-    IReadOnlyCollection<ModuleName> DependsOn,
-    IPlatformModule Module);
-```
-
-### Hosting — startup failure
-
-```csharp
-public sealed class PlatformStartupException : Exception
+public sealed record GameEdgeOptions
 {
-    public PlatformError Error { get; }
+    public required Uri WorkloadBaseAddress { get; init; }
+    public required TimeSpan ForwardTimeout { get; init; }
+    public required TimeSpan LivenessTimeout { get; init; }
 }
+
+public sealed record ForwardedRequest(
+    HttpMethod Method,
+    string PathAndQuery,
+    ReadOnlyMemory<byte> Body,
+    string? ContentType,
+    TraceContext Trace);
+
+public sealed record ForwardedResponse(
+    int StatusCode,
+    ReadOnlyMemory<byte> Body,
+    string? ContentType);
 ```
 
-**Every "aborts startup with a named error" in this contract means this exception carrying that
-error.** It is thrown at host build or start, never from a request. `HostStartupError` wraps the
-cause — a `ConfigurationError`, a `ModuleGraphError`, a registry's rejection — so the inner error's
-name and constraint survive to the operator, which is the property that makes a startup message a
-feature rather than a nicety for the brief's stated audience.
+**`ForwardedRequest` carries no operation id and no parsed body**, and that is the whole of "the edge
+does not know which operation it is carrying". `PathAndQuery` is forwarded unaltered; the edge
+rewrites nothing.
 
-### Hosting — error envelope
+**`ForwardedResponse.Body` is bytes and is returned unaltered.** Stage 2 asserts against the same
+golden transcript Stage 1 does, so any re-encoding at the edge fails it.
 
-```csharp
-public sealed record ErrorEnvelope(string Code, CorrelationId Correlation);
-```
-
-**Two fields, and the design determines exactly these two.** The envelope carries a stable error code
-and the correlation identity, **never exception text and never payload content**. The correlation is
-what ties it to the log line that does carry the detail — which is the whole reason the design
-insisted on a single greppable value. The wire format is resolved at [Unresolved 3](#unresolved).
+**`Trace` is the ambient scope's `TraceContext`**, read from `IOperationScopeAccessor` and written to
+the outbound `traceparent` by the forwarder. The edge sets the header itself because Platform's
+Observability package deliberately does not wire HttpClient instrumentation; there is consequently no
+client-side span for the hop, and no member here to carry one.
 
 ---
 
 ## Persisted schemas
 
-Logical column types map per provider exactly as the design's table states. Names below are logical.
+**There is no database, no table and no collection.** Sessions and saves live in the workload's
+process memory and are lost on restart, by design. Nothing in G1 survives a process, and the absence
+is the brief's non-goal rather than an omission — so there is no schema to migrate and no existing
+data for a migration to act on.
 
-**Two encoding rules bind every table here and every product table, on both providers.** Identifier
-columns store as a 16-byte blob in **RFC 4122 network byte order**, never the platform `Guid` byte
-order, so bytewise blob comparison equals mint order. Instant columns store as **fixed-width
-ISO-8601 UTC text, `Z`-suffixed, exactly seven fractional digits, zero-padded and never trimmed**,
-and **every instant bound as a SQL parameter is written by the same formatter as the column** — the
-platform's default SQLite parameter binding violates all three properties, so pinning only the write
-side moves the defect to the other side of the comparison.
+Five files carry state across a process boundary. Each is listed with what happens to an existing
+one when it changes.
 
-### `platform_outbox`
-
-| Column | Logical type | Null | Constraint |
+| Artifact | Written by | Read by | Migration story |
 |---|---|---|---|
-| `id` | identifier | no | **Primary key.** Version-7 UUID minted at enqueue |
-| `sequence` | sequence | no | **Unique.** App-allocated as `MAX(sequence) + 1` on SQLite (the primary key is `id`, so no rowid alias is available), a `BIGINT` identity on PostgreSQL; claim order only, values reusable after prune on SQLite |
-| `occurred_at` | instant | no | |
-| `type` | text | no | Non-empty |
-| `payload` | payload | no | |
-| `tenant` | tenant | no | Defaults to the all-zero sentinel |
-| `trace_parent` | text | no | Complete `traceparent` including trace flags |
-| `trace_state` | text | yes | W3C `tracestate` when the origin carried one |
-| `correlation` | text | no | The origin's trace-id at any depth; stamped from the ambient correlation at enqueue |
-| `culture` | text | no | The originating BCP-47 tag; empty is invariant; stamped from the ambient culture at enqueue |
-| `attempts` | integer | no | Default 0, `>= 0` |
-| `next_attempt_at` | instant | yes | Null means due at `occurred_at` |
-| `first_deferred_at` | instant | yes | Stamped on first deferral; the deferral age measures from it |
-| `claimed_by` | text | yes | Null exactly when `claimed_at` is null |
-| `claimed_at` | instant | yes | Null exactly when `claimed_by` is null |
-| `processed_at` | instant | yes | |
-| `poisoned_at` | instant | yes | |
-| `last_error` | text | yes | Non-null whenever `poisoned_at` is set |
+| **The contract package** | The generator, in the contract repository | The workload, at startup | Published under its own semantic version and pinned by the workload. A regeneration produces a new version; an existing one is never rewritten, which is what a version-pathed `$id` exists to guarantee. Does not reach `1.0.0` before its generator has rejected something. |
+| **The authored row set** | A human, in the contract repository | The generator | Reviewed as a diff. Adding a row is additive; removing one is a contract major version, because a pinned consumer's routes would disappear. An engine version bump with no matching row edit fails the arity gate, so the row set cannot silently fall behind. |
+| **The replay fixture** | A human, committed | Both runs of the proof | Committed, never generated per run. A change to it invalidates the golden transcript, and the two are regenerated and reviewed in one change or the suite goes red — which is the intended coupling, not a hazard. |
+| **The golden transcript** | The proof, regenerated deliberately | Both comparisons | Committed. Regenerated only as an explicit act and reviewed as a diff; **never rewritten by a passing test.** A regeneration that changes bytes is a change to the projection and is reviewed as one. |
+| **The determinism dump** | The workload, at graceful shutdown, replay profile only | The harness, once | Ephemeral. Overwritten each run, never committed, never read by anything but the harness in the same run. With the default profile it is not written at all, and a test asserts that. |
 
-**Indexes.** One covering the eligibility predicate — `processed_at`, `poisoned_at`,
-`next_attempt_at`, `claimed_at`, ordered by `sequence` — because every dispatch poll runs it and it
-is the only hot query. One on `processed_at` and one on `poisoned_at`, for the prune passes. One
-unique index on `sequence`. The primary key on `id` is append-mostly on PostgreSQL because the UUID
-is time-ordered.
-
-**Check constraints, and one that was retracted.** `claimed_by` and `claimed_at` are null together
-or set together. `poisoned_at IS NOT NULL` implies `last_error IS NOT NULL`. `attempts >= 0`.
-
-There is **no** constraint asserting `processed_at` and `poisoned_at` are mutually exclusive. An
-earlier derivation carried one; it cannot exist, because discard sets both marks by design and the
-constraint would reject the operation the design requires. All four combinations of the two columns
-are legal and each names a state — and **discard alone may produce the both-set state**, which is
-what lets it keep meaning an operator decision. The dispatch-state writes that could otherwise race
-their way into it are conditional on the live claim; see *Public signatures*.
-
-**Migration story.** New table, no existing data. Created empty by the Persistence module's first
-migration.
-
-**Payload shapes change additively or not at all.** New optional fields only — never a rename, a
-removal or a change of meaning. A breaking change is a new event under a new stable `type`, with the
-old handler retained until the old rows drain. A backlog days deep is this design's normal shape, so
-an upgrade that changes what a `type` means is dispatching against history.
-
-**Pending rows are unbounded, by decision rather than oversight.** No retention window applies —
-pruning an undispatched row is dropping a committed write — and no backpressure applies either:
-enqueue is inside the caller's transaction, so refusing it fails the domain write with it. The bound
-that exists is the operator, acting on the pending count and backlog age readiness conditions.
-
-### `platform_background_work_lease`
-
-| Column | Logical type | Null | Constraint |
-|---|---|---|---|
-| `name` | text | no | **Primary key** |
-| `holder` | text | no | |
-| `acquired_at` | instant | no | |
-| `expires_at` | instant | no | |
-
-**Primary key on `name` alone** is what makes acquisition a conditional update rather than a
-read-then-write: a second acquirer either updates the expired row or does not, atomically.
-
-**Migration story.** New table, no existing data.
-
-### `platform_host_registration`
-
-| Column | Logical type | Null | Constraint |
-|---|---|---|---|
-| `role` | text | no | **Primary key** with `instance` |
-| `instance` | text | no | **Primary key** with `role` |
-| `started_at` | instant | no | |
-| `heartbeat_at` | instant | no | |
-| `settings_fingerprint` | text | no | |
-
-**Index** on `role` and `heartbeat_at` — the peer-presence query, which considers live rows only.
-
-**Migration story.** New table, no existing data. A host **deletes its own row on graceful
-shutdown**, and the prune pass removes rows whose heartbeat is older than the registration retention
-window. A previous derivation stated these rows are never pruned; that reintroduces the unbounded
-growth the second outbox retention window exists to close, in the table that watches for everything
-else.
-
-### Columns on product tables
-
-Every product table carries `tenant` (non-null, defaulting to the sentinel) and the four audit
-columns. Soft-delete columns appear only where the product opts in.
-
-**No query filter ships in D3.** The column is data and is ruinous to add after products have rows;
-a filter is code and is cheap whenever tenancy becomes a feature.
-
-**Migration story, and the reason the column is in D3 at all.** On a fresh installation the column is
-present from the first migration and nothing is backfilled. **Adding it to a table that already has
-rows requires a backfill under lock on every table at once**, which is exactly the correctness
-migration the brief moved this into D3 to avoid. There is no supported path that adds it later.
-
-### Migration history
-
-One history per module, not one shared table — a shared one serialises the ordering it exists to
-permit.
-
-**No foreign key may cross a module boundary.** The either-order guarantee holds only for disjoint
-schemas, nothing in the mechanism enforces it, so the provider contract tests assert it directly,
-on both providers, against the applied schema.
-
-**Schema change is expand-then-contract.** A column is added, populated and read before anything
-stops writing the one it replaces; a breaking change is two releases rather than one. The
-degraded-and-serve answer to a host running behind the schema is honest only if the pending change
-is additive, so additivity is a rule here and not a hope.
+**None of these is reachable by a caller.** The dump in particular is a file written by a non-default
+startup profile, is not an endpoint, and no route names it.
 
 ---
 
 ## Public signatures
 
-### Abstractions
+Internal helpers are out of scope. Everything below crosses a module boundary named in the design.
 
-The interfaces and value types above constitute the surface. No functions.
+### The generator — contract repository
 
-### Core
+```ts
+export interface GenerationInput {
+  readonly engineVersion: SemanticVersion;
+  readonly contractVersion: SemanticVersion;
+  readonly wireVersion: WireVersion;
+  readonly rows: readonly AuthoredRow[];
+  readonly statusMapping: StatusMapping;
+}
+
+export function generate(
+  input: GenerationInput,
+): Promise<Outcome<ContractPackage, GenerationError>>;
+```
+
+**`generate` is the only entry point**, and every gate the design names runs inside it: arity, error
+coverage, closed request and response schemas, no response schema resolving to the envelope type, and
+no row carrying the determinism profile. A gate failure returns a `GenerationError` and emits no
+artifact — there is no partial output for a build step to pick up.
+
+### Contract — workload
+
+```ts
+export function loadContract(
+  source: Uint8Array,
+): Outcome<ContractPackage, ContractLoadError>;
+
+export function findRow(
+  contract: ContractPackage,
+  operation: OperationId,
+): OperationRow | null;
+
+export function statusFor(
+  contract: ContractPackage,
+  code: WireErrorCode,
+): Outcome<HttpStatus, ContractLoadError>;
+```
+
+**`statusFor` returns an `Outcome` rather than a status with a fallback.** A code with no mapping is
+a defect the generation gate should already have caught, and the one thing it must not become is a
+`500` nobody attributes.
+
+**`findRow` returns `null` rather than failing.** An unmatched segment is `unknown_operation`, which
+the caller raises with the correlation it already holds; a result type here would be two ways to say
+one thing.
+
+### Composition — workload
+
+```ts
+export interface ComposedWorkload {
+  readonly store: SessionStore;
+  readonly serialization: StoreSerializationHandle;
+}
+
+export function compose(
+  configuration: WorkloadConfiguration,
+  contract: ContractPackage,
+): Promise<Outcome<ComposedWorkload, CompositionError>>;
+
+export function writeDeterminismDump(
+  composed: ComposedWorkload,
+  profile: ReplayDeterminismProfile,
+): Promise<Outcome<void, CompositionError>>;
+```
+
+**`compose` owns the engine-version assertion**, which is why it takes the contract at all — it uses
+nothing else from it. A mismatch returns `EngineVersionMismatch` and no store is built.
+
+**`ComposedWorkload` exposes the serialization handle and the surfaces do not receive it.** The two
+statements are the same statement: the value exists on this type and is passed to the shutdown writer
+and to the harness, and to nothing that builds a route.
+
+**`writeDeterminismDump` takes a `ReplayDeterminismProfile`, not a `DeterminismProfile`.** It cannot
+be called with the default profile, so "with the default profile, nothing is written" is enforced by
+the signature and asserted by a test rather than left to a branch.
+
+### Dispatch — workload
+
+```ts
+export function createDispatcher(
+  contract: ContractPackage,
+  store: SessionStore,
+): Dispatcher;
+```
+
+**Dispatch takes the store, never the composition**, so it has no path to the serialization handle.
+It holds no game logic: it does not retry, does not reinterpret a code, does not decide which actions
+are available, and caches nothing.
+
+### HTTP surface — workload
+
+```ts
+export interface HttpSurface {
+  handle(request: WireRequest): Promise<WireResponse>;
+}
+
+export function buildHttpSurface(
+  contract: ContractPackage,
+  dispatcher: Dispatcher,
+): Outcome<HttpSurface, SurfaceBuildError>;
+
+export function canonicalEncode(value: JsonValue): Outcome<CanonicalJson, EncodingError>;
+
+export function validateRequest(
+  contract: ContractPackage,
+  row: OperationRow,
+  body: JsonValue,
+): Outcome<ValidatedArguments, ValidationFailure>;
+
+export function validateResponse(
+  contract: ContractPackage,
+  row: OperationRow,
+  value: JsonValue,
+): Outcome<void, ValidationFailure>;
+```
+
+**`buildHttpSurface` returns an `Outcome`, and it runs before the listener binds.** A table the
+service cannot satisfy fails startup rather than producing a route that fails on first use.
+
+**`validateResponse` runs on every response, including in the replay run.** Generation proves the
+schema describes the type; it does not prove the handler returned that type unaltered. The schema is
+closed, so an added field is a failure rather than a tolerated extra.
+
+**`canonicalEncode` is the wire's only encoder.** Its rule is the engine's canonical serialization
+rule: JSON, object members ascending by code unit, no insignificant whitespace, members whose value
+is `undefined` omitted, and non-finite numbers rejected rather than coerced.
+
+### MCP surface — workload
+
+```ts
+export interface McpToolDescriptor {
+  readonly name: McpToolName;
+  readonly inputSchema: JsonSchemaDocument;
+}
+
+export type McpToolOutcome =
+  | { readonly kind: "result"; readonly value: CanonicalJson }
+  | { readonly kind: "error"; readonly error: WireErrorBody };
+
+export interface McpSurface {
+  listTools(): readonly McpToolDescriptor[];
+  callTool(name: McpToolName, args: JsonValue): Promise<McpToolOutcome>;
+}
+
+export function buildMcpSurface(
+  contract: ContractPackage,
+  dispatcher: Dispatcher,
+): Outcome<McpSurface, SurfaceBuildError>;
+```
+
+**`listTools()` has exactly as many entries as the table has rows**, which is the engine's own
+standard for this class of claim and is checkable by counting. There is no tool that is not a row and
+no row that is not a tool.
+
+**`callTool` validates against the same request schema and calls the same `Dispatcher`.** It takes no
+row-specific argument type, because an MCP-specific path is precisely what must not exist.
+
+### Probes and process lifecycle — workload
+
+```ts
+export interface WorkloadProcess {
+  readonly listening: ListenEndpoint;
+  readonly probes: ProbeSurface;
+  shutdown(): Promise<Outcome<void, ShutdownError>>;
+}
+
+export function startWorkload(
+  configuration: WorkloadConfiguration,
+): Promise<Outcome<WorkloadProcess, StartupError>>;
+```
+
+**`startWorkload` performs the design's startup order and returns only after the listener is bound.**
+Configuration, contract load, version assertion, composition, both surfaces, then bind.
+
+**`shutdown` is where the dump is written**, under the replay profile only, before the listener stops
+accepting. A failed write is a `ShutdownError` and is reported; it does not become a silent absence
+the harness reads as an empty dump.
+
+### Proof harness — test scope
+
+```ts
+export interface HostedTarget {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, ShutdownError>>;
+  readDump(): Promise<Outcome<StoreSerializationSnapshot, DumpReadError>>;
+}
+
+export function runInProcess(
+  fixture: ReplayFixture,
+  contract: ContractPackage,
+): Promise<Outcome<RunResult, ReplayError>>;
+
+export function runHosted(
+  fixture: ReplayFixture,
+  target: HostedTarget,
+): Promise<Outcome<RunResult, ReplayError>>;
+
+export function compareSerializations(
+  expected: StoreSerializationSnapshot,
+  actual: StoreSerializationSnapshot,
+): ComparisonResult;
+
+export function compareTranscripts(
+  expected: Transcript,
+  actual: Transcript,
+): ComparisonResult;
+
+export function readDeterminismDump(
+  contents: Uint8Array,
+): Outcome<StoreSerializationSnapshot, DumpReadError>;
+```
+
+**Both comparisons are byte comparisons and neither normalizes.** `compareSerializations` compares
+`blob` strings; `compareTranscripts` compares encoded strings. Neither takes an options parameter,
+and the absence of one is deliberate — an ignore-list is how a byte-identity suite stops comparing
+anything.
+
+**`runInProcess` composes the engine and store directly and drives them through a `Dispatcher`.** It
+does not call the store's methods itself: the row's projection and canonical encoding are the same
+code both runs use, and only the transport differs. A run that called the store directly would
+diverge from the hosted run on `save-game` before any determinism defect could.
+
+**`HostedTarget` is what makes one harness serve both stages.** `baseAddress` is the workload in
+Stage 1 and the edge in Stage 2; `shutdown` and `readDump` address the workload in both, because the
+dump is a file the workload writes rather than a value read out of its memory. That separation is the
+whole reason the dump was paid for.
+
+**`runHosted` sends strictly sequentially**, each response fully read before the next request. It
+exposes no concurrency option — pipelining would let two actions reach one session in an order the
+fixture did not specify, and the failure would present as a byte-identity break in a harness that
+caused it.
+
+### The edge — .NET
 
 ```csharp
-public interface IModuleRegistry
+public interface IGameWorkloadForwarder
 {
-    Result<IReadOnlyList<ModuleDescriptor>, ModuleGraphError> Resolve(
-        IReadOnlyCollection<IPlatformModule> modules);
+    Task<Result<ForwardedResponse, EdgeError>> ForwardAsync(
+        ForwardedRequest request,
+        CancellationToken cancellationToken);
 }
 
-public interface IBackgroundWorkRegistry
+public interface IGameWorkloadProbe
 {
-    Result<BackgroundWorkRegistrationError> Register(IBackgroundWork work);
-    IReadOnlyList<IBackgroundWork> Registered { get; }
-    IReadOnlyList<IBackgroundWork> ForRole(HostRole role);
-    void Freeze();
+    Task<Result<EdgeError>> ProbeLivenessAsync(CancellationToken cancellationToken);
 }
 
-public interface IHealthCheckRegistry
+public sealed class GameWorkloadReadinessCheck : IHealthCheck
 {
-    Result<HealthCheckRegistrationError> Register(IHealthCheck check);
-    IReadOnlyList<IHealthCheck> Registered { get; }
-    void Freeze();
+    public GameWorkloadReadinessCheck(IGameWorkloadProbe probe, GameEdgeOptions options);
+
+    public HealthCheckName Name { get; }
+    public HealthCheckKind Kind { get; }
+    public HealthCheckCriticality Criticality { get; }
+    public TimeSpan Timeout { get; }
+    public bool TouchesExternalDependency { get; }
+
+    public Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken);
 }
 
-public interface ISettingsFingerprint
+public static class GameEdgeEndpointExtensions
 {
-    string Compute(PlatformOptions options);
+    public static IEndpointRouteBuilder MapGameWorkloadForwarding(
+        this IEndpointRouteBuilder endpoints);
 }
 ```
 
-**`Resolve` returns the topological order with ties broken by name**, so the order is reproducible
-across runs. **`Freeze` is one-way**; registration after it returns a failure rather than mutating a
-structure concurrent readers are walking.
+**`Kind` is `Readiness`, `Criticality` is `Required`, and `TouchesExternalDependency` is `true`.**
+The last is what makes Platform reject this check as liveness at registration, which is the
+structural form of "liveness does not depend on the workload".
 
-**`ForRole` is how Hosting starts work it cannot name.** It returns the registrations whose `Roles`
-include the host's role, which for the web host is the registration heartbeat alone.
+**`Required` is the decision the brief demands, made in a property.** An unhealthy required check
+produces an unhealthy aggregate and therefore not-ready. `Optional` would produce `Degraded`, which
+would be right if there were another backend; there is exactly one.
 
-**`ISettingsFingerprint.Compute` is specified to the byte, because agreement between two processes
-is the whole of its value.** A prose description that two implementations could follow differently
-would reintroduce exactly the permanent false mismatch it exists to prevent, and this interface is
-public surface a third party may reimplement.
+**`ProbeLivenessAsync` probes the workload's liveness endpoint and no game operation.** A readiness
+check that played a game would create sessions nobody asked for.
 
-Input to the digest, in order:
+**There is no `AddGameEdge` and no second registration call.** The edge is composed by
+`AddPlatformWebHost()`; the forwarding route and the readiness check are ordinary application code
+registered the way any application registers a route and a service. A second mandatory Platform-shaped
+call would be the bespoke wiring D3's own done-criterion forbids at its first consumer.
 
-1. The literal ASCII bytes `szdfp1`, the format version. It is inside the hashed input, so a future
-   change to this encoding is a visible break rather than a silent one.
-2. Every `[Fingerprinted]` property reachable from `PlatformOptions`, as an entry, **ordered by
-   ordinal comparison of the path's UTF-8 bytes** — never by reflection order, which
-   `Type.GetProperties()` does not guarantee.
+**Neither interface exposes a retry.** The forwarder does not retry a failed forward, and nothing in
+this contract gives it a place to record an attempt.
 
-Each entry is exactly:
+### The result type — workload and generator
 
-```text
-uint32BE(byteLength(pathUtf8)) ‖ pathUtf8 ‖ presenceTag ‖ [ uint32BE(byteLength(valueUtf8)) ‖ valueUtf8 ]
+```ts
+export type Outcome<T, E> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E };
 ```
 
-- `path` is the **configuration path** — `Outbox:ProcessedRetention` — the same string a startup
-  error names, so a fingerprint and an error message speak one language.
-- `presenceTag` is one byte: `0x00` for a null value, after which **no length and no value follow**;
-  `0x01` for a present value, after which both do. This is what keeps null distinguishable from the
-  empty string, which a length of zero alone would not.
-- Lengths are **byte counts of the UTF-8 encoding**, not character counts, as unsigned 32-bit
-  big-endian.
-- Values render culture-invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, integers in decimal with
-  no separators or sign for non-negative values, `bool` as `true` or `false`, an enum as its declared
-  name with its declared casing, a string as itself.
-
-The digest is **SHA-256** over that byte sequence, rendered as **64 lowercase hex characters**. The
-length prefixes are what make the encoding injective: without them `a=1,b=23` and `a=12,b=3` could
-hash identically, and a fingerprint that can collide on distinct settings silently reports agreement
-that does not exist.
-
-Why it is stated here rather than left to the implementation is in
-[`90-decisions.md`](90-decisions.md), with the three traps it is built to defeat.
-
-### Persistence — transaction boundary
-
-```csharp
-public enum TransactionIntent { ReadOnly, Write }
-
-public interface IUnitOfWork
-{
-    Task<Result<TransactionError>> ExecuteAsync(
-        TransactionIntent intent,
-        Func<CancellationToken, Task> work,
-        CancellationToken cancellationToken);
-
-    Task<Result<T, TransactionError>> ExecuteAsync<T>(
-        TransactionIntent intent,
-        Func<CancellationToken, Task<T>> work,
-        CancellationToken cancellationToken);
-}
-
-public interface IAmbientTransaction
-{
-    TransactionIntent Intent { get; }
-    DbConnection Connection { get; }
-    DbTransaction Transaction { get; }
-}
-
-public interface IAmbientTransactionAccessor
-{
-    IAmbientTransaction? Current { get; }
-}
-```
-
-**The ambient transaction is one connection, mechanically.** Per-module contexts made the phrase
-ambiguous — "the caller's transaction" spans contexts that would each open a connection by default,
-and two connections is two transactions: the domain write and its outbox rows committing separately
-is the partial write the outbox exists to make impossible. The unit of work therefore owns the
-connection and the transaction, and **every participant — the product module's context and
-Platform's stores alike — enlists through `IAmbientTransactionAccessor` against that one
-connection**. The outbox store never opens its own. Enqueue's required ambient transaction is this
-pair, and nothing else satisfies it.
-
-**The unit of work owns the lifetime; a participant borrows it.** `Connection` and `Transaction` are
-exposed because §2 has Persistence refuse to impose a repository pattern — a product using Dapper or
-raw ADO for its own tables cannot join the ambient transaction without both in hand, and
-encapsulating enlistment would quietly restrict transactional product writes to one data-access
-library. What that exposure costs is a live handle a participant could commit, roll back or dispose,
-so the rule is stated rather than assumed: **a participant enlists and does nothing else with the
-lifetime.** Commit and rollback happen exactly once, in `ExecuteAsync`, which is what makes the
-domain write and its outbox rows atomic.
-
-**`TransactionIntent` is a parameter because no implementation can infer it.** "A transaction that
-will write begins immediate" is only actionable if the caller says which kind it is opening, and the
-deferred-then-upgrade shape is the one case the rule exists to prevent. Treating every transaction
-as a writer would be safe and would make the rule unfalsifiable.
-
-### Persistence — outbox
-
-```csharp
-public interface IOutboxWriter
-{
-    OutboxMessageId Enqueue<TEvent>(TEvent @event) where TEvent : IIntegrationEvent;
-}
-
-public sealed record EventHandlerRegistration(
-    EventTypeName Type,
-    Type EventType,
-    Type HandlerType);
-
-public interface IEventHandlerRegistry
-{
-    Result<EventHandlerRegistrationError> Register<TEvent, THandler>(EventTypeName type)
-        where TEvent : IIntegrationEvent
-        where THandler : class, IIntegrationEventHandler<TEvent>;
-
-    bool TryResolve(EventTypeName type, out EventHandlerRegistration registration);
-
-    bool TryResolve(Type eventType, out EventHandlerRegistration registration);
-
-    IReadOnlyList<EventHandlerRegistration> Registered { get; }
-
-    void Freeze();
-}
-
-public static class PlatformEventHandlerExtensions
-{
-    public static IServiceCollection AddPlatformEventHandler<TEvent, THandler>(
-        this IServiceCollection services,
-        EventTypeName type)
-        where TEvent : IIntegrationEvent
-        where THandler : class, IIntegrationEventHandler<TEvent>;
-}
-
-public interface IOutboxAdministration
-{
-    Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> RedriveAsync(
-        IReadOnlyCollection<OutboxMessageId> ids,
-        CancellationToken cancellationToken);
-
-    Task<Result<int, OutboxError>> RedriveByTypeAsync(
-        EventTypeName type,
-        CancellationToken cancellationToken);
-
-    Task<Result<IReadOnlyList<OutboxAdministrationResult>, OutboxError>> DiscardAsync(
-        IReadOnlyCollection<OutboxMessageId> ids,
-        string reason,
-        CancellationToken cancellationToken);
-
-    Task<Result<int, OutboxError>> DiscardByTypeAsync(
-        EventTypeName type,
-        string reason,
-        CancellationToken cancellationToken);
-
-    Task<Result<IReadOnlyList<OutboxMessage>, OutboxError>> ListPoisonedAsync(
-        int limit,
-        CancellationToken cancellationToken);
-}
-
-public enum OutboxAdministrationOutcome { Applied, NotFound, NotPoisoned }
-
-public sealed record OutboxAdministrationResult(
-    OutboxMessageId Id,
-    OutboxAdministrationOutcome Outcome);
-
-public interface ILeaseManager
-{
-    Task<Result<ILeaseHandle, LeaseError>> AcquireAsync(
-        BackgroundWorkName name,
-        CancellationToken cancellationToken);
-}
-
-public interface ILeaseHandle : IAsyncDisposable
-{
-    BackgroundWorkName Name { get; }
-    DateTimeOffset ExpiresAt { get; }
-    Task<Result<LeaseError>> RenewAsync(CancellationToken cancellationToken);
-}
-
-public interface IModuleMigration
-{
-    string Name { get; }
-
-    Task ApplyAsync(DbConnection connection, DbTransaction transaction, CancellationToken cancellationToken);
-}
-
-public interface IModuleMigrationSource
-{
-    ModuleName Module { get; }
-
-    IReadOnlyList<IModuleMigration> Migrations { get; }
-}
-
-public interface IMigrationRunner
-{
-    Task<Result<IReadOnlyList<ModuleMigrationStatus>, MigrationError>> GetStatusAsync(
-        CancellationToken cancellationToken);
-
-    Task<Result<MigrationError>> ApplyAsync(CancellationToken cancellationToken);
-}
-```
-
-**`AddPlatformEventHandler` is the module-composition form of a handler registration.** A module
-only receives `IServiceCollection` while it composes; the runtime `IEventHandlerRegistry` does not
-exist until the host starts. The extension therefore records the same name–event–handler triple and
-registers the handler type for dependency injection. Startup applies the recorded triples to the
-registry and freezes it; only the worker constructs handlers, preserving the web role's declarative
-registration without importing worker-only constructor dependencies.
-
-**A module's migrations reach the runner by the same route background work and health checks
-do** — plain dependency-injection registration, collected as `IEnumerable<IModuleMigrationSource>`.
-Neither `IMigrationRunner.ApplyAsync` nor `RunPlatformMigrateModeAsync` takes a migration list as a
-parameter, so without a discoverable contribution point a module would have no way to state what its
-history contains; `IPlatformModule` itself carries no migration member, the same way it carries no
-health-check or background-work member; the check and work contracts already solved this exact
-problem, and this is that solution applied a third time. **`Name` is the ordering key within one
-module's history** — applied in ordinal string order, which is what makes "either order across
-modules, one order within a module" a property of the mechanism rather than of discipline. A module
-registers one `IModuleMigrationSource` naming every migration it owns; `ApplyAsync` receives the
-connection and transaction the runner already opened, because the runner — not the migration —
-owns the migration-history bookkeeping and the provider-native lock.
-
-**The registration is declarative, and each role validates the half it runs.** Both hosts register
-the triple — the web host must, in order to enqueue — but a registration is a statement, not a
-resolution: the web host records the handler *type* without ever constructing it, and the handler's
-constructor dependencies resolve and validate only in the role that dispatches. Name uniqueness and
-one-handler-per-Type check identically in both roles, off the declaration alone; a handler that
-cannot be constructed is a named **worker** startup failure and no failure at all in the web role.
-The registry legitimately holds two names for two CLR types that mean successive versions of one
-event — the shape the additive-payload rule assumes.
-
-**The serialiser is `System.Text.Json` with a Platform-pinned options instance that is not
-injectable, and there is no extension point.** Four properties are the durable format, not
-preferences: unmapped members are ignored in both directions, enums serialize as strings, property
-naming and null handling are Platform's, and number handling is fixed. The converter escape hatch an
-earlier derivation carried is **cut** — a converter is a dependency-injection registration the
-settings fingerprint cannot see, so converter drift between the two hosts of a half-upgraded
-installation is exactly the silent format divergence pinning exists to remove. A payload is what
-`System.Text.Json` handles natively under the pinned options, or it is a different payload.
-
-**`Enqueue` returns the id and is synchronous** because it does not write — it looks up the stable
-`EventTypeName` for `TEvent`, mints a version-7 UUID from the clock, stamps tenant, trace context,
-correlation and culture from the ambient scope, enlists in the ambient transaction, and the write
-happens on commit. The id is loggable and returnable before the insert, which is what makes it a
-usable dedupe key.
-
-**`Enqueue` throws `PlatformContractViolationException` on three conditions**: no ambient
-transaction, no ambient operation scope, and an event type that was never registered. The provider
-design requires the contract tests to assert the first two, and the third is listed with them
-because the same call site produces it. The alternatives are worse than a throw: a nullable
-trace context admits rows whose correlation appears nowhere upstream, and an implicitly minted scope
-fabricates a traceparent that dispatch will faithfully rebuild — a fiction indistinguishable at read
-time from a real origin. A call site that genuinely has only the enqueue opens a transaction and a
-scope around it, two explicit lines that state the intent. The third condition has nothing to write
-without the name.
-
-**Redrive is a conditional update that resets the dispatch state whole**: it clears the poison mark,
-`attempts`, `first_deferred_at` and the claim columns, **and sets `next_attempt_at` to now** — a
-poisoned row still carries whatever next attempt the final backoff wrote, hours ahead at the cap,
-and a redrive that left it would report success and deliver nothing for hours. Now rather than null
-keeps the redriven row's past-due age measured from the recovery, not from an `occurred_at` days
-old. It applies **only while the row is still in the poisoned state as the predicate table defines
-it** — so racing the prune pass returns `NotFound` rather than silent nothing, and a row someone
-already discarded returns `NotPoisoned` rather than being resurrected into one that can never
-deliver.
-
-**Per-id redrive and discard return an outcome per id, not a count.** "One of the forty rows you
-named was pruned" is a result, not a failure of the operation.
-
-**Both operations exist per row and in bulk by Type**, because a violated payload rule poisons in
-bulk and the recovery must not be a thousand hand-invocations. **No endpoint or console ships in D3
-to invoke them**; the sample demonstrates calling them.
-
-**`ILeaseHandle.RenewAsync` returning a failure obliges the holder to abort.** The lease is an
-optimisation against duplicate work, not a mutual-exclusion primitive: a holder can stall past its
-expiry while its work continues, and nothing fences it. Leased work must be idempotent, and
-non-idempotent work does not belong under a lease at all.
-
-**`ApplyAsync` is migrate mode's operation and its exclusion is the provider-native migration lock,
-never the lease.** An earlier derivation guarded it with the lease, which cannot do this job: the
-lease table is created by the very migration migrate mode is about to apply, so the guard is absent
-on exactly the run competing deploy scripts are most likely to race — and a lease expires, so a
-stalled migrator is unfenced while its DDL still lands. The native lock is connection-scoped, which
-closes both holes at once: no table, so no bootstrap ordering; released by the provider when the
-holding process dies, so no expiry window. A second concurrent invocation **fails fast** with
-`MigrationError.Locked` — on SQLite that means at `Persistence:SqliteBusyWaitBound`, the same setting
-that bounds every other write's wait for the single write lock, because acquiring this lock *is* that
-write. It cannot be zero: `Microsoft.Data.Sqlite` reads a zero timeout as *wait forever* rather than
-as SQLite's own *fail immediately*, so zero would turn a fail-fast lock into one that never fails.
-
-**One run is one transaction, so a failure rolls the whole run back.** This is a consequence of the
-lock rather than a separate choice: on SQLite the exclusion *is* the transaction, so committing each
-migration as it applied would release the lock between migrations and let a second invocation
-interleave — the race the lock exists to prevent. PostgreSQL could commit per migration and does not,
-because two migrate-mode behaviours that differ by provider is the duplication this seam exists to
-refuse. The operator-visible consequence is stated rather than discovered: **a failed run leaves the
-store exactly as it found it**, and a partially-migrated database is not a state migrate mode can
-produce. A migration is applied within a savepoint so its own failure is isolated for reporting; the
-savepoint never survives the run's rollback.
-
-### Persistence — the provider seam
-
-```csharp
-public enum PruneTarget { ProcessedOutboxRows, PoisonedOutboxRows, DeadHostRegistrations }
-
-public interface IMigrationLock : IAsyncDisposable
-{
-    DbConnection Connection { get; }
-    DbTransaction Transaction { get; }
-}
-
-public interface IProviderCapability
-{
-    PersistenceProvider Provider { get; }
-
-    string FormatInstant(DateTimeOffset instant);
-    bool TryParseInstant(string stored, out DateTimeOffset instant);
-
-    byte[] EncodeIdentifier(Guid value);
-    bool TryDecodeIdentifier(ReadOnlySpan<byte> encoded, out Guid value);
-
-    string MigrationHistoryTable(ModuleName module);
-
-    Task<Result<IAmbientTransaction, TransactionError>> BeginAsync(
-        TransactionIntent intent,
-        CancellationToken cancellationToken);
-
-    TransactionError Classify(Exception exception);
-
-    Task<Result<OutboxMessageId?, TransactionError>> StampClaimAsync(
-        InstanceId holder,
-        DateTimeOffset now,
-        TimeSpan claimWindow,
-        CancellationToken cancellationToken);
-
-    Task<Result<int, TransactionError>> DeleteBoundedAsync(
-        PruneTarget target,
-        DateTimeOffset olderThan,
-        int batchSize,
-        CancellationToken cancellationToken);
-
-    Task<Result<IMigrationLock, MigrationError>> AcquireMigrationLockAsync(
-        CancellationToken cancellationToken);
-
-    Task<Result<ConfigurationError>> AssertStartupPreconditionsAsync(
-        CancellationToken cancellationToken);
-}
-```
-
-**The membership rule, so the capability's growth is checkable rather than a matter of taste: a
-member belongs here when the two providers must do something *different* to produce the same
-observable result.** Everything the providers do identically belongs in a store. That admits the
-instant formatter, the identifier encoder, the claim and bounded-delete statements, transaction-begin
-mode, the migration history name, **the migration lock** — an advisory lock on PostgreSQL,
-an immediate transaction on SQLite — and the startup preconditions — WAL and the busy-wait bound —
-and nothing else. `StampClaimAsync` is the statement only, portable by default with PostgreSQL free
-to use its locking read underneath; which row to dispatch and what to do with the outcome is policy
-and stays in the store. **`Classify` is admitted by the same rule**: what counts as busy, as a
-concurrency conflict, or as unreachable is a different exception type and code on each provider,
-while what the unit of work does with each is identical.
-
-**`BeginAsync` returns the pair it opened, and `IMigrationLock` exposes the pair it holds.** Both
-were previously write-only — success or failure, with no way to read the connection and transaction
-back — which made the capability implementable only from inside Persistence, where the internal
-casts that recovered them live. That contradicts the seam's stated purpose: this log priced the
-capability as expensive precisely because *a third party implementing a provider of their own
-compiles against it*, and an extension point that type-checks and then fails at the first cast is
-not one. The unit of work owns the returned pair's lifetime and is what makes it **ambient**; the
-capability only opens it, which is why `IAmbientTransaction` serves as the return type rather than a
-second interface of identical shape.
-
-```csharp
-public enum ClaimedWriteOutcome { Applied, ClaimLost }
-
-public enum PoisonAttemptMode { Increment, Preserve }
-
-public interface IOutboxStore
-{
-    Task<Result<TransactionError>> InsertAsync(
-        OutboxMessage message, CancellationToken cancellationToken);
-
-    Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
-        InstanceId holder, CancellationToken cancellationToken);
-
-    Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
-        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
-
-    Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
-        OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt,
-        CancellationToken cancellationToken);
-
-    Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
-        OutboxMessageId id, InstanceId holder, string error, PoisonAttemptMode attemptMode,
-        CancellationToken cancellationToken);
-
-    Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
-        OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
-        CancellationToken cancellationToken);
-
-    Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
-        OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken);
-
-    Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
-        IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken);
-
-    Task<Result<int, TransactionError>> RedriveByTypeAsync(
-        EventTypeName type, CancellationToken cancellationToken);
-
-    Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
-        IReadOnlyCollection<OutboxMessageId> ids, string reason,
-        CancellationToken cancellationToken);
-
-    Task<Result<int, TransactionError>> DiscardByTypeAsync(
-        EventTypeName type, string reason, CancellationToken cancellationToken);
-
-    Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
-        int limit, CancellationToken cancellationToken);
-
-    Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(
-        CancellationToken cancellationToken);
-
-    Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken);
-
-    Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken);
-
-    Task<Result<int, TransactionError>> PruneAsync(
-        PruneTarget target, DateTimeOffset olderThan, int batchSize,
-        CancellationToken cancellationToken);
-}
-
-public interface ILeaseStore
-{
-    Task<Result<bool, TransactionError>> TryAcquireAsync(
-        BackgroundWorkName name, InstanceId holder, DateTimeOffset expiresAt,
-        CancellationToken cancellationToken);
-
-    Task<Result<bool, TransactionError>> TryRenewAsync(
-        BackgroundWorkName name, InstanceId holder, DateTimeOffset expiresAt,
-        CancellationToken cancellationToken);
-
-    Task<Result<TransactionError>> ReleaseAsync(
-        BackgroundWorkName name, InstanceId holder, CancellationToken cancellationToken);
-}
-
-public interface IHostRegistrationStore
-{
-    Task<Result<TransactionError>> UpsertAsync(
-        HostRegistration registration, CancellationToken cancellationToken);
-
-    Task<Result<IReadOnlyList<HostRegistration>, TransactionError>> ListLiveAsync(
-        DateTimeOffset heartbeatSince, CancellationToken cancellationToken);
-
-    Task<Result<TransactionError>> DeleteAsync(
-        HostRole role, InstanceId instance, CancellationToken cancellationToken);
-}
-```
-
-**One store per Platform-owned table, and one implementation of each** — parameterised by
-`IProviderCapability`, not written twice. §2 has Persistence refuse to impose a repository pattern,
-so these cover the three tables Platform both defines and stores and never product data.
-
-**The policy is what is not duplicated.** Which row to claim, whether a failure consumes an attempt,
-when a row is poisoned rather than deferred — two copies of that is the objection this design
-already raised against a dialect-specific claim, applied to the surrounding logic rather than the
-statement.
-
-**`PoisonAttemptMode` makes the two poison paths explicit at the store boundary.** `Increment` is
-used when a `HandlerError` reaches poison — a permanent failure or the final transient attempt — and
-increments `attempts` exactly once. `Preserve` is used when a `DispatchError` ages past its deferral
-window and leaves `attempts` unchanged. The mode is named rather than inferred from the `error`
-string: the stored error is diagnostic data, not a control protocol, and renaming an error code must
-not change the row transition.
-
-**Every dispatch-state write is conditional on the live claim, which is why each takes the holder
-and returns `ClaimedWriteOutcome`.** `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`,
-`DeferAsync` and `ReleaseClaimAsync` apply only while `holder` still holds an unexpired claim on the
-row. `ClaimLost` means the write was a **no-op** — counted as evidence of duplicate delivery, never
-escalated, because losing a claim mid-flight is the at-least-once window working as priced. Without
-this, a stalled dispatcher completing after a reclaim-and-poison manufactures the both-set state —
-an operator disposition nobody made. Discard alone produces that state. `DeferAsync` additionally
-stamps `first_deferred_at` when it is unset.
-
-**The outcome is a named type rather than a boolean, for the reason this log already gave once.**
-Folding a correctness property into a bool puts it on a value a caller can get wrong instead of on
-the type the dispatcher switches over, and the obvious misreading here — *the row wasn't there* —
-turns a lost claim into an apparent success and stops the duplicate-delivery evidence being counted.
-Two variants are exhaustive: a claimed row is always pending, and pending rows are never pruned, so
-the row cannot vanish underneath its writer. This mirrors `OutboxAdministrationOutcome`, which
-already names this class of result — a well-formed operation that did not apply.
-
-**`OldestPendingDueAsync`, `PendingCountAsync` and `PoisonedCountAsync` exist because readiness
-needs them and the predicate table decides what they count.** The oldest-due query considers pending
-rows only and returns the due instant — `next_attempt_at`, or `occurred_at` while it is null — so
-readiness measures **time past due**, never time since occurred; the pending count considers pending
-rows only; the poison count excludes discarded rows, because the decision a discarded row was
-demanding has been made.
-
-**Every store method self-guards on an absent schema**, returning `TransactionError.Unavailable`
-rather than throwing, so a first production run reports degraded with the schema named instead of
-turning a known condition into an unhealthy-by-exception.
-
-### Persistence — registration and startup failure
-
-```csharp
-public static class PlatformPersistenceExtensions
-{
-    public static IServiceCollection AddPlatformPersistence(this IServiceCollection services);
-}
-
-public sealed class PersistenceStartupException : Exception
-{
-    public PlatformError Error { get; }
-}
-```
-
-**Persistence registers itself, and Hosting does not do it.** The dependency graph has no
-Hosting → Persistence edge and a host composed without Persistence is a supported shape, so a
-product that wants a store makes this call alongside the standard registration call. It is the same
-arrangement `AddPlatformObservability` has, minus Hosting also invoking it: one explicit line, not
-the bespoke wiring the brief forbids, because nothing about health, readiness, correlation or
-migrations requires the consumer to configure anything beyond naming the package it wants.
-
-**`PersistenceStartupException` is a fourth exception, and the graph is why.** Every "aborts startup
-with a named error" elsewhere means `PlatformStartupException` — which lives in Hosting, a package
-Persistence may not reference. Persistence has its own startup abort to raise (a SQLite file in any
-journal mode but WAL), so it needs a type it is allowed to throw. It carries a `PlatformError` on
-the same terms as the other three, so the code stays stable and enumerable. A consumer catching
-startup failures by type catches both; that cost is the price of the acyclic graph, and it is
-cheaper than the edge.
-
-### Hosting
-
-```csharp
-public static class PlatformHostExtensions
-{
-    public static IHostApplicationBuilder AddPlatformWebHost(this IHostApplicationBuilder builder);
-
-    public static IHostApplicationBuilder AddPlatformWorkerHost(this IHostApplicationBuilder builder);
-
-    public static IEndpointRouteBuilder MapPlatformProbes(this IEndpointRouteBuilder endpoints);
-}
-
-public static class PlatformMigrationExtensions
-{
-    public static Task<int> RunPlatformMigrateModeAsync(
-        this IHostApplicationBuilder builder,
-        CancellationToken cancellationToken);
-}
-```
-
-**Two forms of one registration call, one bootstrap.** The worker is the same startup validation,
-module ordering, options binding and health registration with the product HTTP surface omitted and
-background work enabled — splitting it into a second package would duplicate exactly the behaviour
-that must not diverge between the two processes of one installation.
-
-**There is no `UsePlatform`.** The brief's done-criterion is that health, readiness, correlation,
-migrations and telemetry are configured by nothing but the standard registration call; a second
-mandatory call is bespoke wiring by the first consumer.
-
-**Hosting runs registered background work on timers it owns**, invoking each registration's
-`TickAsync` on its declared interval, in the role each registration declares, without knowing what
-any of it is. Hosting does not reference Persistence; a host composed without Persistence is a
-supported shape with a smaller readiness surface, and the probe body's enumeration of registered
-checks is what keeps that scoping visible.
-
-**Probes are served by Platform's own middleware, in both roles, without either host calling
-`MapPlatformProbes`.** The worker binds its own loopback port through the same endpoint code as the
-web role, and that middleware answers on it — the standard registration call has to be sufficient
-alone. `MapPlatformProbes` exists on the public surface for a host that places the probes within its
-own route table instead; calling it stands the middleware down for that host, rather than being what
-serves the probes in the first place. A port collision fails startup with a named bind error citing
-the setting rather than falling back silently.
-
-**`RunPlatformMigrateModeAsync` returns a process exit status.** It is a one-shot command, not a
-third host role.
-
-**It is grouped under this heading and does not ship in Hosting.** Migrate mode needs the migration
-runner, which is Persistence's, and Hosting has no edge to Persistence — so the method is declared in
-the Persistence package, in a static class of its own — `PlatformMigrationExtensions`, named in the
-block above rather than folded into `PlatformHostExtensions`, which an earlier derivation did and
-which contradicted this very paragraph — sharing this namespace. That is the same idiom
-`Microsoft.EntityFrameworkCore` uses for `AddDbContext`, which extends
-`Microsoft.Extensions.DependencyInjection`'s type from a different assembly than the one declaring
-it. The call site is unchanged and the grouping above is by capability rather than by assembly, which
-is what this document's own preamble says package grouping means. A reader diffing types to files
-should expect this one to move.
-
-### Observability
-
-```csharp
-public static class PlatformObservabilityExtensions
-{
-    public static IHostApplicationBuilder AddPlatformObservability(this IHostApplicationBuilder builder);
-}
-```
-
-Called by both forms of the standard registration call. Exposed separately because Observability is
-usable by a consumer that wants telemetry wiring without a Platform host.
-
-The call installs local Serilog and optional OTLP branches behind the standard `ILogger` surface.
-Serilog writes mandatory UTF-8 JSON Lines to console and to a file named
-`<service>-<role>-.jsonl`, sharing the file safely between instances of one role. Both local sinks
-use the same formatter and one 10 000-event asynchronous buffer with `blockWhenFull` disabled. The
-file rolls daily and at 100 MB and retains no file older than 14 days and no more than 31 files. The
-supported async-sink inspector maintains the exact dropped-event count. File creation, write and
-buffer failure cannot fail startup or application work; an emergency console diagnostic is emitted
-once on entry to failure or dropping and once on recovery.
-
-When `Telemetry.OtlpEndpoint` is present, the official OpenTelemetry SDK also exports logs, traces
-and metrics over OTLP HTTP/protobuf to the base URI's standard `v1/logs`, `v1/traces` and
-`v1/metrics` paths. It uses the SDK's bounded batch processors and experimental in-memory retry as
-provided by the pinned 1.17.0 packages, never a disk queue. A package upgrade must explicitly
-revalidate that experimental feature. Authentication headers, client certificates, per-signal
-endpoints and alternate protocols are outside this contract.
-
-Every OTLP resource and every JSONL record carries `service.name`, `service.version`,
-`deployment.environment.name` and bounded `subzerodev.host.role`. A log also carries ambient
-correlation, tenant, culture and actor when present. `service.instance.id` is not a global resource
-attribute. Request correlation is the trace id; dispatch correlation is represented by its span
-link and structured logs rather than by a duplicate unbounded span attribute.
-
-Incoming traces honour their upstream sampled flag. A new root HTTP trace uses deterministic 10%
-trace-id head sampling. `StartLinked` copies the stored origin's sampled decision into the new linked
-dispatch trace through Platform's sampler; all other traces use the official parent-based ratio
-sampler. Error- and latency-based retention is collector-side tail sampling and is not promised by
-the host.
-
-The fixed, non-injectable redaction processor runs before Serilog's console/file sinks and the OTLP
-branch. Non-empty configuration values whose
-case-insensitive key segments include `authorization`, `cookie`, `password`, `secret`, `token`,
-`api-key`, `connection-string` or `client-certificate` become `[REDACTED]` in structured log
-properties and rendered messages, exceptions and nested text, and span attributes and events.
-Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or
-connection strings.
-
-**Metric labels are not redacted; they are allowlisted, which is the stronger of the two.** Every
-exported metric's labels come from a closed set: host role, HTTP method, route
-template, status, database provider, and closed outcome or signal enums. Raw path and query,
-tenant, correlation, instance, message, event and user identifiers, and arbitrary tag pass-through
-are forbidden. A closed set has nowhere for a secret to arrive, so a redaction pass over it would
-have nothing to find, and naming redaction as the mechanism here would misdescribe which half
-carries the guarantee. In D3 the allowlist governs the instrumentation packages' instruments, since
-Platform publishes none of its own.
-
-### Testing
-
-```csharp
-public sealed class FakeClock : IClock
-{
-    public DateTimeOffset UtcNow { get; }
-    public void Advance(TimeSpan by);
-    public void SetTo(DateTimeOffset instant);
-}
-
-public sealed class FakeCurrentTenant : ICurrentTenant
-{
-    public TenantId Current { get; set; }
-}
-
-public sealed class FakeCurrentPrincipal : ICurrentPrincipal
-{
-    public ClaimsPrincipal? Current { get; set; }
-}
-
-public sealed class FakeCurrentCulture : ICurrentCulture
-{
-    public CultureTag Current { get; set; }
-}
-
-public sealed record CapturedEvent(
-    OutboxMessageId Id,
-    EventTypeName Type,
-    TenantId Tenant,
-    CorrelationId Correlation,
-    CultureTag Culture,
-    DateTimeOffset At);
-
-public interface IEventCapture
-{
-    IReadOnlyList<CapturedEvent> Enqueued { get; }
-    IReadOnlyList<CapturedEvent> Dispatched { get; }
-    void Clear();
-}
-
-public static class PlatformTestHost
-{
-    public static IPlatformTestHostBuilder CreateBuilder();
-}
-
-public interface IPlatformTestHostBuilder
-{
-    IPlatformTestHostBuilder WithRole(HostRole role);
-    IPlatformTestHostBuilder WithProvider(PersistenceProvider provider);
-    IPlatformTestHostBuilder WithSetting(string key, string value);
-    IPlatformTestHostBuilder WithServices(Action<IServiceCollection> configure);
-    Task<IPlatformTestHost> StartAsync(CancellationToken cancellationToken);
-}
-
-public interface IPlatformTestHost : IAsyncDisposable
-{
-    IServiceProvider Services { get; }
-    FakeClock Clock { get; }
-    IEventCapture Events { get; }
-
-    Task<HealthReport> ProbeAsync(HealthCheckKind kind, CancellationToken cancellationToken);
-    Task RunBackgroundWorkOnceAsync(BackgroundWorkName name, CancellationToken cancellationToken);
-}
-```
-
-**`WithServices` is how a test contributes a module, a health check or a background work**, through
-the same plain dependency-injection registration the real host collects them by — so a test
-exercises the production collection path rather than a parallel one built for tests. Without it the
-test host could only run what Platform itself registers, and every criterion needing a
-test-owned check or loop would have to abandon `IPlatformTestHost` for a hand-built host — losing
-`Clock` and `RunBackgroundWorkOnceAsync`, which are the two members that make those criteria
-checkable at all.
-
-**`PlatformTestHost.CreateBuilder` exists because nothing else produced a builder.** A test cannot
-`new` an interface, and leaving the entry point unstated would have each test assembly inventing its
-own.
-
-**`RunBackgroundWorkOnceAsync` invokes one tick, which is what makes background work deterministic
-in tests.** The tick-shaped contract is what makes this possible: the test host owns the schedule,
-the fake clock supplies the instants the tick compares against, and no timing-dependent test
-contains a wall-clock wait.
-
-**The provider contract tests must assert at least the following**, which the design names
-individually. Their invocation surface is resolved at [Unresolved 7](#unresolved); what they assert
-is fixed here.
-
-| Assertion | What it catches |
-|---|---|
-| Identifier blob sort order equals mint order, across a run minted at **distinct clock instants** — the fake clock advances between mints, and no test asserts order within one millisecond | The SQLite `Guid` byte order scrambling a version-7 UUID's time ordering — without a frozen clock making the assertion false while the encoding is right |
-| Instant comparison is correct across a sub-second boundary, column **and** bound comparand | A trimming or variable-width writer making due messages ineligible |
-| `Id` is unique across a drain, prune-to-empty, insert cycle | SQLite rowid reuse, which is why the sequence is not the identity |
-| `Enqueue` throws without an ambient transaction | An outbox row committing apart from its domain write |
-| `Enqueue` throws without an ambient operation scope | A row whose correlation appears nowhere upstream |
-| `Enqueue` throws for an event type no registration bound to a name | A row stamped with a name nothing can resolve back to a type |
-| No foreign key crosses a module boundary, in the applied schema, on both providers | The either-order migration guarantee, which nothing else enforces |
-| A claim is granted to exactly one of two concurrent claimants | The portable conditional-update claim, on both providers |
-| A dispatch-state write whose claim has been lost returns `ClaimLost` and changes no column | The race that would otherwise manufacture the discarded state without an operator |
-| A product write and its outbox rows commit and roll back together when the product enlists against the ambient transaction rather than opening its own connection | The partial write the outbox exists to prevent, reintroduced by the seam between per-module contexts |
-| A payload written under one provider deserializes under the other | The format is the serialiser's, not the provider's |
-| The suite goes red against a deliberately broken `IProviderCapability` | A suite that has never failed is not evidence, and the capability is the only place a difference is permitted to live |
+**Every error crossing a module boundary in TypeScript is an `Outcome` failure carrying a typed
+error value.** The single exception is the engine's own `SessionStoreError`, which is thrown because
+none of `SessionStore`'s signatures has an error channel — Dispatch catches it at the boundary and
+converts it to a `DispatchOutcome` error arm, and it never travels further as an exception.
 
 ---
 
 ## Error semantics
 
-Every variant is a `PlatformError` with a stable `Code`. No bare exceptions and no string errors
-cross a module boundary; the two exceptions that do exist are named above and both signal a caller
-defect rather than a runtime condition.
+Every variant below is a value with a stable `code`. **No bare exceptions and no string errors cross
+a module boundary.** Each module's error type is a discriminated union on `code`.
 
-### Abstractions — `ContractViolation`
-
-Carried by `PlatformContractViolationException`. Never returned.
+### Contract — `ContractLoadError`
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `NoAmbientTransaction` | `Enqueue` is called outside a unit of work | No | Fix the call site — open a transaction around the enqueue |
-| `NoAmbientOperationScope` | `Enqueue`, or an ambient accessor, is reached with no scope open | No | Fix the call site — a seeder or migrate-mode utility opens a scope explicitly, which starts a real root trace |
-| `UnregisteredEventType` | `Enqueue` is called with an event type no registration bound to a stable name | No | Fix the call site — register the type. There is nothing to stamp on the row without the name |
-| `ResultAccessedIncorrectly` | `Value` read on a failure, or `Error` on a success | No | Fix the call site |
+| `MalformedArtifact` | The contract package cannot be parsed, or a required member is absent | No | Fails startup, naming the member. A retry restores the same bytes |
+| `UnsupportedContractVersion` | The artifact's major version is not one this workload understands | No | Fails startup, naming both versions |
+| `UnmappedErrorCode` | `statusFor` is called with a code the mapping does not carry | No | Fails the request as an internal failure and fails the build's gate assertion. A generation gate should have made this unreachable |
 
-### Core — `ModuleGraphError`
-
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `MissingDependency` | A module declares a dependency no registered module provides | No | Fails startup, naming the module and the missing dependency |
-| `CyclicDependency` | The dependency graph contains a cycle | No | Fails startup, naming the cycle |
-| `DuplicateModuleName` | Two modules register the same name | No | Fails startup |
-
-### Core — `ConfigurationError`
+### Composition — `CompositionError`
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `MissingRequiredSetting` | A setting with no default is absent — the two retention windows, the connection string | No | Fails startup, naming the setting **and the configuration source expected to supply it** |
-| `InvalidSetting` | A value is present but outside its permitted range, or a connection string is unparseable | No | Fails startup, naming the setting and the constraint |
-| `InconsistentSettings` | Two settings are individually valid and jointly not. Four pairs: poison retention not longer than processed; drain window not shorter than the claim window; **retry backoff cap shorter than its base**; **peer-absence grace shorter than the heartbeat interval** | No | Fails startup, naming both settings |
-| `UnsupportedJournalMode` | The SQLite file is open in any mode other than WAL | No | Fails startup. The contention analysis this design rests on is false outside WAL |
+| `EngineVersionMismatch` | The contract's recorded engine version differs from the resolved engine package's | No | Fails startup, stating both versions. The listener never binds |
+| `ContentRegistryInvalid` | The content registry does not build, or the fixture's campaign is not in it | No | Fails startup, naming the campaign |
+| `DumpWriteFailed` | The determinism dump cannot be written at shutdown | No | Reports the failure and exits non-zero. The harness must not read a stale or absent dump as an empty one |
 
-### Core — `HealthCheckRegistrationError`
+### Dispatch — `DispatchFailure`
+
+Dispatch returns no error type of its own. Its failure channel is `DispatchOutcome`'s error arm,
+carrying an `EngineErrorCode` unchanged.
+
+| Code class | Raised when | Retryable | Caller does |
+|---|---|---|---|
+| Engine reason code | The store threw a `SessionStoreError` | No, uniformly in G1 | The surface maps the code to a status through the contract's mapping and returns the code **verbatim**. A paraphrase would break the client's own message lookup |
+
+**`storage_failure` is declared and unreachable in G1.** The workload's `SessionPersistence` is
+map-backed and total. It has a mapping because the gate requires one, and the mapping is `503`.
+
+**A rejected action is not an error here.** An unknown action id or an unmet requirement is a
+successful `DispatchOutcome` carrying the store's unsuccessful result, and it becomes a `200`.
+
+### HTTP and MCP surfaces — `WireError`
+
+| Variant | `code` | Status | Raised when | Retryable | Caller does |
+|---|---|---|---|---|---|
+| `UnsupportedVersion` | `unsupported_version` | `404` | The path's version prefix is not the contract's `wireVersion` | No | Address the supported version. The body's code distinguishes this from the next |
+| `UnknownOperation` | `unknown_operation` | `404` | The operation segment matches no row | No | Read the tool list or the table. Same status, different code, by design |
+| `MalformedPayload` | `malformed_payload` | `400` | Request-schema validation fails | No | Fix the payload. **Nothing happened** — the engine was never reached, no session was created and no action was attempted, so nothing is idempotency-sensitive |
+| `EngineRejection` | The engine's code, verbatim | From the mapping | The store threw | No | Render the code through the engine's own string table |
+| `InternalFailure` | [Unresolved 2](#unresolved) | `500` | An unhandled rejection reaches the surface, or response validation fails | No | Read the log line the correlation identifies. The body carries **never** exception text and **never** payload content |
+
+**Response-validation failure is an internal failure, not a passed-through body.** An unvalidated
+response is not returned; the request fails.
+
+### Surface construction — `SurfaceBuildError`
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `DuplicateName` | The name is already registered | No | Fails startup |
-| `RegistryFrozen` | Registration attempted after the host is built | No | Fails startup — a defect, not a condition |
-| `ExternalDependencyInLivenessCheck` | A check declaring `TouchesExternalDependency` registers as `Liveness` | No | Fails startup. A database check reachable from liveness produces a restart loop during the outage it was meant to report |
+| `DuplicateRoute` | Two rows derive the same path segment | No | Fails startup before binding, naming both rows |
+| `DuplicateToolName` | Two rows carry the same `mcpTool` | No | Fails startup before binding, naming both rows |
+| `MissingSchema` | A row references a `SchemaRef` the artifact's schema set does not contain | No | Fails startup, naming the row and the reference |
 
-### Core — `BackgroundWorkRegistrationError`
+**All three fail before the listener binds**, which is what makes the design's ordering claim
+assertable rather than incidental.
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `DuplicateName` | The name is already registered | No | Fails startup |
-| `RegistryFrozen` | Registration attempted after the host is built | No | Fails startup |
-| `NoRoleDeclared` | `Roles` is empty, so no host would ever run the work | No | Fails startup. Silent never-running is the failure this field exists to prevent |
+### Encoding and validation — `EncodingError`, `ValidationFailure`
 
-### Persistence — `EventHandlerRegistrationError`
+| Type | Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|---|
+| `EncodingError` | `NonFiniteNumber` | A value contains `NaN` or an infinity | No | An internal failure. Coercion is not available — it would make two runs' bytes depend on a coercion rule |
+| `EncodingError` | `UnsupportedValue` | A value is not a `JsonValue` — a `bigint`, a function, a symbol | No | An internal failure |
+| `ValidationFailure` | `SchemaViolation` | A payload or a response does not satisfy its schema | No | On a request, `malformed_payload`; on a response, an internal failure. **The violation detail never crosses the wire** |
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `DuplicateHandlerForType` | A second handler registers for an `EventTypeName` already registered | No | Fails startup, naming the type and both handlers. A product that wants two things to happen writes one handler that does two things |
-| `DuplicateNameForEventType` | A second `EventTypeName` registers for a CLR event type already bound | No | Fails startup — enqueue could not choose which name to stamp |
-| `HandlerNotConstructible` | The handler's constructor dependencies fail to resolve, **checked only in the dispatching role** | No | Fails **worker** startup, naming the handler and the missing dependency. No failure in the web role, whose container never constructs it |
-| `RegistryFrozen` | Registration attempted after the host is built | No | Fails startup |
+### Startup and shutdown — `StartupError`, `ShutdownError`
 
-**Name and handler uniqueness are one verdict, checked identically in both roles off the declaration
-alone.** Enforcement is at startup only. Enforcing at dispatch as well is the more rigorous reading —
-a container can be populated directly and bypass the registry — and was declined for one error path
-rather than two. Revisitable if the bypass ever happens.
+| Type | Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|---|
+| `StartupError` | `ConfigurationInvalid` | A required setting is absent, or a value is outside its range | No | Exits non-zero, naming the setting |
+| `StartupError` | `ContractLoad` | Carries a `ContractLoadError` | No | Exits non-zero |
+| `StartupError` | `Composition` | Carries a `CompositionError` | No | Exits non-zero |
+| `StartupError` | `SurfaceBuild` | Carries a `SurfaceBuildError` | No | Exits non-zero |
+| `StartupError` | `ListenerBindFailed` | The configured endpoint cannot be bound | No | Exits non-zero, naming the endpoint |
+| `ShutdownError` | `DumpWriteFailed` | Carries a `CompositionError` | No | Exits non-zero |
 
-### Persistence — `TransactionError`
+**Every startup variant aborts, and none warns.** A service that starts against a contract describing
+a different engine serves a wire its own schemas do not describe, and every downstream assertion in
+this design becomes conditional.
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `Unavailable` | The database cannot be reached, or its schema is absent. **Includes a connect or command timeout**, which both providers surface as a cancellation rather than as a provider exception | **Yes**, by the caller's own policy — never by Platform | Surfaces an error envelope carrying the correlation identity; readiness checks report degraded citing the cause |
-| `Conflict` | A concurrency conflict aborts the transaction | **Yes** | May retry the whole unit of work; outbox rows roll back with the domain write |
-| `Busy` | SQLite's busy-wait bound elapsed without acquiring the write lock | **Yes** | Fails the operation normally; under contention this is the visible symptom |
-| `Faulted` | Any other failure inside the transaction | No | Surfaces; the rollback is complete |
-
-**No variant's `Detail` carries an exception message.** Every one is a fixed operator-facing string,
-because a readiness body renders `Detail` at full detail and invariant 46 admits no exception text
-into a probe body. The exception goes to the log, where the correlation ties the two together — the
-same division the error envelope already makes.
-
-**Platform retries nothing on the request path.** A generic retry doubles load on a struggling
-database and turns a fast failure into a slow one.
-
-**A transaction that will write begins immediate, never deferred.** A deferred transaction that
-upgrades to a write after reading — the shape of both a claim and a mark — can take a busy condition
-that waiting cannot resolve, because no amount of waiting makes its read snapshot valid again.
-
-### Persistence — `OutboxError`
+### The generator — `GenerationError`
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `Unavailable` | The database cannot be reached | **Yes** | Retries at the caller's discretion |
+| `ArityMismatch` | A `SessionStore` method has no row, or a row names no method | No | Fails the contract build, naming both sides. **This is what fires on an engine version bump** |
+| `ErrorCodeUncovered` | A declared `SessionStoreErrorCode` has no status mapping | No | Fails the contract build, naming the code |
+| `NarrowingUnknownField` | A `NarrowedField` names a member the engine's declaration does not have | No | Fails the contract build, naming the row and the member |
+| `ResponseSchemaOpen` | A response schema permits additional properties | No | Fails the contract build, naming the schema |
+| `RequestSchemaOpen` | A request schema permits additional properties | No | Fails the contract build, naming the schema. A tolerated extra member would make a request narrowing reversible from the wire |
+| `EnvelopeReachable` | A response schema resolves to the engine's envelope type | No | Fails the contract build. **This is the permanent non-goal's static gate** |
+| `DeterminismProfileInRow` | A row carries the determinism profile as a field | No | Fails the contract build |
+| `DuplicateOperationId` | Two rows share an `OperationId` or an `McpToolName` | No | Fails the contract build, naming both |
+| `EngineResolutionFailed` | The engine package cannot be resolved for projection | No | Fails the contract build, naming the package and the registry. **Nothing retries automatically** — a silent retry over an authentication failure records a credential problem as flakiness |
 
-**Per-row dispositions are outcomes, not errors.** `NotFound` and `NotPoisoned` are returned per id
-in `OutboxAdministrationResult`, because "one of the forty rows you named was pruned" is a result, not
-a failure of the operation. A lost claim on a dispatch-state write is likewise an outcome — `ClaimLost` —
-counted as duplicate-delivery evidence, never escalated.
+### The harness — `DumpReadError`, `ReplayError`
 
-### Abstractions — `HandlerError`
+| Type | Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|---|
+| `DumpReadError` | `DumpAbsent` | No dump exists at the configured path after shutdown | No | Fails the comparison. An absent dump is never read as an empty one |
+| `DumpReadError` | `DumpMalformed` | The dump cannot be parsed | No | Fails the comparison |
+| `ReplayError` | `CoverageIncomplete` | The fixture's operation set is not equal to the table's row set | No | Fails the suite, naming the operations on each side. This is what makes "every store operation is exercised through the hosted surface" checkable by counting |
+| `ReplayError` | `UnknownOperationInFixture` | A step names an operation with no row | No | Fails the suite, naming the step |
+| `ReplayError` | `StepFailed` | A step produced an error outcome the fixture did not declare | No | Fails the suite, naming the step and the code. A replay whose steps fail is not a replay |
+| `ReplayError` | `TransportFailure` | The hosted client could not complete a request | No | Fails the suite. **No retry** — a retried step is a second action |
+| `ReplayError` | `Shutdown` | Carries a `ShutdownError` | No | Fails the suite |
+| `ReplayError` | `DumpRead` | Carries a `DumpReadError` | No | Fails the suite |
 
-Returned by a handler. Both variants consume an attempt.
+### The edge — `EdgeError`
 
-**It is Abstractions', not Persistence', and the dependency graph leaves no choice.**
-`IIntegrationEventHandler<TEvent>.HandleAsync` returns `Result<HandlerError>` and that interface is in
-Abstractions, which has no edge to Persistence — so a product writes a handler against Abstractions
-alone, which is the property that makes Abstractions a separate package. `DispatchError` below is
-genuinely Persistence', because only the dispatcher raises it.
+```csharp
+public abstract record EdgeError(string Code) : PlatformError(Code);
+```
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `Transient` | The handler failed in a way that may succeed later; also an exception escaping the handler | **Yes** | Dispatcher records the error, increments attempts, sets the next attempt with exponential backoff |
-| `Permanent` | The handler failed in a way that will not succeed on retry | No | Dispatcher poisons the row immediately, without burning the remaining attempts to reach a conclusion the handler already had |
+| Variant | Status | Raised when | Retryable | Caller does |
+|---|---|---|---|---|
+| `WorkloadUnreachable` | `503` | The forward cannot connect, or the readiness probe cannot reach the workload's liveness endpoint | **No** | The caller re-reads with a query operation. **The edge does not retry** — a retry against a `submitAction` whose outcome is unknown is a second action, and merging two is explicitly not available |
+| `WorkloadTimeout` | `504` | The forward exceeds `ForwardTimeout` | **No** | Same. The state is unknown to the edge and knowable only at the workload, which is exactly the partial-failure case; G1's honest answer is a re-read, not a resubmit |
 
-### Persistence — `DispatchError`
+**`IsRetryable` is `false` on both**, and that is a statement about this system rather than about
+HTTP: there is no idempotency key, and inventing one is Platform's API-conventions work, not G1's.
 
-Raised by the dispatcher, never by a handler. **No variant consumes an attempt** — that is the whole
-reason these are separate from `HandlerError`.
+**The codes on both variants are unnamed by the design** and are [Unresolved 2](#unresolved).
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `HandlerUnresolved` | No handler is registered for the row's `type` | **Yes, without consuming an attempt** | Releases the claim, stamps `first_deferred_at` if unset, sets the next attempt one fixed deferral interval ahead. Raised routinely during an upgrade, when the new web process enqueues a type the old worker has never seen. Poisons only past the deferral age, measured from first deferral |
-| `PayloadUndeserializable` | The type resolves and the payload does not deserialize | **Yes, without consuming an attempt** | The same deferral path. Burning attempts here mass-poisons the entire pre-upgrade backlog within minutes of a bad deploy — the exact catastrophe the additive-only payload rule exists to prevent, delivered by the retry machinery itself |
-| `MigrationsPending` | This host has registered migrations that are not applied | **Yes, without consuming an attempt** | **Does not claim at all.** Nothing is stamped and nothing ages; the backlog-age readiness condition already reports the wait |
-
-**Measuring the deferral age from first deferral rather than from `occurred_at` is what preserves
-the grace after a long outage:** a days-old backlog row gets the full deferral window on its first
-attempt instead of poisoning instantly.
-
-### Persistence — `LeaseError`
-
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `Held` | Another holder has an unexpired lease | **Yes**, at the next interval | Skips this run entirely |
-| `Lost` | Renewal found the lease held by someone else | No | **Aborts the work immediately** |
-| `Unavailable` | The database cannot be reached | **Yes** | Skips this run |
-
-### Persistence — `MigrationError`
-
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `Failed` | A migration failed to apply | No | Stops, and does not continue to the next module. **The whole run rolls back** — every migration that run had applied, across every module — so the database is left exactly as the run found it |
-| `Locked` | Another invocation holds the provider-native migration lock | **Yes**, once the other run finishes | **Fails fast**, exiting non-zero without applying anything. The lock is connection-scoped: it exists on a fresh store and dies with its holder, so there is no expiry window and no bootstrap ordering |
-| `Unavailable` | The database cannot be reached | **Yes** | Exits non-zero; the operator retries |
-| `HistoryTableCollision` | Two modules' history tables resolve to one name — module names are unique case-sensitively, so `Orders` and `orders` are two legal modules sharing one table | No | **Fails before acquiring the lock and before applying anything**, naming both modules and the table. Sharing a history is silent corruption of what per-module histories provide: each module reads the other's applied list and skips its own migrations as already applied |
-
-### Hosting — `HostStartupError`
-
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `Configuration` | A `ConfigurationError` was raised during binding or validation | No | Aborts startup, surfacing the inner error's name and constraint |
-| `ModuleGraph` | A `ModuleGraphError` was raised during resolution | No | Aborts startup, surfacing the inner error |
-| `Registration` | Any registry rejected a registration | No | Aborts startup, surfacing the inner error |
-| `ProbeBindFailed` | The worker probe port cannot be bound | No | Aborts startup, **naming the setting** — the design's own environment puts two products on one server, and a silent fallback port would make the probe surface unfindable |
-
-**Startup aborts; it never degrades.** *Unavailability* with valid configuration is the opposite
-case and is not an error here at all — the host starts and reports not ready, because on a
-self-hosted box a database thirty seconds behind the application should not need a human.
-
-### Observability
-
-**No error type crosses this boundary.** File failures are absorbed by the non-blocking Serilog
-queue, with its supported inspector supplying exact drop counts and one emergency console
-diagnostic on failure-or-dropping entry and recovery. OTLP failures are absorbed by the official
-bounded batch processors and in-memory retry, then dropped; the pinned SDK exposes no supported
-exact dropped-signal counter or queue-transition hook, so Platform promises neither and does not
-manufacture one through a custom processor or parsed internal diagnostics. A malformed inbound
-`traceparent` yields `false` from `TryParse` and a fresh root, never a rejected request. Collection
-never becomes a path by which a caller can fail, so there is nothing for a caller to handle.
-
-### Testing
-
-**No error type of its own.** Failures surface as the underlying package's error, which is the point
-— a test host that translated errors would be testing the translation.
+**The edge produces no other error.** Every other status a caller sees came from the workload and was
+forwarded unaltered.
 
 ---
 
@@ -1923,152 +960,190 @@ Each is written to be assertable, with the module responsible for maintaining it
 
 | # | Invariant | Owner |
 |---|---|---|
-| 1 | Every persisted instant has `Offset == TimeSpan.Zero` and originates from `IClock`; no eligibility, claim-expiry or lease-expiry comparison reads a database clock | Persistence |
-| 2 | A persisted instant's SQLite text form is fixed-width, `Z`-suffixed, seven fractional digits, never trimmed — and every instant bound as a SQL parameter uses the same formatter as the column | Persistence |
-| 3 | An identifier's SQLite blob encoding is RFC 4122 network byte order, so bytewise blob order equals mint order at millisecond resolution, the tie unspecified | Persistence |
-| 4 | Every outbox row is in exactly one of the four states, and every consumer — readiness, prune, redrive — derives its state from the predicate table rather than from a column of its own | Persistence |
-| 5 | `claimed_by` is null if and only if `claimed_at` is null | Persistence |
-| 6 | `poisoned_at` set implies `last_error` non-null | Persistence |
-| 7 | An outbox row is inserted only inside an ambient transaction that also carries its domain write, and only inside an ambient operation scope | Persistence |
-| 8 | The ambient transaction is one connection owned by the unit of work; every participant enlists against it, and the outbox store never opens its own on the enqueue path — claim, marks, redrive, discard, the three readiness queries and prune each correctly open their own connection through `capability.BeginAsync`, none running inside a caller's transaction | Persistence |
-| 9 | A participant enlists against the ambient transaction and never commits, rolls back or disposes it; commit and rollback happen exactly once, in `ExecuteAsync` | Persistence |
-| 10 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
-| 11 | No foreign key crosses a module boundary | Persistence |
-| 12 | A dispatched message's ambient context is rebuilt from its row — correlation from the row's correlation column, tenant and culture from the row, principal null — never inherited from the worker | Persistence |
-| 13 | Dispatch starts a new trace linked to the stored one, honouring its stored sampling flags; it never continues the origin trace | Persistence |
-| 14 | The correlation and culture columns are stamped from their ambient values at enqueue and each propagates unchanged through derived events at any depth | Persistence |
-| 15 | `attempts` increases only on a `HandlerError`; no `DispatchError` variant increments it | Persistence |
-| 16 | `attempts` never decreases except through an explicit redrive | Persistence |
-| 17 | Every dispatch-state write — mark processed, record failure, defer, poison, release — applies only while the writer holds the live claim; a write that lost its claim returns `ClaimLost`, changes nothing, and is counted as duplicate-delivery evidence rather than escalated | Persistence |
-| 18 | Discard alone produces the both-marks-set state | Persistence |
-| 19 | Redrive applies only in the poisoned state; it clears the poison mark, `attempts`, `first_deferred_at` and the claim columns, and sets `next_attempt_at` to now | Persistence |
-| 20 | A claim covers exactly one row, and is granted to exactly one of any two concurrent claimants | Persistence |
-| 21 | The dispatcher claims nothing while this host has unapplied migrations | Persistence |
-| 22 | A pending row is never pruned; processed rows prune on the processed window, poisoned and discarded rows on the poison window | Persistence |
-| 23 | Every background write is bounded — one row per claim and per mark, `PruneBatchSize` rows per prune statement | Persistence |
-| 24 | A transaction that will write begins immediate; the SQLite file is in WAL mode or the host does not start | Persistence |
-| 25 | Every persistence readiness check self-guards on an absent schema, reporting degraded with the schema named rather than throwing | Persistence |
-| 26 | Exactly one handler is registered per `EventTypeName`, and exactly one `EventTypeName` per CLR event type; handler constructor graphs validate only in the dispatching role, and the registry accepts no registration after `Freeze` | Persistence |
-| 27 | A stored `type` resolves to a CLR type through the registry alone — never through a runtime type name | Persistence |
-| 28 | Payload serialisation is the pinned `System.Text.Json` options — unmapped members ignored in both directions, enums as strings, fixed naming, null and number handling — with no reachable extension point | Persistence |
-| 29 | Backlog age measures pending rows only and time past due only; the pending count counts pending rows only; the poison count excludes discarded rows | Persistence |
-| 30 | Module order is a topological sort of declared dependencies, ties broken by name, identical across runs on identical input | Core |
-| 31 | The health and background-work registries and the module graph accept no registration after `Freeze` | Core |
-| 32 | No check declaring `TouchesExternalDependency` is registered as `Liveness` | Core |
-| 33 | Both retention settings and the connection string are present, or the host does not start | Core |
-| 34 | The settings fingerprint covers exactly the properties marked `[Fingerprinted]`, and two hosts on identical settings compute identical values | Core |
-| 35 | `PeerLivenessThreshold` equals three times `HeartbeatInterval` and cannot be set independently | Core |
-| 36 | Liveness never evaluates an external dependency | Hosting |
-| 37 | Readiness returns success for `Healthy` and `Degraded`, failure only for `Unhealthy` | Hosting |
-| 38 | Every host writes its registration to the store it is using; the first successful heartbeat is the registration, and the host deletes its own row on graceful shutdown | Hosting |
-| 39 | Background work runs only in a host whose role the registration's `Roles` includes; no product work and no outbox dispatch runs in the web role | Hosting |
-| 40 | Hosting owns every background-work timer; a registration exposes a tick and no schedule of its own | Hosting |
-| 41 | A request never blocks on telemetry export, a probe, dispatch, or prune | Hosting |
-| 42 | A malformed inbound `traceparent` never fails the request | Hosting |
-| 43 | Graceful shutdown stops claiming immediately and releases claims it has not started | Hosting |
-| 44 | The worker probe binds loopback unless explicitly configured otherwise, and a port collision fails startup naming the setting | Hosting |
-| 45 | The probe body is `Full` only on loopback or in the development environment; the status is identical at either detail level, and the body enumerates every registered check | Hosting |
-| 46 | `last_error` never crosses a wire; no probe body and no error envelope carries exception text or payload content | Hosting |
-| 47 | Peer absence is informational in the development environment; elsewhere it degrades only once it has persisted for the rolling grace window, measured on the observing host's clock from the absence first being seen | Hosting |
-| 48 | Telemetry export never propagates a failure to a caller | Observability |
-| 49 | No secret appears in any exported log or span attribute — by redaction; and none can appear in a metric label, because labels are allowlisted rather than filtered | Observability |
-| 50 | No metric is labelled with an unbounded value. Platform publishes no instrument in D3, so this is asserted against the instrumentation packages' instruments | Observability |
-| 51 | Every host writes mandatory role-specific UTF-8 JSON Lines logs to console and file, and a file failure never prevents startup or blocks application work | Observability |
-| 52 | With no OTLP endpoint, no exporter starts and no outbound connection is attempted | Observability |
-| 53 | Every telemetry resource and JSONL record carries the same service name, service version, deployment environment and bounded host role | Observability |
-| 54 | Incoming traces retain the upstream sampling decision; new root HTTP traces use deterministic 10% trace-id sampling; linked dispatch traces retain the stored origin decision | Observability |
-| 55 | Platform captures no HTTP headers or bodies, event payloads, SQL parameter values or connection strings as telemetry | Observability |
-| 56 | Every unit of work creates one provider-neutral child activity carrying provider and operation only | Persistence |
-| 57 | A health report is derived per probe and never cached; two probes of the same kind evaluate their checks afresh | Hosting |
+| 1 | The row set exactly covers the exported `SessionStore` interface's methods — no method without a row, no row without a method | Generator |
+| 2 | Every `SessionStoreErrorCode` the engine declares and every member of `TransportErrorCode` appears exactly once in the status mapping, and the mapping has no other entry | Generator |
+| 3 | Every response schema is closed at every object level, and none resolves to the engine's envelope type | Generator |
+| 3a | Every request schema is closed at every object level, so a narrowed request field cannot be re-supplied and no undeclared member reaches the store | Generator |
+| 4 | `httpPath` equals its row's `operation`, for every row | Generator |
+| 5 | No row carries the determinism profile in any form | Generator |
+| 6 | `OperationId` and `McpToolName` are each unique across the row set | Generator |
+| 7 | Every `NarrowedField` names a top-level member the engine's declaration actually has | Generator |
+| 8 | Every `SchemaRef` a row references resolves to a document in the same artifact's schema set | Generator |
+| 9 | No `$ref` or `$id` is dereferenced over the network, at generation or at run time | Generator, Contract |
+| 10 | `ContractPackage.engineVersion` equals the version the schemas were projected from | Generator |
+| 11 | The workload's resolved engine package version equals `ContractPackage.engineVersion`, or the process does not start | Composition |
+| 12 | The workload computes no sequence and stamps no field on a session or save record; every value is the engine's. The one thing it supplies is `RecordIdSource`, which the engine calls — and only under the replay profile | Composition |
+| 12a | With the default determinism profile, no `RecordIdSource` is supplied and the engine's own minting applies unchanged | Composition |
+| 12b | Under the replay profile, session and save ids are the same strings in every run, which is what makes comparison A's id ordering reproducible and the fixture's literal ids writable | Composition |
+| 13 | No correlation, trace id, or other host metadata is written into a session record or into any canonical serialization | Composition |
+| 14 | With the default determinism profile, no dump is written and no dump path exists to write to | Composition |
+| 15 | The determinism profile is startup configuration only — never a request field, never a header, never a route segment | Composition, HTTP surface, MCP surface |
+| 16 | `StoreSerializationSnapshot` and `DeterminismDump` carry canonical serializations only, never a host-owned record field | Composition |
+| 17 | Neither surface's module graph reaches `StoreSerializationHandle` | HTTP surface, MCP surface |
+| 18 | No response body anywhere in either transcript contains a canonical serialization | HTTP surface, MCP surface, Proof harness |
+| 19 | Both surfaces are constructed from the in-memory row set before the listener binds; a construction failure aborts startup | HTTP surface, MCP surface |
+| 20 | The number of MCP tools equals the number of table rows, and the two name sets correspond one-to-one | MCP surface |
+| 21 | Both surfaces reach the store only through one `Dispatcher` instance over one `SessionStore` | HTTP surface, MCP surface |
+| 22 | A row's request and response shapes are the same for both surfaces; no narrowing is applied by a surface | Dispatch |
+| 23 | Dispatch applies the row's projection; a surface never narrows and never widens what Dispatch returned | Dispatch |
+| 24 | A request that fails request-schema validation never reaches the store | HTTP surface, MCP surface |
+| 25 | Every response is validated against its row's closed response schema before it is encoded | HTTP surface, MCP surface |
+| 26 | An engine reason code travels to the caller verbatim; no code is paraphrased, normalized, or translated | Dispatch, HTTP surface, MCP surface |
+| 27 | Status is a function of the code through the contract's mapping, with no default branch | HTTP surface |
+| 28 | A rejected action is a `200` carrying the store's unsuccessful result; no game verdict determines a status | HTTP surface, MCP surface |
+| 29 | Every response, success or failure, carries the correlation | HTTP surface, MCP surface, Edge |
+| 30 | No error body carries exception text or payload content | HTTP surface, MCP surface, Edge |
+| 31 | A malformed inbound `traceparent` yields a fresh root and never fails the request | HTTP surface |
+| 32 | With no OTLP endpoint configured, no exporter is constructed and no outbound connection is attempted | Composition, Edge |
+| 33 | `canonicalEncode` is the only encoder on the response path, and its output reaches the socket unaltered | HTTP surface |
+| 34 | The replay is strictly sequential — each response is fully read before the next request is sent | Proof harness |
+| 35 | The fixture's operation set equals the table's row set | Proof harness |
+| 36 | Both comparisons are byte comparisons with no ignore-list, no normalization and no options parameter | Proof harness |
+| 37 | The golden transcript is never written by a passing test | Proof harness |
+| 38 | Two perturbations are asserted red: one transposing two actions must fail comparison A, one substituting a response field must fail comparison B | Proof harness |
+| 39 | Stage 1's single-hop replay remains in the suite and green after the edge lands | Proof harness |
+| 40 | The edge forwards method, path, body and `traceparent` and alters none of them; the response is returned byte-for-byte | Edge |
+| 41 | The edge holds no per-session state, no connection affinity and no cache, and never reorders, batches or coalesces | Edge |
+| 42 | The edge's readiness check is `Required` and declares `TouchesExternalDependency`; its liveness declares no external dependency | Edge |
+| 43 | The edge retries nothing and records no attempt | Edge |
+| 44 | The edge is composed by Platform's standard registration call and no second Platform-shaped call | Edge |
+| 45 | No project under `src/` or `samples/` references the workload | Build |
+| 46 | The listener binds loopback unless explicitly configured otherwise | Composition |
 
 ---
 
 ## Unresolved
 
-Values the design did not determine, each of which sets something a future reader would ask "why?"
-about. **Seven of the eight are resolved** — 2, 3 and 4 in S1, 6 and 7 in S2, and 1 and 5 ahead of
-S3, so those slices implemented against a contract with nothing left to invent. **8 is open**, and
-it blocks nothing that shipped: it names a behaviour the design promises and D3 never built. Every
-resolved one has its reasoning, its rejected alternatives and its cost in
-[`90-decisions.md`](90-decisions.md); none of it is restated here.
-
-**A new entry belongs here whenever the design names a concept without naming its construction.**
-That is what 8 is, and it is why it is here rather than settled by whoever writes the first line of
-it.
+Values and signatures the design does not determine. **Each blocks something concrete**, and none is
+guessed at above. **1 is resolved and nothing above is now held back**; 2, 3 and 4 are open, and each
+names a value a first implementer would otherwise settle silently.
 
 **Resolved items keep their number and are struck through rather than removed**, because
-[`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) both cite these by number and
+[`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) will cite these by number and
 renumbering would silently break every reference.
 
-1. ~~**The settings fingerprint's canonical form and hash algorithm.**~~ **Resolved ahead of S3:** each
-   `[Fingerprinted]` value is keyed by its **configuration path** — the same string an error message
-   names, so the two speak one language — then the pairs are **ordinal-sorted by path**, each path
-   and value **length-prefixed** so no two different inputs can concatenate to the same bytes, the
-   whole preceded by a format version, hashed with **SHA-256** and rendered as lowercase hex.
-   Values format invariantly: `TimeSpan` as `"c"`, `double` as `"R"`, enums by name, and a null
-   distinctly from an empty string. Sorting by path rather than by reflection order is the load-
-   bearing part — `Type.GetProperties()` guarantees no order. **The byte-exact encoding is specified
-   beside `ISettingsFingerprint` itself**, which is what an implementer reads; this entry summarises
-   the decision and is not the normative form. See [`90-decisions.md`](90-decisions.md).
+### ~~1. Session and save ids are not deterministic, and the design says they are~~
 
-2. ~~**Upper bounds for `DispatchTickBudget` and `PruneBatchSize`.**~~ **Resolved in S1:**
-   `DispatchTickBudget` at 1 000 and `PruneBatchSize` at 5 000, each an order above its default. The
-   prune bound is the one that matters — a prune delete is a single statement holding SQLite's write
-   lock, where a tick's budget is only serial duration. Both are enforced by the hand-written binder.
-   See [`90-decisions.md`](90-decisions.md).
+**Resolved 2026-08-08, by Ben: the engine gains the seam.** G1 delivers a host-suppliable
+`RecordIdSource` on the engine's session composition root, defaulting to today's
+`crypto.randomUUID()`, and the brief's engine-behaviour non-goal carries a carve-out naming it. See
+[*The engine seam G1 adds*](#the-engine-seam-g1-adds); the reasoning and the rejected alternatives
+are in [`90-decisions.md`](90-decisions.md) and are not restated here. The signatures this held back
+— `runInProcess`, `runHosted`, `HostedTarget` and literal ids in `ReplayStep.arguments` — are
+declared above. **The evidence that forced it is kept below**, because it is the reason a
+cross-repository change entered an effort whose virtue is being cheap.
 
-3. ~~**The wire format of the error envelope and the probe body.**~~ **Resolved in S1:** plain
-   `application/json`, camel-cased member names, enums as their string names, nulls omitted. The
-   envelope is `{code, correlation}` and nothing else, and does **not** reuse problem details. The
-   probe body is
-   `{status, checks[]}` with each entry `{name, status, detail?, data?}`, the last two present only
-   at full detail. See [`90-decisions.md`](90-decisions.md).
+**The design stated** (*Data model*, in-memory session and save records): *"Identity: session id and
+save id, both minted by the engine's `IdSource` port."*
 
-4. ~~**The per-check default timeout, and the probe endpoint's overall timeout.**~~ **Resolved.** The
-   endpoint's overall timeout was set in S1 at 15 s; the per-check timeouts were set in S2, with the
-   first two checks that needed them — `Database` at 5 s, `PendingMigrations` at 10 s. Both are in
-   [`90-decisions.md`](90-decisions.md).
+**The engine does not do this.** In the engine's session store, `sessionId` and `saveId` come from a
+module-local `mintId()` that calls `crypto.randomUUID()`. Neither `SessionHost` nor
+`InMemorySessionStoreOptions` carries an `IdSource`; `IdSource` is an `EngineHost` port and governs
+`gameId` and `seed` only. The engine's own comment records the intent — *"this is the one place
+unpredictability is legitimate"* — so this is a deliberate engine decision, not an oversight a host
+can compose around.
 
-5. ~~**How `InstanceId` is derived.**~~ **Resolved ahead of S3:** `Environment.MachineName`, a slash, and
-   eight hex characters from `RandomNumberGenerator`, minted once at startup — `homelab-01/7f3a9c2e`.
-   Uniqueness and restart-freshness come from the random suffix alone, so neither process-id reuse
-   nor a clock adjustment can break either. The role is deliberately **not** encoded:
-   `HostRegistration` carries a `role` column, and two homes for one fact is two things that can
-   disagree. See [`90-decisions.md`](90-decisions.md).
+**What that blocks, precisely:**
 
-6. ~~**The naming convention for a module's migration history table.**~~ **Resolved in S2:**
-   `platform_migrations_{module}`, the module name in lower snake case. **Two distinct modules can
-   collide** — names are unique case-sensitively, so `Orders` and `orders` are both legal and both
-   resolve to one table — so `ApplyAsync` rejects a collision with `HistoryTableCollision` before
-   applying anything, rather than letting two modules share one history and skip each other's
-   migrations. See [`90-decisions.md`](90-decisions.md).
+- **Comparison B cannot hold for three rows.** `createSession` and `loadGame` return
+  `SessionHandle { sessionId, scene }`; `saveGame`'s narrowed response is `{ saveId }`. Each carries
+  a fresh random UUID in every run, so those three encoded responses differ between run 1 and run 2
+  and differ again from any committed golden transcript. The remaining rows are unaffected —
+  `Scene.gameId` and `PlayerView.gameId` come from `IdSource` and are deterministic under
+  `createCountingIds`.
+- **Comparison A's ordering is not reproducible.** *"Ordered by id"* is a random order across runs
+  once more than one session or more than one save exists. The blobs themselves can still match —
+  ids are store metadata and never enter `GameState` — but the sequence they are compared in does
+  not.
+- **The fixture cannot name a session id.** A step after `create-session` needs the id that call
+  returned, and it is not knowable when the fixture is written.
 
-7. ~~**The provider contract tests' invocation surface.**~~ **Resolved in S2:** an abstract base
-   class holding every assertion, with one subclass per provider supplying a connection string and
-   the few provider-specific schema queries an assertion needs. PostgreSQL's subclass sources its
-   store from a container per test class and a database per test; SQLite's from a temp file. A third
-   party runs the suite against a provider of their own by adding a subclass. See
-   [`90-decisions.md`](90-decisions.md).
+**Also false, and smaller:** the design's replay profile takes *"a counting `IdSource` from a stated
+start"*, and the fixture carries *"the counting `IdSource`'s starting value"*. The engine's exported
+`createCountingIds()` takes no argument and counts from zero. `ReplayDeterminismProfile` and
+`ReplayFixture` above therefore carry no start value, which is the only reading consistent with the
+engine as published.
 
-8. **How development-environment automatic migration application is invoked, and which package owns
-   it.** [`10-design.md`](10-design.md) states twice — in *Control flow* §1 and again in *Failure
-   modes* — that application is a separate explicit operation, **automatic only in the development
-   environment**. `RunPlatformMigrateModeAsync` is the explicit operation and this contract has
-   always named it; the automatic path has no surface here and none in the tree, where
-   `IMigrationRunner.ApplyAsync` has exactly one caller. Four things the design does not determine,
-   each of which a first implementer would otherwise settle silently:
-   - **Which package invokes it.** Hosting has no edge to Persistence, so the standard registration
-     call cannot reach the runner; `AddPlatformPersistence` is the only call that can, which makes
-     this a startup side effect of a package whose registration currently has none.
-   - **Whether it is a side effect of registration or an opt-in**, given that the design's stated
-     objection to migrating on start — the least controlled moment available — is an argument the
-     development environment does not answer on its own.
-   - **What a failed automatic application does.** The design's own taxonomy has misconfiguration
-     fail startup and unavailability start and report not-ready; an auto-apply failure is neither,
-     and *Failure modes* prices the manual operation's failure only.
-   - **Whether it takes the provider-native migration lock.** Two development hosts start
-     concurrently — the case the design cites against migrate-on-start — so either it takes the same
-     lock migrate mode does, or it reintroduces exactly the race that lock exists to close.
+**What it cost to resolve it this way**, stated rather than hidden: a cross-repository engine change
+inside the effort whose virtue is being the cheapest informative failure, and an amendment to a
+binding non-goal. Both were accepted because the alternatives each removed something the brief calls
+load-bearing — excluding ids from the transcript comparison is a normalization the design refuses by
+name; restricting the fixture to one session leaves comparison B failing on `create-session` and
+stops the fixture exercising every row.
 
-   Tracked under `## Open` in [`90-decisions.md`](90-decisions.md). **A contract amendment settling
-   these four comes before any slice**, per the rule this section exists to enforce.
+### 2. The three transport-only error codes the design describes but does not name
+
+The workload's generic code on an unhandled failure, and the edge's codes for an unreachable and a
+timed-out workload. Each is a wire-visible string a client renders and never parses around, so it is
+a contract value rather than an implementation detail — and there are three of them, so a first
+implementer would settle three names silently. `WireError`'s `InternalFailure` row and both
+`EdgeError` variants point here.
+
+Resolving this amends declarations that are otherwise closed, by design rather than by accident:
+the workload's code becomes `TransportErrorCode`'s fourth member — before that, `WireErrorCode`
+cannot represent the `InternalFailure` body's `code` at all — and invariant 2 then requires its
+`500` entry in the status mapping, since the invariant tracks the union's membership. The edge's
+two codes are `EdgeError`'s own: their statuses are fixed in its table, and they enter neither
+`WireErrorCode` nor the mapping.
+
+### 3. The JSON Schema dialect the generated schema set declares
+
+`JsonSchemaDocument.$schema` has a type and no value. The dialect decides whether `additionalProperties: false` composes as the closed-schema gate assumes, and whether a
+version-pathed `$id` is an identifier the validator will decline to fetch. It also fixes which
+validator the workload can use, which is a dependency and therefore a decision-log entry of its own.
+
+### 4. The contract package's published name and registry
+
+[`10-design.md`](10-design.md)'s own open question 7. ADR-005 fixes the repository and the versioning
+discipline and not the artifact's identity. It blocks nothing above — no signature names it — and it
+blocks the first line of the workload's dependency declaration.
+
+### Design questions that shape this contract without blocking a signature
+
+[`10-design.md`](10-design.md)'s open questions 1, 5 and 6 change what this contract contains without
+leaving any signature above undetermined, and are recorded here so the coupling is visible when they
+are answered.
+
+- **~~Question 1 — which engine version G1 pins.~~ Resolved 2026-08-08: the release S1 cuts from the
+  engine's `main`, carrying ten operations.** It sets the row set's contents, which are data in the
+  published artifact rather than a type here, so `OperationRow` is unchanged either way. The table is
+  **ten** rows, and invariant 1 is asserted against a ten-method `SessionStore`.
+- **Question 5 — whether the shutdown dump is inside the permanent non-goal.** This contract takes
+  the design's reading. If it is reversed, `StoreSerializationHandle`, `DeterminismDump`,
+  `writeDeterminismDump`, `readDeterminismDump`, `DumpReadError` and invariants 14 and 16 are removed,
+  and comparison A narrows to the in-process run.
+- **Question 6 — whether the edge covers the MCP surface.** This contract routes the JSON wire only.
+  Covering MCP adds a second `Map…` extension and a second forwarder route; it adds no type.
+
+---
+
+## Additions requiring a decision-log entry
+
+Six things above originated here rather than in the design, and none was derivable from it. Each is
+small, mechanical, and named here rather than left for a reader to discover in the code. One (2) has
+since been folded back into the design's own text.
+
+1. **`Outcome<T, E>` as the TypeScript error channel.** The design specifies error *semantics* and no
+   carrier for them on the Node side; "no bare exceptions, no string errors" needs one, and D3's
+   `Result<T, TError>` is C# and in another package.
+2. **Run 1 drives `Dispatcher`, not the store directly.** Now stated by the design itself (*Control
+   flow* §3) — the design originally had run 1 play the fixture's action list *against the store*,
+   and this addition was folded back in when the design was corrected. The reasoning stands in the
+   decision log: both transcripts are asserted against one golden file, which is only true if run 1
+   applies the row's projection and canonical encoding — otherwise `save-game` alone diverges, since
+   the store returns `SaveHandle` and the wire returns `{ saveId }`. Only the transport differs
+   between the runs.
+3. **`canonicalEncode` is a second implementation of the engine's canonical serialization rule.** The
+   engine does not export `canonicalStringify`. The rule is restated in this contract under
+   `canonicalEncode` because the workload must implement it; **that is a second copy of a rule and
+   therefore a drift hazard**, and the alternative — the engine exporting its encoder — is a
+   cross-repository change this contract does not have the standing to make.
+4. **`DeterminismDump` ordering comes from the encoding.** The design says *"keyed by id, in id
+   order"*; writing the dump with `canonicalEncode`, whose members sort ascending by code unit, makes
+   the ordering a property of the encoder rather than a step. It is reproducible only because
+   Unresolved 1's resolution makes the ids themselves reproducible.
+5. **The listener binds loopback by default** (invariant 46). Implied by trusted-local reachability
+   and by the brief's non-goal on exposure, stated by neither.
+6. **`RecordIdSource`'s name and shape.** A second port beside `IdSource`, with two members rather
+   than one, and no counter start. The engine repository owns the final naming; this contract names
+   it so the G1 slices and the engine PR are describing one thing.

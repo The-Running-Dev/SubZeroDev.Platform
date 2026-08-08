@@ -10,7 +10,7 @@ const siteRoot = dirname(fileURLToPath(import.meta.url)).replace(
   "",
 );
 const slicesDoc = readFileSync(
-  join(siteRoot, "..", "design", "30-slices.md"),
+  join(siteRoot, "..", "design", "d3", "30-slices.md"),
   "utf8",
 );
 
@@ -71,7 +71,7 @@ describe("landing page", () => {
     ).toBeInTheDocument();
   });
 
-  it("every name in the readiness-probe example exists in design/30-slices.md", () => {
+  it("every name in the readiness-probe example exists in design/d3/30-slices.md", () => {
     render(<App />);
     const pre = document.querySelector(".readiness-example code");
     expect(pre).not.toBeNull();

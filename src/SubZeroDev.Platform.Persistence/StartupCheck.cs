@@ -7,7 +7,7 @@ namespace SubZeroDev.Platform.Persistence;
 /// <summary>A fatal condition at host start, raised by Persistence's own startup check. Distinct
 /// from Hosting's <c>PlatformStartupException</c> — the dependency graph fixes Persistence on
 /// Abstractions and Core alone, so Persistence cannot throw Hosting's type without an edge the
-/// graph forbids. See design/90-decisions.md, 2026-08-03.</summary>
+/// graph forbids. See design/d3/90-decisions.md, 2026-08-03.</summary>
 public sealed class PersistenceStartupException : Exception
 {
     /// <summary>Creates the exception for a failed startup precondition.</summary>

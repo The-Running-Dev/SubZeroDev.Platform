@@ -37,7 +37,7 @@ const allCss = cssFiles.map((f) => f.text).join("\n");
  * SubZeroDev.GameEngine/site's own tokens and accent, transcribed here as
  * literal forbidden strings rather than read from that sibling repository at
  * test time — CI checks out this repository alone, so a test cannot depend
- * on the engine's repository being present on disk. design/40-site.md,
+ * on the engine's repository being present on disk. design/d3/40-site.md,
  * "Design distinctness" is what this file enforces.
  */
 const ENGINE_ONLY_TOKENS = [

@@ -144,7 +144,7 @@ export default function RoadmapApp() {
           <h2 id="continue-title">The Rest of the Record</h2>
           <p>
             <a href="/">Back to status</a> ·{" "}
-            <ExternalLink href={`${repo}/blob/main/design/30-slices.md`}>
+            <ExternalLink href={`${repo}/blob/main/design/d3/30-slices.md`}>
               Read the slice ledger
             </ExternalLink>{" "}
             · <ExternalLink href={repo}>Browse the repository</ExternalLink>

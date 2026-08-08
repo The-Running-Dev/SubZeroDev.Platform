@@ -96,7 +96,7 @@ const capabilities = [
 
 /**
  * The readiness-probe body used as the page's one screenshot. Every name in
- * it must exist in design/30-slices.md — asserted by App.test.tsx — because
+ * it must exist in design/d3/30-slices.md — asserted by App.test.tsx — because
  * a status page whose own demo cites a check it never built is the exact
  * failure "nothing may be funnier than it is true" forbids.
  */

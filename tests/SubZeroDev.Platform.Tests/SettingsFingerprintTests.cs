@@ -5,7 +5,7 @@ using SubZeroDev.Platform.Core;
 namespace SubZeroDev.Platform.Tests;
 
 /// <summary>Unresolved #1, settled ahead of S3: the settings fingerprint's canonical form and hash.
-/// Specified to the byte in <c>design/20-contract.md</c>, so it is tested to the byte here, not
+/// Specified to the byte in <c>design/d3/20-contract.md</c>, so it is tested to the byte here, not
 /// just for "changes" versus "does not change".</summary>
 public sealed class SettingsFingerprintTests
 {
@@ -24,7 +24,7 @@ public sealed class SettingsFingerprintTests
     public void Matches_the_byte_exact_specification_against_a_hand_computed_vector()
     {
         // Computed independently in PowerShell against System.Security.Cryptography.SHA256 over
-        // the exact byte layout design/20-contract.md specifies: "szdfp1", then each of the nine
+        // the exact byte layout design/d3/20-contract.md specifies: "szdfp1", then each of the nine
         // currently-[Fingerprinted] entries, path-sorted ordinally, length-prefixed.
         var fingerprint = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline());
 

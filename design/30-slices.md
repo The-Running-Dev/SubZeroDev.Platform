@@ -1,4 +1,4 @@
-# Slices — the minimal package set (D3)
+# Slices — one session, over the wire, then the edge (G1)
 
 **Document status:** Slices. Derived from [`10-design.md`](10-design.md) and
 [`20-contract.md`](20-contract.md). The contract is authoritative for every signature named below;
@@ -6,625 +6,552 @@
 does not carry, it stops and asks for a contract amendment rather than inventing one.
 
 Each slice is vertical: it runs, and its acceptance criteria are observable from outside the code
-that satisfies them. **All six packages land together** per the brief, so no slice releases
-anything — the release is [S9](#s9--pack-publish-consume-and-the-api-reference).
+that satisfies them. **Three repositories are in scope**, because G1's boundary crosses all three —
+`SubZeroDev.GameEngine` (the seam and the coverage column), `SubZeroDev.ServiceContract` (the
+contract package and its generator), and this one (the workload, the edge, the proof). A slice
+states which repository it lands in; a slice spanning two states what each side receives.
 
-**Interfaces arrive with their consumers, not whole.** `IProviderCapability`, `IOutboxStore` and
-`IEventHandlerRegistry` each span several slices. A member is declared in the slice that implements
-and exercises it; declaring the rest with throwing bodies is the half-wired state `AGENTS.md`
-forbids. Nothing is added that the contract does not already carry.
-
-**Testing grows with every slice.** It is not a final slice — the fake clock and the test host land
-in S1 because S2 cannot be verified without them, and the provider contract tests accumulate
-assertions from S2 onward.
+**The ordering is the design's risk ordering.** The effort exists to answer one question — whether a
+game played over a wire is the same game, byte for byte — and [S5](#s5--the-byte-identity-proof)
+answers it. S1 to S4 exist only to reach S5, and each is the smallest thing that gets there: without
+the engine seam three operations return a fresh random id every run, without the contract package
+there is nothing to build a surface from, without the wire there is nothing to replay, and without
+the shutdown snapshot there is nothing to compare. Everything after S5 is the second surface, the
+second hop, and the evidence.
 
 **Each heading carries a `**Status:**` line** — `shipped`, `in progress`, or `queued` — as the first
 line of its body, never inside the heading itself: Docusaurus derives anchors from heading text, and
-a marker there would break `[S9](#s9--pack-publish-consume-and-the-api-reference)` above along with
-every inbound link written later. [`design/40-site.md`](40-site.md) reads this line to render the
-public roadmap and reads nothing else — a slice sets its own marker to `shipped` in the same change
-that satisfies it, and sets the next one to `in progress`. This is a second place done-ness is
-recorded, alongside the slice's tracking issue; where they disagree, say so per `AGENTS.md`
-*Tracking work* rather than editing either to match.
+a marker there would break every inbound link. `build/Test-SliceStatusMarkers.ps1` reads this file in
+CI and enforces exactly one `in progress` slice while any slice is `queued`, so **S1 carries the
+marker from the moment this document exists** — it means *current*, not *underway*. A slice sets its
+own marker to `shipped` in the same change that satisfies it and sets the next one to `in progress`.
+This is a second place done-ness is recorded, alongside the slice's tracking issue; where they
+disagree, say so per `AGENTS.md` *Tracking work* rather than editing either to match.
 
-## Where the contract's unresolved items get decided
+## Decisions that must be taken before the slice that needs them starts
 
-Each needed a `90-decisions.md` entry from the slice that first set a value. **All seven are now
-settled**, and this table is the record of where each was taken.
+Neither the design nor the contract settles these, and none is a slice's to settle silently.
+[`10-design.md`](10-design.md)'s open questions and [`20-contract.md`](20-contract.md#unresolved)'s
+unresolved items are listed here against the first slice that cannot proceed without an answer. Each
+gets a `90-decisions.md` entry from that slice.
 
-| [Unresolved](20-contract.md#unresolved) | Decided |
+| Question | Needed before |
 |---|---|
-| 2 — upper bounds for `DispatchTickBudget` and `PruneBatchSize` | In S1, with the rest of options validation |
-| 3 — wire format of the error envelope and the probe body | In S1 |
-| 4 — per-check default timeout and the probe endpoint timeout | In S1 |
-| 6 — migration history table naming convention per module | In S2 |
-| 7 — the provider contract tests' invocation surface | In S2 |
-| 1 — the settings fingerprint's canonical form and hash | **Ahead of** S3 |
-| 5 — how `InstanceId` is derived | **Ahead of** S3 |
-
-The last two were taken before S3 started rather than during it, deliberately: both are
-architectural, and `AGENTS.md` forbids continuing an implementation while that kind of uncertainty
-is unresolved. S3 transcribes them.
+| ~~Design Q1 — which engine version G1 pins~~ | **Resolved 2026-08-08.** S1 cuts from engine `main`; G1 pins ten operations. See [`90-decisions.md`](90-decisions.md) |
+| Design Q3 — whether ServiceContract's "depends on nothing" governs the published artifact or also the generator's build inputs | **S2**. It is a cross-repository rule edit |
+| Contract Unresolved 3 — the JSON Schema dialect the generated set declares | **S2**. It fixes which validator the workload can use |
+| Contract Unresolved 4 — the contract package's published name and registry | **S2**. It is the first line of the workload's dependency declaration |
+| Contract Unresolved 2 — the workload's generic internal-failure code | **S3**. It is a wire-visible string |
+| Design Q5 — whether the shutdown serialization dump is inside the permanent non-goal | **S4**. If it is, S4 does not exist and S5's comparison A narrows |
+| ~~Design Q2 — the shape of the hosted column, and whether a blank row is acceptable there~~ | **Resolved 2026-08-08 by Q1.** It is the fifth column, with ten ticks and no blank row |
+| Design Q4 — whether comparison B is in-process against hosted, or two hosted runs | **S5**. One golden transcript satisfies both readings; what the criterion is understood to assert is not the same question |
+| Contract Unresolved 2 — the edge's unreachable and timed-out codes | **S7**. Two more wire-visible strings |
+| Design Q6 — whether the edge covers the MCP surface | **S7**. Leaving it open hands G3 a surface that bypasses the authorization point |
 
 ---
 
-## S1 — Host boots, scopes the operation, answers its probes
-**Status:** shipped · [#11](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/11)
+## S1 — Session and save ids the host can supply
+**Status:** in progress
 
-Delivers: a sample web host and a sample worker host start from `AddPlatformWebHost()` and
-`AddPlatformWorkerHost()` alone — no second call — serve liveness and readiness, populate an
-ambient operation scope on every request, return an error envelope carrying the correlation when a
-handler throws, and abort startup with a named error on a bad setting.
+Delivers: anyone composing the game engine can hand it the thing that names new sessions and saves,
+so a run played twice from the same starting point names them identically both times. Anyone who
+hands it nothing sees exactly what they see today — new names, unpredictable on purpose.
+
+**This is the slice that unblocks the whole effort**, and it lands in another repository first
+because a published engine version is what everything after it pins. Three of the table's operations
+return a freshly-minted random id in every run; until the host can supply that minting, the proof
+this effort exists to build cannot be written.
+
+Repository: **`SubZeroDev.GameEngine`**.
 
 Touches:
-- **Abstractions** — the value types (`TenantId`, `CorrelationId`, `TraceContext`, `InstanceId`,
-  `ModuleName`, `HealthCheckName`, `BackgroundWorkName`), `PlatformError`, `Result<…>`,
-  `PlatformContractViolationException`, `IClock`, `IOperationScope`, `IOperationScopeFactory`,
-  `IOperationScopeAccessor`, `ICurrentTenant`, `ICurrentPrincipal`, `ICurrentCorrelation`,
-  `ITraceContextCodec`, `ITraceHandle`, `IPlatformModule`, the health contract, the background-work
-  contract, `HostRole`, `HostRoles`, `PlatformHealthChecks`, `PlatformBackgroundWork`,
-  `FingerprintedAttribute`
-- **Core** — `PlatformOptions` and every sub-record with its binding and validation,
-  `ModuleDescriptor`, `IModuleRegistry`, `IHealthCheckRegistry`, `IBackgroundWorkRegistry`, the
-  default `IClock`, scope factory and three accessors, `ModuleGraphError`, `ConfigurationError`,
-  `HealthCheckRegistrationError`, `BackgroundWorkRegistrationError`
-- **Observability** — `AddPlatformObservability` and `ITraceContextCodec` over
-  `System.Diagnostics.Activity`, telemetry wiring excluded
-- **Hosting** — `PlatformHostExtensions` web and worker forms, `MapPlatformProbes`, the probe
-  endpoints and their wire mapping, request scope establishment, `ErrorEnvelope`, the
-  background-work timers, graceful shutdown, `HostStartupError`
-- **Testing** — `FakeClock`, `FakeCurrentTenant`, `FakeCurrentPrincipal`,
-  `IPlatformTestHostBuilder` and `IPlatformTestHost` less `WithProvider` and `Events`
-- **samples/** — a web project with one endpoint and a worker project, both in CI
+- **The session layer's composition root** — `RecordIdSource` declared and accepted as an optional
+  member alongside the clock, persistence and profile ports
+- **The session store** — the module-local id minting, which now calls the supplied source when one
+  is present
+- **The engine's own suite** — the assertions below
+- **The engine's release** — a published version carrying the seam in its type declarations, **cut
+  from the engine's `main`**, so it carries the already-merged `previewAction` and G1 pins a
+  ten-operation engine (decided 2026-08-08; see [`90-decisions.md`](90-decisions.md))
 
 Depends on: none.
 
 Acceptance:
-- **S1.1** `AddPlatformWebHost()` is the only Platform call in the sample's `Program.cs`; adding a
-  second mandatory call fails the criterion this slice exists to prove.
-- **S1.2** Liveness returns HTTP 200 with a body enumerating every registered check by name and
-  status. With no Persistence registered the body contains no `PlatformHealthChecks.Database` entry
-  — an absent check reads as absent, not as a passing one.
-- **S1.3** A readiness check returning `Degraded` yields HTTP 200; the same check returning
-  `Unhealthy` yields HTTP 503. Both bodies enumerate the identical entry list.
-- **S1.4** The probe body is `Full` on loopback and in `Development`, `Minimal` elsewhere; the
-  aggregate status and every entry's status are identical between the two, and only `Detail` and
-  `Data` differ.
-- **S1.5** Registering a check with `TouchesExternalDependency = true` and `Kind = Liveness` aborts
-  startup with `ExternalDependencyInLivenessCheck` naming the check.
-- **S1.6** `IModuleRegistry.Resolve` over modules `B` (depends on `A`), `C`, `A` returns `A, C, B`,
-  and returns the same order over the same input presented in a different discovery order.
-- **S1.7** Two modules named `Orders` abort startup with `DuplicateModuleName`; a module depending
-  on `Invoices` when no module provides it aborts with `MissingDependency` naming both; `A → B → A`
-  aborts with `CyclicDependency` naming the cycle.
-- **S1.8** Omitting `Outbox:ProcessedRetention` aborts startup with `MissingRequiredSetting` naming
-  the setting **and the configuration source expected to supply it**. `PoisonedRetention` equal to
-  `ProcessedRetention` aborts with `InconsistentSettings` naming both. A
-  `Hosting:GracefulShutdownDrainWindow` of `00:10:00` against a `ClaimWindow` of `00:05:00` aborts
-  with `InconsistentSettings`. `Outbox:RetryBackoffFactor = 1` aborts with `InvalidSetting` naming
-  the constraint. **This is the brief's second CI assertion.**
-- **S1.9** An endpoint that throws returns `ErrorEnvelope` with a stable code and the request's
-  correlation, and no exception text, stack trace or payload content anywhere in the response.
-- **S1.10** Inside a request, `ICurrentCorrelation.Current.TraceId` equals the trace-id of the
-  request's established traceparent, `ICurrentTenant.Current` equals `TenantId.Implicit`, and
-  `ICurrentPrincipal.Current` is null. Outside any scope all three throw
-  `PlatformContractViolationException` carrying `NoAmbientOperationScope`.
-- **S1.11** A request carrying a well-formed `traceparent` adopts its trace-id as the correlation. A
-  request carrying `traceparent: not-a-traceparent` returns 200 with a fresh root trace, never 400.
-- **S1.12** `IOperationScopeFactory.Begin(TenantId.Implicit, null)` outside any request opens a root
-  trace whose `TraceContext.TraceId` equals the scope's `Correlation.TraceId`.
-- **S1.13** The worker host binds its probes on `127.0.0.1:5100` and is unreachable on the machine's
-  other addresses. With 5100 already bound, startup aborts with `ProbeBindFailed` naming
-  `Hosting:WorkerProbePort`.
-- **S1.14** An `IBackgroundWork` declaring `Worker` ticks in the worker host and never in the web
-  host; one declaring `Both` ticks in both; one declaring no role aborts startup with
-  `NoRoleDeclared`. Hosting invokes the tick on the declared interval, and
-  `IPlatformTestHost.RunBackgroundWorkOnceAsync` invokes exactly one.
-- **S1.15** Registration after `Freeze` returns `RegistryFrozen` from all three registries and
-  mutates nothing.
-- **S1.16** CI starts the sample in both roles in a non-`Development` environment and fails if
-  either process exits non-zero or either probe is unreachable.
+- **S1.1** Composing the session layer with no `RecordIdSource`, two `createSession` calls return two
+  different session ids and two `saveGame` calls return two different save ids, each in the format
+  the engine mints today. Present behaviour is unchanged by omission.
+- **S1.2** Composing with a `RecordIdSource` whose `newSessionId` and `newSaveId` count from zero on
+  independent counters, two separate runs of the identical call sequence return the identical session
+  ids and the identical save ids, in the identical order.
+- **S1.3** For one arc, one seed and one choice list, `serialize()` produces the same bytes whether a
+  `RecordIdSource` was supplied or not. The seam cannot change game state, and this is the assertion
+  that says so rather than the argument that says so.
+- **S1.4** `newSessionId` is called exactly once per session created and `newSaveId` exactly once per
+  save written — asserted with a counting source. No other engine path consumes the source.
+- **S1.5** A released engine version carries `RecordIdSource` in its published type declarations, and
+  a consumer resolving that version from the registry can supply one without reaching into the
+  engine's internals. It is cut from `main`, so its exported `SessionStore` declares **ten**
+  operations — the count S2's arity gate is asserted against.
 
-Out of scope: any database access — the Persistence package does not exist yet, and
-`Persistence:ConnectionString` is validated as present and parseable without anything opening a
-connection; telemetry exporters, instrumentation and sampling (S8); events, handlers and the outbox
-(S4); the settings fingerprint (S3); anything that would make Persistence a de facto requirement of
-Hosting.
+Out of scope: **authoring** `previewAction` or any other change to engine behaviour — the brief's
+non-goal carries one carve-out and this is it; the operation ships in this release because it is
+already merged, and S1 neither writes nor modifies it. Widening the existing `IdSource`, which
+governs `gameId` and `seed` and is a different category; the coverage-checklist column, which is S5's
+PR because S5 is what produces its evidence; exporting a counting `RecordIdSource` implementation,
+which the workload composes for itself in S4.
 
 ---
 
-## S2 — Two providers, one connection, per-module migrations
-**Status:** shipped · [#12](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/12)
+## S2 — The contract has a home, and a build that refuses to publish a lie
+**Status:** queued
 
-Delivers: the sample's two product modules each own a table carrying the tenant and audit columns;
-migrate mode applies both in either order on PostgreSQL and SQLite; and one request writing to both
-modules commits or rolls back as a single transaction over a single connection.
+Delivers: the hosted service's contract stops being a document and becomes an artifact. One reviewed
+table of operations produces a versioned package anything can consume, and the build that produces it
+refuses when the table and the engine disagree — so a contract that describes an engine nobody is
+running cannot be published in the first place.
 
-**This slice exercises the design's riskiest bets first** — the SQLite instant and identifier
-encodings, and the claim that one connection spans per-module contexts. Each is a correctness
-property the design says nothing else in the definition of done would catch.
+Repository: **`SubZeroDev.ServiceContract`**, with one file moved out of this repository's
+`docs/docs/` — ADR-005 already moved it out of `SubZeroDev.GameEngine` — and inbound links updated
+in this repository and the engine's in the same change.
 
 Touches:
-- **Persistence** — `IProviderCapability` for both providers (`FormatInstant`, `TryParseInstant`,
-  `EncodeIdentifier`, `TryDecodeIdentifier`, `MigrationHistoryTable`, `BeginAsync`,
-  `AcquireMigrationLockAsync`, `AssertStartupPreconditionsAsync`), `IMigrationLock`, `IUnitOfWork`,
-  `IAmbientTransaction`, `IAmbientTransactionAccessor`, `TransactionIntent`, `IMigrationRunner`,
-  `ModuleMigrationStatus`, `ITenantOwned`, `IAuditable`, `ISoftDeletable`, `TransactionError`,
-  `MigrationError`, the `Database` and `PendingMigrations` readiness checks
-- **Core** — `ConfigurationError.UnsupportedJournalMode`
-- **Hosting** — `RunPlatformMigrateModeAsync`
-- **Testing** — `IPlatformTestHostBuilder.WithProvider`, and the provider contract-test suite
-- **samples/** — two modules with their own tables and migrations, one of them opting into soft
-  delete; an endpoint writing to both
+- **The authored row set** — `AuthoredRow` values, one per exported `SessionStore` method: the
+  operation id, the store method, the MCP tool name, the narrowings, the reachable errors
+- **The status mapping** — `StatusMapping`, `StatusMappingEntry`, covering every declared
+  `SessionStoreErrorCode` plus the three transport codes
+- **The generator** — `generate`, `GenerationInput`, and every gate: arity, error coverage, closed
+  response schemas, no envelope-reachable schema, no determinism profile in a row, no unknown
+  narrowed field, no duplicate id or tool name, `httpPath` equal to `operation`
+- **The emitted artifact** — `ContractPackage`, `OperationRow`, `JsonSchemaDocument` with its `$id`
+  and dialect, `SchemaRef`
+- **`GenerationError`** — all nine variants
+- **The publish path** — the package published under its own semantic version, resolvable by a
+  consumer that pins it
+- **`mcp-tool-contract.md`** — moved here from this repository's `docs/docs/`, with that copy
+  retired and its inbound links (`docs/docs/index.md`, `docs/docs/game-engine-as-a-service.md`)
+  repointed; the engine's `design/10-design.md` link updated so the generated `09-clients.md`
+  points at its new home
 
 Depends on: S1.
 
 Acceptance:
-- **S2.1** `RunPlatformMigrateModeAsync` against an empty database creates both modules' tables and
-  one migration history table per module, and returns exit status 0. A second run returns 0 and
-  applies nothing.
-- **S2.2** Applying module `B` before module `A`, and `A` before `B`, produce identical applied
-  schemas on both providers.
-- **S2.3** The contract test asserting that no foreign key in the applied schema references a table
-  outside its owner's model passes on both providers, and goes red when a cross-module foreign key
-  is added to a sample module.
-- **S2.4** Two concurrent `RunPlatformMigrateModeAsync` invocations against one store: one applies,
-  the other exits non-zero with `MigrationError.Locked` having applied nothing — including against a
-  store whose schema does not yet exist.
-- **S2.5** 100 identifiers minted at distinct clock instants — the fake clock advanced at least one
-  millisecond between mints — inserted and read back ordered by the identifier column, return in
-  mint order on both providers. The same assertion goes red when the SQLite encoder is switched to
-  `Guid.ToByteArray()`. No assertion is made about two identifiers minted within one millisecond.
-- **S2.6** Rows stamped `2026-08-03T12:00:00.1000000Z` and `2026-08-03T12:00:00.1500000Z` sort in
-  that order on both providers, and `WHERE created_at <= @now` with `@now` bound as
-  `2026-08-03T12:00:00.1200000Z` returns exactly the first — the comparand written by the same
-  capability formatter as the column. The assertion goes red against a formatter that trims trailing
-  zeros.
-- **S2.7** One `ExecuteAsync(TransactionIntent.Write, …)` writing a row in each module leaves both
-  rows on success and neither on a thrown failure, on both providers — **including when the second
-  module writes through a raw `DbCommand` enlisted via `IAmbientTransactionAccessor`** rather than
-  opening its own connection. Two connections would leave one row.
-- **S2.8** Every product row carries `tenant = TenantId.Implicit`, `created_at` from `IClock` with
-  `Offset == TimeSpan.Zero`, and `created_by` null when there is no principal. The soft-delete
-  columns exist on the opted-in table and on no other.
-- **S2.9** A SQLite file in `journal_mode=delete` aborts startup with `UnsupportedJournalMode`; the
-  same file in WAL starts.
-- **S2.10** Against a store whose schema is absent, readiness reports `Degraded` with
-  `PendingMigrations` naming the absent schema — never `Unhealthy`, and no exception escapes a
-  check. **`Database` answers reachability only and stays healthy here**, because a reachable store
-  with no tables is reachable, and in D3 Platform owns no table of its own until S3 — so there is
-  nothing for `Database` to find missing that `PendingMigrations` does not already report. Corrected
-  during S2's reconcile: the original criterion had `Database` citing the same cause, which would
-  make two checks restate one verdict and is the second source of truth this design rejects
-  elsewhere.
-- **S2.11** Applied migrations the host never registered report `Degraded` naming them as `Surplus`,
-  and the host keeps serving.
-- **S2.12** The contract-test suite goes red against a deliberately broken `IProviderCapability` —
-  one whose instant formatter trims and whose identifier encoder uses platform byte order. **This is
-  the brief's fourth CI assertion.**
+- **S2.1** `generate` over the authored rows emits a `ContractPackage` whose `operations` count equals
+  the exported `SessionStore`'s method count at the pinned engine version, and whose `engineVersion`
+  equals the version the schemas were projected from.
+- **S2.2** Deleting one row fails generation with `ArityMismatch` naming the uncovered method; adding
+  a row whose `storeMethod` the engine does not declare fails with `ArityMismatch` naming the row.
+  **No artifact is written on either** — the output directory is byte-identical before and after.
+- **S2.3** Deleting one entry from the status mapping fails with `ErrorCodeUncovered` naming the code.
+  Adding an entry for a code that is neither a declared engine code nor a member of
+  `TransportErrorCode` fails the same gate.
+- **S2.4** A response schema emitted without `additionalProperties: false` at any object level fails
+  with `ResponseSchemaOpen` naming the schema; a response shape resolving to the engine's envelope
+  type fails with `EnvelopeReachable`. **These two are the permanent non-goal's static gate.** A
+  request schema open at any object level fails with `RequestSchemaOpen` on the same terms — an open
+  request schema would make a request narrowing reversible from the wire.
+- **S2.5** A `NarrowedField` naming a member the engine's declaration does not have fails with
+  `NarrowingUnknownField` naming the row and the member; two rows sharing an `OperationId` or an
+  `McpToolName` fail with `DuplicateOperationId` naming both; a row carrying the determinism profile
+  in any member fails with `DeterminismProfileInRow`.
+- **S2.6** In the emitted artifact, every row's `httpPath` equals its `operation` verbatim, and every
+  `requestShape` and `responseShape` resolves to a document present in the same artifact's `schemas`.
+- **S2.7** With the engine package already restored and all outbound network blocked, generation
+  completes and every emitted `$id` and `$ref` is left unresolved — **nothing is fetched**. With the
+  engine package unresolvable, generation fails with `EngineResolutionFailed` naming the package and
+  the registry, and does not retry.
+- **S2.8** Every emitted schema declares the same `$schema` dialect, and the validator chosen for the
+  workload loads all of them and rejects a payload with an added member on a closed response schema —
+  proving `additionalProperties: false` composes the way the gate assumes it does.
+- **S2.9** The package is published under a semantic version and a consumer pinning that version
+  resolves it and reads its `operations` without any other input. Republishing the same version is
+  refused by the registry rather than overwriting.
+- **S2.10** Running the generator twice over an unchanged row set and an unchanged engine produces
+  byte-identical artifacts.
+- **S2.11** `mcp-tool-contract.md` lives in `SubZeroDev.ServiceContract` and nowhere else: the
+  Platform copy at `docs/docs/mcp-tool-contract.md` is retired, Platform's inbound links
+  (`docs/docs/index.md`, `docs/docs/game-engine-as-a-service.md`) point at the new home, and the
+  engine's generated `09-clients.md` links to it there. No dead link is left behind, and each
+  repository's edits are one change set.
 
-Out of scope: the outbox table and both `StampClaimAsync` and `DeleteBoundedAsync`, which arrive
-with their consumers in S5 and S6; tenant **query filters**, which the brief makes a binding non-goal
-for D3; any repository pattern over product tables — Persistence refuses to impose one; a retry
-policy over `TransactionError` — Platform retries nothing on the request path.
+Out of scope: the workload consuming the package — that is S3, and the criterion "the workload reads
+the contract from ServiceContract, not a local copy" is asserted there; a hand-written schema of any
+kind, however temporary; a .NET distribution of the artifact, which the edge deliberately does not
+need and G3 pays for; a second `wireVersion`; anything that dereferences a `$id` at build time to
+"check the URL works".
 
 ---
 
-## S3 — Host registration, heartbeat, and the split-brain surface
-**Status:** shipped · [#31](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/31)
+## S3 — The game is playable over HTTP, and asking wrongly has an answer
+**Status:** queued
 
-Delivers: every host records itself in the store it is actually using, and both roles report
-degraded when the peer is missing or its fingerprinted settings disagree — the only mechanism that
-can see two hosts pointed at different databases.
+Delivers: an operator can start the game service and play a whole game over the network — start a
+session, make choices, ask what the scene looks like, save it and load it back. Every operation the
+engine offers is reachable, and every way of asking for one incorrectly comes back with a stated,
+specific answer instead of a shrug.
+
+**This slice is deliberately not split into "the happy path" and "the errors".** Shipping the routes
+without their defined answers produces a wire whose behaviour under misuse is undefined, which the
+brief names as the thing that is not a wire — and G2's persistence and G3's principals inherit
+whatever is chosen here. It is one request/response cycle, and it lands whole.
+
+Repository: **this one**, under `workloads/game-service/`.
 
 Touches:
-- **Persistence** — `HostRegistration`, `IHostRegistrationStore`, the heartbeat registered as
-  `IBackgroundWork` declaring `HostRoles.Both` under
-  `PlatformBackgroundWork.HostRegistrationHeartbeat`, the `PeerHost` and `SettingsFingerprint`
-  readiness checks
-- **Core** — `ISettingsFingerprint`, `HostRegistrationOptions` and the derived
-  `PeerLivenessThreshold`
-- **Hosting** — `InstanceId` derivation, and deletion of the host's own row on graceful shutdown
-- **samples/** — both roles against one store in CI
+- **Contract module** — `loadContract`, `findRow`, `statusFor`, `ContractLoadError`
+- **Composition** — `compose`, `ComposedWorkload`, `CompositionError`, the engine instance, the
+  content registry, the map-backed `SessionPersistence` and `ProfileStore`
+- **Dispatch** — `createDispatcher`, `Dispatcher`, `DispatchOutcome`, the `SessionStoreError` catch
+  at the boundary
+- **HTTP surface** — `buildHttpSurface`, `HttpSurface`, `validateRequest`, `validateResponse`,
+  `canonicalEncode`, `ValidatedArguments`, `WireRequest`, `WireResponse`, `WireErrorBody`,
+  `SurfaceBuildError`, `EncodingError`, `ValidationFailure`
+- **Probes and lifecycle** — `startWorkload`, `WorkloadProcess`, `ProbeSurface`, `ProbeResult`,
+  `WorkloadConfiguration`, `ListenEndpoint`, `StartupError`
+- **The result type** — `Outcome<T, E>`
+- **build/** — the gate failing any project under `src/` or `samples/` that references `workloads/`
+- **CI** — the workload's suite, from a fresh clone
 
 Depends on: S2.
 
 Acceptance:
-- **S3.1** Starting the sample web host writes exactly one row with `role = Web`, its instance,
-  started-at, heartbeat-at and fingerprint. Each heartbeat interval updates heartbeat-at and no
-  other column.
-- **S3.2** A host started against a store with no schema does not fail: the heartbeat returns
-  `TransactionError.Unavailable`, retries at its ordinary interval, and the row appears within one
-  interval of migrate mode running. No bespoke startup retry exists.
-- **S3.3** With only the web host running in a non-`Development` environment, readiness reports
-  `Degraded` on `PeerHost` naming the missing `Worker` role once the absence has persisted for
-  `PeerAbsenceGrace`; within the grace it does not. In `Development` it never degrades and the entry
-  is informational.
-- **S3.4** Advancing the fake clock by `2 × HeartbeatInterval` with no beat leaves the peer live; `4
-  ×` plus the grace degrades. A peer that returns inside the grace degrades nothing.
-- **S3.5** Two hosts in one store differing on `Outbox:ProcessedRetention` both report `Degraded` on
-  `SettingsFingerprint` naming the peer instance. Two hosts differing only on
-  `Outbox:DispatchInterval` do not — it is not `[Fingerprinted]`.
-- **S3.6** Two hosts pointed at different SQLite files each report `Degraded` on `PeerHost` while
-  each individually serves and each is individually configured correctly.
-- **S3.7** Graceful shutdown deletes the host's own row; the surviving peer sees the absence at once
-  and degrades only after the rolling grace measured on its own clock.
-- **S3.8** `ISettingsFingerprint.Compute` over identical `PlatformOptions` returns identical strings
-  in two separate processes. Asserted by reflection over every property of `PlatformOptions`: the
-  value changes when a `[Fingerprinted]` property changes and does not change when any other does.
-- **S3.9** Two hosts of the same role on one machine hold different `InstanceId`s, and a restarted
-  host holds a different one from the row it replaced.
-- **S3.10** A dead instance's stale fingerprint never contradicts a live one's — peer and
-  fingerprint checks consider live rows only.
+- **S3.1** With the service started, `POST /v1/create-session` with a valid body returns `200` and a
+  body whose object members are ascending by code unit with no insignificant whitespace. A subsequent
+  `submit-action` against the returned session id returns `200`, and a query operation returns the
+  scene that action produced. **The whole table is routed** — every row has a live path.
+- **S3.2** Every response body validates against its row's closed response schema. A row whose
+  handler returns an added member fails validation and the request becomes a `500`; **the unvalidated
+  body is never returned.**
+- **S3.3** `POST /v2/create-session` returns `404` with `{"code":"unsupported_version",...}`;
+  `POST /v1/not-an-operation` returns `404` with `{"code":"unknown_operation",...}`. Same status,
+  different code, and no other member in either body.
+- **S3.4** A body missing a required member returns `400` with `malformed_payload`, and **the store
+  is never called** — asserted against a store whose invocations are recorded. The validation detail
+  does not appear in the response.
+- **S3.5** `submit-action` against an unknown session id returns `404` carrying `unknown_session`
+  **verbatim**; an unknown save returns `404` with `unknown_save`; an unknown campaign returns `404`
+  with `unknown_campaign`; `invalid_state`, `unknown_kind`, `save_requires_migration` and
+  `migration_failed` each return `409` carrying their own code. No code is paraphrased or normalized.
+- **S3.6** An action the game rejects — an unknown action id, an unmet requirement — returns **`200`**
+  carrying the store's unsuccessful result. No game verdict produces a 4xx.
+- **S3.7** Every response, success or failure, carries the correlation. A request with a well-formed
+  `traceparent` carries that trace-id as its correlation; a request with `traceparent:
+  not-a-traceparent` returns the same `200` with a fresh 32-hex correlation and **never** a `400`.
+- **S3.8** A handler that throws returns `500` whose body has exactly two members, `code` and
+  `correlation`. No exception text, no stack trace, no payload content anywhere in the response.
+- **S3.9** Started against a contract whose `engineVersion` differs from the resolved engine
+  package's, the process exits non-zero with `EngineVersionMismatch` naming both versions, and a
+  connection attempt to the configured port is refused — **the listener never bound.**
+- **S3.10** A contract whose rows derive two identical path segments fails startup with
+  `DuplicateRoute` naming both rows, before binding; a row referencing a `SchemaRef` absent from the
+  artifact's schema set fails with `MissingSchema` naming the row and the reference.
+- **S3.11** Liveness returns healthy without touching the store. Readiness returns healthy only after
+  both surface construction and the listener bind have completed.
+- **S3.12** With no listen host configured, the service is reachable on loopback and unreachable on
+  the machine's other addresses.
+- **S3.13** With `otlpEndpoint` null, no exporter is constructed and no outbound connection is
+  attempted — asserted with outbound network blocked, the service still serving.
+- **S3.14** A project under `src/` or `samples/` referencing anything under `workloads/` fails the
+  build with a named error. The gate is exercised by introducing the reference deliberately and
+  observing the failure, then removing it.
+- **S3.15** The workload's suite runs in CI from a fresh clone, and the workload resolves the contract
+  package from the registry — **there is no copy of the contract in this repository.**
 
-Out of scope: pruning dead registration rows — every retention window lands together in S6; any
-outbox condition on readiness (S6); reacting to a detected split beyond reporting it, since no host
-refuses traffic over a missing peer.
+Out of scope: the MCP surface (S6) — one surface at a time, and the second one is what proves the
+table is the only source; the determinism profile, the counting sources and the dump (S4); the replay
+fixture and either comparison (S5); trace export and the collector (S8); anything the edge does (S7);
+compare-and-swap, eviction, quotas and expiry, each a binding non-goal.
 
 ---
 
-## S4 — Outbox enqueue
-**Status:** shipped · [#32](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/32)
+## S4 — The service can be asked to record what the game looked like when it stopped
+**Status:** queued
 
-Delivers: a product writes a domain row and enqueues an integration event in one transaction, and
-the row is committed with the domain write or with neither.
+Delivers: an operator can start the service in a mode that plays the same way every time and, when it
+is stopped cleanly, writes to a file of their choosing exactly what the game had become — and nothing
+about the service or the machine it ran on. Started the ordinary way, it writes nothing at all and
+there is nowhere for it to write to.
 
-**Culture arrives here rather than in S1**, under this document's own rule that a member is declared
-in the slice that exercises it. The outbox column is culture's only consumer in D3 — S1 has none, S2
-and S3 have none — so declaring the accessor earlier would land it unexercised, which is the
-half-wired state this document forbids. S1 shipped without it and its criteria are unchanged.
+Repository: **this one**.
 
 Touches:
-- **Abstractions** — `IIntegrationEvent`, `IIntegrationEventHandler<TEvent>`, `EventTypeName`,
-  `CultureTag`, `ICurrentCulture`, and `IOperationScope.Culture`
-- **Core** — the culture argument on both `IOperationScopeFactory.Begin` overloads, the scope's
-  fifth member, and the `ICurrentCulture` accessor
-- **Persistence** — the `platform_outbox` migration with its indexes and check constraints,
-  `OutboxMessage`, `OutboxMessageId`, `OutboxMessageState`, `DueAt`, `IOutboxWriter`,
-  `EventHandlerRegistration`, `IEventHandlerRegistry`, `IOutboxStore.InsertAsync`, the pinned
-  `System.Text.Json` options, `EventHandlerRegistrationError`
-- **Testing** — `CapturedEvent`, `IEventCapture.Enqueued`, and `FakeCurrentCulture`
-- **samples/** — an event, its handler, its registration, and an endpoint that enqueues
+- **Configuration** — `DeterminismProfile`, `DefaultDeterminismProfile`, `ReplayDeterminismProfile`
+- **Composition** — the counting `IdSource`, a counting implementation of the engine's
+  `RecordIdSource`, the fixed clock, `StoreSerializationHandle`, `StoredBlob`,
+  `StoreSerializationSnapshot`, `writeDeterminismDump`, `DeterminismDump`, `CompositionError`
+- **Lifecycle** — `shutdown` writing the dump before the listener stops accepting, `ShutdownError`
+- **Harness support** — `readDeterminismDump`, `DumpReadError`
+- **A dependency-direction test** — the HTTP surface's module graph against
+  `StoreSerializationHandle`
 
-Depends on: S2.
+Depends on: S3.
 
 Acceptance:
-- **S4.1** An endpoint writing a domain row and calling `Enqueue(new OrderPlaced(…))` leaves one
-  product row and one outbox row after commit, and neither after a rollback, on both providers.
-- **S4.2** `Enqueue` returns the id synchronously, before the transaction commits, and the committed
-  row's `id` equals the returned value.
-- **S4.3** `Enqueue` with no ambient transaction throws `PlatformContractViolationException`
-  carrying `NoAmbientTransaction`; with no ambient operation scope, `NoAmbientOperationScope`; with
-  an event type no registration bound to a name, `UnregisteredEventType`. Nothing is written in any
-  of the three cases. **All three are provider contract tests.**
-- **S4.4** The stored row carries: `type` equal to the registered literal and unchanged after the
-  CLR class is renamed; `tenant` from the ambient scope; `trace_parent` the complete traceparent
-  **including trace flags**; `trace_state` when the origin carried one and null otherwise;
-  `correlation` equal to `ICurrentCorrelation.Current.TraceId`; `culture` equal to
-  `ICurrentCulture.Current`; `attempts` 0; and every dispatch-state column null.
-- **S4.5** An event enqueued inside a scope opened with culture `bg` stores `bg`, and a handler
-  dispatching it in a **worker process started under a different operating-system culture** observes
-  `bg` from `ICurrentCulture.Current`. The assertion goes red when the dispatcher reads the ambient
-  `CultureInfo.CurrentCulture` instead of the row — which is the defect the column exists to prevent
-  and is invisible whenever the two happen to agree.
-- **S4.6** A follow-up event enqueued by that handler stores `bg` unchanged, at any depth — culture
-  propagates like `correlation`, not like `trace_parent`.
-- **S4.7** Inside a request, `ICurrentCulture.Current` equals `CultureTag.Invariant` **even when the
-  request carries an `Accept-Language` header** — nothing in D3 resolves culture, and a test sending
-  one proves the absence rather than assuming it. Outside any scope it throws
-  `PlatformContractViolationException` carrying `NoAmbientOperationScope`, as the other three
-  accessors do.
-- **S4.8** A scope opened explicitly with a culture reports it: `Begin(TenantId.Implicit, null, new
-  CultureTag("bg"))` yields `ICurrentCulture.Current` of `bg`, and the same call omitting the
-  argument yields `CultureTag.Invariant` — the invariant being the empty tag is what makes the
-  omitted case correct rather than merely convenient.
-- **S4.9** The check constraints hold: `claimed_by` and `claimed_at` are null together, `attempts >=
-  0`, and `poisoned_at` set implies `last_error` non-null. **No constraint makes `processed_at` and
-  `poisoned_at` mutually exclusive** — all four combinations are legal and each names a state.
-- **S4.10** `OutboxMessage.State` returns `Pending` for a freshly inserted row, and `DueAt` returns
-  `OccurredAt` while `NextAttemptAt` is null.
-- **S4.11** A second handler registration for a registered `EventTypeName` aborts startup with
-  `DuplicateHandlerForType` naming the type and both handlers. A second `EventTypeName` for a bound
-  CLR type aborts with `DuplicateNameForEventType`. A handler whose constructor dependency cannot be
-  resolved aborts **worker** startup with `HandlerNotConstructible` naming the handler and the
-  missing dependency, and does not fail the web host — which registers the same triple in order to
-  enqueue.
-- **S4.12** A payload written under one provider deserializes under the other and back. A stored
-  payload carrying an unknown member deserializes without error; an enum round-trips as its string
-  name; a type that gained an optional field reads rows written before it, and a type that has not
-  gained it reads rows written after.
-- **S4.13** The pinned serializer options are not resolvable from the container and no converter can
-  be registered — asserted by attempting both.
-- **S4.14** `IEventCapture.Enqueued` records the id, type, tenant, correlation and instant of every
-  enqueue.
+- **S4.1** Started with the replay profile and a dump path, played through two sessions and one save,
+  then shut down gracefully: the file at that path is canonical JSON carrying `sessions` and `saves`
+  keyed by id, members ascending by code unit, each value the engine's canonical serialization.
+- **S4.2** That file contains **no** `createdAt`, `updatedAt`, attempt counter, `audience`,
+  `profileId` or `savedAtSeq` — no host-owned record field of any kind, asserted member by member
+  against a run that produced non-default values for each.
+- **S4.3** Started with the default profile, no file is written at any path and the configuration
+  carries no dump path to write to. `writeDeterminismDump` cannot be called with the default profile
+  because it does not typecheck, and a test asserts the absence of the file after a graceful shutdown.
+- **S4.4** Under the replay profile, two separate runs of the identical request sequence return the
+  identical session ids and the identical save ids. Under the default profile, the same sequence
+  returns different ids in the two runs.
+- **S4.5** Under the replay profile, the clock reports `fixedInstant` on every call for the whole
+  run, asserted at the composition seam.
+- **S4.6** With the dump path unwritable, shutdown exits non-zero with `DumpWriteFailed` naming the
+  path, and **no empty or partial file is left behind** for a later reader to mistake for an empty
+  store.
+- **S4.7** `readDeterminismDump` over an absent file returns `DumpAbsent` and over a truncated file
+  returns `DumpMalformed`. Neither returns an empty snapshot.
+- **S4.8** A request carrying a member named for the determinism profile is rejected as
+  `malformed_payload` and the store is never called — request schemas are closed, so there is no
+  path from a caller to the profile. A run containing that rejected request produces the identical
+  ids and the identical dump as the same run without it.
+- **S4.9** Adding an import of `StoreSerializationHandle` to the HTTP surface's module graph fails the
+  dependency-direction test. The failure is observed deliberately before the import is removed.
 
-Out of scope: dispatch, claiming and every dispatch-state write (S5); redrive and discard (S7);
-fan-out — a second handler for a type is a startup failure by design, not a gap to close; an
-attribute-based alternative to the registration call, which stays available as later sugar.
+Out of scope: the fixture, the golden transcript and either comparison (S5); any endpoint, route,
+tool or header that returns or names the serialization — the one permanently non-negotiable non-goal;
+comparing the dump against anything, which is the next slice's whole subject.
 
 ---
 
-## S5 — Outbox dispatch
-**Status:** shipped · [#34](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/34)
+## S5 — The byte-identity proof
+**Status:** queued
 
-Delivers: the worker claims, dispatches and marks messages one at a time; a process killed between
-the domain commit and the dispatch delivers the message on restart.
+Delivers: the question this effort exists to answer gets an answer that anyone can re-run — a game
+played across the network is the same game, byte for byte, as the same game played in-process. And
+the check is known to be checking something, because it has been deliberately made to fail.
+
+**This is the effort's pivotal slice.** Every slice before it is a prerequisite; every slice after it
+is a second surface, a second hop, or the evidence around it.
+
+Repository: **this one**, plus a PR opened against **`SubZeroDev.GameEngine`**.
 
 Touches:
-- **Persistence** — the dispatcher registered as `IBackgroundWork` declaring `HostRoles.Worker`
-  under `PlatformBackgroundWork.OutboxDispatch`; `IOutboxStore.ClaimNextAsync`,
-  `MarkProcessedAsync`, `RecordFailureAsync`, `PoisonAsync`, `DeferAsync`, `ReleaseClaimAsync`;
-  `ClaimedWriteOutcome`; `PoisonAttemptMode`; `IProviderCapability.StampClaimAsync`; `HandlerError`;
-  `DispatchError`;
-  the per-message dependency and operation scopes; `ITraceContextCodec.StartLinked`
-- **Hosting** — graceful shutdown stopping claims and releasing unstarted ones within the drain
-  window
-- **Testing** — `IEventCapture.Dispatched`, and `RunBackgroundWorkOnceAsync` over the dispatcher
-- **CI** — the kill-and-restart assertion
+- **The committed fixture** — `ReplayFixture`, `ReplayStep`, with literal ids, covering every row
+- **The committed golden transcript** — the canonically-encoded responses, in order
+- **The harness** — `runInProcess`, `runHosted`, `HostedTarget`, `RunResult`, `Transcript`,
+  `compareSerializations`, `compareTranscripts`, `ComparisonResult`, `Divergence`, `ReplayError`
+- **CI** — both runs and both comparisons, from a fresh clone
+- **`SubZeroDev.GameEngine`** — a PR adding the hosted transport's column to the API coverage
+  checklist in the engine's design source, from which `09-clients.md` is generated
 
-Depends on: S3, S4.
+Depends on: S4.
 
 Acceptance:
-- **S5.1** Three enqueued events and one dispatch tick: all three handlers ran and all three rows
-  are in the `Processed` state.
-- **S5.2** With `DispatchTickBudget = 2` and five eligible rows, one tick dispatches exactly two.
-- **S5.3** The sample's web process is killed after its domain transaction commits and before any
-  dispatch tick runs. The row survives; after restart the worker's next tick delivers it and the
-  handler observes the event. **This is the brief's third CI assertion and Persistence's stated
-  done-criterion.**
-- **S5.4** A handler returning `HandlerError.Transient` sets `attempts` to 1, `next_attempt_at` to
-  now plus 30 s, records `last_error`, and leaves the row `Pending`. The row is not claimed by a
-  tick before that instant and is claimed by one at it, with the fake clock supplying both.
-- **S5.5** Attempts 1 through 12 under base 30 s, factor 2 and cap 6 h produce a non-decreasing
-  backoff that reaches and holds the cap; the twelfth failure sets `poisoned_at` with `last_error`
-  non-null, and no later tick claims the row.
-- **S5.6** `HandlerError.Permanent` poisons on the first failure, leaving `attempts` at 1 rather
-  than burning the remaining eleven.
-- **S5.7** An exception escaping a handler is treated as `Transient` and consumes one attempt.
-- **S5.8** A row whose `type` resolves to no handler is deferred: the claim is released,
-  `first_deferred_at` is stamped, `next_attempt_at` is set one fixed minute ahead, and `attempts`
-  stays 0. A second deferral leaves `first_deferred_at` unchanged. A row still unresolvable at
-  `first_deferred_at + 24 h` is poisoned — measured from first deferral, so a row whose
-  `occurred_at` is three days old still gets the full window.
-- **S5.9** A row whose payload does not deserialize takes the same deferral path and increments
-  nothing.
-- **S5.10** With registered migrations unapplied, a dispatch tick claims nothing, stamps nothing and
-  increments nothing.
-- **S5.11** Two dispatchers ticking concurrently against one eligible row: exactly one receives it
-  and the other receives nothing, on both providers. **A provider contract test.**
-- **S5.12** A dispatch-state write from a holder whose claim was reclaimed returns `ClaimLost`,
-  changes no column, and is counted as duplicate-delivery evidence rather than escalated. The row
-  keeps the state the reclaiming dispatcher left. **A provider contract test.**
-- **S5.13** A claim older than `ClaimWindow` is picked up by the ordinary claim query, with no
-  separate reclaim pass running.
-- **S5.14** Inside a handler: `ICurrentCorrelation.Current.TraceId` equals the row's `correlation`
-  column, `ICurrentTenant.Current` equals the row's tenant, `ICurrentPrincipal.Current` is null, and
-  the active trace is a **new** trace carrying a link to the stored one and the stored sampled flag
-  — its trace-id differs from the stored traceparent's.
-- **S5.15** Request → event → follow-up → follow-up: all four rows carry the originating request's
-  correlation unchanged, while each follow-up's stored `trace_parent` carries the trace-id of the
-  link that enqueued it.
-- **S5.16** Graceful shutdown stops claiming immediately, releases claims not yet started, finishes
-  an in-flight message inside the 30 s drain window, and abandons one still running when the window
-  closes — leaving that row to claim expiry.
+- **S5.1** The set of operations the fixture's steps name equals the set of operations the table
+  declares. Removing the only step naming one operation fails the suite with `CoverageIncomplete`
+  naming that operation on the side it is missing from.
+- **S5.2** **Comparison A:** the hosted run's dump equals the in-process run's snapshot, blob for
+  blob, byte for byte. A mismatch reports the first divergence with a locator identifying the record.
+- **S5.3** **Comparison B:** the hosted run's transcript equals the committed golden transcript byte
+  for byte, and the in-process run's transcript equals the same file. One artifact carries both
+  claims.
+- **S5.4** The two comparisons are asserted separately: a failure of one is distinguishable in the
+  suite's output from a failure of the other, and passing one does not report the other as passed.
+- **S5.5** **Perturbation 1:** a run with two of the fixture's steps transposed fails comparison A.
+  Asserted as a test, not demonstrated once.
+- **S5.6** **Perturbation 2:** a run with one member of one response substituted fails comparison B.
+  Same standard.
+- **S5.7** The hosted run is a real operating-system process with a bound socket, addressed over that
+  socket. Each response is fully read before the next request is sent, and the harness exposes no
+  concurrency option to turn that off.
+- **S5.8** No entry anywhere in either transcript contains a canonical serialization — the dynamic
+  half of the projection-boundary gate, asserted over the whole transcript rather than per row.
+- **S5.9** `save-game`'s transcript entry is the narrowed `{ saveId }` in **both** runs, which is what
+  says run 1 drove the same `Dispatcher` the surfaces use rather than the store directly.
+- **S5.10** A passing run leaves the golden transcript's bytes unchanged: the working tree is clean
+  after a green suite. Regeneration is an explicit act, reviewed as a diff.
+- **S5.11** Both runs and both comparisons execute in CI from a fresh clone, with no artifact carried
+  in from a previous run.
+- **S5.12** A PR is open against `SubZeroDev.GameEngine` adding the hosted transport's column — the
+  **fifth** — to the coverage checklist, with one tick per operation the replay exercised. Because
+  G1 pins the ten-operation release and the fixture covers every row (S5.1), the column is complete:
+  ten ticks, no blank. A blank would mean S5.1 failed.
 
-Out of scope: prune and retention (S6); redrive and discard (S7); any ordering assertion — the
-design offers no ordering guarantee and a test asserting one would encode a promise it refuses;
-concurrent dispatch of several claimed rows; a signal from the writer to the dispatcher, since the
-trigger is a timer.
+Out of scope: any endpoint serving the serialization, however named; an ignore-list, a normalization
+or an options parameter on either comparison — a byte-identity suite that can be told what to skip
+stops comparing anything; per-run golden files; running the fixture through MCP (S6) or through the
+edge (S7).
 
 ---
 
-## S6 — Leases, prune, and the outbox readiness conditions
-**Status:** shipped · [#36](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/36)
+## S6 — The same game, through an assistant
+**Status:** queued
 
-Delivers: retention actually deletes, under a lease, in bounded batches; and readiness names a
-backlog, a pending flood, and a poisoned row.
+Delivers: an assistant that speaks MCP can play the same game, in the same service, against the same
+sessions a network caller sees — and there is now a test that proves neither surface has a mind of
+its own, because deleting one operation from the table takes it out of both at once.
+
+Repository: **this one**.
 
 Touches:
-- **Persistence** — `BackgroundWorkLease` and its migration, `ILeaseStore`, `ILeaseManager`,
-  `ILeaseHandle`, `LeaseError`; the prune registered as `IBackgroundWork` declaring
-  `HostRoles.Worker` under `PlatformBackgroundWork.Prune`; `PruneTarget`,
-  `IProviderCapability.DeleteBoundedAsync`, `IOutboxStore.PruneAsync`, `OldestPendingDueAsync`,
-  `PendingCountAsync`, `PoisonedCountAsync`; the `OutboxBacklogAge`, `OutboxPendingCount` and
-  `OutboxPoisonCount` readiness checks
-- **Core** — `LeaseOptions`, `HealthOptions`
+- **MCP surface** — `buildMcpSurface`, `McpSurface`, `McpToolDescriptor`, `McpToolOutcome`, the MCP
+  HTTP transport served by the workload process
+- **Startup** — the MCP tool list built from the same in-memory row set before the listener binds
+- **The dependency-direction test** — extended to the MCP surface's module graph
+- **A table-is-the-only-source test** — one row removed, both surfaces observed
 
-Depends on: S3, S5.
+Depends on: S3.
 
 Acceptance:
-- **S6.1** One prune tick deletes a processed row older than `ProcessedRetention` and leaves one
-  younger; deletes a poisoned row and a discarded row only past `PoisonedRetention`; and **never
-  deletes a pending row of any age**.
-- **S6.2** One prune tick deletes a host registration row whose heartbeat is older than
-  `HostRegistration:RetentionWindow` and leaves a live one — the three `PruneTarget` values are one
-  registration.
-- **S6.3** With 1 200 eligible rows and `PruneBatchSize = 500`, no single delete statement removes
-  more than 500 rows.
-- **S6.4** Pruning a poisoned row logs at warning naming the row.
-- **S6.5** Two workers ticking prune concurrently: one acquires the lease and runs; the other's
-  `AcquireAsync` returns `LeaseError.Held` and it skips the run entirely rather than waiting.
-- **S6.6** A holder whose `RenewAsync` returns `LeaseError.Lost` aborts its run rather than
-  continuing on the assumption it still holds.
-- **S6.7** A lease whose `expires_at` has passed is acquired by a second holder, and the original
-  holder's next renewal returns `Lost`.
-- **S6.8** `OutboxBacklogAge` degrades when the oldest pending row's `DueAt` is more than
-  `Health:BacklogAgeThreshold` in the past, and stays healthy for each of: ten rows deferred one
-  minute ahead, ten rows backing off six hours ahead, and one row whose `occurred_at` is three days
-  old but whose `next_attempt_at` is now. A worker stopped for ten minutes with due rows degrades
-  it.
-- **S6.9** A poisoned row of any age degrades `OutboxPoisonCount`; a discarded row does not. Neither
-  returns `Unhealthy`, and one poisoned message never fails readiness's wire status.
-- **S6.10** `PendingCountThreshold + 1` pending rows degrade `OutboxPendingCount`;
-  `PendingCountThreshold - 1` do not. Poisoned, processed and discarded rows are not counted.
-- **S6.11** Every one of these checks self-guards on an absent schema, reporting `Degraded` citing
-  the schema rather than throwing.
+- **S6.1** `listTools()` returns exactly as many descriptors as the table has rows, and the descriptor
+  names correspond one-to-one with the rows' `mcpTool` values. Checkable by counting.
+- **S6.2** A session created over the JSON wire is addressable by an MCP tool call in the same
+  process, and the reverse. **One store**, asserted rather than assumed.
+- **S6.3** One operation end to end through MCP: a tool call creates a session and a second tool call
+  submits an action against it, each returning a canonically-encoded result identical to the JSON
+  wire's for the same arguments.
+- **S6.4** With one row removed from the table and the service restarted, the corresponding HTTP path
+  returns `404` with `unknown_operation` **and** the tool is absent from `listTools()`. One change,
+  both surfaces, no second edit — this is the test that the table is the only source. The row-removed
+  artifact is constructed by the test and loaded through `loadContract` — the generator refuses to
+  emit one (S2.2), and startup asserts the engine version, not arity, so the crafted artifact starts.
+- **S6.5** A tool call whose arguments fail the row's request schema returns an error outcome carrying
+  `malformed_payload`, and the store is never called.
+- **S6.6** An engine error raised through a tool call carries the same code verbatim as the JSON wire
+  returns for the same input, and a rejected action is a successful tool result carrying the store's
+  unsuccessful result — no MCP-specific error vocabulary.
+- **S6.7** Two rows carrying the same `mcpTool` fail startup with `DuplicateToolName` naming both,
+  before the listener binds.
+- **S6.8** The MCP surface's module graph does not reach `StoreSerializationHandle`, asserted by the
+  same dependency-direction test that covers the HTTP surface.
 
-Out of scope: redrive and discard (S7); a retention window for pending rows — the design forbids
-one, since pruning an undispatched row is the message loss the outbox exists to prevent;
-backpressure at enqueue; using the lease to guard migrate mode, which takes the provider-native lock
-instead.
+Out of scope: MCP through the edge — a stated gap that is harmless while reachability is
+trusted-local, and G3's to close; a separate stdio MCP process, which would compose a second store;
+any tool that is not a row, any richer view for MCP, any per-surface narrowing.
 
 ---
 
-## S7 — Redrive and discard
-**Status:** shipped · [#40](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/40)
+## S7 — The edge in front, and an honest answer when the service behind it is gone
+**Status:** queued
 
-Delivers: an operator recovers or retires poisoned rows, per id and in bulk by type, without editing
-the database by hand.
+Delivers: an operator can put the .NET edge in front of the game service and play through it with no
+difference the caller can detect. When the service behind it is stopped, the edge stays up, says
+plainly that it is not ready, and names what is wrong instead of failing silently or pretending.
 
-Touches:
-- **Persistence** — `IOutboxAdministration`, `OutboxAdministrationOutcome`,
-  `OutboxAdministrationResult`, `OutboxError`, and `IOutboxStore.RedriveAsync`,
-  `RedriveByTypeAsync`, `DiscardAsync`, `DiscardByTypeAsync`, `ListPoisonedAsync`
-- **samples/** — a demonstration of calling both, not an endpoint
-
-Depends on: S5, S6.
-
-Acceptance:
-- **S7.1** `RedriveAsync` over a poisoned row clears `poisoned_at`, sets `attempts` to 0, clears
-  `first_deferred_at`, `claimed_by` and `claimed_at`, sets `next_attempt_at` to now, and returns
-  `Applied`. The next dispatch tick claims and delivers it.
-- **S7.2** A row poisoned with `next_attempt_at` six hours ahead is delivered by the next tick after
-  redrive — not six hours later.
-- **S7.3** Immediately after redriving a row whose `occurred_at` is three days old,
-  `OutboxBacklogAge` is not degraded: the past-due age measures from the recovery.
-- **S7.4** `RedriveAsync` over an id that no longer exists returns `NotFound`; over a discarded row
-  (both marks set) returns `NotPoisoned` and changes nothing; over a pending row returns
-  `NotPoisoned`.
-- **S7.5** A forty-id call where one row was pruned returns thirty-nine `Applied` and one `NotFound`
-  as a **successful** result, not a failed operation.
-- **S7.6** `DiscardAsync` sets `processed_at`, keeps `poisoned_at`, and appends the reason to
-  `last_error`. The row leaves `OutboxPoisonCount`, still prunes on the poison window, and is
-  refused by a subsequent redrive.
-- **S7.7** `RedriveByTypeAsync` over 500 poisoned rows of one type returns 500 and leaves rows of
-  every other type untouched; `DiscardByTypeAsync` likewise.
-- **S7.8** `ListPoisonedAsync(limit: 10)` returns at most ten rows, all in the `Poisoned` state and
-  none discarded.
-- **S7.9** No HTTP endpoint, console command or UI invokes any of these, on either host.
-
-Out of scope: an administrative endpoint, console or UI — the design excludes one from D3 and it is
-not smuggled in through the sample; redriving a processed or pending row; editing a payload as part
-of a redrive; a bulk operation keyed on anything other than `EventTypeName`.
-
----
-
-## S8 — Telemetry
-**Status:** shipped · [#46](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/46)
-
-Delivers: logs, traces and metrics configured by the standard registration call alone, exporting
-nowhere by default, and never able to fail a request.
+Repository: **this one**, under `workloads/` beside the Node workload.
 
 Touches:
-- **Abstractions** — `PlatformTelemetry.ActivitySourceName` and `MeterName`, the stable
-  provider-neutral instrumentation names
-- **Observability** — Serilog console/file logging, official OpenTelemetry log/trace/metric wiring,
-  OTLP opt-in, resource identity, redaction, sampling, metric allowlists, bounded queues and their
-  supported failure signals
-- **Persistence** — one provider-neutral child activity around each unit-of-work transaction on
-  both providers
-- **Core** — `TelemetryOptions`, endpoint validation, and service-name and service-version
-  derivation from the entry assembly
+- **The edge host** — `AddPlatformWebHost()` and nothing else Platform-shaped
+- **Options and forwarding** — `GameEdgeOptions`, `ForwardedRequest`, `ForwardedResponse`,
+  `IGameWorkloadForwarder`, `GameEdgeEndpointExtensions.MapGameWorkloadForwarding`
+- **Readiness** — `IGameWorkloadProbe`, `GameWorkloadReadinessCheck`
+- **Errors** — `EdgeError` with its two variants
+- **The harness** — `HostedTarget` addressed at the edge, with `shutdown` and `readDump` still
+  addressing the workload
 
 Depends on: S5.
 
 Acceptance:
-- **S8.1** With no OTLP endpoint configured, the sample writes UTF-8 JSON Lines to console and to
-  role-specific files and makes no outbound connection attempt at startup or in steady state —
-  asserted with outbound network blocked, which is the brief's environment rather than a
-  contrivance. The file path, daily and 100 MB rolling, 14-day and 31-file retention, and
-  shared-file mode match the contract.
-- **S8.2** `ServiceName` and `ServiceVersion` left unset resolve to the entry assembly's name and
-  informational version. Service name, service version, deployment environment and host role appear
-  on every OTLP resource and JSONL log record; ambient correlation, tenant, culture and actor appear
-  on logs when present.
-- **S8.3** One request produces one server span whose trace id is the correlation; a unit of work
-  inside it produces one child activity on PostgreSQL and SQLite carrying provider and operation but
-  no SQL, parameter or connection-string data.
-- **S8.4** A dispatched message produces a span whose trace-id differs from the row's stored
-  trace-id and carries a link to it, and copies the row's stored sampled decision. Incoming traces
-  honour the upstream sampled flag; new root HTTP traces are deterministically sampled at 10% by
-  trace id.
-- **S8.5** A test collector blocks behind a gate, enough telemetry is generated to occupy the batch
-  path, and a request completes while the collector call remains blocked. Releasing the gate proves
-  export resumes. The same gate pattern around a blocked or failing file sink proves application
-  work does not wait for file output.
-- **S8.6** Saturating the Serilog async file queue exposes its exact dropped-event count and emits
-  one emergency console diagnostic on entry to failure or dropping and one on recovery. OTLP uses
-  the official bounded batch processors and in-memory retry; recovery is proved by a successful
-  export, without asserting an unsupported exact OTLP drop count or queue-transition log.
-- **S8.7** Configuration values selected by every secret-key segment in the contract become
-  `[REDACTED]` in structured and rendered logs, nested exceptions, and span attributes and events.
-  Metric labels are not redacted — S8.8's allowlist is what constrains them, per the contract. HTTP
-  headers and bodies, event payloads, SQL parameters and connection strings are
-  absent from all signals.
-- **S8.8** Each standard metric accepts only its documented bounded labels. Tests reject tenant,
-  correlation, instance, message, event and user identifiers, raw paths and queries, and arbitrary
-  tag pass-through.
-- **S8.9** With telemetry in place the sample satisfies the brief's **first CI assertion** whole:
-  health, readiness, correlation and telemetry all working through the standard registration call
-  alone.
+- **S7.1** The edge's `Program.cs` contains `AddPlatformWebHost()` as its only Platform-shaped
+  registration call. The forwarding route and the readiness check are registered the way any
+  application registers a route and a service; there is no `AddGameEdge`.
+- **S7.2** With the workload running, a request to the edge returns the workload's status code and its
+  body **byte for byte**, and the path and query reach the workload unaltered — including a path
+  segment the edge has never heard of, which it forwards rather than rejects.
+- **S7.3** With the workload stopped, the edge's liveness returns `200` and its readiness returns
+  `503` with a body naming the failed check. The edge started successfully while the workload was
+  already down.
+- **S7.4** The readiness check reports `Kind = Readiness`, `Criticality = Required` and
+  `TouchesExternalDependency = true`. Registering the same check as liveness aborts startup with
+  Platform's existing `ExternalDependencyInLivenessCheck`.
+- **S7.5** With the workload stopped, a forwarded request returns `503` carrying the correlation, and
+  the edge makes **exactly one** attempt — asserted with a counting stub, not inferred from timing.
+- **S7.6** Against a workload that accepts the connection and never answers, the edge returns `504`
+  after `ForwardTimeout`, carrying the correlation, having made exactly one attempt.
+- **S7.7** The edge's readiness check probes the workload's liveness endpoint and no game operation:
+  after readiness has run any number of times, the workload's session count is zero.
+- **S7.8** The same replay, with the client addressed at the edge, passes comparison A and comparison
+  B — the dump still read from the workload, the golden transcript still the one Stage 1 asserts
+  against.
+- **S7.9** Stage 1's single-hop replay is still in the suite and still green after the edge lands.
+  Both run in CI.
 
-Out of scope: choosing, shipping or operating a collector; dashboards and alert rules; per-product
-semantic conventions — Observability collects and does not interpret; making export synchronous or
-fallible on any path; OTLP authentication headers, client certificates, per-signal endpoints,
-alternate protocols or environment-variable configuration; exact OTLP queue drop accounting until
-the official SDK exposes a supported metric or hook; collector-side tail sampling for errors or slow
-traces; product- or plugin-specific sampling; database-command instrumentation or SQL capture.
+Out of scope: authorization, ownership checks and anything that reads a principal — G3, and a widened
+edge is G3 pulled into G1; persistence, caching, retries and rate limiting; routing the MCP surface;
+the edge consuming the contract artifact and routing per operation, which needs a distribution channel
+G1 deliberately does not build; a client-side span for the hop.
 
 ---
 
-## S9 — Pack, publish, consume, and the API reference
-**Status:** shipped · [#48](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/48)
+## S8 — One trace across two languages
+**Status:** queued
 
-Delivers: the six packages publish to a private GitHub Packages feed, the sample restores them from
-it, and the generated API reference gates the release.
+Delivers: an operator looking at their telemetry sees a single request crossing from the .NET edge
+into the Node service as one trace, with one identifier running through both — so a question about a
+slow or failed call has one thread to pull rather than two systems to correlate by hand.
 
-Touches: **build/** — pack targets, versioning, symbols and doc-comment generation; **CI** — the
-publish and authenticated-restore jobs; **samples/** — feed `PackageReference`s in place of project
-references; **docs/** — the published reference.
+Repository: **this one**.
 
-Depends on: S1–S8.
+Touches:
+- **The edge** — the outbound `traceparent` written from the ambient operation scope's `TraceContext`
+- **The workload** — inbound trace adoption, `RequestContext`, the OTLP exporter constructed only
+  when an endpoint is configured
+- **CI** — an OTLP sink on loopback, both processes exporting to it, assertions over the collected
+  spans, and the existing outbound-port block still in force
+
+Depends on: S7.
 
 Acceptance:
-- **S9.1** `dotnet pack` produces six packages, each carrying its doc-comment XML, and the build
-  fails when any public type or member lacks a doc comment.
-- **S9.2** CI publishes the six to GitHub Packages as a private feed and the sample restores them
-  from it with authentication — proving pack, publish and authenticated restore without spending the
-  unreserved public identifiers.
-- **S9.3** Every assertion in S1–S8 runs a second time against the sample built on the restored
-  packages rather than on project references, and passes.
-- **S9.4** The generated API reference contains every public type in all six packages. A public type
-  added without doc comments fails the reference build, and the release job does not run when the
-  reference build fails.
-- **S9.5** No shipped package declares a dependency on Testing — asserted against the produced
-  package manifests, since Testing refuses to be a development dependency of anything shipped.
-- **S9.6** The published version is a 0.x version, and the release records that the API is
-  explicitly unstable.
+- **S8.1** One request through the edge produces spans from both processes in the collector sharing
+  one trace-id.
+- **S8.2** The workload's span's parent is the edge's span for that request — the relationship is
+  asserted, not inferred from a shared id.
+- **S8.3** The correlation on the edge's response equals that trace-id, and equals the correlation the
+  workload recorded for the same request. One greppable value spans both processes.
+- **S8.4** A request arriving at the edge with a well-formed `traceparent` has its trace adopted
+  end to end; one arriving with `traceparent: not-a-traceparent` returns the same `200` under a fresh
+  root trace, at both hops.
+- **S8.5** With no OTLP endpoint configured on either process, neither constructs an exporter and
+  neither attempts an outbound connection — asserted with outbound network blocked, both processes
+  still serving and the replay still green.
+- **S8.6** The CI job runs the collector on loopback, asserts over collected spans rather than over a
+  propagated header alone, and still fails if either process opens an outbound OTLP connection.
 
-Out of scope: publishing to nuget.org or reserving the public identifiers — the brief leaves them
-unspent deliberately; any stability or compatibility promise beyond 0.x; release-note automation;
-the G1 engine edge, which the brief makes a follow-up rather than a done-criterion.
+Out of scope: metrics, dashboards, log aggregation, alerting — one trace is Stage 2's evidence, not
+the first of a set; a client-side span for the edge's hop, which Platform's deliberate omission of
+HttpClient instrumentation rules out and which performance being a non-goal makes affordable; any
+collector reachable over the network.
 
 ---
 
-## What each slice discharges
+## S9 — A fresh clone can re-run everything this effort proved
+**Status:** queued
 
-| Obligation | Slice |
-|---|---|
-| CI 1 — the sample starts and serves, with health, readiness, correlation and telemetry through the standard call alone | S1, completed by S8 |
-| CI 2 — a broken configuration aborts startup with a named error | S1 |
-| CI 3 — a process killed between commit and dispatch delivers on restart | S5 |
-| CI 4 — the provider contract tests go red against a broken provider | S2 |
-| Abstractions — no Platform dependency; a consumer compiles against it alone | S1 |
-| Core — explicit module registration; a bad graph fails startup with a named error | S1 |
-| Hosting — one endpoint with health, readiness, correlation and graceful shutdown from the standard call | S1 |
-| Persistence — two modules migrate in either order | S2 |
-| Persistence — the tenant column in the first schema | S2 |
-| Persistence — the outbox survives a process kill between the domain write and the publish | S4, S5 |
-| Observability — a trace spans a request through a background job; no secrets; export opt-in | S8 |
-| Testing — an integration test on a real provider and a frozen clock with no bespoke setup | S1, S2 |
-| Testing — the contract tests exist and fail against a broken provider | S2 |
-| Both providers pass the contract tests | S2 |
-| The packages publish privately and the sample consumes them from the feed | S9 |
-| A generated API reference for every public type, gating the release | S9 |
+Delivers: someone arriving at the repository with nothing but a clone can start both processes,
+replay the byte-identity proof, and regenerate the contract, by following what is written — and the
+build proves the instructions still work, so the next effort begins by re-running this one's proof
+rather than by reconstructing it.
+
+Repository: **this one**.
+
+Touches:
+- **`workloads/game-service/` documentation** — starting both processes, replaying the proof,
+  regenerating the contract, each as a command that can be copied and run
+- **CI** — a job that runs the documented commands themselves
+- **Handover notes** — the two facts G2 and G3 inherit
+
+Depends on: S5, S7, S8.
+
+Acceptance:
+- **S9.1** The documentation states, as runnable commands: how to start the workload, how to start the
+  edge, how to run the replay against each, and how to regenerate and publish the contract package.
+- **S9.2** CI executes those documented commands rather than a private script, and the job fails if a
+  documented command does not exist or does not run.
+- **S9.3** Following the regeneration instructions against an unchanged engine and an unchanged row
+  set produces an artifact byte-identical to the published one.
+- **S9.4** The documentation states the two facts the next effort inherits rather than discovers:
+  **single-instance is unenforced** — a second workload instance holds its own memory and presents as
+  `unknown_session` — and **the MCP surface bypasses the edge**, which is harmless only while
+  reachability is trusted-local.
+- **S9.5** The documentation states where the engine writes the mutated blob before writing through
+  to persistence, which is the finding G2 must answer when its persistence can fail.
+
+Out of scope: a human-facing interface of any kind — no front end, no playground, no operator console;
+deployment machinery, container images and process supervision, which two hand-started processes are
+the whole of; the public site's roadmap rendering, which is an L-track question tracked as issue #80;
+the human-facing guide, which is `/make-human-docs`'s output and not a slice's.

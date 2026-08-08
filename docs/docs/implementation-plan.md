@@ -43,7 +43,7 @@ Measured, not assumed.
 
 ADR-004 established that .NET already ships much of what the six packages describe, leaving narrow
 gaps — outbox, tenant filtering, module conventions — and requires those gaps to be checked against
-existing NuGet packages before anything is written. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md)
+existing NuGet packages before anything is written. The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/00-brief.md)
 settles D3 as **all six packages**, which land together; the check against existing packages remains
 mandatory and is not a licence to hand-roll six.
 
@@ -107,7 +107,7 @@ Abstractions, Core, Hosting, Persistence, Observability, Testing. Boundaries and
 done-criteria are specified in
 [`minimal-platform-packages.md`](minimal-platform-packages.md).
 
-> **The count is settled.** The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) commits D3 to all six
+> **The count is settled.** The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/00-brief.md) commits D3 to all six
 > packages landing together. [ADR-004](adr/ADR-004-framework-build-not-adopt.md) still requires the
 > narrow gaps — outbox, tenant filtering, module conventions — to be evaluated against existing
 > packages before anything is written; six packages is not a licence to hand-roll six.
@@ -155,11 +155,12 @@ billing, no tenancy.
 **Unblocked.** This stage waited on the engine's consumer-boundary work; that is merged and
 `@the-running-dev/game-engine` **0.4.0 is published**. Nothing else gates it.
 
-> **One thing G1 must decide that this stage did not anticipate.** Platform is .NET
+> **One thing G1 had to decide that this stage did not anticipate.** Platform is .NET
 > ([ADR-002](adr/ADR-002-implementation-technology.md)) and the engine is Node, so a G1 written
 > as a single Node service consumes the engine but **not Platform**. If G1 is also meant to be
 > Platform's first consumer, it splits: a .NET edge on Platform in front of the Node engine
-> workload. That is a materially different G1, and it is one of the open decisions in §8.
+> workload. **Decided — see §8.4:** both, in sequence. The thin Node-only service first; the
+> .NET edge in front of it as a fast follow, once the byte-identity proof exists.
 
 **Done when** — and this is the criterion worth having, because the engine already knows how
 to write it:
@@ -273,7 +274,7 @@ of what the six packages describe, and the narrow gaps that remain — transacti
 column and query filtering, module registration conventions — must each be checked against
 existing NuGet packages before anything is written.
 
-The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md) settles D3 at **six packages** — Abstractions,
+The [D3 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/00-brief.md) settles D3 at **six packages** — Abstractions,
 Core, Hosting, Persistence, Observability and Testing — and requires them to land together. The
 evaluation against existing packages remains a prerequisite for each narrow gap; it informs whether
 the capability is taken or built, not whether D3 includes the package.
@@ -330,3 +331,23 @@ the first wire. MCP stays a projection, per the ecosystem's own MCP decision.
 > **8.2 and 8.3 no longer interact.** Choosing the sample for 8.2 means the contract is not needed
 > to prove Platform — so the repository can be created and populated on its own schedule, driven by
 > the first real boundary rather than by D3's definition of done.
+
+### 8.4 The shape of G1 — **decided: Node-only first, the .NET edge as a fast follow**
+
+The split named in §5's G1 note is resolved as a sequence rather than a choice. **First**, a thin
+Node-only service consuming the published engine package — in-memory stores, the ten-operation
+game surface as a JSON-over-HTTP wire with the MCP projection beside it, and G1's byte-identity
+done-criterion. It consumes the
+engine and not Platform, which keeps it the cheapest informative failure. **Then**, as a fast
+follow, the .NET edge in front of that workload: Platform's packages terminating transport,
+routing to the Node service, and carrying a distributed trace across the language boundary — the
+validation §8.2 assigns to the edge. The edge does not gate G2; the byte-identity proof exists
+after the first stage.
+
+**Where it runs, and what that costs.** G1 is built in this repository, under
+`workloads/game-service/`, rather than in a repository of its own — decided 2026-08-08, with the
+reasoning and the rejected alternatives in `design/90-decisions.md`. The named cost: §8.2 valued
+the edge as *genuine external* validation, and an edge living in Platform's own repository is
+nearer to framework-authored proof. The byte-identity criterion and the real distributed trace
+keep their value; the independence claim weakens, and this section says so rather than quietly
+dropping the word "external".

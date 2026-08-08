@@ -19,7 +19,7 @@ public interface ISettingsFingerprint
 }
 
 /// <inheritdoc cref="ISettingsFingerprint"/>
-/// <remarks>Specified to the byte in <c>design/20-contract.md</c>, because agreement between two
+/// <remarks>Specified to the byte in <c>design/d3/20-contract.md</c>, because agreement between two
 /// independently-running processes is the whole of its value: a prose description two
 /// implementations could follow differently would reintroduce the permanent false mismatch this
 /// exists to prevent. Reflection order is never trusted for that reason — the entries are always

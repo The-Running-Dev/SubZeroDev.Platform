@@ -284,7 +284,7 @@ public enum PoisonAttemptMode
 
 /// <summary>Platform's pinned <c>System.Text.Json</c> options. Not exposed publicly and not
 /// resolvable from the container — the durable format, not a preference, per
-/// design/20-contract.md's cut converter extension point.</summary>
+/// design/d3/20-contract.md's cut converter extension point.</summary>
 internal static class OutboxSerializer
 {
     internal static readonly JsonSerializerOptions Options = new()

@@ -1,4 +1,4 @@
-import slicesRaw from "../../../design/30-slices.md?raw";
+import slicesRaw from "../../../design/d3/30-slices.md?raw";
 
 export type SliceStatus = "shipped" | "in-progress" | "queued";
 
@@ -18,10 +18,10 @@ const DEPENDS_RE = /^Depends on:\s*(.+)$/m;
 const PR_LINK_RE = /\[#(\d+)]\((https:\/\/\S+?)\)/;
 
 /**
- * Parses design/30-slices.md's own headings and Status lines. Throws rather
+ * Parses design/d3/30-slices.md's own headings and Status lines. Throws rather
  * than returning an empty or partial result on any malformed input — an
  * empty roadmap or a silently-SCHEDULED slice is exactly the failure mode
- * this function exists to make impossible. See design/40-site.md, "Derived
+ * this function exists to make impossible. See design/d3/40-site.md, "Derived
  * content".
  */
 export function parseSlices(raw: string): Slice[] {
@@ -84,10 +84,13 @@ function parseStatus(id: string, text: string): SliceStatus {
 
 /**
  * Fails the internal-consistency invariants build/Test-SliceStatusMarkers.ps1
- * also checks at the repository level: exactly one 'in progress' slice
- * whenever any slice is unshipped, and every queued slice ordered after
- * every shipped one. Exported so both the app and its tests can assert it
- * without duplicating the rule.
+ * also checks at the repository level — each tool against the ledger it
+ * targets: the script validates the active design/30-slices.md, while this
+ * module parses the archived design/d3/30-slices.md (issue #80). The rules:
+ * exactly one 'in progress' slice whenever any slice is unshipped, and every
+ * queued slice ordered after every shipped one. Exported so the app, its
+ * tests, and the active-ledger test can assert it without duplicating the
+ * rule.
  */
 export function assertConsistent(slices: readonly Slice[]): void {
   const inProgress = slices.filter((s) => s.status === "in-progress");
@@ -131,7 +134,7 @@ export type NonGoal = {
 };
 
 /**
- * design/00-brief.md's Non-goals section, hand-authored: the brief's prose
+ * design/d3/00-brief.md's Non-goals section, hand-authored: the brief's prose
  * is not machine-parseable the way 30-slices.md's headings are, and these
  * four are a closed, stable list — closing a non-goal is a brief amendment,
  * not something a slice merge changes.

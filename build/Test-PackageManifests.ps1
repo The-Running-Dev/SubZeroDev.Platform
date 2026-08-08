@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Validates the six shipped packages' manifests: S9.1, S9.5 and S9.6 of
-    design/30-slices.md.
+    design/d3/30-slices.md.
 
 .DESCRIPTION
     Packs SubZeroDev.Platform.slnx to a scratch directory and checks the

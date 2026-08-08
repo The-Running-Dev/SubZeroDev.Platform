@@ -2,7 +2,7 @@
  * Design tokens and the shared status-page shell — header, footer, pills,
  * panels, tables. Light by default; a `prefers-color-scheme: dark` variant
  * is a console treatment, not a copy of any other site's palette. See
- * design/40-site.md, "Design language — and what it may not be": no dark
+ * design/d3/40-site.md, "Design language — and what it may not be": no dark
  * default, no ice-blue accent, no reveal-on-scroll, no full-bleed display
  * type, monospace structural / sans prose only, dense hairline-ruled panels.
  */

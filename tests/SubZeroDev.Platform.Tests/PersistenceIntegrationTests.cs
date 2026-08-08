@@ -11,8 +11,8 @@ namespace SubZeroDev.Platform.Tests;
 
 /// <summary>The provider contract test suite: what every acceptance criterion in S2 requires,
 /// asserted once and run against each provider by the two subclasses below. The invocation surface
-/// — an abstract base parameterised by provider, per <c>design/20-contract.md</c>'s Unresolved #7 —
-/// is decided here; see <c>design/90-decisions.md</c>.</summary>
+/// — an abstract base parameterised by provider, per <c>design/d3/20-contract.md</c>'s Unresolved #7 —
+/// is decided here; see <c>design/d3/90-decisions.md</c>.</summary>
 public abstract class PersistenceContractTests : IAsyncLifetime
 {
     protected abstract PersistenceProvider Provider { get; }

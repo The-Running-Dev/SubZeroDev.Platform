@@ -117,7 +117,7 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
     : IUnitOfWork
 {
     // A bare System.Diagnostics.ActivitySource, never an OpenTelemetry package reference — see
-    // design/90-decisions.md, "S8 adopts Serilog for mandatory file logging and official
+    // design/d3/90-decisions.md, "S8 adopts Serilog for mandatory file logging and official
     // OpenTelemetry for OTLP": Persistence must stay instrumentation-agnostic, and Observability
     // subscribes to this stable name so both database providers get the same span without either
     // taking an OpenTelemetry dependency.
