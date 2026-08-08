@@ -1,4 +1,7 @@
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
@@ -700,6 +703,44 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Id_is_unique_across_a_drain_prune_to_empty_insert_cycle()
+    {
+        // SQLite's sequence is MAX(sequence)+1: draining and pruning the table to empty resets the
+        // next value to 1, the same value the first row carried. Id is minted independently and is
+        // what a dedupe key or a re-read must rely on, not the sequence — this is why the sequence
+        // is not the identity.
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .WithSetting("Outbox:ProcessedRetention", "00:00:01")
+            .WithRole(HostRole.Worker)
+            .WithServices(services =>
+                services.AddPlatformEventHandler<TestEvent, TestEventHandler>(new EventTypeName("test.event")))
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var store = host.Services.GetRequiredService<IOutboxStore>();
+        var instance = new InstanceId("worker/id-cycle");
+
+        var firstId = await EnqueueOneAsync(host);
+        var claimed = await store.ClaimNextAsync(instance, CancellationToken.None);
+        Assert.True(claimed.IsSuccess);
+        Assert.Equal(firstId, claimed.Value!.Id);
+        Assert.True((await store.MarkProcessedAsync(firstId, instance, CancellationToken.None)).IsSuccess);
+
+        host.Clock.Advance(TimeSpan.FromSeconds(2));
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+        Assert.Null(await ReadOutboxRowAsync(_connectionString, capability, firstId));
+
+        var secondId = await EnqueueOneAsync(host);
+
+        Assert.NotEqual(firstId, secondId);
+        Assert.Null(await ReadOutboxRowAsync(_connectionString, capability, firstId));
+        Assert.NotNull(await ReadOutboxRowAsync(_connectionString, capability, secondId));
+    }
+
+    [Fact]
     public async Task Concurrent_enqueues_each_commit_with_a_distinct_sequence()
     {
         // MAX(sequence)+1 races under real concurrency — on SQLite a write transaction already
@@ -1192,4 +1233,143 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     protected abstract Task<int> CountCrossModuleForeignKeysAsync(string connectionString, string ownerTable, string referencingTable);
 
     protected abstract Task<(string Tenant, string CreatedAt, string? CreatedBy)> ReadAuditRowAsync(string connectionString, string id);
+}
+
+/// <summary>Contract assertion `20-contract.md:1732`: the payload format is the serialiser's, not
+/// the provider's. Enqueues under SQLite, then carries the exact stored payload text into a fresh
+/// row inserted under PostgreSQL and deserializes it there — proving the text one provider wrote is
+/// meaningful to the other with no provider-specific step in between.</summary>
+public sealed class CrossProviderPayloadTests(PostgresContainerFixture fixture) : IClassFixture<PostgresContainerFixture>
+{
+    [Fact]
+    public async Task A_payload_written_under_one_provider_deserializes_under_the_other()
+    {
+        var sqliteConnectionString =
+            $"Data Source={Path.Combine(Path.GetTempPath(), $"platform-cross-{Guid.NewGuid():N}.db")}";
+        var postgresConnectionString = await AcquirePostgresConnectionStringAsync();
+
+        try
+        {
+            var written = new TestEvent("cross-provider-payload");
+
+            await using var sqliteHost = await PlatformTestHost.CreateBuilder()
+                .WithProvider(PersistenceProvider.Sqlite)
+                .WithSetting("Persistence:ConnectionString", sqliteConnectionString)
+                .WithRole(HostRole.Worker)
+                .WithServices(services =>
+                    services.AddPlatformEventHandler<TestEvent, TestEventHandler>(new EventTypeName("test.event")))
+                .StartAsync(CancellationToken.None);
+            Assert.True((await sqliteHost.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+            var sqliteWriter = sqliteHost.Services.GetRequiredService<IOutboxWriter>();
+            var sqliteScopes = sqliteHost.Services.GetRequiredService<IOperationScopeFactory>();
+            using var sqliteScope = sqliteScopes.Begin(TenantId.Implicit, null);
+
+            var writtenId = default(OutboxMessageId);
+            var sqliteCommitted = await sqliteHost.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+                TransactionIntent.Write,
+                token =>
+                {
+                    writtenId = sqliteWriter.Enqueue(written);
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+            Assert.True(sqliteCommitted.IsSuccess);
+
+            var sqliteStore = sqliteHost.Services.GetRequiredService<IOutboxStore>();
+            var sqliteClaim = await sqliteStore.ClaimNextAsync(new InstanceId("cross/sqlite"), CancellationToken.None);
+            Assert.True(sqliteClaim.IsSuccess);
+            Assert.Equal(writtenId, sqliteClaim.Value!.Id);
+            var payload = sqliteClaim.Value.Payload;
+
+            await using var postgresHost = await PlatformTestHost.CreateBuilder()
+                .WithProvider(PersistenceProvider.PostgreSql)
+                .WithSetting("Persistence:ConnectionString", postgresConnectionString)
+                .WithRole(HostRole.Worker)
+                .StartAsync(CancellationToken.None);
+            Assert.True((await postgresHost.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+            var postgresStore = postgresHost.Services.GetRequiredService<IOutboxStore>();
+            var movedId = OutboxMessageId.Create(postgresHost.Clock.UtcNow);
+            var movedMessage = new OutboxMessage
+            {
+                Id = movedId,
+                Sequence = 0,
+                OccurredAt = postgresHost.Clock.UtcNow,
+                Type = new EventTypeName("test.event"),
+                Payload = payload,
+                Tenant = TenantId.Implicit,
+                TraceContext = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", null),
+                Correlation = new CorrelationId("1111111111111111111111111111aaaa"),
+                Culture = CultureTag.Invariant,
+                Attempts = 0,
+            };
+
+            var insertResult = default(Result<TransactionError>);
+            var postgresCommitted = await postgresHost.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+                TransactionIntent.Write,
+                async token => { insertResult = await postgresStore.InsertAsync(movedMessage, token); },
+                CancellationToken.None);
+            Assert.True(postgresCommitted.IsSuccess);
+            Assert.True(insertResult.IsSuccess);
+
+            var postgresClaim = await postgresStore.ClaimNextAsync(new InstanceId("cross/postgres"), CancellationToken.None);
+            Assert.True(postgresClaim.IsSuccess);
+            Assert.Equal(movedId, postgresClaim.Value!.Id);
+
+            var deserialized = JsonSerializer.Deserialize<TestEvent>(postgresClaim.Value.Payload, OutboxSerializer.Options);
+            Assert.Equal(written.Value, deserialized!.Value);
+        }
+        finally
+        {
+            CleanupSqlite(sqliteConnectionString);
+            await DropPostgresAsync(postgresConnectionString);
+        }
+    }
+
+    private async Task<string> AcquirePostgresConnectionStringAsync()
+    {
+        var database = $"test_{Guid.NewGuid():N}";
+
+        await using var admin = new NpgsqlConnection(fixture.AdminConnectionString);
+        await admin.OpenAsync();
+        await using var create = admin.CreateCommand();
+        create.CommandText = $"CREATE DATABASE \"{database}\";";
+        await create.ExecuteNonQueryAsync();
+
+        var builder = new NpgsqlConnectionStringBuilder(fixture.AdminConnectionString) { Database = database };
+        return builder.ConnectionString;
+    }
+
+    private async Task DropPostgresAsync(string connectionString)
+    {
+        var database = new NpgsqlConnectionStringBuilder(connectionString).Database;
+        if (string.IsNullOrEmpty(database))
+        {
+            return;
+        }
+
+        await using var admin = new NpgsqlConnection(fixture.AdminConnectionString);
+        await admin.OpenAsync();
+        await using var drop = admin.CreateCommand();
+        drop.CommandText = $"DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE);";
+        await drop.ExecuteNonQueryAsync();
+    }
+
+    private static void CleanupSqlite(string connectionString)
+    {
+        var path = new SqliteConnectionStringBuilder(connectionString).DataSource;
+
+        foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
+        {
+            try
+            {
+                File.Delete(path + suffix);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup.
+            }
+        }
+    }
 }
