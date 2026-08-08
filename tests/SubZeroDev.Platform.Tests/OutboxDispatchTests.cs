@@ -164,6 +164,44 @@ public sealed class OutboxDispatchTests
     }
 
     [Fact]
+    public async Task Pending_migrations_log_the_hold_under_MigrationsPending_and_claim_nothing()
+    {
+        await using var fixture = await ScriptedFixture.StartAsync(services =>
+            services.AddSingleton<IMigrationRunner, PendingMigrationRunner>());
+        var realRunner = new MigrationRunner(
+            fixture.Host.Services.GetServices<IModuleMigrationSource>(),
+            fixture.Host.Services.GetRequiredService<IProviderCapability>(),
+            fixture.Host.Clock);
+        Assert.True((await realRunner.ApplyAsync(CancellationToken.None)).IsSuccess);
+        var id = await EnqueueOneAsync(fixture.Host);
+
+        var services = fixture.Host.Services;
+        var logger = new CapturingLogger<OutboxDispatcher>();
+        var dispatcher = new OutboxDispatcher(
+            services.GetRequiredService<IOutboxStore>(),
+            services.GetRequiredService<IEventHandlerRegistry>(),
+            new PendingMigrationRunner(),
+            services.GetRequiredService<IServiceScopeFactory>(),
+            services.GetRequiredService<IOperationScopeFactory>(),
+            services.GetRequiredService<ITraceContextCodec>(),
+            services.GetRequiredService<PlatformOptions>(),
+            services.GetRequiredService<InstanceId>(),
+            services.GetRequiredService<IClock>(),
+            logger);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Level == LogLevel.Information
+                && entry.Message.Contains(nameof(DispatchError.MigrationsPending), StringComparison.Ordinal));
+
+        var row = await fixture.ReadAsync(id);
+        Assert.Null(row.ClaimedBy);
+        Assert.Equal(0, row.Attempts);
+    }
+
+    [Fact]
     public async Task Follow_up_events_keep_the_origin_correlation_and_store_each_linked_trace()
     {
         var path = Path.Combine(Path.GetTempPath(), $"platform-chain-{Guid.NewGuid():N}.db");

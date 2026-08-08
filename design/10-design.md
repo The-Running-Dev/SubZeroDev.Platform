@@ -36,12 +36,23 @@ storage is per provider.
 
 | Logical type | PostgreSQL | SQLite |
 |---|---|---|
-| Identifier | native uuid | 16-byte blob |
-| Sequence | 64-bit identity | 64-bit rowid alias |
-| Instant | timestamp with time zone | ISO-8601 UTC text |
-| Tenant | native uuid | 16-byte blob |
-| Payload | native json | text |
+| Identifier | 16-byte blob | 16-byte blob |
+| Sequence | 64-bit identity | 64-bit, app-allocated |
+| Instant | ISO-8601 UTC text | ISO-8601 UTC text |
+| Tenant | text | text |
+| Payload | text | text |
 | Text | text | text |
+
+**One migration source generates both providers' DDL**, not a PostgreSQL-native schema with a
+separate SQLite translation — but the two providers' generated text is not identical: the
+identifier and sequence columns substitute a provider-native type keyword (`BLOB`/`BYTEA`,
+`INTEGER`/`BIGINT GENERATED ... AS IDENTITY`), the one branch this table exists to describe. Every
+other column, tenant and payload included, is declared and bound as `TEXT` unconditionally, with no
+per-provider branch at all — never blob, on either provider. Identifier and Instant are chosen and
+costed at [2026-08-03 "Reconciling S2: the capability seam was not implementable, and four values it
+set", item (6)](90-decisions.md); Payload was already text on both and needed no decision. See the
+2026-08-08 entry for what that decision did not name and how this table stood in front of it stale
+until now.
 
 **The identifier's SQLite encoding is pinned to RFC 4122 network byte order**, not the platform
 `Guid` byte order, whose little-endian first three fields scramble precisely the bytes a version-7
@@ -176,12 +187,19 @@ claim in *Alternatives*: the id orders time to the millisecond and no finer, and
 it must tolerate ties, which the id doubling as the dedupe key already equips a consumer to do.
 
 **The sequence is claim order and nothing else.** An earlier draft made it the identity and called
-it monotonic per database, and both claims were false on SQLite: a plain rowid alias allocates
-max(current)+1, so a fully drained and pruned outbox restarts numbering at 1, reusing values earlier
-messages carried. Demoted, the reuse is harmless — a reused value can only collide with a dead
-row's, never a live one, so claim order among live rows stays consistent, and delivery order is not
-guaranteed anyway. Nothing downstream may treat the sequence as durable; anything needing a cursor
-across time uses the time-ordered id. The reversal is recorded in *Alternatives*.
+it monotonic per database, and both claims were false on SQLite: the primary key is `id`, not
+`sequence`, so a rowid alias is not available to it, and the app allocates the value itself at
+insert as `MAX(sequence) + 1`. A fully drained and pruned outbox therefore restarts numbering at 1
+— `MAX` of an empty table is null — reusing values earlier messages carried. Demoted, the reuse is
+harmless — a reused value can only collide with a dead row's, never a live one, so claim order
+among live rows stays consistent, and delivery order is not guaranteed anyway. Nothing downstream
+may treat the sequence as durable; anything needing a cursor across time uses the time-ordered id.
+The reversal is recorded in *Alternatives*.
+
+**PostgreSQL allocates the sequence as a `BIGINT` identity column instead of the same subquery.**
+SQLite's write transaction already serialises every writer, so the scalar subquery cannot race
+there; under PostgreSQL's real concurrency it can — two concurrent inserts reading the same `MAX`
+would collide on the column's uniqueness — so there the provider allocates it.
 
 **Payload shapes change additively or not at all.** A change to an event's payload must be
 tolerant-reader safe — new optional fields, never renames, removals or meaning changes. A breaking
@@ -404,11 +422,16 @@ restart.
 | Name | text | **Identity.** The work item's stable name |
 | Holder | text | Process instance identity |
 | Acquired at | instant | |
-| Expires at | instant | Renewed by heartbeat while the work runs. **Five minutes**, the same window as a claim |
+| Expires at | instant | **Five minutes**, the same window as a claim. `ILeaseHandle.RenewAsync` extends it for a holder whose work outlives one window; D3's only leased work does not call it — see below |
 
-**Ownership:** Persistence. **Lifecycle:** acquired before scheduled work runs, renewed while it
-runs, released or expired after. **Not needed by outbox dispatch** — that is protected by the row
-claim instead, which is finer-grained and lets two dispatchers work different messages concurrently.
+**Ownership:** Persistence. **Lifecycle:** acquired before scheduled work runs, released or expired
+after. **Not needed by outbox dispatch** — that is protected by the row claim instead, which is
+finer-grained and lets two dispatchers work different messages concurrently.
+
+**D3's only leased work — prune — completes inside one lease and never renews.** `RenewAsync` and
+the abort-on-failed-renewal obligation below are real members, exercised by the provider contract
+tests, and stay for the first consumer whose work outlives one lease window; nothing in D3 is that
+consumer yet.
 
 **The lease reduces duplicate runs; it does not prevent them, and the wording matters more than the
 mechanism.** A holder can stall past its expiry — a garbage-collection pause, or a heartbeat write
@@ -887,6 +910,12 @@ every renewal is the same statement. One mechanism instead of two, and it is wha
 database non-fatal: against a store whose schema does not exist yet the beat fails, the loop retries
 at its ordinary interval, and the row appears the moment migrations run. No bespoke startup retry,
 and no ordering dependency between startup and the schema.
+
+**The first beat lands one heartbeat interval after start, not at start.** Hosting's timer awaits
+its first tick before running any registration's `TickAsync`, heartbeat included, so a host is
+unregistered for that first interval. The peer-absence grace's one-interval floor already covers
+this — it exists precisely so a shorter grace cannot elapse before a working peer's next beat can
+land.
 
 **Registration happens in the store, not in memory**, which is what makes the peer check work: a host
 writing to the wrong database registers itself there too, so its absence from the right one is

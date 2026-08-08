@@ -4,6 +4,97 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 
 **This log is slice-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what belongs in `docs/docs/adr/`.
 
+### 2026-08-08 — Reconciling D3's physical types: eight stale doc corrections, one dispatch log gap, and four unlogged values
+Context: `/reconcile` against `10-design.md` and `20-contract.md` after the D3 packages shipped. The
+2026-08-03 "Reconciling S2: the capability seam was not implementable, and four values it set" entry
+already settled identifier and instant columns as text/blob on both providers rather than native
+`uuid`/`timestamptz` on PostgreSQL — but that decision named only those two logical types. The
+design's logical-type table still read `uuid`/`timestamptz`/`json`, and two more rows in the same
+table were wrong for reasons the S2 decision does not cover: payload had drifted from native `json`
+the same way identifier and instant had, and tenant's row claimed a 16-byte blob it has never been on
+either provider — the code binds it as plain text throughout. Nothing caught either, and three more
+places in both documents had
+independently gone stale: the sequence mechanism, the lease-renewal paragraph, the startup heartbeat
+timing, and where `MapPlatformProbes` and invariant 8 actually apply. One behavioural gap sat beside
+them: `DispatchError.MigrationsPending` has existed since S2 and was never constructed.
+Chosen, as eleven parts of one reconcile:
+
+**Doc corrections — the code was right, the doc was wrong, in every case below:**
+1. `10-design.md`'s logical-type table: PostgreSQL is blob for Identifier and text for Tenant,
+   Instant and Payload — Tenant was never blob on either provider, a table row this reconcile first
+   assumed by pattern-matching against Identifier and then corrected against `PlatformOutboxMigration`
+   itself, which declares `tenant TEXT NOT NULL` unconditionally. The one migration source generates
+   provider-specific DDL only for the identifier and sequence columns (`BLOB`/`BYTEA`,
+   `INTEGER`/`BIGINT GENERATED ... AS IDENTITY`); every other column, including tenant and payload,
+   is literal `TEXT` with no per-provider branch — extending the 2026-08-03 S2 decision's
+   identifier/instant scope to a table that had also drifted on a column that decision never touched.
+2. `10-design.md`'s sequence mechanism: app-allocated `MAX(sequence) + 1` on SQLite — a rowid alias
+   is unavailable because the primary key is `id`, not `sequence` — and a `BIGINT` identity column on
+   PostgreSQL. The reuse-after-prune consequence was already right; only the mechanism was described
+   wrong, as a rowid alias, which SQLite's own schema for this table cannot produce.
+3. `10-design.md`'s lease-renewal paragraph: D3's only leased work — prune — completes inside one
+   lease and never renews. `ILeaseHandle.RenewAsync` and the abort-on-failed-renewal obligation are
+   real, tested members (`LeaseTests.cs`), kept for the first consumer whose work outlives one lease
+   window; nothing in D3 is that consumer.
+4. `10-design.md`'s startup/heartbeat control flow: the first heartbeat lands one heartbeat interval
+   after start, not at start — `BackgroundWorkService.RunAsync` awaits `PeriodicTimer.WaitForNextTickAsync`
+   before the first `TickAsync`, heartbeat included. The peer-absence grace's one-interval floor
+   already covers the gap; nothing needed to change there.
+5. `20-contract.md`'s two encoding-rule paragraphs (identifier byte order, instant text format): bind
+   both providers, not SQLite alone — the contract-layer half of (1).
+6. `20-contract.md`'s `platform_outbox` sequence row: the same mechanism correction as (2).
+7. `20-contract.md`'s `MapPlatformProbes` paragraph: Platform's own middleware serves the probes in
+   both roles without either host calling it — the standard registration call has to be sufficient
+   alone. `MapPlatformProbes` stands that middleware down for a host that places the probes in its
+   own route table; it does not turn the probes on.
+8. `20-contract.md`'s invariant 8: scoped to the enqueue path. Claim, marks, redrive, discard, the
+   three readiness queries and prune each correctly open their own connection through
+   `capability.BeginAsync` — none runs inside a caller's transaction — and the invariant as written
+   forbade exactly that.
+
+**Code:**
+9. `OutboxDispatcher.TickAsync`'s pending-migration branch now logs the hold under
+   `DispatchError.MigrationsPending` (`Errors.cs:211`), constructed for the first time since it was
+   defined at S2. Behaviour was already correct — claim nothing, stamp nothing — the gap was purely
+   observability. Cited by member name, not line number, since the line moves with every edit near it.
+10. `PersistenceIntegrationTests.cs` gained the two contract-mandated assertions — the `Id` uniqueness
+    row and the cross-provider payload row in `20-contract.md`'s provider-contract-tests table — that
+    had no test: `Id` unique across a drain, prune-to-empty, insert cycle; and a payload written under
+    one provider deserializing under the other.
+
+**Found unlogged, recorded rather than corrected — nothing here contradicted either document, so
+nothing above changed for these:**
+11. A module is composed before the container exists (`PlatformHostExtensions.cs:184`): it must be
+    registered as a type or an instance ahead of the standard registration call, with a public
+    parameterless constructor if registered by type. A factory registration, or a constructor needing
+    arguments, aborts startup with `HostStartupError.Registration`. Added to `20-contract.md`'s
+    `IPlatformModule` block, which stated the interface but not this constraint on registering it.
+    `HostStartupError.Registration` passes a `null` inner error on both of those failure paths
+    (`StartupFailure.cs:47`) — an accepted shape, not a defect: neither path has an inner
+    `PlatformError` to wrap, so there is nothing to pass.
+    A `null RemoteIpAddress` reads as loopback, so the probe body is `Full` (`Probes.cs:184`) —
+    invariant 45 says `Full` is loopback-or-development and does not say what a null remote address
+    resolves to; this is that resolution, matching the platform's own treatment of a caller with no
+    observable remote endpoint.
+    The unhandled-failure envelope carries exactly one code, `UnhandledRequestFailure`, at HTTP 500
+    (`Pipeline.cs:61`) — S1 already decided this (2026-08-03 "The values S1 set...", item (8)); it is
+    restated here only because this is the first entry to log the three siblings above beside it, not
+    because anything about it changed.
+
+Rejected: **Native PostgreSQL types for tenant and payload** — `uuid` for tenant, `json` for
+payload — matching what the table said before this reconcile; the code has never been written that
+way for either column, and taking it now would mean a migration and a second `IProviderCapability`
+bind path for two columns that already work correctly as text, spent to make the table's stale claim
+true instead of fixing the table. **Leaving `OutboxDispatcher`'s migration hold
+silent** — cheaper, and it is exactly the gap invariant 21 depends on an operator noticing without a
+log line. **Leaving invariant 8 as written and treating the other five call sites as an implicit,
+unstated exception** — shorter, and it is the same failure this whole entry exists to correct one
+level up: an invariant that means something narrower than its own sentence says is a design table
+lying about the code, at invariant scale rather than table scale.
+Reversibility: cheap throughout. Every correction here describes the code as it already runs; no
+public contract changes shape, and nothing external depends on any of the eleven differently than it
+did before this entry.
+
 ### 2026-08-08 — ADR-004's architecture reading happens after the fact, and finds two gaps rather than a defect
 Context: [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §3 names three things to
 read closely in ABP **before** the thin equivalents are written — its module lifecycle and

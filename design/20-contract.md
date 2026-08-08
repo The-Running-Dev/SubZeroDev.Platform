@@ -318,6 +318,11 @@ public interface IPlatformModule
 }
 ```
 
+**A module is composed before the container exists**, so it must be registered as a type or an
+instance ahead of the standard registration call, and a type registration needs a public
+parameterless constructor — nothing can be injected into one. A factory registration or a
+constructor requiring arguments aborts startup with `HostStartupError.Registration`.
+
 ### Abstractions — event and handler contracts
 
 ```csharp
@@ -832,9 +837,9 @@ insisted on a single greppable value. The wire format is [Unresolved](#unresolve
 
 Logical column types map per provider exactly as the design's table states. Names below are logical.
 
-**Two encoding rules bind every table here and every product table.** Identifier columns store on
-SQLite as a 16-byte blob in **RFC 4122 network byte order**, never the platform `Guid` byte order,
-so bytewise blob comparison equals mint order. Instant columns store on SQLite as **fixed-width
+**Two encoding rules bind every table here and every product table, on both providers.** Identifier
+columns store as a 16-byte blob in **RFC 4122 network byte order**, never the platform `Guid` byte
+order, so bytewise blob comparison equals mint order. Instant columns store as **fixed-width
 ISO-8601 UTC text, `Z`-suffixed, exactly seven fractional digits, zero-padded and never trimmed**,
 and **every instant bound as a SQL parameter is written by the same formatter as the column** — the
 platform's default SQLite parameter binding violates all three properties, so pinning only the write
@@ -845,7 +850,7 @@ side moves the defect to the other side of the comparison.
 | Column | Logical type | Null | Constraint |
 |---|---|---|---|
 | `id` | identifier | no | **Primary key.** Version-7 UUID minted at enqueue |
-| `sequence` | sequence | no | **Unique.** Provider-allocated; claim order only, values reusable after prune |
+| `sequence` | sequence | no | **Unique.** App-allocated as `MAX(sequence) + 1` on SQLite (the primary key is `id`, so no rowid alias is available), a `BIGINT` identity on PostgreSQL; claim order only, values reusable after prune on SQLite |
 | `occurred_at` | instant | no | |
 | `type` | text | no | Non-empty |
 | `payload` | payload | no | |
@@ -1556,10 +1561,13 @@ any of it is. Hosting does not reference Persistence; a host composed without Pe
 supported shape with a smaller readiness surface, and the probe body's enumeration of registered
 checks is what keeps that scoping visible.
 
-**`MapPlatformProbes` is called by the worker form itself**, on its own loopback port, through the
-same endpoint code as the web role. It exists on the public surface so a web host can place the
-probes within its own route table. A port collision fails startup with a named bind error citing the
-setting rather than falling back silently.
+**Probes are served by Platform's own middleware, in both roles, without either host calling
+`MapPlatformProbes`.** The worker binds its own loopback port through the same endpoint code as the
+web role, and that middleware answers on it — the standard registration call has to be sufficient
+alone. `MapPlatformProbes` exists on the public surface for a host that places the probes within its
+own route table instead; calling it stands the middleware down for that host, rather than being what
+serves the probes in the first place. A port collision fails startup with a named bind error citing
+the setting rather than falling back silently.
 
 **`RunPlatformMigrateModeAsync` returns a process exit status.** It is a one-shot command, not a
 third host role.
@@ -1921,7 +1929,7 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 5 | `claimed_by` is null if and only if `claimed_at` is null | Persistence |
 | 6 | `poisoned_at` set implies `last_error` non-null | Persistence |
 | 7 | An outbox row is inserted only inside an ambient transaction that also carries its domain write, and only inside an ambient operation scope | Persistence |
-| 8 | The ambient transaction is one connection owned by the unit of work; every participant enlists against it, and the outbox store never opens its own | Persistence |
+| 8 | The ambient transaction is one connection owned by the unit of work; every participant enlists against it, and the outbox store never opens its own on the enqueue path — claim, marks, redrive, discard, the three readiness queries and prune each correctly open their own connection through `capability.BeginAsync`, none running inside a caller's transaction | Persistence |
 | 9 | A participant enlists against the ambient transaction and never commits, rolls back or disposes it; commit and rollback happen exactly once, in `ExecuteAsync` | Persistence |
 | 10 | Every product table row has a non-null tenant; the value is `TenantId.Implicit` throughout D3 | Persistence |
 | 11 | No foreign key crosses a module boundary | Persistence |

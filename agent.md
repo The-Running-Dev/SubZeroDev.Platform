@@ -51,6 +51,13 @@ and preferences belong in `AGENTS.md`.
   and released while the roadmap called S9 queued, and a reconcile pass was what found it.** The
   repeat is what makes this a lesson rather than a preference — the gate exists for exactly this
   and is blind to it, so the check has to be you: on merge, set the marker in the same change.
+- **A decision that contradicts a table in `10-design.md` must edit that table in the same
+  commit.** The S2 reconcile logged text-and-blob-on-both-providers and left the logical-type
+  table saying `uuid`/`timestamptz`/`json`. The log records why a choice was made, not what is
+  true now, so nothing pointed at the stale table — and two more columns drifted the same way
+  underneath it, unnoticed. **Cost: a later reconcile re-derived the whole physical-type
+  question from the DDL, and found the tenant/payload divergence by reading SQL rather than the
+  log.** A decision that overrides a table is not finished until the table says so.
 
 ## Documentation site
 

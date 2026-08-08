@@ -39,6 +39,7 @@ internal sealed class OutboxDispatcher(
 
         if (status.Value.Any(module => module.Pending.Count > 0))
         {
+            logger.LogInformation("Outbox dispatch held: {Code}.", DispatchError.MigrationsPending().Code);
             return;
         }
 
