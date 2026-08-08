@@ -372,6 +372,4 @@ Reversibility: cheap
 
 ## Open
 
-- The public site's roadmap renders `design/d3/30-slices.md` (the archived D3 set) since the
-  archive move. Whether it should render the active effort's slices instead — or both — is an
-  L-track design question, not a G1 one.
+_(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
