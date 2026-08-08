@@ -123,7 +123,7 @@ Touches:
   narrowed field, no duplicate id or tool name, `httpPath` equal to `operation`
 - **The emitted artifact** — `ContractPackage`, `OperationRow`, `JsonSchemaDocument` with its `$id`
   and dialect, `SchemaRef`
-- **`GenerationError`** — all eight variants
+- **`GenerationError`** — all nine variants
 - **The publish path** — the package published under its own semantic version, resolvable by a
   consumer that pins it
 - **`mcp-tool-contract.md`** — moved here; the engine's `design/10-design.md` link updated so the
@@ -139,10 +139,13 @@ Acceptance:
   a row whose `storeMethod` the engine does not declare fails with `ArityMismatch` naming the row.
   **No artifact is written on either** — the output directory is byte-identical before and after.
 - **S2.3** Deleting one entry from the status mapping fails with `ErrorCodeUncovered` naming the code.
-  Adding an entry for a code the engine does not declare fails the same gate.
+  Adding an entry for a code that is neither a declared engine code nor one of the three transport
+  codes fails the same gate.
 - **S2.4** A response schema emitted without `additionalProperties: false` at any object level fails
   with `ResponseSchemaOpen` naming the schema; a response shape resolving to the engine's envelope
-  type fails with `EnvelopeReachable`. **These two are the permanent non-goal's static gate.**
+  type fails with `EnvelopeReachable`. **These two are the permanent non-goal's static gate.** A
+  request schema open at any object level fails with `RequestSchemaOpen` on the same terms — an open
+  request schema would make a request narrowing reversible from the wire.
 - **S2.5** A `NarrowedField` naming a member the engine's declaration does not have fails with
   `NarrowingUnknownField` naming the row and the member; two rows sharing an `OperationId` or an
   `McpToolName` fail with `DuplicateOperationId` naming both; a row carrying the determinism profile
@@ -296,9 +299,10 @@ Acceptance:
   store.
 - **S4.7** `readDeterminismDump` over an absent file returns `DumpAbsent` and over a truncated file
   returns `DumpMalformed`. Neither returns an empty snapshot.
-- **S4.8** A request carrying a member named for the determinism profile changes nothing: the run's
-  ids and the written dump are identical to the same run without it. The profile is startup
-  configuration and there is no path from a caller to it.
+- **S4.8** A request carrying a member named for the determinism profile is rejected as
+  `malformed_payload` and the store is never called — request schemas are closed, so there is no
+  path from a caller to the profile. A run containing that rejected request produces the identical
+  ids and the identical dump as the same run without it.
 - **S4.9** Adding an import of `StoreSerializationHandle` to the HTTP surface's module graph fails the
   dependency-direction test. The failure is observed deliberately before the import is removed.
 
@@ -397,7 +401,9 @@ Acceptance:
   wire's for the same arguments.
 - **S6.4** With one row removed from the table and the service restarted, the corresponding HTTP path
   returns `404` with `unknown_operation` **and** the tool is absent from `listTools()`. One change,
-  both surfaces, no second edit — this is the test that the table is the only source.
+  both surfaces, no second edit — this is the test that the table is the only source. The row-removed
+  artifact is constructed by the test and loaded through `loadContract` — the generator refuses to
+  emit one (S2.2), and startup asserts the engine version, not arity, so the crafted artifact starts.
 - **S6.5** A tool call whose arguments fail the row's request schema returns an error outcome carrying
   `malformed_payload`, and the store is never called.
 - **S6.6** An engine error raised through a tool call carries the same code verbatim as the JSON wire

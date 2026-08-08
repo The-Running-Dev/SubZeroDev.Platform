@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds the API reference and checks it against S9.4 of design/30-slices.md.
+    Builds the API reference and checks it against S9.4 of design/d3/30-slices.md.
 
 .DESCRIPTION
     Builds each of the six shipped projects (gating on CS1591 as an error, per

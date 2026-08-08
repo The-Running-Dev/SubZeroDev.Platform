@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
     Validates the internal consistency of design/30-slices.md's per-slice
-    Status markers, which site/src/roadmap/roadmapData.ts reads to render the
-    public roadmap.
+    Status markers -- the active effort's slice ledger. The public site's
+    roadmap currently renders the archived design/d3/30-slices.md; issue #80
+    tracks pointing it back at the active effort.
 
 .DESCRIPTION
     A separate script rather than an addition to Test-Documentation.ps1

@@ -35,7 +35,7 @@ Settled in [`implementation-plan.md`](../docs/docs/implementation-plan.md) §8.4
 here because the brief is where scope binds:
 
 1. **The Node service.** A single Node service consuming the published engine package, composing
-   the in-memory stores, exposing the nine-operation game surface. It consumes the engine and not
+   the in-memory stores, exposing the ten-operation game surface. It consumes the engine and not
    Platform.
 2. **The .NET edge, as a fast follow.** Platform's packages in front of that workload: transport
    termination, routing to the Node service, a distributed trace across the language boundary.

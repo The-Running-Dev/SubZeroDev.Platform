@@ -341,8 +341,9 @@ whitespace, undefined-valued members dropped, non-finite numbers and `bigint` re
 Chosen: the workload implements the same rule, and `20-contract.md` states the rule beside
 `canonicalEncode` so an implementer reads it rather than inferring it.
 Rejected: the engine exporting its encoder — one home for the rule and the right answer, but a
-cross-repository change the contract has no standing to make, and G1's only agreed deliverable into
-the engine is the coverage-checklist column. `JSON.stringify` — key order follows insertion order,
+cross-repository change the contract has no standing to make: G1's agreed deliverables into the
+engine are the record-id seam and the coverage-checklist column, and the encoder's export is
+neither. `JSON.stringify` — key order follows insertion order,
 which follows code paths, so two runs can differ for no reason the proof is looking for.
 Cost, stated rather than hidden: two copies of one rule, which this repository's own standing
 instruction calls a promise they will diverge. The mitigation is that comparison B fails loudly if
@@ -396,6 +397,25 @@ Cost, stated rather than hidden: G1's surface carries an operation the effort di
 the ten-row table is pinned to an engine release that does not exist yet.
 Reversibility: cheap while the contract is pre-1.0 — dropping to nine rows is a row deletion and a
 regeneration.
+
+### 2026-08-08 — Request schemas are closed, like response schemas
+
+Context: the contract closed every response schema and was silent on request schemas, and two
+statements resolved the silence in opposite directions: S4.8 as originally written required a
+request carrying an undeclared member to "change nothing" (an open-schema reading), while the
+request narrowings — `start_game` dropping `audience` — are only enforceable if an undeclared
+member cannot pass validation (a closed-schema reading).
+Chosen: closed, at every object level, gated at generation (`RequestSchemaOpen`). An undeclared
+request member is a `malformed_payload` and the store is never reached, which makes a request
+narrowing irreversible from the wire and leaves the determinism profile with no caller-reachable
+path. S4.8 is restated to assert the rejection rather than the tolerance.
+Rejected: open request schemas with tolerated extras — S4.8's original wording would hold, but a
+caller could re-supply any narrowed request field and the narrowing mechanism the design calls
+load-bearing would constrain nothing; it also lets unvalidated members ride `ValidatedArguments`
+into the engine. Closing responses only — the asymmetry is exactly the ambiguity that produced the
+contradiction.
+Reversibility: cheap while the contract is pre-1.0 — opening a schema is an additive change for
+callers.
 
 ## Open
 

@@ -97,7 +97,10 @@ than descriptive:**
 JSON Schema documents projected from the engine's published TypeScript declarations, one per request
 and response shape the table references, with the row's narrowings applied. Wholly derived; nothing
 in it is authored. Every response schema is **closed** — no additional properties — which is one half
-of the projection-boundary gate.
+of the projection-boundary gate. **Request schemas are closed too**: a member the row's request shape
+does not declare fails validation as `malformed_payload`, which is what makes a request narrowing
+irreversible from the wire — a dropped field cannot be re-supplied by a caller — and what leaves the
+determinism profile with no caller-reachable path.
 
 Identity is the schema's `$id`, a version-pathed URL per ADR-005 Rule 5. **The URL is an identifier,
 not a fetch.** Nothing dereferences it at build time or at runtime; a validator that resolved `$ref`s

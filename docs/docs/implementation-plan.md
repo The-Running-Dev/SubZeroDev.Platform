@@ -335,8 +335,9 @@ the first wire. MCP stays a projection, per the ecosystem's own MCP decision.
 ### 8.4 The shape of G1 — **decided: Node-only first, the .NET edge as a fast follow**
 
 The split named in §5's G1 note is resolved as a sequence rather than a choice. **First**, a thin
-Node-only service consuming the published engine package — in-memory stores, the nine-operation
-tool surface over a real MCP transport, and G1's byte-identity done-criterion. It consumes the
+Node-only service consuming the published engine package — in-memory stores, the ten-operation
+game surface as a JSON-over-HTTP wire with the MCP projection beside it, and G1's byte-identity
+done-criterion. It consumes the
 engine and not Platform, which keeps it the cheapest informative failure. **Then**, as a fast
 follow, the .NET edge in front of that workload: Platform's packages terminating transport,
 routing to the Node service, and carrying a distributed trace across the language boundary — the

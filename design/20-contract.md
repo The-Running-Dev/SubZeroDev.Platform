@@ -179,6 +179,11 @@ export interface JsonSchemaDocument {
 no response schema resolves to the engine's envelope type. Both are asserted at generation, and
 together they are the static half of the projection-boundary gate.
 
+**Every request schema is closed on the same terms**, asserted at generation. A request member the
+row's shape does not declare is a `malformed_payload`, never a tolerated extra — which is what makes
+a request narrowing irreversible from the wire (a dropped `audience` cannot be re-supplied) and the
+determinism profile unreachable by any caller.
+
 **The dialect is one value for the whole set**, and which value it is is
 [Unresolved 3](#unresolved).
 
@@ -285,6 +290,12 @@ export interface RequestContext {
 **`correlation` is derived and never supplied.** It is the trace-id of the adopted-or-minted trace
 context; a malformed `inboundTraceParent` yields a fresh root and a fresh correlation, and never a
 failed request. Nothing on this type is persisted, and nothing on it reaches a session record.
+
+**The MCP surface builds the same context without a version path.** A tool call carries no
+`/v<n>/` segment, so `wireVersion` is the artifact's own `wireVersion` — the contract carries
+exactly one, which is what makes the assignment a lookup rather than a negotiation. `correlation`
+is derived by the same rule, from the trace context adopted or minted for the MCP request, and
+`inboundTraceParent` is whatever the MCP HTTP transport carried, or null.
 
 ### Workload — dispatch
 
@@ -522,9 +533,9 @@ export function generate(
 ```
 
 **`generate` is the only entry point**, and every gate the design names runs inside it: arity, error
-coverage, closed response schemas, no response schema resolving to the envelope type, and no row
-carrying the determinism profile. A gate failure returns a `GenerationError` and emits no artifact —
-there is no partial output for a build step to pick up.
+coverage, closed request and response schemas, no response schema resolving to the envelope type, and
+no row carrying the determinism profile. A gate failure returns a `GenerationError` and emits no
+artifact — there is no partial output for a build step to pick up.
 
 ### Contract — workload
 
@@ -898,6 +909,7 @@ this design becomes conditional.
 | `ErrorCodeUncovered` | A declared `SessionStoreErrorCode` has no status mapping | No | Fails the contract build, naming the code |
 | `NarrowingUnknownField` | A `NarrowedField` names a member the engine's declaration does not have | No | Fails the contract build, naming the row and the member |
 | `ResponseSchemaOpen` | A response schema permits additional properties | No | Fails the contract build, naming the schema |
+| `RequestSchemaOpen` | A request schema permits additional properties | No | Fails the contract build, naming the schema. A tolerated extra member would make a request narrowing reversible from the wire |
 | `EnvelopeReachable` | A response schema resolves to the engine's envelope type | No | Fails the contract build. **This is the permanent non-goal's static gate** |
 | `DeterminismProfileInRow` | A row carries the determinism profile as a field | No | Fails the contract build |
 | `DuplicateOperationId` | Two rows share an `OperationId` or an `McpToolName` | No | Fails the contract build, naming both |
@@ -944,8 +956,9 @@ Each is written to be assertable, with the module responsible for maintaining it
 | # | Invariant | Owner |
 |---|---|---|
 | 1 | The row set exactly covers the exported `SessionStore` interface's methods — no method without a row, no row without a method | Generator |
-| 2 | Every `SessionStoreErrorCode` the engine declares appears exactly once in the status mapping, and the mapping has no entry for a code the engine does not declare | Generator |
+| 2 | Every `SessionStoreErrorCode` the engine declares and each of the three transport codes appears exactly once in the status mapping, and the mapping has no other entry | Generator |
 | 3 | Every response schema is closed at every object level, and none resolves to the engine's envelope type | Generator |
+| 3a | Every request schema is closed at every object level, so a narrowed request field cannot be re-supplied and no undeclared member reaches the store | Generator |
 | 4 | `httpPath` equals its row's `operation`, for every row | Generator |
 | 5 | No row carries the determinism profile in any form | Generator |
 | 6 | `OperationId` and `McpToolName` are each unique across the row set | Generator |
@@ -1094,17 +1107,20 @@ are answered.
 
 ## Additions requiring a decision-log entry
 
-Six things above are not stated by the design and are not derivable from it. Each is small,
-mechanical, and named here rather than left for a reader to discover in the code.
+Six things above originated here rather than in the design, and none was derivable from it. Each is
+small, mechanical, and named here rather than left for a reader to discover in the code. One (2) has
+since been folded back into the design's own text.
 
 1. **`Outcome<T, E>` as the TypeScript error channel.** The design specifies error *semantics* and no
    carrier for them on the Node side; "no bare exceptions, no string errors" needs one, and D3's
    `Result<T, TError>` is C# and in another package.
-2. **Run 1 drives `Dispatcher`, not the store directly.** The design has run 1 *"play the fixture's
-   action list against the store"* and both transcripts asserted against one golden file. Those are
-   only jointly true if run 1 applies the row's projection and canonical encoding — otherwise
-   `save-game` alone diverges, since the store returns `SaveHandle` and the wire returns `{ saveId }`.
-   Only the transport differs between the runs.
+2. **Run 1 drives `Dispatcher`, not the store directly.** Now stated by the design itself (*Control
+   flow* §3) — the design originally had run 1 play the fixture's action list *against the store*,
+   and this addition was folded back in when the design was corrected. The reasoning stands in the
+   decision log: both transcripts are asserted against one golden file, which is only true if run 1
+   applies the row's projection and canonical encoding — otherwise `save-game` alone diverges, since
+   the store returns `SaveHandle` and the wire returns `{ saveId }`. Only the transport differs
+   between the runs.
 3. **`canonicalEncode` is a second implementation of the engine's canonical serialization rule.** The
    engine does not export `canonicalStringify`. The rule is restated in this contract under
    `canonicalEncode` because the workload must implement it; **that is a second copy of a rule and
