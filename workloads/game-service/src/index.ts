@@ -2,7 +2,8 @@
 export { canonicalEncode } from "./canonical.js";
 export { loadContract, findRow, statusFor } from "./contract.js";
 export { validateRequest, validateResponse } from "./validate.js";
-export { compose } from "./compose.js";
+export { compose, writeDeterminismDump } from "./compose.js";
+export { readDeterminismDump } from "./dump.js";
 export { createDispatcher } from "./dispatch.js";
 export { buildHttpSurface } from "./http-surface.js";
 export { startWorkload, createProbeSurface, CONTRACT_PATH_VARIABLE } from "./lifecycle.js";

@@ -264,7 +264,7 @@ compare-and-swap, eviction, quotas and expiry, each a binding non-goal.
 ---
 
 ## S4 — The service can be asked to record what the game looked like when it stopped
-**Status:** in progress
+**Status:** shipped
 
 Delivers: an operator can start the service in a mode that plays the same way every time and, when it
 is stopped cleanly, writes to a file of their choosing exactly what the game had become — and nothing
@@ -319,7 +319,7 @@ comparing the dump against anything, which is the next slice's whole subject.
 ---
 
 ## S5 — The byte-identity proof
-**Status:** queued
+**Status:** in progress
 
 Delivers: the question this effort exists to answer gets an answer that anyone can re-run — a game
 played across the network is the same game, byte for byte, as the same game played in-process. And

@@ -4,7 +4,23 @@
  * not describe, and every downstream assertion becomes conditional.
  */
 import { startWorkload } from "./lifecycle.js";
-import type { WorkloadConfiguration } from "./types.js";
+import type { DeterminismProfile, WorkloadConfiguration } from "./types.js";
+
+/** `GAME_SERVICE_DETERMINISM=replay` plus both companion variables selects the replay profile;
+ *  anything else — unset, any other value, or either companion variable missing — is the default
+ *  profile. Without this, the replay profile S4 delivers is reachable only from a programmatic
+ *  `startWorkload` caller (tests), never from the process an operator actually starts. */
+function determinismProfile(): DeterminismProfile {
+  if (process.env["GAME_SERVICE_DETERMINISM"] !== "replay") {
+    return { kind: "default" };
+  }
+  const fixedInstant = process.env["GAME_SERVICE_FIXED_INSTANT"];
+  const dumpPath = process.env["GAME_SERVICE_DUMP_PATH"];
+  if (!fixedInstant || !dumpPath) {
+    return { kind: "default" };
+  }
+  return { kind: "replay", fixedInstant, dumpPath };
+}
 
 function configuration(): WorkloadConfiguration {
   const port = Number.parseInt(process.env["GAME_SERVICE_PORT"] ?? "8080", 10);
@@ -13,7 +29,7 @@ function configuration(): WorkloadConfiguration {
     // An unset host is loopback, decided in `startWorkload` rather than here so every caller of it
     // gets the same answer (invariant 46).
     listen: { host: process.env["GAME_SERVICE_HOST"] ?? "", port },
-    determinism: { kind: "default" },
+    determinism: determinismProfile(),
     otlpEndpoint,
   };
 }
@@ -32,6 +48,9 @@ process.stdout.write(
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     void started.value.shutdown().then((outcome) => {
+      if (!outcome.ok) {
+        process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
+      }
       process.exit(outcome.ok ? 0 : 1);
     });
   });
