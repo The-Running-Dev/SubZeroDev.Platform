@@ -141,6 +141,38 @@ configuration over a standard the runtime already implements. The same test appl
 S3-compatible API rather than one vendor's SDK — and it is why the evaluation prefers
 self-hostable products where a service is genuinely wanted.
 
+#### Provider re-verification — 2026-08-10
+
+The named providers were re-checked against their own sources on the date above. State the date
+whenever this is checked again, for the reason the coverage map above gives: a list with no date
+cannot be told apart from a stale one. **The rule is unchanged; two of the four named providers
+are.**
+
+- **Zitadel is now AGPL-3.0-only**, verified in `zitadel/zitadel/LICENSING.md`. It moved off
+  Apache 2.0 during 2025, for v3 and later. Exceptions carve out `proto/` and the docs app
+  (Apache 2.0) and the login app and client packages (MIT), and the project offers commercial
+  licensing to those for whom AGPL does not work. **This is the qualifier below firing on a
+  provider rather than a library**, which is worth noting because the qualifier was written about
+  NuGet packages and the same failure mode reached the service list within the year. Zitadel stays
+  *compatible* — it is OpenID Connect certified, and the whole point of depending on the protocol
+  is that a compatible provider costs nothing to keep on the list — but it should not be a default,
+  a bundled component, or anything shipped inside an installation image without counsel.
+- **Supabase Auth is now genuinely an OIDC provider, and self-hostably so.** It ships an OAuth 2.1
+  server with `/.well-known/openid-configuration`, `/.well-known/jwks.json`, `/oauth/authorize`,
+  `/oauth/token` and `/oauth/userinfo`, authorization-code with PKCE, and asymmetric validation
+  needing no shared secret. It is gated behind `GOTRUE_OAUTH_SERVER_ENABLED` (default `false`) in
+  the open-source `supabase/auth` tree, so a self-hosted deployment can enable it. That removes the
+  objection this section would otherwise have raised — it satisfies the self-hostable-path clause
+  on its own terms rather than by exception.
+- **Auth0, Entra and Keycloak are unchanged.** Keycloak is Apache 2.0 and a CNCF incubating
+  project, which is the strongest licence-durability position on the list by the standard the next
+  section sets.
+
+**None of this settles a substrate**, and it is recorded here rather than in a new ADR precisely so
+that it does not read as one. Identity's tier is `Undecided` in
+[`platform-identity.md`](../platform-identity.md) §3, deliberately, and ADR-006 rule 3 settles a
+tier when the package is designed.
+
 ### One qualifier the first evaluation forced
 
 **Check the licence's durability, not just its current text.** The .NET ecosystem saw several
