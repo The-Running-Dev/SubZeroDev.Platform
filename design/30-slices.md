@@ -51,7 +51,7 @@ gets a `90-decisions.md` entry from that slice.
 ---
 
 ## S1 — Session and save ids the host can supply
-**Status:** in progress
+**Status:** shipped
 
 Delivers: anyone composing the game engine can hand it the thing that names new sessions and saves,
 so a run played twice from the same starting point names them identically both times. Anyone who
