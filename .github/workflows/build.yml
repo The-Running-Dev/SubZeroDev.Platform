@@ -48,3 +48,45 @@ jobs:
         env:
           ASPNETCORE_ENVIRONMENT: Production
         run: pwsh ./build/Test-SampleRoundTrip.ps1
+
+      # S3.14 / invariant 45: the dependency direction between the framework and a hosted workload
+      # is one-way. Nothing in MSBuild enforces it, so the gate is a build step rather than a
+      # convention, and it runs on every push and pull request like the rest of this job.
+      - name: Assert no framework project references a workload
+        run: pwsh ./build/Test-WorkloadIsolation.ps1
+
+  # S3.15: the workload's suite runs from a fresh clone. It is its own job rather than a step in
+  # the one above so that "a fresh clone" is literal — this job shares no restored state, no
+  # node_modules and no build output with the .NET job, and its only inputs are the checkout and
+  # the two vendored package tarballs the workload declares.
+  game-service:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # S3.13 / invariant 32: with no OTLP endpoint configured the workload must construct no
+      # exporter and attempt no outbound connection. Rejecting both OTLP ports before the suite
+      # runs is what makes that enforced rather than merely unobserved, exactly as the .NET job
+      # does for the sample. Loopback stays open — the suite binds and dials 127.0.0.1 throughout.
+      - name: Block outbound OTLP ports for the workload suite
+        run: |
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -p tcp --dport 4317 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 4318 -j REJECT
+
+      - name: Install the workload's dependencies
+        working-directory: workloads/game-service
+        run: npm install
+
+      - name: Typecheck
+        working-directory: workloads/game-service
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: workloads/game-service
+        run: npm test

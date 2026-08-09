@@ -460,6 +460,22 @@ Rejected: blocking S2.9 entirely on #81 — correct about the dependency but lea
 calls load-bearing untested for an arbitrarily long time; a local registry proves the same mechanism.
 Reversibility: cheap — the name is a string and the registry target is a config value
 
+### 2026-08-09 — The workload's test runner is Vitest, run through `tsx`
+
+Context: S3 needed a test runner and a way to execute TypeScript directly for `start`, and
+`AGENTS.md`'s no-new-dependencies rule requires the alternatives considered to be on record.
+Chosen: `vitest` for tests and `tsx` for running `src/main.ts` without a separate build step.
+Vitest shares its transform pipeline with the rest of the TypeScript-first tooling already in use
+across the contract package's own dev dependencies, needs no separate config for ESM and `.js`
+specifier resolution against `.ts` sources, and its watch mode is what `test:watch` uses during
+development.
+Rejected: `node:test` — zero additional dependency and already in Node's own runtime, but it has no
+built-in TypeScript transform, pushing that need onto a second tool anyway (`tsx` or `ts-node`) and
+losing Vitest's assertion and mocking ergonomics already familiar from the contract package's suite.
+`ts-node` in place of `tsx` — older and slower to start; `tsx` is esbuild-backed and is what the
+contract package's own generator already uses for the same job.
+Reversibility: cheap — dev-only, no published surface depends on the choice
+
 ## Open
 
 _(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
