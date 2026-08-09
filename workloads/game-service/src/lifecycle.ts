@@ -17,10 +17,11 @@ import type { ContractPackage } from "@subzerodev/service-contract";
 
 import { buildHttpSurface } from "./http-surface.js";
 import { createDispatcher } from "./dispatch.js";
-import { compose } from "./compose.js";
+import { compose, writeDeterminismDump } from "./compose.js";
 import { loadContract, validateContract } from "./contract.js";
 import { err, ok } from "./types.js";
 import type {
+  CompositionError,
   HttpSurface,
   ListenEndpoint,
   Outcome,
@@ -208,9 +209,19 @@ export async function startWorkload(
     listening: bound,
     probes: probes.surface,
     async shutdown(): Promise<Outcome<void, ShutdownError>> {
-      // The replay profile's dump is written here, before the listener stops accepting. S4 is
-      // where that lands; the default profile writes nothing and has nowhere to write to.
+      // The replay profile's dump is written here, before the listener stops accepting
+      // (invariant 14). The default profile carries no dump path, so nothing is written and
+      // there is nowhere for it to write to.
+      let written: Outcome<void, CompositionError> = ok(undefined);
+      if (configuration.determinism.kind === "replay") {
+        written = await writeDeterminismDump(composed.value, configuration.determinism);
+      }
+
       await new Promise<void>((resolve) => server.close(() => resolve()));
+
+      if (!written.ok) {
+        return err({ code: "DumpWriteFailed", cause: written.error });
+      }
       return ok(undefined);
     },
   });

@@ -107,6 +107,11 @@ export interface StoreSerializationHandle {
   snapshot(): Promise<StoreSerializationSnapshot>;
 }
 
+export interface DeterminismDump {
+  readonly sessions: Readonly<Record<string, string>>;
+  readonly saves: Readonly<Record<string, string>>;
+}
+
 // ---------------------------------------------------------------------------- probes and envelope
 
 export type ProbeStatus = "healthy" | "unhealthy";
@@ -191,3 +196,7 @@ export type StartupError =
   | { readonly code: "ListenerBindFailed"; readonly endpoint: ListenEndpoint };
 
 export type ShutdownError = { readonly code: "DumpWriteFailed"; readonly cause: CompositionError };
+
+export type DumpReadError =
+  | { readonly code: "DumpAbsent" }
+  | { readonly code: "DumpMalformed" };
