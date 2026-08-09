@@ -254,12 +254,25 @@ adopting either means Platform never builds those.
 | Stack | Postgres, GoTrue, PostgREST, Realtime, Storage, Studio | One Go binary, embedded SQLite |
 | Fits | The chosen PostgreSQL persistence baseline | Local and single-server deployment, superbly |
 | Costs | A substantial operational surface to self-host | SQLite-only; a second runtime; scale ceiling |
+| Is an OIDC **provider** | Yes — see the correction below | **No** — see the correction below |
 
-**Recommendation: record both as live options for D5, decide neither now.** They are irrelevant to
-the near-term gaps, and committing to an auth and storage substrate before there is a product with
-users would be the same mistake as adopting a framework before there is a consumer. What this entry
-buys is that nobody builds Identity or Storage from scratch later without first asking whether one
-of these already is it.
+**Correction, 2026-08-10: PocketBase cannot be the Identity option.** It is an OAuth2/OIDC
+**client** — it authenticates its own users *against* external providers and issues its own tokens.
+It exposes no authorization-server surface: no `/authorize` endpoint, no discovery document, and no
+way for a separate application to authenticate against it. The row above credited it with Identity
+on the strength of "it has auth", which is true and is not the same claim. **Its Storage and
+local-single-binary entries are unaffected**, and it remains a live option for those.
+
+Supabase moved in the other direction over the same period: its OAuth 2.1 / OIDC **server** is real
+and self-hostable, behind `GOTRUE_OAUTH_SERVER_ENABLED`. Both findings are recorded with their
+evidence in [ADR-004](adr/ADR-004-framework-build-not-adopt.md) §"Provider re-verification".
+
+**Recommendation: record both as live options for D5, decide neither now** — Supabase for Identity
+and Storage, PocketBase for Storage and local deployment only. They are irrelevant to the near-term
+gaps, and committing to an auth and storage substrate before there is a product with users would be
+the same mistake as adopting a framework before there is a consumer. What this entry buys is that
+nobody builds Identity or Storage from scratch later without first asking whether one of these
+already is it.
 
 ### Mediator libraries — Platform should not have an opinion
 

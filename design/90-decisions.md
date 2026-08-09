@@ -501,9 +501,78 @@ Pulling its Postgres persistence forward into G1 — the brief orders the byte-i
 durable persistence precisely so persistence has something to be checked against.
 Reversibility: cheap — nothing was taken, and the POC is unaffected either way
 
+### 2026-08-10 — No identity substrate is chosen; the proposed ADR-007 was withdrawn before it was written
+
+Context: Ben asked whether Supabase should be brought in for identity and adjacent capabilities, and
+then asked for the substrate to be settled now as an ADR ahead of G2's persistence work. Research
+was carried out and produced findings worth keeping (recorded in
+[ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) §"Provider re-verification" and in
+`minimal-platform-packages.md`). The decision the ADR was to record is a different matter.
+Chosen: write no substrate ADR. [`platform-identity.md`](../docs/docs/platform-identity.md) §3
+gives Identity the tier `Undecided` and says in terms that filling one in passing "would be the
+speculative-package habit the guard exists to break, arriving as a table cell"; ADR-006 rule 3
+settles a tier when the package is designed. An ADR naming a substrate settles that tier by
+implication. The §4 consumer table is the sharper objection: Identity's three consumers need API
+keys and service accounts (Automator), player accounts (GEaaS), and "a table, established by QR
+link and never an account" (BarStrad) — an OIDC provider answers exactly one of the three, so any
+substrate chosen now would be chosen for the GEaaS column and mislabelled as a Platform decision.
+Rejected: **Keycloak as the reference default** — the strongest licence-durability position
+available (Apache 2.0, CNCF incubating), and it was the recommendation until the tier objection
+landed; declined on weight for the homelab mode, and then moot. **authentik** — MIT outside
+`authentik/enterprise/`, better admin UX, but a workforce/gateway design centre rather than a
+consumer-signup one, and open-core boundaries move. **Supabase Auth as the platform-wide default**
+— fits the GEaaS column well and is now a self-hostable OIDC provider, but that is one column of
+three. **Supabase's data plane (PostgREST, RLS, Storage-with-RLS)** — declined on architecture, not
+hosting: RLS puts ownership checks in SQL policies while the engine hosting contract §6.2–6.3 and
+G3's done-criterion put them in an authorization decorator, and PostgREST would stand up a second
+source of operations beside the row table that S6.4 exists to protect.
+Reversibility: cheap — nothing was adopted, and every finding above is recorded rather than held in
+a conversation
+
+### 2026-08-10 — The Automator and Game Engine as a Service do not share identity
+
+Context: whether a person can hold one account across both products decides whether Platform's
+Identity must federate, link accounts, or carry a shared user directory — and that is expensive to
+retrofit and equally expensive to build speculatively.
+Chosen: they do not share identity. Decided by Ben: the hosted game service serves players and game
+creators; the Automator manages plugins and workflows and is not a surface those users reach. The
+three consumers in [`platform-identity.md`](../docs/docs/platform-identity.md) §4 are therefore
+disjoint principal *domains*, which means Platform's Identity is at most a consistent contract over
+per-application principals rather than a shared store — a reading that argues for the application
+module tier over the framework tier, without settling it.
+Rejected: a shared principal across products — buys single sign-on nobody asked for, and imports
+federation and account-linking design into a package that has not been designed. Deferring the
+question — it is cheap to answer now and shapes the eventual design, and "obviously they would
+share accounts" is exactly the kind of assumption that gets built without ever being written down.
+Cost, stated rather than hidden: Ben's answer carried "at this point", so this is current intent
+rather than a permanent boundary. The hedge that keeps it cheap is opaque, stable principal ids in
+every product from the start, which makes later linking a retrofit rather than a migration.
+Reversibility: cheap now; expensive once any product's principal ids become externally meaningful
+
 ## Open
 
-_(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
+- **What is a principal, when one consumer's principal never has an account?** BarStrad's Identity
+  entry in [`platform-identity.md`](../docs/docs/platform-identity.md) §4 is "a table, established
+  by QR link and never an account", while the Automator's is "users, API keys, service accounts"
+  and GEaaS's is "player accounts". D5's done-criterion requires the divergences that
+  `second-consumer-packages.md` names to be satisfied for every consumer, so this is the question
+  that decides the eventual design — and no identity provider models the BarStrad case. Belongs to
+  the design cycle for the package, not to a vendor evaluation.
+- **The Automator's audience is unsettled, and its Identity row depends on it.**
+  `second-consumer-packages.md` §5 has it open-core, feature-tiered and licensed per installation
+  with agents as the paid dimension, which implies external paying customers; Ben describes it as
+  the tool he uses to manage plugins and workflows. Both, currently — the use is still being
+  worked out. Record it the way BarStrad's billing cell is recorded: unsettled and stated, not
+  guessed. It matters because reading (a) makes Platform's Identity serve a real multi-user,
+  machine-credential case and reading (b) leaves it one serious human-facing consumer and two thin
+  ones.
+- **Identity is being replaced in `SubZeroDev.Adventures`, and that build is the evidence.** The
+  extraction guard wants a running implementation to read rather than a vendor comparison, and
+  Adventures already runs guest-first cookie identity, a GitHub upgrade path with player merge, and
+  transfer codes. The replacement is specified in that repository and stays there; the Platform
+  interest is that it be *readable* as a contract later — a named principal-resolution seam,
+  provider-specific code behind one adapter, and ownership enforced at a store decorator rather
+  than per route. **No `SubZeroDev.Platform.Identity` package is created on the strength of it.**
 
 ---
 
