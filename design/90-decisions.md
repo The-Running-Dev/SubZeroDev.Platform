@@ -476,9 +476,61 @@ losing Vitest's assertion and mocking ergonomics already familiar from the contr
 contract package's own generator already uses for the same job.
 Reversibility: cheap — dev-only, no published surface depends on the choice
 
+### 2026-08-09 — The Adventures POC is a reference for G2 and G3, not a source this effort copies from
+
+Context: [`SubZeroDev.Adventures`](https://github.com/The-Running-Dev/SubZeroDev.Adventures) runs a
+live Fastify service over the same engine release G1 pins — all ten store operations over HTTP,
+Postgres-backed `SessionPersistence` and `ProfileStore`, cookie identity, per-player ownership
+checks, and replay endpoints. It was read end to end to settle whether G1's remaining slices should
+take anything from it.
+Chosen: take no code into S5–S9, and treat the POC as the reference implementation G2 and G3 read
+when they start. Two facts were harvested instead of code. The engine's write ordering is staged
+under `## Open` below. The second needs no work and is recorded here: the POC's hand-written
+`ERROR_STATUS` table agrees with the generated `statusMapping` on all eight engine codes —
+`unknown_session`, `unknown_save` and `unknown_campaign` at `404`, `invalid_state`, `unknown_kind`,
+`save_requires_migration` and `migration_failed` at `409`, `storage_failure` at `503` — which is
+independent corroboration of the mapping rather than self-consistency, since it was arrived at
+separately against the same engine.
+Rejected: porting its routes — they are hand-written REST (`POST /api/sessions/:id/actions`) where
+this workload derives uniform `POST /v1/<operation>` from the row table, so adopting them would put
+a second source of operations beside the table, which is the thing S6.4 exists to detect. Porting
+its replay endpoints as a second byte-identity oracle — they return the stored and replayed blobs in
+a failure body, which is the raw-state surface the brief declares permanently out of scope, and they
+reach `serialize`/`deserialize` from the request path, which invariant 17 keeps out of Dispatch.
+Pulling its Postgres persistence forward into G1 — the brief orders the byte-identity proof before
+durable persistence precisely so persistence has something to be checked against.
+Reversibility: cheap — nothing was taken, and the POC is unaffected either way
+
 ## Open
 
-_(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
+- **The engine writes the mutated blob to memory before persistence on two of its four write paths,
+  and the four disagree with each other.** S9.5 requires the documentation to state where the engine
+  writes the mutated blob before writing through to persistence; the answer is that it depends on the
+  operation. In the `0.5.0` package this workload resolves (`dist/core/session/store.js`, confirmed
+  against the engine source): `createSession` and `loadGame` `await writeSession(record)` and then
+  `sessions.set(...)`; `submitAction` mutates `record.blob` and `record.updatedAt` **in place on the
+  object already held in the map** and then awaits the write; `saveGame` calls `saves.set(saveId,
+  save)` **before** `await writeSave(save)`. `attemptCounter` also increments in memory before
+  dispatch and is never rolled back. While G1's persistence is map-backed and total this is
+  unobservable — `storage_failure` is declared and unreachable. Under G2 it is not: a failing `put`
+  raises `storage_failure`, a `503` the contract marks non-retryable, while memory already holds the
+  advanced game, so a caller that retries anyway applies the action twice. G2 has to decide the
+  ordering and whether the in-memory record rolls back, and whether that is the workload's to fix or
+  the engine's. Found by reading the Adventures POC, whose persistence port runs against this same
+  ordering in production.
+- **The Adventures POC already implements what G2, G3 and G4 will need, against this same engine
+  release.** G2: `server/src/persistence.ts` (Postgres `SessionPersistence`, the engine's own
+  five-method port), `server/src/profile-store.ts`, `server/migrations/002_sessions_and_saves.sql`
+  (`StoredSessionRecord`/`StoredSaveRecord` mapped 1:1, with `created_at`/`updated_at` as `text` and
+  not `timestamptz` — the engine writes ISO-8601 through its `Clock` and reads it back verbatim, and
+  a `timestamptz` round-trip reformats it, which would break byte-identity), and a port-conformance
+  test that builds a second store over the same database to prove durability rather than the
+  write-through cache. G3: guest-first cookie identity persisting only the token's sha256, an
+  ownership guard resolving a session's or save's owner before any store delegation, and a
+  per-player save list — which independently reaches the brief's own conclusion that the ten
+  operations are session-id-keyed and a player-keyed list belongs to the account surface. G4: an
+  on-disk campaign catalogue. Whoever opens G2 should read it before designing the persistence
+  slice.
 
 ---
 
