@@ -34,13 +34,18 @@ import type {
   ComposedWorkload,
   CompositionError,
   DeterminismDump,
-  JsonValue,
   Outcome,
   ReplayDeterminismProfile,
   StoreSerializationHandle,
   StoreSerializationSnapshot,
   WorkloadConfiguration,
 } from "./types.js";
+
+/** Ascending by code unit — the same rule `canonicalEncode` applies to object members, restated
+ *  here so the live snapshot and the dump read back from disk agree on order (S5 compares them). */
+function byId(a: { readonly id: string }, b: { readonly id: string }): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
 
 /** `KindRegistry` is a plain record keyed by kind id; kinds are engine-owned and are not ports. */
 function kinds(): KindRegistry {
@@ -157,8 +162,8 @@ export async function compose(
   const serialization: StoreSerializationHandle = {
     async snapshot(): Promise<StoreSerializationSnapshot> {
       return {
-        sessions: [...sessions.values()].map((record) => ({ id: record.sessionId, blob: record.blob })),
-        saves: [...saves.values()].map((record) => ({ id: record.saveId, blob: record.blob })),
+        sessions: [...sessions.values()].map((record) => ({ id: record.sessionId, blob: record.blob })).sort(byId),
+        saves: [...saves.values()].map((record) => ({ id: record.saveId, blob: record.blob })).sort(byId),
       };
     },
   };
@@ -183,7 +188,7 @@ export async function writeDeterminismDump(
   // `canonicalEncode` is what makes "keyed by id, in id order" a property of the encoding rather
   // than a step the writer must remember (`20-contract.md`, additions requiring a decision-log
   // entry, item 4).
-  const encoded = canonicalEncode(dump as unknown as JsonValue);
+  const encoded = canonicalEncode(dump);
   if (!encoded.ok) {
     return err({ code: "DumpWriteFailed", path: profile.dumpPath });
   }
@@ -193,7 +198,7 @@ export async function writeDeterminismDump(
   // an empty store (S4.6).
   const temporaryPath = `${profile.dumpPath}.tmp-${process.pid}-${Date.now()}`;
   try {
-    writeFileSync(temporaryPath, encoded.value as string, "utf8");
+    writeFileSync(temporaryPath, encoded.value, "utf8");
     renameSync(temporaryPath, profile.dumpPath);
   } catch {
     try {

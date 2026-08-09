@@ -4,7 +4,7 @@
  * here for the reader): a dump that was never written and a dump that describes an empty store
  * are different facts, and this module keeps them distinguishable.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { err, ok } from "./types.js";
 import type { DeterminismDump, DumpReadError, Outcome, StoreSerializationSnapshot } from "./types.js";
 
@@ -42,12 +42,19 @@ export function readDeterminismDump(contents: Uint8Array): Outcome<StoreSerializ
   });
 }
 
-/** The path-taking convenience S5's `HostedTarget.readDump()` calls through. Absence is checked
- *  here, before `readDeterminismDump` — its signature takes bytes, and there are none to offer
- *  for a file that does not exist. */
+/** The path-taking convenience S5's `HostedTarget.readDump()` calls through. A single read, not an
+ *  `existsSync` check followed by one — that pairing leaves a TOCTOU window (a file removed between
+ *  the two calls) and leaves every non-absence failure (a directory at the path, no read
+ *  permission) to throw past this function's `Outcome` return type instead of naming a
+ *  `DumpReadError`. `ENOENT` is `DumpAbsent`; every other read failure is `DumpMalformed`, the
+ *  contract's only other code for "not a store snapshot this function could return". */
 export function readDeterminismDumpFile(path: string): Outcome<StoreSerializationSnapshot, DumpReadError> {
-  if (!existsSync(path)) {
-    return err({ code: "DumpAbsent" });
+  let contents: Uint8Array;
+  try {
+    contents = readFileSync(path);
+  } catch (thrown) {
+    const code = (thrown as NodeJS.ErrnoException).code;
+    return err({ code: code === "ENOENT" ? "DumpAbsent" : "DumpMalformed" });
   }
-  return readDeterminismDump(readFileSync(path));
+  return readDeterminismDump(contents);
 }

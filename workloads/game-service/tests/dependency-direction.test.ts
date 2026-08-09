@@ -5,7 +5,9 @@
  * check to the MCP surface.
  *
  * This walks the transitive closure of local (relative) imports reachable from the surface's
- * entry file and collects every named import encountered anywhere in it. `StoreSerializationHandle`
+ * entry file, using the TypeScript parser rather than a hand-rolled regex — a regex misses mixed
+ * default+named imports, re-exports (`export { X } from`), side-effect imports, and dynamic
+ * `import()`, any of which would let a real violation through a passing test. `StoreSerializationHandle`
  * is declared in `types.ts`, which the surface's graph does reach — the check that matters is
  * narrower than file reachability: nothing in the graph may *import* the name.
  */
@@ -13,19 +15,82 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
-
-const IMPORT_RE = /import\s+(?:type\s+)?(?:\{([^}]*)\}|[\w*]+)\s+from\s+["']([^"']+)["']/g;
+const TARGET_NAME = "StoreSerializationHandle";
 
 function resolveRelative(fromFile: string, specifier: string): string {
   const withoutExtension = specifier.replace(/\.js$/, "");
   return `${resolve(dirname(fromFile), withoutExtension)}.ts`;
 }
 
-function collectNamedImports(entryFile: string): Set<string> {
+function parse(file: string): ts.SourceFile {
+  return ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+/** Every local (relative) module specifier this file's import/export/dynamic-import statements
+ *  name, regardless of form — named, default, namespace, side-effect, or re-export all push their
+ *  target onto the traversal, unlike a regex keyed to one import shape. */
+function localSpecifiers(source: ts.SourceFile): string[] {
+  const specifiers: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      specifiers.push((node.arguments[0] as ts.StringLiteral).text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return specifiers.filter((specifier) => specifier.startsWith("."));
+}
+
+/** True if this file's own text can bind `target` — a named import, a named re-export, or (since
+ *  a namespace import or `export *` makes every export of its target reachable through a property
+ *  access this AST walk does not resolve) a literal-identifier scan whenever either wildcard form
+ *  is present. Recall over precision: this is a security-boundary gate, and a wildcard import that
+ *  merely mentions the name in an unrelated comment is a false positive worth accepting. */
+function namesTarget(source: ts.SourceFile, target: string): boolean {
+  let sawWildcard = false;
+  let namedDirectly = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && node.importClause) {
+      const bindings = node.importClause.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if (element.name.text === target) namedDirectly = true;
+        }
+      }
+      if (bindings && ts.isNamespaceImport(bindings)) sawWildcard = true;
+    }
+    if (ts.isExportDeclaration(node)) {
+      if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+        for (const element of node.exportClause.elements) {
+          if (element.name.text === target) namedDirectly = true;
+        }
+      } else if (!node.exportClause) {
+        sawWildcard = true; // `export * from "..."` re-exports everything
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  if (namedDirectly) return true;
+  return sawWildcard && new RegExp(`\\b${target}\\b`).test(source.getFullText());
+}
+
+function reachesTarget(entryFile: string, target: string): boolean {
   const visited = new Set<string>();
-  const named = new Set<string>();
   const stack = [resolve(entryFile)];
 
   while (stack.length > 0) {
@@ -33,27 +98,17 @@ function collectNamedImports(entryFile: string): Set<string> {
     if (visited.has(file)) continue;
     visited.add(file);
 
-    const text = readFileSync(file, "utf8");
-    for (const match of text.matchAll(IMPORT_RE)) {
-      const [, names, specifier] = match;
-      if (names) {
-        for (const raw of names.split(",")) {
-          const name = raw.trim().split(/\s+as\s+/)[0]?.trim();
-          if (name) named.add(name);
-        }
-      }
-      if (specifier?.startsWith(".")) {
-        stack.push(resolveRelative(file, specifier));
-      }
+    const source = parse(file);
+    if (namesTarget(source, target)) return true;
+    for (const specifier of localSpecifiers(source)) {
+      stack.push(resolveRelative(file, specifier));
     }
   }
-
-  return named;
+  return false;
 }
 
 describe("S4.9 — the HTTP surface's module graph does not reach StoreSerializationHandle", () => {
   it("names no import of StoreSerializationHandle anywhere in its transitive module graph", () => {
-    const named = collectNamedImports(resolve(SRC_ROOT, "http-surface.ts"));
-    expect(named.has("StoreSerializationHandle")).toBe(false);
+    expect(reachesTarget(resolve(SRC_ROOT, "http-surface.ts"), TARGET_NAME)).toBe(false);
   });
 });

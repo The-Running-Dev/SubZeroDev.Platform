@@ -107,10 +107,12 @@ export interface StoreSerializationHandle {
   snapshot(): Promise<StoreSerializationSnapshot>;
 }
 
-export interface DeterminismDump {
+// A type alias (not an interface) so it picks up TypeScript's implicit index signature and is
+// structurally assignable to `JsonValue` with no cast at the one call site that encodes it.
+export type DeterminismDump = {
   readonly sessions: Readonly<Record<string, string>>;
   readonly saves: Readonly<Record<string, string>>;
-}
+};
 
 // ---------------------------------------------------------------------------- probes and envelope
 

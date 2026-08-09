@@ -11,9 +11,10 @@ import { join } from "node:path";
 
 import { startWorkload } from "../src/lifecycle.js";
 import { createFixedClock } from "../src/compose.js";
+import { canonicalEncode } from "../src/canonical.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { bodyJson, post, recordingStore, surfaceOver } from "./support/harness.js";
-import type { WorkloadConfiguration } from "../src/types.js";
+import type { JsonValue, WorkloadConfiguration } from "../src/types.js";
 
 function freshDumpPath(): string {
   return join(mkdtempSync(join(tmpdir(), "determinism-dump-")), "dump.json");
@@ -79,9 +80,15 @@ describe("S4.1 — the replay profile writes a canonical dump at shutdown", () =
     expect(shutdown.ok).toBe(true);
 
     const raw = readFileSync(path, "utf8");
-    expect(raw).not.toMatch(/[\n\t]|: | :/);
-
     const parsed = JSON.parse(raw) as { sessions: Record<string, string>; saves: Record<string, string> };
+
+    // Re-encoding the parsed value must reproduce the file byte for byte — the direct test of
+    // "canonical JSON", rather than a whitespace regex that a blob's own string content (a colon
+    // followed by a space, entirely legal inside a JSON string value) can trip on a correct encode.
+    const reencoded = canonicalEncode(parsed as unknown as JsonValue);
+    expect(reencoded.ok).toBe(true);
+    if (reencoded.ok) expect(raw).toBe(reencoded.value);
+
     expect(Object.keys(parsed)).toEqual(["saves", "sessions"]);
     expect(Object.keys(parsed.sessions).sort()).toEqual([...sessionIds].sort());
     expect(Object.keys(parsed.saves)).toEqual([saveId]);
