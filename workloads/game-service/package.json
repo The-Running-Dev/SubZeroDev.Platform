@@ -1,0 +1,28 @@
+{
+  "name": "@subzerodev/game-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The hosted Game Engine service — the JSON wire over one engine session store (G1, S3).",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@subzerodev/service-contract": "file:./vendor/subzerodev-service-contract-0.2.0.tgz",
+    "@the-running-dev/game-engine": "file:./vendor/the-running-dev-game-engine-0.5.0.tgz",
+    "ajv": "^8.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
