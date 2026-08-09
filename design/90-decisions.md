@@ -503,34 +503,7 @@ Reversibility: cheap — nothing was taken, and the POC is unaffected either way
 
 ## Open
 
-- **The engine writes the mutated blob to memory before persistence on two of its four write paths,
-  and the four disagree with each other.** S9.5 requires the documentation to state where the engine
-  writes the mutated blob before writing through to persistence; the answer is that it depends on the
-  operation. In the `0.5.0` package this workload resolves (`dist/core/session/store.js`, confirmed
-  against the engine source): `createSession` and `loadGame` `await writeSession(record)` and then
-  `sessions.set(...)`; `submitAction` mutates `record.blob` and `record.updatedAt` **in place on the
-  object already held in the map** and then awaits the write; `saveGame` calls `saves.set(saveId,
-  save)` **before** `await writeSave(save)`. `attemptCounter` also increments in memory before
-  dispatch and is never rolled back. While G1's persistence is map-backed and total this is
-  unobservable — `storage_failure` is declared and unreachable. Under G2 it is not: a failing `put`
-  raises `storage_failure`, a `503` the contract marks non-retryable, while memory already holds the
-  advanced game, so a caller that retries anyway applies the action twice. G2 has to decide the
-  ordering and whether the in-memory record rolls back, and whether that is the workload's to fix or
-  the engine's. Found by reading the Adventures POC, whose persistence port runs against this same
-  ordering in production.
-- **The Adventures POC already implements what G2, G3 and G4 will need, against this same engine
-  release.** G2: `server/src/persistence.ts` (Postgres `SessionPersistence`, the engine's own
-  five-method port), `server/src/profile-store.ts`, `server/migrations/002_sessions_and_saves.sql`
-  (`StoredSessionRecord`/`StoredSaveRecord` mapped 1:1, with `created_at`/`updated_at` as `text` and
-  not `timestamptz` — the engine writes ISO-8601 through its `Clock` and reads it back verbatim, and
-  a `timestamptz` round-trip reformats it, which would break byte-identity), and a port-conformance
-  test that builds a second store over the same database to prove durability rather than the
-  write-through cache. G3: guest-first cookie identity persisting only the token's sha256, an
-  ownership guard resolving a session's or save's owner before any store delegation, and a
-  per-player save list — which independently reaches the brief's own conclusion that the ten
-  operations are session-id-keyed and a player-keyed list belongs to the account surface. G4: an
-  on-disk campaign catalogue. Whoever opens G2 should read it before designing the persistence
-  slice.
+_(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
 
 ---
 
