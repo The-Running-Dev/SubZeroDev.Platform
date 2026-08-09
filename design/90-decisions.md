@@ -417,6 +417,49 @@ contradiction.
 Reversibility: cheap while the contract is pre-1.0 — opening a schema is an additive change for
 callers.
 
+### 2026-08-09 — "Depends on nothing" governs the published artifact, not the generator's build inputs
+
+Context: `01-contract-rules.md` rule 5 in `SubZeroDev.ServiceContract` says the repository "depends
+on nothing," and S2's generator must resolve the pinned engine package to project schemas from its
+types — rule 1, "projected, never authored," requires it. Design Q3 asked which of these two
+readings governs.
+Chosen: the published `ContractPackage` carries zero runtime dependencies — that is what a consumer
+pinning it can rely on. The generator itself, and its tests, may depend on the engine package (to
+project types from, resolved at generation time and never dereferenced into the artifact) and on
+ordinary dev tooling (a TypeScript compiler, a JSON Schema validator for its own gates). None of
+that ships. Decided by Ben.
+Rejected: extending "depends on nothing" to the generator's build inputs — the only reading under
+which S2.1's projection could not happen at all, since there would be nothing left to project from.
+Reversibility: cheap — it is a statement about what the rule means, not a structural choice
+
+### 2026-08-09 — The generated schema set declares JSON Schema draft 2020-12
+
+Context: Unresolved 3 — `JsonSchemaDocument.$schema` has a type and no value, and the choice fixes
+which validator the workload can use and whether `additionalProperties: false` composes the way the
+closed-schema gates assume.
+Chosen: `https://json-schema.org/draft/2020-12/schema` for every emitted document. Ajv supports it
+natively (`ajv/dist/2020`), and it is JSON Schema's own current draft. Decided by Ben.
+Rejected: draft-07 — still ajv's default and very widely supported, but a step behind the dialect
+JSON Schema itself now recommends, with no offsetting advantage for this contract.
+Reversibility: expensive once a consumer has pinned a version against it
+
+### 2026-08-09 — The contract package publishes as `@subzerodev/service-contract` on npm; S2's publish
+criterion runs against a local registry, not live npm
+
+Context: Unresolved 4 — the package's published name and registry. Issue #81 (the `@subzerodev` npm
+organisation reservation) is open as of this decision, so a real `npm publish` under that scope is
+not yet available to this session, and would be an external, credentialed action outside what an
+agent session performs unprompted regardless.
+Chosen: the name is fixed now — `@subzerodev/service-contract`, npm registry — so the workload's
+dependency declaration (Unresolved 4's blocking use) has its first line. S2.9's acceptance
+("published under a semantic version," "republishing the same version is refused") is satisfied
+against a local, ephemeral registry started for the test run, proving the refuse-to-overwrite gate
+for real without needing live npm credentials. The actual first publish to the real `@subzerodev`
+scope happens later, by Ben, once issue #81 closes. Decided by Ben.
+Rejected: blocking S2.9 entirely on #81 — correct about the dependency but leaves a gate the design
+calls load-bearing untested for an arbitrarily long time; a local registry proves the same mechanism.
+Reversibility: cheap — the name is a string and the registry target is a config value
+
 ## Open
 
 _(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
