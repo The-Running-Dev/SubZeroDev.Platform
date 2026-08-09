@@ -23,8 +23,8 @@ A reference from Platform to a product is a build failure, not a review comment.
 - **Start here:** [`docs/docs/platform-identity.md`](docs/docs/platform-identity.md) — what
   this repository is, and the collision it settles. Everything else depends on it.
 - The reading order is the sidebar order: identity → platform specification → Game Engine as
-  a Service → engine hosting contract → MCP tool contract → packages → second-consumer
-  packages → application modules → implementation plan → ADRs.
+  a Service → engine hosting contract → MCP tool contract → prior art survey → packages →
+  second-consumer packages → application modules → implementation plan → ADRs.
 - **Game Engine as a Service (GEaaS)** is one *hosted workload*, not what this repository is.
   Formerly "NEaaS — Narrative Engine as a Service"; renamed because the engine ships three
   kinds and only one of them is narrative.
