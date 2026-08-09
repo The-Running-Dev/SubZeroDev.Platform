@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "tsx src/main.ts"
+    "start": "tsx src/main.ts",
+    "regenerate-golden": "tsx scripts/regenerate-golden-transcript.ts"
   },
   "dependencies": {
     "@subzerodev/service-contract": "file:./vendor/subzerodev-service-contract-0.2.0.tgz",

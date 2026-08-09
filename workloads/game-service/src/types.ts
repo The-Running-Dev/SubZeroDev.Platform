@@ -4,6 +4,7 @@
  * this file declares only what the workload adds on its own side of the boundary.
  */
 import type {
+  CanonicalJson,
   CorrelationId,
   HttpStatus,
   JsonObject,
@@ -18,6 +19,7 @@ import type { EngineErrorCode } from "@subzerodev/service-contract";
 import type { SessionStore } from "@the-running-dev/game-engine";
 
 export type {
+  CanonicalJson,
   CorrelationId,
   HttpStatus,
   JsonObject,
@@ -202,3 +204,54 @@ export type ShutdownError = { readonly code: "DumpWriteFailed"; readonly cause: 
 export type DumpReadError =
   | { readonly code: "DumpAbsent" }
   | { readonly code: "DumpMalformed" };
+
+// ---------------------------------------------------------------------------- proof harness
+
+/**
+ * `20-contract.md`'s "Proof harness — fixture, transcript, comparisons" and "test scope" sections.
+ * Not exported by the contract package (same footing as `ValidatedArguments` above), so declared
+ * here beside the harness that is their only producer and consumer.
+ */
+export interface ReplayStep {
+  readonly operation: OperationId;
+  readonly arguments: JsonObject;
+}
+
+export interface ReplayFixture {
+  readonly campaignId: string;
+  readonly seed: string;
+  readonly steps: readonly ReplayStep[];
+}
+
+export type Transcript = readonly CanonicalJson[];
+
+export interface Divergence {
+  readonly locator: string;
+  readonly expected: string;
+  readonly actual: string;
+}
+
+export interface ComparisonResult {
+  readonly matched: boolean;
+  readonly firstDivergence: Divergence | null;
+}
+
+export interface RunResult {
+  readonly transcript: Transcript;
+  readonly serialization: StoreSerializationSnapshot;
+}
+
+export interface HostedTarget {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, ShutdownError>>;
+  readDump(): Promise<Outcome<StoreSerializationSnapshot, DumpReadError>>;
+}
+
+export type ReplayError =
+  | { readonly code: "CoverageIncomplete"; readonly onlyInFixture: readonly string[]; readonly onlyInTable: readonly string[] }
+  | { readonly code: "UnknownOperationInFixture"; readonly step: number; readonly operation: string }
+  | { readonly code: "StepFailed"; readonly step: number; readonly operation: string; readonly wireErrorCode: string }
+  | { readonly code: "TransportFailure"; readonly detail: string }
+  | { readonly code: "Composition"; readonly cause: CompositionError }
+  | { readonly code: "Shutdown"; readonly cause: ShutdownError }
+  | { readonly code: "DumpRead"; readonly cause: DumpReadError };
