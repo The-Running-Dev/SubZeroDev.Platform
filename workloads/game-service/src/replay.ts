@@ -68,7 +68,7 @@ export async function runInProcess(
 
   const composed = await compose(configuration, contract);
   if (!composed.ok) {
-    throw new Error(`runInProcess: compose() failed: ${JSON.stringify(composed.error)}`);
+    return err({ code: "Composition", cause: composed.error });
   }
 
   const dispatcher = createDispatcher(contract, composed.value.store);
@@ -100,6 +100,14 @@ export async function runHosted(
 ): Promise<Outcome<RunResult, ReplayError>> {
   const transcript: CanonicalJson[] = [];
 
+  // Shuts the target down on every path out of this function, including a step failure — the
+  // doc comment's "the last thing this does is shut the target down" applies to a failed run as
+  // much as a passing one, or the process the failure path abandons keeps its socket bound.
+  async function bail(error: ReplayError): Promise<Outcome<RunResult, ReplayError>> {
+    await target.shutdown();
+    return err(error);
+  }
+
   for (const [index, step] of fixture.steps.entries()) {
     let response: Response;
     try {
@@ -109,7 +117,7 @@ export async function runHosted(
         body: JSON.stringify(step.arguments),
       });
     } catch (thrown) {
-      return err({ code: "TransportFailure", detail: thrown instanceof Error ? thrown.message : String(thrown) });
+      return bail({ code: "TransportFailure", detail: thrown instanceof Error ? thrown.message : String(thrown) });
     }
 
     // Fully read before the next request is sent — the sequencing this criterion is about, not
@@ -124,9 +132,9 @@ export async function runHosted(
         // A non-JSON error body is itself a StepFailed below, under the unknown code.
       }
       if (code === "unknown_operation") {
-        return err({ code: "UnknownOperationInFixture", step: index, operation: step.operation as string });
+        return bail({ code: "UnknownOperationInFixture", step: index, operation: step.operation as string });
       }
-      return err({ code: "StepFailed", step: index, operation: step.operation as string, wireErrorCode: code });
+      return bail({ code: "StepFailed", step: index, operation: step.operation as string, wireErrorCode: code });
     }
 
     transcript.push(body as CanonicalJson);

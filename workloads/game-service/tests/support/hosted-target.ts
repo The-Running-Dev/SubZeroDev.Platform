@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { REPLAY_FIXED_INSTANT } from "../../src/replay.js";
 import { readDeterminismDumpFile } from "../../src/dump.js";
 import { err, ok } from "../../src/types.js";
 import type { HostedTarget, Outcome, ShutdownError } from "../../src/types.js";
@@ -43,9 +44,15 @@ export async function spawnHostedWorkload(): Promise<SpawnedHostedTarget> {
   const dumpPath = freshDumpPath();
 
   const env: NodeJS.ProcessEnv = { ...process.env };
+  // The published contract is the one `runInProcess` loads (`loadPublishedContract()`, unconditional);
+  // an inherited override here would let the hosted run compare against a different contract than the
+  // in-process run, defeating comparisons A and B without either failing loudly.
+  delete env["GAME_SERVICE_CONTRACT"];
   env["GAME_SERVICE_HOST"] = "127.0.0.1";
   env["GAME_SERVICE_PORT"] = "0";
-  env["GAME_SERVICE_FIXED_INSTANT"] = "2026-01-01T00:00:00.000Z";
+  // The same fixed instant `runInProcess` uses, so the one clock input the byte-identity proof
+  // holds constant is stated once rather than duplicated as a literal that could drift from it.
+  env["GAME_SERVICE_FIXED_INSTANT"] = REPLAY_FIXED_INSTANT;
   env["GAME_SERVICE_DUMP_PATH"] = dumpPath;
 
   const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [TSX_CLI, ENTRYPOINT], {
@@ -58,10 +65,26 @@ export async function spawnHostedWorkload(): Promise<SpawnedHostedTarget> {
     stderr += chunk.toString("utf8");
   });
 
+  // A write to `child.stdin` after the child has already exited (a crash, an OOM kill) emits
+  // EPIPE; with no listener, Node escalates that to an uncaught exception. This keeps the failure
+  // inside `shutdown()`'s own `Outcome` instead of taking the process down.
+  let stdinError: Error | null = null;
+  child.stdin.on("error", (thrown: Error) => {
+    stdinError = thrown;
+  });
+
+  let hasExited = false;
+  child.once("exit", () => {
+    hasExited = true;
+  });
+
   const listening = await new Promise<Listening>((resolve, reject) => {
     const lines = createInterface({ input: child.stdout });
     const timeout = setTimeout(() => {
       lines.close();
+      // The child never reported readiness within budget — nothing else will ever reclaim it, so
+      // the timeout itself is the one place that kills it.
+      child.kill("SIGKILL");
       reject(new Error(`hosted workload did not report readiness in time; stderr:\n${stderr}`));
     }, 15_000);
 
@@ -88,29 +111,37 @@ export async function spawnHostedWorkload(): Promise<SpawnedHostedTarget> {
   const baseAddress = `http://${listening.listening.host}:${listening.listening.port}`;
 
   const exited = new Promise<number | null>((resolve) => {
+    if (hasExited) {
+      resolve(child.exitCode);
+      return;
+    }
     child.once("exit", (code) => resolve(code));
   });
-
-  let shutdownRequested = false;
 
   const target: HostedTarget = {
     baseAddress,
 
     async shutdown(): Promise<Outcome<void, ShutdownError>> {
-      shutdownRequested = true;
-      // A byte on stdin, not a signal — `hosted-entrypoint.ts`'s own note explains why a signal
-      // cannot be relied on to reach a Node child process gracefully on every platform.
-      child.stdin.write("shutdown\n");
-      const code = await exited;
-      if (code === 0) return ok(undefined);
-
-      let cause: ShutdownError["cause"] | undefined;
-      try {
-        cause = JSON.parse(stderr.trim().split("\n").pop() ?? "") as ShutdownError["cause"];
-      } catch {
-        cause = { code: "DumpWriteFailed", path: dumpPath };
+      if (!hasExited) {
+        // A byte on stdin, not a signal — `hosted-entrypoint.ts`'s own note explains why a signal
+        // cannot be relied on to reach a Node child process gracefully on every platform.
+        child.stdin.write("shutdown\n");
       }
-      return err({ code: "DumpWriteFailed", cause: cause ?? { code: "DumpWriteFailed", path: dumpPath } });
+      const code = await exited;
+      if (code === 0 && !stdinError) return ok(undefined);
+
+      // The child's own last stderr line is a `ShutdownError` (`hosted-entrypoint.ts` writes
+      // `outcome.error` verbatim), not a bare `CompositionError` — parsed and unwrapped here
+      // rather than cast wholesale into `cause`, or the reported error nests one layer too deep
+      // and its declared fields (e.g. `cause.path`) come back `undefined`.
+      let fromChild: ShutdownError | undefined;
+      try {
+        fromChild = JSON.parse(stderr.trim().split("\n").pop() ?? "") as ShutdownError;
+      } catch {
+        fromChild = undefined;
+      }
+      const cause = fromChild?.cause ?? { code: "DumpWriteFailed" as const, path: dumpPath };
+      return err({ code: "DumpWriteFailed", cause });
     },
 
     async readDump() {
@@ -122,7 +153,7 @@ export async function spawnHostedWorkload(): Promise<SpawnedHostedTarget> {
     target,
     dumpPath,
     forceKill(): void {
-      if (!shutdownRequested) child.kill("SIGKILL");
+      if (!hasExited) child.kill("SIGKILL");
     },
   };
 }

@@ -33,13 +33,24 @@ if (!started.ok) {
   process.exit(1);
 }
 
-process.stdout.write(`${JSON.stringify({ listening: started.value.listening })}\n`);
+const workload = started.value;
+process.stdout.write(`${JSON.stringify({ listening: workload.listening })}\n`);
 
-process.stdin.once("data", () => {
-  void started.value.shutdown().then((outcome) => {
+let shuttingDown = false;
+function triggerShutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void workload.shutdown().then((outcome) => {
     if (!outcome.ok) {
       process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
     }
     process.exit(outcome.ok ? 0 : 1);
   });
-});
+}
+
+process.stdin.once("data", triggerShutdown);
+// A parent that dies without writing the shutdown byte (an interrupted test run, a killed CI job)
+// still closes its end of the pipe, which delivers `end` here — the one signal every platform
+// gives this process that its parent is gone, without relying on a POSIX signal reaching a Node
+// child the way `hosted-target.ts`'s own note on `SIGTERM` explains it cannot.
+process.stdin.once("end", triggerShutdown);

@@ -195,6 +195,10 @@ describe("S5.8 — no transcript entry anywhere contains a canonical serializati
     for (const entry of inProcess.value.transcript) {
       for (const blob of blobs) {
         expect(entry).not.toContain(blob);
+        // A blob is JSON itself; carried as a JSON *string* member every quote in it is
+        // backslash-escaped, so the raw substring check above cannot see it that way. This is
+        // the escaped form the same blob would take as a string member's value.
+        expect(entry).not.toContain(JSON.stringify(blob).slice(1, -1));
       }
     }
   });

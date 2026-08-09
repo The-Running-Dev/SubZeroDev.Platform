@@ -252,5 +252,6 @@ export type ReplayError =
   | { readonly code: "UnknownOperationInFixture"; readonly step: number; readonly operation: string }
   | { readonly code: "StepFailed"; readonly step: number; readonly operation: string; readonly wireErrorCode: string }
   | { readonly code: "TransportFailure"; readonly detail: string }
+  | { readonly code: "Composition"; readonly cause: CompositionError }
   | { readonly code: "Shutdown"; readonly cause: ShutdownError }
   | { readonly code: "DumpRead"; readonly cause: DumpReadError };
