@@ -476,6 +476,31 @@ losing Vitest's assertion and mocking ergonomics already familiar from the contr
 contract package's own generator already uses for the same job.
 Reversibility: cheap — dev-only, no published surface depends on the choice
 
+### 2026-08-09 — The Adventures POC is a reference for G2 and G3, not a source this effort copies from
+
+Context: [`SubZeroDev.Adventures`](https://github.com/The-Running-Dev/SubZeroDev.Adventures) runs a
+live Fastify service over the same engine release G1 pins — all ten store operations over HTTP,
+Postgres-backed `SessionPersistence` and `ProfileStore`, cookie identity, per-player ownership
+checks, and replay endpoints. It was read end to end to settle whether G1's remaining slices should
+take anything from it.
+Chosen: take no code into S5–S9, and treat the POC as the reference implementation G2 and G3 read
+when they start. Two facts were harvested instead of code. The engine's write ordering is staged
+under `## Open` below. The second needs no work and is recorded here: the POC's hand-written
+`ERROR_STATUS` table agrees with the generated `statusMapping` on all eight engine codes —
+`unknown_session`, `unknown_save` and `unknown_campaign` at `404`, `invalid_state`, `unknown_kind`,
+`save_requires_migration` and `migration_failed` at `409`, `storage_failure` at `503` — which is
+independent corroboration of the mapping rather than self-consistency, since it was arrived at
+separately against the same engine.
+Rejected: porting its routes — they are hand-written REST (`POST /api/sessions/:id/actions`) where
+this workload derives uniform `POST /v1/<operation>` from the row table, so adopting them would put
+a second source of operations beside the table, which is the thing S6.4 exists to detect. Porting
+its replay endpoints as a second byte-identity oracle — they return the stored and replayed blobs in
+a failure body, which is the raw-state surface the brief declares permanently out of scope, and they
+reach `serialize`/`deserialize` from the request path, which invariant 17 keeps out of Dispatch.
+Pulling its Postgres persistence forward into G1 — the brief orders the byte-identity proof before
+durable persistence precisely so persistence has something to be checked against.
+Reversibility: cheap — nothing was taken, and the POC is unaffected either way
+
 ## Open
 
 _(none — tracked in GitHub issues; see [`/track`](../.claude/commands/track.md))_
