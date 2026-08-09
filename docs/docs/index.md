@@ -16,7 +16,7 @@ Read in this order. Each document says what it owns; decisions live in their own
 | 2 | [Platform Specification](platform-specification.md) | The framework — packages, modules, hosting, persistence, identity, billing |
 | 3 | [Game Engine as a Service](game-engine-as-a-service.md) | The hosted game product — vision, not contract |
 | 4 | [Engine Hosting Contract](engine-hosting-contract.md) | What "Platform hosts the engine" means, and the four questions hosting introduces |
-| 5 | [MCP Tool Contract](mcp-tool-contract.md) | The engine's tool table — current, built and tested |
+| 5 | [MCP Tool Contract](https://github.com/The-Running-Dev/SubZeroDev.ServiceContract/blob/main/mcp-tool-contract.md) | The engine's tool table — current, built and tested. Lives in `SubZeroDev.ServiceContract` |
 | 7 | [The Minimal Package Set](minimal-platform-packages.md) | The six near-term packages: boundaries and done-criteria |
 | 8 | [Second-Consumer Packages](second-consumer-packages.md) | Identity, Tenancy, Billing, Mcp — justified, not scheduled |
 | 9 | [Application Modules](application-modules.md) | The framework/module split, a third consumer, and the two modules admitted by decision |

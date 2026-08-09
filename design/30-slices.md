@@ -51,7 +51,7 @@ gets a `90-decisions.md` entry from that slice.
 ---
 
 ## S1 — Session and save ids the host can supply
-**Status:** in progress
+**Status:** shipped
 
 Delivers: anyone composing the game engine can hand it the thing that names new sessions and saves,
 so a run played twice from the same starting point names them identically both times. Anyone who
@@ -103,7 +103,7 @@ which the workload composes for itself in S4.
 ---
 
 ## S2 — The contract has a home, and a build that refuses to publish a lie
-**Status:** queued
+**Status:** shipped
 
 Delivers: the hosted service's contract stops being a document and becomes an artifact. One reviewed
 table of operations produces a versioned package anything can consume, and the build that produces it
@@ -182,7 +182,7 @@ need and G3 pays for; a second `wireVersion`; anything that dereferences a `$id`
 ---
 
 ## S3 — The game is playable over HTTP, and asking wrongly has an answer
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator can start the game service and play a whole game over the network — start a
 session, make choices, ask what the scene looks like, save it and load it back. Every operation the

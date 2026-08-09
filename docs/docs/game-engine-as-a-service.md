@@ -50,8 +50,8 @@ Above the pure engine:
   applies — AI authors campaign data, the engine validates it).
 - Multiplayer sessions (far future).
 - **A live MCP transport**, making the tool contract
-  ([`mcp-tool-contract.md`](mcp-tool-contract.md)) reachable by a real AI client rather than
-  only called directly by tests.
+  ([`mcp-tool-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.ServiceContract/blob/main/mcp-tool-contract.md))
+  reachable by a real AI client rather than only called directly by tests.
 
 Each of those is either a Platform concern or a product concern, and the split is not
 obvious by inspection. [`engine-hosting-contract.md`](engine-hosting-contract.md) §4 draws
