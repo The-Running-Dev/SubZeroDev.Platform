@@ -14,7 +14,10 @@ import type { JsonValue, Outcome, ValidatedArguments, ValidationFailure } from "
 
 const compiled = new WeakMap<ContractPackage, Map<string, ValidateFunction>>();
 
-function validatorsFor(contract: ContractPackage): Map<string, ValidateFunction> {
+/** Compiled once per contract and cached — the compilation itself is what `buildHttpSurface` forces
+ *  to happen before the bind, so a schema ajv cannot resolve is a startup refusal, not a first-use
+ *  failure. */
+export function validatorsFor(contract: ContractPackage): Map<string, ValidateFunction> {
   const existing = compiled.get(contract);
   if (existing) return existing;
 

@@ -18,7 +18,7 @@ import type { ContractPackage } from "@subzerodev/service-contract";
 import { buildHttpSurface } from "./http-surface.js";
 import { createDispatcher } from "./dispatch.js";
 import { compose } from "./compose.js";
-import { loadContract } from "./contract.js";
+import { loadContract, validateContract } from "./contract.js";
 import { err, ok } from "./types.js";
 import type {
   HttpSurface,
@@ -70,7 +70,14 @@ export function createProbeSurface(): ProbeGate {
 function readContract(): Outcome<ContractPackage, StartupError> {
   const override = process.env[CONTRACT_PATH_VARIABLE];
   if (!override) {
-    return ok(loadPublishedContract());
+    // The installed package's own artifact still owes the same major-version refusal the override
+    // path enforces — a resolved dependency one major ahead of what this workload understands is
+    // exactly the case `ContractLoadError.UnsupportedContractVersion` exists to catch.
+    const validated = validateContract(loadPublishedContract());
+    if (!validated.ok) {
+      return err({ code: "ContractLoad", cause: validated.error });
+    }
+    return ok(validated.value);
   }
   let bytes: Uint8Array;
   try {
@@ -85,18 +92,28 @@ function readContract(): Outcome<ContractPackage, StartupError> {
   return ok(loaded.value);
 }
 
+// Every request/response schema in the contract describes a payload of a few kilobytes; this is
+// generous headroom over any legitimate one, not a tuned limit.
+const MAX_BODY_BYTES = 1_048_576;
+
+class BodyTooLarge extends Error {}
+
 async function readRequestBody(message: IncomingMessage): Promise<Uint8Array> {
   const chunks: Buffer[] = [];
-  for await (const chunk of message) {
-    chunks.push(chunk as Buffer);
+  let total = 0;
+  for await (const chunk of message as AsyncIterable<Buffer>) {
+    total += chunk.length;
+    if (total > MAX_BODY_BYTES) throw new BodyTooLarge();
+    chunks.push(chunk);
   }
-  return new Uint8Array(Buffer.concat(chunks));
+  return Buffer.concat(chunks);
 }
 
 function serve(surface: HttpSurface, probes: ProbeSurface): Server {
   return createServer((message: IncomingMessage, response: ServerResponse) => {
     void (async () => {
-      const path = message.url ?? "/";
+      const [rawPath] = (message.url ?? "/").split("?");
+      const path = rawPath ?? "/";
 
       if (path === "/livez" || path === "/readyz") {
         const result = path === "/livez" ? probes.liveness() : probes.readiness();
@@ -123,14 +140,23 @@ function serve(surface: HttpSurface, probes: ProbeSurface): Server {
       // The bytes the encoder produced reach the socket unaltered — nothing between the encoder
       // and here re-encodes (invariant 33).
       response.end(Buffer.from(wire.body));
-    })();
+    })().catch(() => {
+      // A stream error (client abort, reset connection) or an oversized body reaches here with no
+      // response started yet. There is nothing left to negotiate on a broken connection, and the
+      // one thing this must not do is become an unhandled rejection that takes the process with it.
+      response.destroy();
+    });
   });
 }
 
 export async function startWorkload(
   configuration: WorkloadConfiguration,
 ): Promise<Outcome<WorkloadProcess, StartupError>> {
-  if (!Number.isInteger(configuration.listen.port) || configuration.listen.port < 0) {
+  if (
+    !Number.isInteger(configuration.listen.port) ||
+    configuration.listen.port < 0 ||
+    configuration.listen.port > 65535
+  ) {
     return err({ code: "ConfigurationInvalid", setting: "listen.port" });
   }
 

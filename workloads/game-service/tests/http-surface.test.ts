@@ -8,7 +8,7 @@ import { CAMPAIGN_ID, realStore } from "./support/real-workload.js";
 
 describe("S3.1 — the whole table is routed and a game plays over it", () => {
   it("creates a session, submits an action against it, and a query returns that action's scene", async () => {
-    const surface = surfaceOver(realStore());
+    const surface = surfaceOver(await realStore());
 
     const created = await post(surface, "/v1/create-session", { campaignId: CAMPAIGN_ID });
     expect(created.status).toBe(200);
@@ -37,7 +37,7 @@ describe("S3.1 — the whole table is routed and a game plays over it", () => {
   });
 
   it("routes every row in the table — no row is missing a live path", async () => {
-    const surface = surfaceOver(realStore());
+    const surface = surfaceOver(await realStore());
     const unrouted: string[] = [];
 
     for (const row of contract.operations) {
@@ -54,7 +54,7 @@ describe("S3.1 — the whole table is routed and a game plays over it", () => {
   });
 
   it("encodes canonically — members ascending by code unit, no insignificant whitespace", async () => {
-    const surface = surfaceOver(realStore());
+    const surface = surfaceOver(await realStore());
     const created = await post(surface, "/v1/create-session", { campaignId: CAMPAIGN_ID });
     const text = bodyText(created);
 
@@ -94,6 +94,21 @@ describe("S3.3 — unsupported version and unknown operation share a status and 
     expect(response.status).toBe(404);
     expect(Object.keys(bodyJson(response)).sort()).toEqual(["code", "correlation"]);
     expect(bodyJson(response)["code"]).toBe("unknown_operation");
+  });
+
+  it("returns 404 unknown_operation for a non-POST method on an otherwise-valid route, and never calls the store", async () => {
+    const { store, calls } = recordingStore();
+    const surface = surfaceOver(store);
+    const response = await surface.handle({
+      method: "GET",
+      path: "/v1/create-session",
+      headers: new Map(),
+      body: new TextEncoder().encode(JSON.stringify({ campaignId: CAMPAIGN_ID })),
+    });
+
+    expect(response.status).toBe(404);
+    expect(bodyJson(response)["code"]).toBe("unknown_operation");
+    expect(calls).toEqual([]);
   });
 });
 
@@ -153,7 +168,7 @@ describe("S3.5 — engine codes travel verbatim, and status is the mapping's ans
 
 describe("S3.6 — a rejected action is a 200, not a 4xx", () => {
   it("returns 200 carrying the store's unsuccessful result for an unknown action id", async () => {
-    const surface = surfaceOver(realStore());
+    const surface = surfaceOver(await realStore());
     const created = await post(surface, "/v1/create-session", { campaignId: CAMPAIGN_ID });
     const { sessionId } = bodyJson(created) as unknown as { sessionId: string };
 
@@ -177,7 +192,7 @@ describe("S3.7 — every response carries the correlation", () => {
   });
 
   it("mints a fresh correlation for a malformed traceparent and still returns the ordinary status", async () => {
-    const surface = surfaceOver(realStore());
+    const surface = surfaceOver(await realStore());
     const headers = new Map([["traceparent", "not-a-traceparent"]]);
     const response = await post(surface, "/v1/create-session", { campaignId: CAMPAIGN_ID }, headers);
 
@@ -188,7 +203,7 @@ describe("S3.7 — every response carries the correlation", () => {
   });
 
   it("carries the correlation on a success as well as on a failure", async () => {
-    const surface = surfaceOver(realStore());
+    const surface = surfaceOver(await realStore());
     const ok = await post(surface, "/v1/create-session", { campaignId: CAMPAIGN_ID });
     const bad = await post(surface, "/v1/get-scene", {});
 

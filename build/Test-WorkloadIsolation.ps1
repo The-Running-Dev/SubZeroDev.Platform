@@ -63,6 +63,11 @@ foreach ($tree in @('src', 'samples')) {
             foreach ($section in @('dependencies', 'devDependencies')) {
                 if (-not $manifest.PSObject.Properties.Name.Contains($section)) { continue }
                 foreach ($entry in $manifest.$section.PSObject.Properties) {
+                    # A workload published under its own package name has no path to resolve; it is
+                    # checked by identity, the same reasoning `PackageReference` gets below.
+                    if ($entry.Name -match '^(@subzerodev/|SubZeroDev\..*\.Workload)') {
+                        $violations.Add("$($project.FullName): dependency '$($entry.Name)' names a workload package.")
+                    }
                     if ($entry.Value -is [string] -and $entry.Value -match 'workloads[/\\]') {
                         $violations.Add("$($project.FullName): dependency '$($entry.Name)' resolves into workloads/ ('$($entry.Value)').")
                     }
@@ -90,7 +95,10 @@ foreach ($tree in @('src', 'samples')) {
                 if ($value -notmatch '[/\\]') { continue }
 
                 $candidate = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectDirectory, $value))
-                if ($candidate.StartsWith($workloadsFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $workloadsPrefix = $workloadsFull + [System.IO.Path]::DirectorySeparatorChar
+                $insideWorkloads = ($candidate -eq $workloadsFull) -or
+                    $candidate.StartsWith($workloadsPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+                if ($insideWorkloads) {
                     $violations.Add("$($project.FullName): <$($node.LocalName) $attribute=""$value""> resolves into workloads/ ('$candidate').")
                 }
             }

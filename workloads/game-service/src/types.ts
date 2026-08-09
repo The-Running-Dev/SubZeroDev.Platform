@@ -174,7 +174,8 @@ export type CompositionError =
 export type SurfaceBuildError =
   | { readonly code: "DuplicateRoute"; readonly first: string; readonly second: string }
   | { readonly code: "DuplicateToolName"; readonly first: string; readonly second: string }
-  | { readonly code: "MissingSchema"; readonly operation: string; readonly reference: string };
+  | { readonly code: "MissingSchema"; readonly operation: string; readonly reference: string }
+  | { readonly code: "SchemaCompile"; readonly detail: string };
 
 export type EncodingError =
   | { readonly code: "NonFiniteNumber"; readonly locator: string }

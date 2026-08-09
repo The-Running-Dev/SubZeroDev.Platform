@@ -9,9 +9,9 @@
  */
 import type { ContractPackage, OperationRow, WireErrorCode } from "@subzerodev/service-contract";
 import { canonicalEncode } from "./canonical.js";
-import { findRow, statusFor } from "./contract.js";
+import { statusFor } from "./contract.js";
 import { correlationFrom } from "./correlation.js";
-import { schemaPresent, validateRequest, validateResponse } from "./validate.js";
+import { schemaPresent, validateRequest, validateResponse, validatorsFor } from "./validate.js";
 import { err, ok } from "./types.js";
 import type {
   CorrelationId,
@@ -61,7 +61,20 @@ function errorResponse(status: HttpStatus, code: WireErrorCode, correlation: Cor
 
 function internalFailure(contract: ContractPackage, correlation: CorrelationId): WireResponse {
   const status = statusFor(contract, INTERNAL_FAILURE);
+  // internal_failure is itself the answer every other unmapped code falls back to; there is
+  // nowhere further to redirect an unmapped internal_failure, so this is the one true default.
   return errorResponse(status.ok ? status.value : 500, INTERNAL_FAILURE, correlation);
+}
+
+/** Every transport-code error response goes through here: the status the mapping names, or
+ *  `internal_failure` if the code has none — never the code's own status defaulted to 500, which
+ *  would answer with a status the mapping never produced (invariant 27). */
+function respondError(contract: ContractPackage, code: WireErrorCode, correlation: CorrelationId): WireResponse {
+  const mapped = statusFor(contract, code);
+  if (!mapped.ok) {
+    return internalFailure(contract, correlation);
+  }
+  return errorResponse(mapped.value, code, correlation);
 }
 
 function parseBody(body: Uint8Array): JsonValue | undefined {
@@ -94,37 +107,47 @@ export function buildHttpSurface(
     routes.set(segment, row);
   }
 
+  // Compiled before the bind, alongside the presence check above — a schema ajv cannot resolve is
+  // a startup refusal, not a route that fails the first time it is asked to validate anything.
+  try {
+    validatorsFor(contract);
+  } catch (thrown) {
+    return err({ code: "SchemaCompile", detail: thrown instanceof Error ? thrown.message : String(thrown) });
+  }
+
   const surface: HttpSurface = {
     async handle(request: WireRequest): Promise<WireResponse> {
       const correlation = correlationFrom(request.headers.get("traceparent") ?? null);
 
       try {
-        const parts = splitPath(request.path);
-        if (!parts) {
-          return errorResponse(await status(contract, "unknown_operation"), "unknown_operation" as WireErrorCode, correlation);
-        }
-        if (parts.version !== (contract.wireVersion as string)) {
-          return errorResponse(
-            await status(contract, "unsupported_version"),
-            "unsupported_version" as WireErrorCode,
-            correlation,
-          );
+        // The wire is uniformly POST; every route is one row, and a row has no verb variants for
+        // any other method to mean.
+        if (request.method.toUpperCase() !== "POST") {
+          return respondError(contract, "unknown_operation" as WireErrorCode, correlation);
         }
 
-        const row = routes.get(parts.operation) ?? findRow(contract, parts.operation as OperationId);
-        if (!row || !routes.has(row.httpPath as string)) {
-          return errorResponse(await status(contract, "unknown_operation"), "unknown_operation" as WireErrorCode, correlation);
+        const parts = splitPath(request.path);
+        if (!parts) {
+          return respondError(contract, "unknown_operation" as WireErrorCode, correlation);
+        }
+        if (parts.version !== (contract.wireVersion as string)) {
+          return respondError(contract, "unsupported_version" as WireErrorCode, correlation);
+        }
+
+        const row = routes.get(parts.operation);
+        if (!row) {
+          return respondError(contract, "unknown_operation" as WireErrorCode, correlation);
         }
 
         const body = parseBody(request.body);
         if (body === undefined) {
-          return errorResponse(await status(contract, "malformed_payload"), "malformed_payload" as WireErrorCode, correlation);
+          return respondError(contract, "malformed_payload" as WireErrorCode, correlation);
         }
 
         const validated = validateRequest(contract, row, body);
         if (!validated.ok) {
           // Nothing happened: the store was never reached, so nothing here is idempotency-sensitive.
-          return errorResponse(await status(contract, "malformed_payload"), "malformed_payload" as WireErrorCode, correlation);
+          return respondError(contract, "malformed_payload" as WireErrorCode, correlation);
         }
 
         const outcome = await dispatcher.invoke(row.operation as OperationId, validated.value);
@@ -160,9 +183,4 @@ export function buildHttpSurface(
   };
 
   return ok(surface);
-}
-
-async function status(contract: ContractPackage, code: string): Promise<HttpStatus> {
-  const mapped = statusFor(contract, code as WireErrorCode);
-  return mapped.ok ? mapped.value : 500;
 }

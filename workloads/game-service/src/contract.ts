@@ -26,7 +26,14 @@ export function loadContract(source: Uint8Array): Outcome<ContractPackage, Contr
   } catch {
     return err({ code: "MalformedArtifact", member: "(document)" });
   }
+  return validateContract(parsed);
+}
 
+/** The shape and version checks both contract sources need — bytes read through `loadContract`,
+ *  and the installed package's own artifact, which arrives already parsed. Both are refusals to
+ *  start on the same terms; only the published path skipping this made the major-version guarantee
+ *  conditional on which path a deployment happened to take. */
+export function validateContract(parsed: unknown): Outcome<ContractPackage, ContractLoadError> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return err({ code: "MalformedArtifact", member: "(document)" });
   }

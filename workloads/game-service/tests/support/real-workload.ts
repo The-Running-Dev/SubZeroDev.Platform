@@ -1,46 +1,28 @@
 /**
  * A composed workload over the real engine and a real campaign — what S3.1 and S3.6 need, since
  * "the whole table is routed" and "a rejected action is a 200" are only observable against a game
- * that actually plays.
+ * that actually plays. Reached through `compose()` itself rather than a second copy of it, so these
+ * tests exercise the same composition the deployed process runs.
  */
-import {
-  buildContentRegistry,
-  buildWorldGraphMvpCampaign,
-  createEngine,
-  createSessionLayer,
-  storyGraphKind,
-  simulationKind,
-  worldGraphKind,
-  WORLD_GRAPH_MVP_CAMPAIGN_ID,
-} from "@the-running-dev/game-engine";
-import type { ContentRegistry, KindRegistry, SessionStore } from "@the-running-dev/game-engine";
+import { loadPublishedContract } from "@subzerodev/service-contract";
+import { WORLD_GRAPH_MVP_CAMPAIGN_ID } from "@the-running-dev/game-engine";
+import type { SessionStore } from "@the-running-dev/game-engine";
+
+import { compose } from "../../src/compose.js";
+import type { WorkloadConfiguration } from "../../src/types.js";
 
 export const CAMPAIGN_ID = WORLD_GRAPH_MVP_CAMPAIGN_ID;
 
-export function kinds(): KindRegistry {
-  return {
-    [storyGraphKind.id]: storyGraphKind,
-    [simulationKind.id]: simulationKind,
-    [worldGraphKind.id]: worldGraphKind,
-  } as KindRegistry;
-}
+const CONFIGURATION: WorkloadConfiguration = {
+  listen: { host: "127.0.0.1", port: 0 },
+  determinism: { kind: "default" },
+  otlpEndpoint: null,
+};
 
-export function contentRegistry(): ContentRegistry {
-  const campaign = buildWorldGraphMvpCampaign();
-  if (!campaign.ok || !campaign.value) {
-    throw new Error("the MVP campaign did not build");
+export async function realStore(): Promise<SessionStore> {
+  const composed = await compose(CONFIGURATION, loadPublishedContract());
+  if (!composed.ok) {
+    throw new Error(`compose() failed: ${JSON.stringify(composed.error)}`);
   }
-  const registry = buildContentRegistry([campaign.value]);
-  if (!registry.ok || !registry.value) {
-    throw new Error("the content registry did not build");
-  }
-  return registry.value;
-}
-
-/** The engine and store the workload composes, built directly — `compose()` is asserted on its
- *  own terms in the startup tests, and these tests want a store without a listener. */
-export function realStore(): SessionStore {
-  const registry = contentRegistry();
-  const engine = createEngine({ kinds: kinds(), registry });
-  return createSessionLayer({ engine, registry });
+  return composed.value.store;
 }

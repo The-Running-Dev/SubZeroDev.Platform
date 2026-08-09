@@ -63,8 +63,10 @@ export function createDispatcher(contract: ContractPackage, store: SessionStore)
         throw new Error(`the store declares no ${row.storeMethod as string}`);
       }
 
-      const positional =
-        names === null ? [args] : names.map((name) => (args as JsonObject)[name]).filter((held) => held !== undefined);
+      // `undefined` in a non-final slot must stay in that slot — dropping it would shift every
+      // later argument left. Passing it through explicitly is harmless: the store method reads it
+      // as an omitted optional parameter either way.
+      const positional = names === null ? [args] : names.map((name) => (args as JsonObject)[name]);
 
       try {
         const returned = await invocation.apply(store, positional);

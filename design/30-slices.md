@@ -182,7 +182,7 @@ need and G3 pays for; a second `wireVersion`; anything that dereferences a `$id`
 ---
 
 ## S3 — The game is playable over HTTP, and asking wrongly has an answer
-**Status:** in progress
+**Status:** shipped
 
 Delivers: an operator can start the game service and play a whole game over the network — start a
 session, make choices, ask what the scene looks like, save it and load it back. Every operation the
@@ -264,7 +264,7 @@ compare-and-swap, eviction, quotas and expiry, each a binding non-goal.
 ---
 
 ## S4 — The service can be asked to record what the game looked like when it stopped
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator can start the service in a mode that plays the same way every time and, when it
 is stopped cleanly, writes to a file of their choosing exactly what the game had become — and nothing
