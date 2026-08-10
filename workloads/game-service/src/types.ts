@@ -8,7 +8,9 @@ import type {
   CorrelationId,
   HttpStatus,
   JsonObject,
+  JsonSchemaDocument,
   JsonValue,
+  McpToolName,
   OperationId,
   Outcome,
   SchemaRef,
@@ -23,7 +25,9 @@ export type {
   CorrelationId,
   HttpStatus,
   JsonObject,
+  JsonSchemaDocument,
   JsonValue,
+  McpToolName,
   OperationId,
   Outcome,
   SchemaRef,
@@ -153,6 +157,22 @@ export interface WireResponse {
 
 export interface HttpSurface {
   handle(request: WireRequest): Promise<WireResponse>;
+}
+
+// ---------------------------------------------------------------------------- MCP surface
+
+export interface McpToolDescriptor {
+  readonly name: McpToolName;
+  readonly inputSchema: JsonSchemaDocument;
+}
+
+export type McpToolOutcome =
+  | { readonly kind: "result"; readonly value: CanonicalJson }
+  | { readonly kind: "error"; readonly error: WireErrorBody };
+
+export interface McpSurface {
+  listTools(): readonly McpToolDescriptor[];
+  callTool(name: McpToolName, args: JsonValue): Promise<McpToolOutcome>;
 }
 
 // ---------------------------------------------------------------------------- composition

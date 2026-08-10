@@ -15,20 +15,30 @@ import { readFileSync } from "node:fs";
 import { loadPublishedContract } from "@subzerodev/service-contract";
 import type { ContractPackage } from "@subzerodev/service-contract";
 
+import { canonicalEncode } from "./canonical.js";
+import { correlationFrom } from "./correlation.js";
 import { buildHttpSurface } from "./http-surface.js";
+import { buildMcpSurface } from "./mcp-surface.js";
 import { createDispatcher } from "./dispatch.js";
 import { compose, writeDeterminismDump } from "./compose.js";
 import { loadContract, validateContract } from "./contract.js";
+import { INTERNAL_FAILURE, wireError } from "./wire-error.js";
 import { err, ok } from "./types.js";
 import type {
   CompositionError,
+  CorrelationId,
+  HttpStatus,
   HttpSurface,
+  JsonValue,
   ListenEndpoint,
+  McpSurface,
+  McpToolName,
   Outcome,
   ProbeResult,
   ProbeSurface,
   ShutdownError,
   StartupError,
+  WireErrorCode,
   WireRequest,
   WorkloadConfiguration,
   WorkloadProcess,
@@ -110,7 +120,89 @@ async function readRequestBody(message: IncomingMessage): Promise<Uint8Array> {
   return Buffer.concat(chunks);
 }
 
-function serve(surface: HttpSurface, probes: ProbeSurface): Server {
+const MCP_LIST_TOOLS = "/mcp/list-tools";
+const MCP_CALL_TOOL = "/mcp/call-tool";
+
+interface McpRequest {
+  readonly path: string;
+  readonly method: string;
+  readonly body: Uint8Array;
+  readonly correlation: CorrelationId;
+}
+
+interface McpResponse {
+  readonly status: HttpStatus;
+  readonly body: string;
+  /** `null` only on a successful tool result: `McpToolOutcome`'s result arm carries no correlation
+   *  and `callTool` takes no context parameter, so the transport has none to report. That is a
+   *  contract gap against invariant 29, recorded in `mcp-surface.ts` — not a choice made here. */
+  readonly correlation: CorrelationId | null;
+}
+
+/**
+ * The MCP HTTP transport: `POST /mcp/list-tools` with no body, and `POST /mcp/call-tool` with
+ * `{ name, arguments }`. Neither carries a `/v<n>/` segment — the MCP surface has no version path
+ * (`20-contract.md`, "Workload — request context").
+ *
+ * Codes and statuses are the JSON wire's, resolved through the same `wire-error.ts` the HTTP
+ * surface calls: `20-contract.md` heads that table "HTTP and MCP surfaces", so a tool error answers
+ * with the status the mapping names rather than one this transport invented.
+ */
+async function handleMcp(contract: ContractPackage, mcp: McpSurface, request: McpRequest): Promise<McpResponse> {
+  // The wire is uniformly POST, and a tool call is one row's invocation by another name; no row has
+  // a verb variant for any other method to mean. Without this, a `GET` listed the tools and a
+  // `DELETE` ran a state-changing tool.
+  if (request.method.toUpperCase() !== "POST") {
+    return errorResponse(contract, "unknown_operation" as WireErrorCode, request.correlation);
+  }
+
+  if (request.path === MCP_LIST_TOOLS) {
+    // A descriptor set is JSON the artifact itself supplied; there is no branch here that can make
+    // it non-encodable, and the fallback exists so this path has no throw of its own.
+    const encoded = canonicalEncode({ tools: mcp.listTools() } as unknown as JsonValue);
+    if (!encoded.ok) {
+      return errorResponse(contract, INTERNAL_FAILURE, request.correlation);
+    }
+    return { status: 200, body: encoded.value as string, correlation: null };
+  }
+
+  if (request.path !== MCP_CALL_TOOL) {
+    return errorResponse(contract, "unknown_operation" as WireErrorCode, request.correlation);
+  }
+
+  // An unparsable body and a missing or non-string `name` are both the caller's payload to fix, so
+  // both are `malformed_payload`. `internal_failure` is reserved for an unhandled rejection or a
+  // response that failed validation, and telling a caller to read a log line for their own bad
+  // envelope is the one answer that helps nobody.
+  let parsed: { name?: unknown; arguments?: unknown };
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(request.body)) as { name?: unknown; arguments?: unknown };
+  } catch {
+    return errorResponse(contract, "malformed_payload" as WireErrorCode, request.correlation);
+  }
+  if (typeof parsed.name !== "string") {
+    return errorResponse(contract, "malformed_payload" as WireErrorCode, request.correlation);
+  }
+
+  const outcome = await mcp.callTool(parsed.name as McpToolName, (parsed.arguments ?? {}) as JsonValue);
+  if (outcome.kind === "result") {
+    return { status: 200, body: outcome.value as string, correlation: null };
+  }
+  // The surface has already resolved the code and minted the correlation; re-encoding it through
+  // `wireError` is what attaches the status, and produces the same bytes the wire would.
+  return errorResponse(contract, outcome.error.code, outcome.error.correlation);
+}
+
+function errorResponse(
+  contract: ContractPackage,
+  code: WireErrorCode,
+  correlation: CorrelationId,
+): McpResponse {
+  const envelope = wireError(contract, code, correlation);
+  return { status: envelope.status, body: envelope.body, correlation: envelope.correlation };
+}
+
+function serve(contract: ContractPackage, surface: HttpSurface, mcp: McpSurface, probes: ProbeSurface): Server {
   return createServer((message: IncomingMessage, response: ServerResponse) => {
     void (async () => {
       const [rawPath] = (message.url ?? "/").split("?");
@@ -121,6 +213,26 @@ function serve(surface: HttpSurface, probes: ProbeSurface): Server {
         const body = JSON.stringify({ status: result.status });
         response.writeHead(result.status === "healthy" ? 200 : 503, { "content-type": "application/json" });
         response.end(body);
+        return;
+      }
+
+      if (path === MCP_LIST_TOOLS || path === MCP_CALL_TOOL) {
+        const inbound = message.headers["traceparent"];
+        const result = await handleMcp(contract, mcp, {
+          path,
+          method: message.method ?? "POST",
+          body: await readRequestBody(message),
+          // Adopted here, where the header is in hand, so a transport-level refusal is at least
+          // reachable from the caller's trace. A refusal the *surface* raises is not — see the
+          // note in `mcp-surface.ts`.
+          correlation: correlationFrom(typeof inbound === "string" ? inbound : null),
+        });
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (result.correlation !== null) {
+          headers["x-correlation-id"] = result.correlation as string;
+        }
+        response.writeHead(result.status, headers);
+        response.end(result.body);
         return;
       }
 
@@ -175,6 +287,10 @@ export async function startWorkload(
   if (!built.ok) {
     return err({ code: "SurfaceBuild", cause: built.error });
   }
+  const builtMcp = buildMcpSurface(contract.value, dispatcher);
+  if (!builtMcp.ok) {
+    return err({ code: "SurfaceBuild", cause: builtMcp.error });
+  }
   probes.markSurfacesBuilt();
 
   // `otlpEndpoint` null means no exporter is constructed and no outbound connection is attempted —
@@ -190,7 +306,7 @@ export async function startWorkload(
   }
 
   const host = configuration.listen.host.trim().length > 0 ? configuration.listen.host : LOOPBACK;
-  const server = serve(built.value, probes.surface);
+  const server = serve(contract.value, built.value, builtMcp.value, probes.surface);
 
   const bound = await new Promise<ListenEndpoint | null>((resolve) => {
     server.once("error", () => resolve(null));

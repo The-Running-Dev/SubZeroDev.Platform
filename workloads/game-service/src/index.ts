@@ -6,5 +6,6 @@ export { compose, writeDeterminismDump } from "./compose.js";
 export { readDeterminismDump } from "./dump.js";
 export { createDispatcher } from "./dispatch.js";
 export { buildHttpSurface } from "./http-surface.js";
+export { buildMcpSurface } from "./mcp-surface.js";
 export { startWorkload, createProbeSurface, CONTRACT_PATH_VARIABLE } from "./lifecycle.js";
 export * from "./types.js";

@@ -551,28 +551,18 @@ Reversibility: cheap now; expensive once any product's principal ids become exte
 
 ## Open
 
-- **What is a principal, when one consumer's principal never has an account?** BarStrad's Identity
-  entry in [`platform-identity.md`](../docs/docs/platform-identity.md) §4 is "a table, established
-  by QR link and never an account", while the Automator's is "users, API keys, service accounts"
-  and GEaaS's is "player accounts". D5's done-criterion requires the divergences that
-  `second-consumer-packages.md` names to be satisfied for every consumer, so this is the question
-  that decides the eventual design — and no identity provider models the BarStrad case. Belongs to
-  the design cycle for the package, not to a vendor evaluation.
-- **The Automator's audience is unsettled, and its Identity row depends on it.**
-  `second-consumer-packages.md` §5 has it open-core, feature-tiered and licensed per installation
-  with agents as the paid dimension, which implies external paying customers; Ben describes it as
-  the tool he uses to manage plugins and workflows. Both, currently — the use is still being
-  worked out. Record it the way BarStrad's billing cell is recorded: unsettled and stated, not
-  guessed. It matters because reading (a) makes Platform's Identity serve a real multi-user,
-  machine-credential case and reading (b) leaves it one serious human-facing consumer and two thin
-  ones.
-- **Identity is being replaced in `SubZeroDev.Adventures`, and that build is the evidence.** The
-  extraction guard wants a running implementation to read rather than a vendor comparison, and
-  Adventures already runs guest-first cookie identity, a GitHub upgrade path with player merge, and
-  transfer codes. The replacement is specified in that repository and stays there; the Platform
-  interest is that it be *readable* as a contract later — a named principal-resolution seam,
-  provider-specific code behind one adapter, and ownership enforced at a store decorator rather
-  than per route. **No `SubZeroDev.Platform.Identity` package is created on the strength of it.**
+- **`20-contract.md` contradicts itself about the MCP surface's correlation, and the code cannot
+  satisfy both halves.** "Workload — request context" says the MCP surface adopts whatever
+  `traceparent` the transport carried, and invariant 29 says every response carries the
+  correlation. The `McpSurface` declared under "MCP surface — workload" gives `callTool` no context
+  parameter to receive one and gives `McpToolOutcome`'s result arm no member to return one, so a
+  successful tool result carries no correlation anywhere and no inbound trace reaches an MCP call.
+  Closing it amends the contract (`callTool` takes the request context; the result arm carries the
+  correlation) and is `/contract`'s to make — recorded rather than silently reconciled, per
+  *Source of truth*. Found by the S6 code review; the seven findings that did not need a contract
+  change are fixed on `slice/S6`.
+
+_(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100))
 
 ---
 

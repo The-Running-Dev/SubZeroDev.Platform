@@ -9,9 +9,9 @@
  */
 import type { ContractPackage, OperationRow, WireErrorCode } from "@subzerodev/service-contract";
 import { canonicalEncode } from "./canonical.js";
-import { statusFor } from "./contract.js";
 import { correlationFrom } from "./correlation.js";
 import { schemaPresent, validateRequest, validateResponse, validatorsFor } from "./validate.js";
+import { internalFailure as internalFailureEnvelope, wireError } from "./wire-error.js";
 import { err, ok } from "./types.js";
 import type {
   CorrelationId,
@@ -26,7 +26,6 @@ import type {
   WireResponse,
 } from "./types.js";
 
-const INTERNAL_FAILURE = "internal_failure" as WireErrorCode;
 const JSON_CONTENT_TYPE = "application/json";
 
 /** `POST /v1/create-session` → `{ version: "v1", operation: "create-session" }`. Anything that is
@@ -49,32 +48,16 @@ function respond(status: HttpStatus, body: string, correlation: CorrelationId): 
   };
 }
 
-/** The two-member envelope, encoded by the same encoder every success uses. Never exception text
- *  and never payload content (invariant 30). */
-function errorResponse(status: HttpStatus, code: WireErrorCode, correlation: CorrelationId): WireResponse {
-  const encoded = canonicalEncode({ code: code as string, correlation: correlation as string });
-  // Two string members cannot fail canonical encoding; the fallback exists so this path has no
-  // throw of its own rather than because it is reachable.
-  const body = encoded.ok ? (encoded.value as string) : `{"code":"${INTERNAL_FAILURE}","correlation":"${correlation}"}`;
-  return respond(status, body, correlation);
-}
-
 function internalFailure(contract: ContractPackage, correlation: CorrelationId): WireResponse {
-  const status = statusFor(contract, INTERNAL_FAILURE);
-  // internal_failure is itself the answer every other unmapped code falls back to; there is
-  // nowhere further to redirect an unmapped internal_failure, so this is the one true default.
-  return errorResponse(status.ok ? status.value : 500, INTERNAL_FAILURE, correlation);
+  const envelope = internalFailureEnvelope(contract, correlation);
+  return respond(envelope.status, envelope.body, envelope.correlation);
 }
 
-/** Every transport-code error response goes through here: the status the mapping names, or
- *  `internal_failure` if the code has none — never the code's own status defaulted to 500, which
- *  would answer with a status the mapping never produced (invariant 27). */
+/** Every error response goes through `wire-error.ts`, which the MCP transport also calls — the
+ *  status the mapping names, or `internal_failure` if the code has none (invariant 27). */
 function respondError(contract: ContractPackage, code: WireErrorCode, correlation: CorrelationId): WireResponse {
-  const mapped = statusFor(contract, code);
-  if (!mapped.ok) {
-    return internalFailure(contract, correlation);
-  }
-  return errorResponse(mapped.value, code, correlation);
+  const envelope = wireError(contract, code, correlation);
+  return respond(envelope.status, envelope.body, envelope.correlation);
 }
 
 function parseBody(body: Uint8Array): JsonValue | undefined {
@@ -153,14 +136,10 @@ export function buildHttpSurface(
         const outcome = await dispatcher.invoke(row.operation as OperationId, validated.value);
 
         if (outcome.kind === "error") {
-          const mapped = statusFor(contract, outcome.code);
-          if (!mapped.ok) {
-            // A code with no mapping is a defect the generation gate should have caught. It fails
-            // the request as an internal failure rather than becoming an unattributed 500.
-            return internalFailure(contract, correlation);
-          }
-          // The engine's code travels verbatim — no paraphrase, no normalization.
-          return errorResponse(mapped.value, outcome.code, correlation);
+          // The engine's code travels verbatim — no paraphrase, no normalization. A code with no
+          // mapping is a defect the generation gate should have caught; `respondError` fails the
+          // request as an internal failure rather than letting it become an unattributed 500.
+          return respondError(contract, outcome.code, correlation);
         }
 
         const checked = validateResponse(contract, row, outcome.value);

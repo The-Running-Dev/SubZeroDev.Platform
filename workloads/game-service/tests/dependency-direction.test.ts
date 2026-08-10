@@ -112,3 +112,9 @@ describe("S4.9 — the HTTP surface's module graph does not reach StoreSerializa
     expect(reachesTarget(resolve(SRC_ROOT, "http-surface.ts"), TARGET_NAME)).toBe(false);
   });
 });
+
+describe("S6.8 — the MCP surface's module graph does not reach StoreSerializationHandle", () => {
+  it("names no import of StoreSerializationHandle anywhere in its transitive module graph", () => {
+    expect(reachesTarget(resolve(SRC_ROOT, "mcp-surface.ts"), TARGET_NAME)).toBe(false);
+  });
+});

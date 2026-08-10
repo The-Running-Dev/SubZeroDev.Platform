@@ -9,8 +9,9 @@ import { SessionStoreError } from "@the-running-dev/game-engine";
 import type { SessionStoreErrorCode } from "@the-running-dev/game-engine";
 
 import { buildHttpSurface } from "../../src/http-surface.js";
+import { buildMcpSurface } from "../../src/mcp-surface.js";
 import { createDispatcher } from "../../src/dispatch.js";
-import type { HttpSurface, WireRequest, WireResponse } from "../../src/types.js";
+import type { HttpSurface, McpSurface, WireRequest, WireResponse } from "../../src/types.js";
 
 export const contract: ContractPackage = loadPublishedContract();
 
@@ -60,6 +61,16 @@ export function surfaceOver(store: SessionStore, source: ContractPackage = contr
   const built = buildHttpSurface(source, createDispatcher(source, store));
   if (!built.ok) {
     throw new Error(`buildHttpSurface failed: ${JSON.stringify(built.error)}`);
+  }
+  return built.value;
+}
+
+/** The same `Dispatcher` construction `surfaceOver` uses, so a test that builds both surfaces over
+ *  the same store is asserting "one store" rather than assuming it (S6.2). */
+export function mcpSurfaceOver(store: SessionStore, source: ContractPackage = contract): McpSurface {
+  const built = buildMcpSurface(source, createDispatcher(source, store));
+  if (!built.ok) {
+    throw new Error(`buildMcpSurface failed: ${JSON.stringify(built.error)}`);
   }
   return built.value;
 }
