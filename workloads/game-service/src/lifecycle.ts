@@ -22,6 +22,8 @@ import { buildMcpSurface } from "./mcp-surface.js";
 import { createDispatcher } from "./dispatch.js";
 import { compose, writeDeterminismDump } from "./compose.js";
 import { loadContract, validateContract } from "./contract.js";
+import { createTracing } from "./telemetry.js";
+import type { Tracing } from "./telemetry.js";
 import { INTERNAL_FAILURE, wireError } from "./wire-error.js";
 import { err, ok } from "./types.js";
 import type {
@@ -206,7 +208,13 @@ function errorResponse(
   return { status: envelope.status, body: envelope.body, correlation: envelope.correlation };
 }
 
-function serve(contract: ContractPackage, surface: HttpSurface, mcp: McpSurface, probes: ProbeSurface): Server {
+function serve(
+  contract: ContractPackage,
+  surface: HttpSurface,
+  mcp: McpSurface,
+  probes: ProbeSurface,
+  tracing: Tracing | null,
+): Server {
   return createServer((message: IncomingMessage, response: ServerResponse) => {
     void (async () => {
       const [rawPath] = (message.url ?? "/").split("?");
@@ -232,6 +240,11 @@ function serve(contract: ContractPackage, surface: HttpSurface, mcp: McpSurface,
           // body), before a row lookup is reached for `callTool` to derive its own.
           correlation: correlationFrom(inboundTraceParent),
         });
+        // `result.correlation` is whichever of the two actually answered — reached here rather
+        // than precomputed, because `correlationFrom` mints a fresh random value on every call
+        // when the header is absent or malformed, and two separate calls over the same invalid
+        // header would not agree with each other the way two parses of a well-formed one do.
+        tracing?.startRequestSpan("game-service.mcp", inboundTraceParent, result.correlation).end();
         const headers: Record<string, string> = {
           "content-type": "application/json",
           "x-correlation-id": result.correlation as string,
@@ -253,7 +266,15 @@ function serve(contract: ContractPackage, surface: HttpSurface, mcp: McpSurface,
         body: await readRequestBody(message),
       };
 
+      const inboundTraceParent = headers.get("traceparent") ?? null;
       const wire = await surface.handle(request);
+      // `wire.headers` carries whatever `HttpSurface.handle` actually derived from the same
+      // header, read here rather than precomputed — `correlationFrom` mints a fresh random value
+      // on every call when the header is absent or malformed, and two separate calls over the
+      // same invalid header would not agree with each other the way two parses of a well-formed
+      // one do.
+      const correlation = (wire.headers.get("x-correlation-id") ?? correlationFrom(inboundTraceParent)) as CorrelationId;
+      tracing?.startRequestSpan("game-service.request", inboundTraceParent, correlation).end();
       response.writeHead(wire.status, Object.fromEntries(wire.headers));
       // The bytes the encoder produced reach the socket unaltered — nothing between the encoder
       // and here re-encodes (invariant 33).
@@ -300,18 +321,10 @@ export async function startWorkload(
 
   // `otlpEndpoint` null means no exporter is constructed and no outbound connection is attempted —
   // not a disabled exporter, and not a default endpoint (invariant 32).
-  //
-  // A *configured* endpoint has no meaning until S8 builds the exporter, and the choice between
-  // the two ways of having none is deliberate: this refuses to start rather than starting and
-  // silently exporting nothing. A service asked to emit telemetry that cannot is the shrug this
-  // slice exists to remove, and "every startup variant aborts, and none warns" is the rule the
-  // contract states for exactly this shape of gap. S8 replaces the refusal with the exporter.
-  if (configuration.otlpEndpoint !== null) {
-    return err({ code: "ConfigurationInvalid", setting: "otlpEndpoint" });
-  }
+  const tracing = configuration.otlpEndpoint !== null ? createTracing(configuration.otlpEndpoint) : null;
 
   const host = configuration.listen.host.trim().length > 0 ? configuration.listen.host : LOOPBACK;
-  const server = serve(contract.value, built.value, builtMcp.value, probes.surface);
+  const server = serve(contract.value, built.value, builtMcp.value, probes.surface, tracing);
 
   const bound = await new Promise<ListenEndpoint | null>((resolve) => {
     server.once("error", () => resolve(null));
@@ -339,6 +352,10 @@ export async function startWorkload(
       }
 
       await new Promise<void>((resolve) => server.close(() => resolve()));
+
+      // Flushed after the listener stops accepting, so a request handled just before shutdown is
+      // not silently dropped from the collector's view.
+      await tracing?.shutdown();
 
       if (!written.ok) {
         return err({ code: "DumpWriteFailed", cause: written.error });

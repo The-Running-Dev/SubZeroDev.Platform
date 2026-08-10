@@ -641,6 +641,67 @@ a package attached. Per-provider sections (`Logging:Console:LogLevel`) — Platf
 there is no provider for a consumer to address and the key would name something that does not exist.
 Reversibility: cheap — one private method and its tests; the prior behaviour is the no-section path.
 
+### 2026-08-10 — The workload's OTLP export goes through the official OpenTelemetry JS SDK, not a
+hand-rolled OTLP encoder
+
+Context: S8 needs the workload to export spans over OTLP/HTTP, and the workload had no OpenTelemetry
+dependency of any kind before this — `correlation.ts`'s own hand-rolled `traceparent` regex parsing
+is the only precedent for building wire-format handling by hand in this package, and
+`AGENTS.md`'s guardrails cut the other way for this class of problem: "prefer an existing package or
+service to hand-rolled infrastructure. Hand-rolling is what needs justifying, not taking a
+dependency." Encoding OTLP correctly by hand — trace/span id generation, the parent/child and
+sampling rules, the export payload shape — is exactly the wire-format work that guidance is warning
+against, and getting it subtly wrong would be silent: nothing else in the suite re-derives OTLP
+semantics to catch a mistake in ones own encoder. `AGENTS.md`'s no-new-dependencies rule requires the
+alternatives considered to be on record, which is this entry. Decided by Ben, in-session, after the
+agent stopped rather than choosing silently between the two paths `/slice` itself cannot take
+(hand-rolling wire-format code the guardrail steers away from, or adding a dependency `/slice` is
+barred from adding without this record).
+Chosen: `@opentelemetry/api`, `@opentelemetry/sdk-trace-base` and `@opentelemetry/exporter-trace-otlp-http`
+as workload dependencies (`workloads/game-service/package.json`). `telemetry.ts` composes a
+`BasicTracerProvider` with one `SimpleSpanProcessor` over the OTLP/HTTP JSON exporter, constructed
+only when `otlpEndpoint` is configured — mirroring the `DeterminismProfile` pattern already in this
+package, where the type itself makes "nothing exists in the other case" a fact the compiler enforces
+rather than a branch that could be gotten wrong. A root span's trace id is forced to equal the
+correlation `correlation.ts` already derives, through the SDK's own `IdGenerator` extension point —
+one authority per request, not two independent mints that must agree by coincidence.
+Rejected: a hand-rolled span/OTLP-JSON encoder, matching `correlation.ts`'s existing style — no new
+dependency, but it is the wire-format hand-rolling `AGENTS.md` singles out as needing justification
+rather than being the default, and correctness here is exactly the kind of thing a byte-identity-proof
+project should not be trusting to an unreviewed-by-anyone-else implementation of a spec with edge
+cases (sampling, trace-state, batch export semantics) this effort has no reason to reinvent.
+Reversibility: moderate — a workload dependency and its usage inside one module (`telemetry.ts`),
+consumed only from `lifecycle.ts`'s internal `serve()`; no exported, contract-governed signature
+carries an OpenTelemetry type.
+
+### 2026-08-10 — S8's CI trace-evidence assertion runs a real OpenTelemetry Collector binary, not a
+hand-decoded stand-in for two wire formats
+
+Context: `20-contract.md`'s edge signatures and `PlatformObservabilityExtensions.ConfigureOtlp`
+(unconditional `OtlpExportProtocol.HttpProtobuf`, outside this slice's `Touches`) mean the .NET edge's
+OTLP export is always protobuf, while the workload's own exporter (the decision above) sends OTLP/HTTP
+JSON. A collector accepts and normalises both on one receiver; a hand-built sink in this suite would
+need to decode two different wire formats, and the .NET SDK's own generated OTLP protobuf types are
+`internal` to `OpenTelemetry.Exporter.OpenTelemetryProtocol` — unreachable from a test project without
+either vendoring the official `.proto` schemas at build time or adding a second protobuf-handling
+dependency solely to read them back. Both are more hand-rolled-infrastructure than running the
+standard product built for exactly this job. Decided by Ben, in-session, for the same reason as the
+decision above: `/slice` stops rather than silently picking between hand-decoding and standing up new
+CI infrastructure.
+Chosen: the `game-service` CI job downloads a pinned, checksum-verified `otelcol-contrib` release
+(`v0.158.0`, linux_amd64) before the outbound-OTLP-port block (`build.yml`, the same step-ordering
+`dotnet`/`node` setup already uses), configures it with an OTLP/HTTP receiver on a loopback port
+chosen at run time and a `file` exporter, and `tests/trace-evidence.test.ts` reads that file — Go's
+own `protojson` marshaling, base64 trace/span ids per the standard proto3 JSON mapping — after driving
+one request through a real edge-plus-workload pair pointed at it. The test skips itself when
+`OTEL_COLLECTOR_BIN` is unset, so a local `npm test` with no collector installed still runs everything
+else; only CI sets the variable.
+Rejected: hand-decoding both wire formats in this suite — no external binary, but two decoders to get
+right (one of them binary protobuf) purely to read back facts the collector already computes
+correctly, and it duplicates work a widely-used, independently-tested product already does.
+Reversibility: cheap — confined to one CI step, one test-support module, and one test file; nothing
+outside CI depends on the collector existing.
+
 ## Open
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))

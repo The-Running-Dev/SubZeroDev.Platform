@@ -23,7 +23,7 @@ function configuration(): WorkloadConfiguration {
       fixedInstant: process.env["GAME_SERVICE_FIXED_INSTANT"] ?? "",
       dumpPath: process.env["GAME_SERVICE_DUMP_PATH"] ?? "",
     },
-    otlpEndpoint: null,
+    otlpEndpoint: process.env["GAME_SERVICE_OTLP_ENDPOINT"] ?? null,
   };
 }
 

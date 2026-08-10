@@ -79,10 +79,22 @@ jobs:
       - name: Build the edge
         run: dotnet build workloads/game-edge/SubZeroDev.Platform.GameEdge/SubZeroDev.Platform.GameEdge.csproj --configuration Release
 
+      # S8.1/S8.2/S8.6: the trace-evidence test's own OTLP sink is a real collector, not a
+      # hand-decoded stand-in for either process's wire format (`tests/support/otel-collector.ts`).
+      # Pinned to a specific release and checksum-verified, the same as any other build input.
+      - name: Install the OpenTelemetry Collector
+        run: |
+          curl -sL -o otelcol-contrib.tar.gz \
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.158.0/otelcol-contrib_0.158.0_linux_amd64.tar.gz
+          echo "7623348c295ec7b00d86c30040a30730f7e3537e813b34c880c1d5abb9bbe8d5  otelcol-contrib.tar.gz" | sha256sum -c -
+          tar xzf otelcol-contrib.tar.gz otelcol-contrib
+          chmod +x otelcol-contrib
+
       # S3.13 / invariant 32: with no OTLP endpoint configured the workload must construct no
       # exporter and attempt no outbound connection. Rejecting both OTLP ports before the suite
       # runs is what makes that enforced rather than merely unobserved, exactly as the .NET job
-      # does for the sample. Loopback stays open — the suite binds and dials 127.0.0.1 throughout.
+      # does for the sample. Loopback stays open — the suite, and the collector installed above,
+      # bind and dial 127.0.0.1 throughout, on ports chosen at run time as well as 4317/4318.
       - name: Block outbound OTLP ports for the workload suite
         run: |
           sudo iptables -A OUTPUT -o lo -j ACCEPT
@@ -101,4 +113,5 @@ jobs:
         working-directory: workloads/game-service
         env:
           GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
+          OTEL_COLLECTOR_BIN: ${{ github.workspace }}/otelcol-contrib
         run: npm test

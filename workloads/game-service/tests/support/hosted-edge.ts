@@ -80,9 +80,11 @@ async function waitForLive(
 }
 
 /** Spawns the edge as a genuine child process — `dotnet <built dll>` over a real bound socket, in
- *  front of a genuinely separate workload process `spawnHostedWorkload` also spawns. */
-export async function spawnHostedEdge(): Promise<SpawnedHostedEdge> {
-  const workload = await spawnHostedWorkload();
+ *  front of a genuinely separate workload process `spawnHostedWorkload` also spawns. `otlpEndpoint`,
+ *  when given, points both processes at the same collector — S8's own hook; every other caller
+ *  omits it and gets today's no-telemetry behaviour on both sides unchanged. */
+export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHostedEdge> {
+  const workload = await spawnHostedWorkload(otlpEndpoint);
   const port = await freePort();
   const dllPath = process.env["GAME_EDGE_DLL"] ?? DEFAULT_DLL;
 
@@ -93,6 +95,10 @@ export async function spawnHostedEdge(): Promise<SpawnedHostedEdge> {
     GameEdge__WorkloadBaseAddress: workload.target.baseAddress,
     GameEdge__ForwardTimeout: "00:00:10",
     GameEdge__LivenessTimeout: "00:00:05",
+    // Read by `AddPlatformObservability` (`PlatformObservabilityExtensions.ResolveIdentity`) when
+    // there is no `PlatformOptions` singleton already registered ahead of it — the same section
+    // `AddPlatformWebHost` itself reads.
+    ...(otlpEndpoint ? { Platform__Telemetry__OtlpEndpoint: otlpEndpoint } : {}),
   };
 
   // The content root ASP.NET resolves appsettings.json against defaults to the process's working

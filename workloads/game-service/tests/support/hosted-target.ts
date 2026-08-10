@@ -39,8 +39,9 @@ function freshDumpPath(): string {
 
 /** Spawns the workload as a genuine child process — `process.execPath` running `tsx`'s own CLI
  *  entry point, so this exercises the compiled-equivalent startup path rather than an in-process
- *  stand-in, over a real bound socket. */
-export async function spawnHostedWorkload(): Promise<SpawnedHostedTarget> {
+ *  stand-in, over a real bound socket. `otlpEndpoint`, when given, is S8's own hook: every other
+ *  caller omits it and gets today's `otlpEndpoint: null` behaviour unchanged. */
+export async function spawnHostedWorkload(otlpEndpoint?: string): Promise<SpawnedHostedTarget> {
   const dumpPath = freshDumpPath();
 
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -54,6 +55,11 @@ export async function spawnHostedWorkload(): Promise<SpawnedHostedTarget> {
   // holds constant is stated once rather than duplicated as a literal that could drift from it.
   env["GAME_SERVICE_FIXED_INSTANT"] = REPLAY_FIXED_INSTANT;
   env["GAME_SERVICE_DUMP_PATH"] = dumpPath;
+  if (otlpEndpoint) {
+    env["GAME_SERVICE_OTLP_ENDPOINT"] = otlpEndpoint;
+  } else {
+    delete env["GAME_SERVICE_OTLP_ENDPOINT"];
+  }
 
   const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [TSX_CLI, ENTRYPOINT], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
