@@ -84,6 +84,8 @@ function freePort(): Promise<number> {
 export interface RunningCollector {
   readonly otlpEndpoint: string;
   readonly outputPath: string;
+  /** The collector's own stderr, accumulated so far — for a failure message, not for parsing. */
+  stderr(): string;
   /** Sends the collector its shutdown signal and waits for exit, which is what flushes the `file`
    *  exporter's buffered writes — reading the output before this returns sees a partial file. */
   stop(): Promise<void>;
@@ -119,7 +121,7 @@ export async function startCollector(): Promise<RunningCollector> {
     "service:",
     "  telemetry:",
     "    logs:",
-    "      level: warn",
+    "      level: info",
     "  pipelines:",
     "    traces:",
     "      receivers: [otlp]",
@@ -175,6 +177,7 @@ export async function startCollector(): Promise<RunningCollector> {
   return {
     otlpEndpoint: `http://127.0.0.1:${port}`,
     outputPath,
+    stderr: () => stderr,
     async stop() {
       if (!hasExited) {
         child.kill("SIGTERM");

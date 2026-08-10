@@ -13,10 +13,12 @@
  * correlation from in the first place. What this file adds beyond that is the fact only a real,
  * cross-process collector can show: that the two processes' spans are the *same* trace.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { spawnHostedEdge } from "./support/hosted-edge.js";
 import { readCollectedSpans, startCollector } from "./support/otel-collector.js";
+import type { CollectedSpan } from "./support/otel-collector.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 
 /** `edge.target.shutdown()` signals the edge (`SIGTERM`) without waiting for it to actually exit —
@@ -36,77 +38,69 @@ async function waitForEdgeToExit(baseAddress: string, timeoutMs = 10_000): Promi
   throw new Error(`edge did not exit within ${timeoutMs}ms`);
 }
 
+/** Drives one request through a freshly spawned edge-plus-workload pair pointed at a freshly
+ *  spawned collector, and returns whatever the collector's `file` exporter captured. */
+async function collectSpansForOneRequest(traceparent: string | null): Promise<CollectedSpan[]> {
+  const collector = await startCollector();
+  const edge = await spawnHostedEdge(collector.otlpEndpoint);
+
+  try {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (traceparent !== null) headers["traceparent"] = traceparent;
+
+    const response = await fetch(`${edge.target.baseAddress}/v1/create-session`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ campaignId: CAMPAIGN_ID }),
+    });
+    expect(response.status).toBe(200);
+
+    const shutdown = await edge.target.shutdown();
+    expect(shutdown.ok).toBe(true);
+    await waitForEdgeToExit(edge.target.baseAddress);
+  } finally {
+    edge.forceKill();
+    await collector.stop();
+  }
+
+  const raw = readFileSync(collector.outputPath, "utf8");
+  const spans = readCollectedSpans(collector.outputPath);
+  if (spans.length === 0) {
+    throw new Error(
+      `collector captured no spans at all. output file bytes: ${raw.length}, content: ${JSON.stringify(raw)}\n`
+        + `collector stderr:\n${collector.stderr()}`,
+    );
+  }
+  return spans;
+}
+
+function assertOneSharedTrace(spans: CollectedSpan[]): void {
+  const workloadSpan = spans.find((span) => span.name === "game-service.request");
+  expect(workloadSpan, `no workload span among: ${JSON.stringify(spans)}`).toBeDefined();
+  expect(workloadSpan!.parentSpanId).not.toBeNull();
+
+  const edgeSpan = spans.find((span) => span.spanId === workloadSpan!.parentSpanId);
+  expect(edgeSpan, `no edge span with spanId ${workloadSpan!.parentSpanId} among: ${JSON.stringify(spans)}`)
+    .toBeDefined();
+
+  // S8.1 — one trace id, shared.
+  expect(workloadSpan!.traceId).toBe(edgeSpan!.traceId);
+  // S8.2 — the relationship is asserted directly, not inferred from the shared id alone: the
+  // lookup above only succeeds because the workload span's own parentSpanId names it.
+  expect(workloadSpan!.parentSpanId).toBe(edgeSpan!.spanId);
+}
+
 describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
   "S8.1/S8.2/S8.6 — one request through the edge, one trace, in a real collector",
   () => {
     it("the workload's span is a child of the edge's span, and both carry the same trace id", async () => {
-      const collector = await startCollector();
-      const edge = await spawnHostedEdge(collector.otlpEndpoint);
-
-      try {
-        const response = await fetch(`${edge.target.baseAddress}/v1/create-session`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ campaignId: CAMPAIGN_ID }),
-        });
-        expect(response.status).toBe(200);
-
-        const shutdown = await edge.target.shutdown();
-        expect(shutdown.ok).toBe(true);
-        await waitForEdgeToExit(edge.target.baseAddress);
-      } finally {
-        edge.forceKill();
-        await collector.stop();
-      }
-
-      const spans = readCollectedSpans(collector.outputPath);
-      const workloadSpan = spans.find((span) => span.name === "game-service.request");
-      expect(workloadSpan, `no workload span among: ${JSON.stringify(spans)}`).toBeDefined();
-      expect(workloadSpan!.parentSpanId).not.toBeNull();
-
-      const edgeSpan = spans.find((span) => span.spanId === workloadSpan!.parentSpanId);
-      expect(edgeSpan, `no edge span with spanId ${workloadSpan!.parentSpanId} among: ${JSON.stringify(spans)}`)
-        .toBeDefined();
-
-      // S8.1 — one trace id, shared.
-      expect(workloadSpan!.traceId).toBe(edgeSpan!.traceId);
-      // S8.2 — the relationship is asserted directly, not inferred from the shared id alone: the
-      // lookup above only succeeds because the workload span's own parentSpanId names it.
-      expect(workloadSpan!.parentSpanId).toBe(edgeSpan!.spanId);
+      assertOneSharedTrace(await collectSpansForOneRequest(null));
     });
 
     it("S8.4 — a malformed traceparent arriving at the edge still answers 200, under one fresh root shared by both hops", async () => {
-      const collector = await startCollector();
-      const edge = await spawnHostedEdge(collector.otlpEndpoint);
-
-      try {
-        const response = await fetch(`${edge.target.baseAddress}/v1/create-session`, {
-          method: "POST",
-          headers: { "content-type": "application/json", traceparent: "not-a-traceparent" },
-          body: JSON.stringify({ campaignId: CAMPAIGN_ID }),
-        });
-        expect(response.status).toBe(200);
-
-        const shutdown = await edge.target.shutdown();
-        expect(shutdown.ok).toBe(true);
-        await waitForEdgeToExit(edge.target.baseAddress);
-      } finally {
-        edge.forceKill();
-        await collector.stop();
-      }
-
-      const spans = readCollectedSpans(collector.outputPath);
-      const workloadSpan = spans.find((span) => span.name === "game-service.request");
-      expect(workloadSpan, `no workload span among: ${JSON.stringify(spans)}`).toBeDefined();
-
-      const edgeSpan = spans.find((span) => span.spanId === workloadSpan!.parentSpanId);
-      expect(edgeSpan, `no edge span with spanId ${workloadSpan!.parentSpanId} among: ${JSON.stringify(spans)}`)
-        .toBeDefined();
-
       // A malformed header at the edge still yields one shared, freshly minted root — same
       // criterion as the well-formed case above, over a header neither hop can adopt.
-      expect(workloadSpan!.traceId).toBe(edgeSpan!.traceId);
-      expect(workloadSpan!.parentSpanId).toBe(edgeSpan!.spanId);
+      assertOneSharedTrace(await collectSpansForOneRequest("not-a-traceparent"));
     });
   },
 );
