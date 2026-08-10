@@ -121,6 +121,36 @@ describe("S3.10 — a table the service cannot satisfy fails surface constructio
   });
 });
 
+describe("S6.4 — the table is the only source: one row removed takes it out of both surfaces at once", () => {
+  it("the HTTP path returns unknown_operation and the tool is absent from listTools(), from one crafted artifact, restarted", async () => {
+    const port = 39_519;
+    const removed = contract.operations.find((row) => (row.operation as string) === "get-scene")!;
+    const rowRemoved = withOperations(contract.operations.filter((row) => row !== removed));
+    artifactAt(rowRemoved);
+
+    const started = await startWorkload({ ...DEFAULT_CONFIGURATION, listen: { host: "127.0.0.1", port } });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    try {
+      const httpResponse = await fetch(`http://127.0.0.1:${port}/v1/get-scene`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(httpResponse.status).toBe(404);
+      const httpBody = (await httpResponse.json()) as { code: string };
+      expect(httpBody.code).toBe("unknown_operation");
+
+      const mcpResponse = await fetch(`http://127.0.0.1:${port}/mcp/list-tools`, { method: "POST" });
+      const mcpBody = (await mcpResponse.json()) as { tools: { name: string }[] };
+      expect(mcpBody.tools.map((tool) => tool.name)).not.toContain(removed.mcpTool as string);
+    } finally {
+      await started.value.shutdown();
+    }
+  });
+});
+
 describe("S3.11 — probes", () => {
   it("returns liveness healthy without touching the store, and readiness healthy once bound", async () => {
     const started = await startWorkload(DEFAULT_CONFIGURATION);

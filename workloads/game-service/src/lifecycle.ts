@@ -15,7 +15,9 @@ import { readFileSync } from "node:fs";
 import { loadPublishedContract } from "@subzerodev/service-contract";
 import type { ContractPackage } from "@subzerodev/service-contract";
 
+import { canonicalEncode } from "./canonical.js";
 import { buildHttpSurface } from "./http-surface.js";
+import { buildMcpSurface } from "./mcp-surface.js";
 import { createDispatcher } from "./dispatch.js";
 import { compose, writeDeterminismDump } from "./compose.js";
 import { loadContract, validateContract } from "./contract.js";
@@ -24,6 +26,7 @@ import type {
   CompositionError,
   HttpSurface,
   ListenEndpoint,
+  McpSurface,
   Outcome,
   ProbeResult,
   ProbeSurface,
@@ -110,7 +113,44 @@ async function readRequestBody(message: IncomingMessage): Promise<Uint8Array> {
   return Buffer.concat(chunks);
 }
 
-function serve(surface: HttpSurface, probes: ProbeSurface): Server {
+const INTERNAL_FAILURE_BODY = JSON.stringify({ code: "internal_failure" });
+
+/** The MCP HTTP transport: `POST /mcp/list-tools` with no body, and `POST /mcp/call-tool` with
+ *  `{ name, arguments }`. Neither carries a `/v<n>/` segment — the MCP surface has no version
+ *  path (`20-contract.md`, "Workload — request context"). */
+async function handleMcp(mcp: McpSurface, path: string, body: Uint8Array): Promise<{ status: number; body: string }> {
+  if (path === "/mcp/list-tools") {
+    const encoded = canonicalEncodeOrFallback({ tools: mcp.listTools() });
+    return { status: 200, body: encoded };
+  }
+
+  if (path === "/mcp/call-tool") {
+    let parsed: { name?: unknown; arguments?: unknown };
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(body)) as { name?: unknown; arguments?: unknown };
+    } catch {
+      return { status: 400, body: INTERNAL_FAILURE_BODY };
+    }
+    if (typeof parsed.name !== "string") {
+      return { status: 400, body: INTERNAL_FAILURE_BODY };
+    }
+
+    const outcome = await mcp.callTool(parsed.name as never, (parsed.arguments ?? {}) as never);
+    if (outcome.kind === "result") {
+      return { status: 200, body: outcome.value as string };
+    }
+    return { status: 200, body: canonicalEncodeOrFallback(outcome.error) };
+  }
+
+  return { status: 404, body: INTERNAL_FAILURE_BODY };
+}
+
+function canonicalEncodeOrFallback(value: unknown): string {
+  const encoded = canonicalEncode(value as never);
+  return encoded.ok ? (encoded.value as string) : INTERNAL_FAILURE_BODY;
+}
+
+function serve(surface: HttpSurface, mcp: McpSurface, probes: ProbeSurface): Server {
   return createServer((message: IncomingMessage, response: ServerResponse) => {
     void (async () => {
       const [rawPath] = (message.url ?? "/").split("?");
@@ -121,6 +161,14 @@ function serve(surface: HttpSurface, probes: ProbeSurface): Server {
         const body = JSON.stringify({ status: result.status });
         response.writeHead(result.status === "healthy" ? 200 : 503, { "content-type": "application/json" });
         response.end(body);
+        return;
+      }
+
+      if (path === "/mcp/list-tools" || path === "/mcp/call-tool") {
+        const requestBody = await readRequestBody(message);
+        const result = await handleMcp(mcp, path, requestBody);
+        response.writeHead(result.status, { "content-type": "application/json" });
+        response.end(result.body);
         return;
       }
 
@@ -175,6 +223,10 @@ export async function startWorkload(
   if (!built.ok) {
     return err({ code: "SurfaceBuild", cause: built.error });
   }
+  const builtMcp = buildMcpSurface(contract.value, dispatcher);
+  if (!builtMcp.ok) {
+    return err({ code: "SurfaceBuild", cause: builtMcp.error });
+  }
   probes.markSurfacesBuilt();
 
   // `otlpEndpoint` null means no exporter is constructed and no outbound connection is attempted —
@@ -190,7 +242,7 @@ export async function startWorkload(
   }
 
   const host = configuration.listen.host.trim().length > 0 ? configuration.listen.host : LOOPBACK;
-  const server = serve(built.value, probes.surface);
+  const server = serve(built.value, builtMcp.value, probes.surface);
 
   const bound = await new Promise<ListenEndpoint | null>((resolve) => {
     server.once("error", () => resolve(null));
