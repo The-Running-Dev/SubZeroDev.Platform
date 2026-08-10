@@ -4,22 +4,19 @@
  * surface uses — no row-specific argument type and no MCP-specific path, because that is precisely
  * what must not exist.
  *
- * **Known gap — the correlation, pending a contract amendment.** `20-contract.md` says two things
- * this surface cannot satisfy at once: "Workload — request context" has the MCP surface adopt
- * whatever `traceparent` the transport carried, and invariant 29 has every response carry the
- * correlation — while the `McpSurface` declared in "MCP surface — workload" gives `callTool` no
- * context parameter to receive one and `McpToolOutcome`'s result arm no member to return one. So
- * every call mints a fresh correlation that no inbound trace reaches, and a successful tool result
- * carries none at all. That is a contradiction inside the contract, not a shortcut taken here;
- * closing it is a contract amendment, tracked rather than silently reconciled.
+ * `callTool` takes the raw `inboundTraceParent` the MCP HTTP transport carried and derives the
+ * correlation from it, the same way the JSON wire does — closing #102: a successful tool result
+ * used to carry no correlation at all, and even an error's was always freshly minted rather than
+ * adopted from an inbound trace.
  */
 import type { ContractPackage, McpToolName, OperationRow } from "@subzerodev/service-contract";
 import { canonicalEncode } from "./canonical.js";
-import { mintCorrelation } from "./correlation.js";
+import { correlationFrom } from "./correlation.js";
 import { schemaPresent, validateRequest, validateResponse, validatorsFor } from "./validate.js";
 import { INTERNAL_FAILURE, resolvedCode } from "./wire-error.js";
 import { err, ok } from "./types.js";
 import type {
+  CorrelationId,
   Dispatcher,
   JsonValue,
   McpSurface,
@@ -66,8 +63,8 @@ export function buildMcpSurface(
     inputSchema: contract.schemas.find((schema) => (schema.$id as string) === (row.requestShape as string))!,
   }));
 
-  function errorOutcome(code: WireErrorCode): McpToolOutcome {
-    return { kind: "error", error: { code, correlation: mintCorrelation() } };
+  function errorOutcome(code: WireErrorCode, correlation: CorrelationId): McpToolOutcome {
+    return { kind: "error", error: { code, correlation } };
   }
 
   const surface: McpSurface = {
@@ -75,17 +72,18 @@ export function buildMcpSurface(
       return descriptors;
     },
 
-    async callTool(name: McpToolName, args: JsonValue): Promise<McpToolOutcome> {
+    async callTool(name: McpToolName, args: JsonValue, inboundTraceParent: string | null): Promise<McpToolOutcome> {
+      const correlation = correlationFrom(inboundTraceParent);
       try {
         const row = tools.get(name as string);
         if (!row) {
-          return errorOutcome("unknown_operation" as WireErrorCode);
+          return errorOutcome("unknown_operation" as WireErrorCode, correlation);
         }
 
         const validated = validateRequest(contract, row, args);
         if (!validated.ok) {
           // Nothing happened: the store was never reached (S6.5).
-          return errorOutcome("malformed_payload" as WireErrorCode);
+          return errorOutcome("malformed_payload" as WireErrorCode, correlation);
         }
 
         const outcome = await dispatcher.invoke(row.operation as OperationId, validated.value);
@@ -94,21 +92,21 @@ export function buildMcpSurface(
           // The engine's code travels verbatim — no MCP-specific error vocabulary (S6.6) — and a
           // code the mapping does not name resolves to the same `internal_failure` the JSON wire
           // answers with, so the two surfaces cannot disagree about a code the artifact left out.
-          return errorOutcome(resolvedCode(contract, outcome.code as unknown as WireErrorCode));
+          return errorOutcome(resolvedCode(contract, outcome.code as unknown as WireErrorCode), correlation);
         }
 
         const checked = validateResponse(contract, row, outcome.value);
         if (!checked.ok) {
-          return errorOutcome(INTERNAL_FAILURE);
+          return errorOutcome(INTERNAL_FAILURE, correlation);
         }
 
         const encoded = canonicalEncode(outcome.value);
         if (!encoded.ok) {
-          return errorOutcome(INTERNAL_FAILURE);
+          return errorOutcome(INTERNAL_FAILURE, correlation);
         }
-        return { kind: "result", value: encoded.value };
+        return { kind: "result", value: encoded.value, correlation };
       } catch {
-        return errorOutcome(INTERNAL_FAILURE);
+        return errorOutcome(INTERNAL_FAILURE, correlation);
       }
     },
   };
