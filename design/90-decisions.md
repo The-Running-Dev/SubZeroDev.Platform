@@ -580,6 +580,26 @@ which invariant 29's neighbors (30, 31) assume does not happen.
 Reversibility: cheap — S6 shipped code references the old two-argument signature and is updated in
 the same change that closes #102.
 
+### 2026-08-10 — `Logging:LogLevel` is the one home for log levels, and Observability reads it
+
+Context: `AddPlatformObservability` fixed `MinimumLevel.Information()` and never read
+configuration, so the `Logging` section every .NET consumer writes was dead config that reads as
+live — an operator setting `Microsoft.AspNetCore: Warning` still got a log line per request and per
+outbound call. It is not an ordinary filtering gap: `AddSerilog` replaces the logger factory
+outright, so `Microsoft.Extensions.Logging`'s own rules never run and there was nowhere else the
+section could take effect. Found reviewing the S7 edge, where 70 KB of per-request logging over a
+ten-step replay fell out of it.
+Chosen: translate `Logging:LogLevel` into Serilog's minimum level and per-prefix overrides inside
+`ConfigureLogging`. `Default` is the minimum, every other key an override on that category prefix,
+`None` mapped one past the highest level so it admits nothing. Absent section keeps `Information`,
+so nothing already deployed changes.
+Rejected: a level on `TelemetryOptions` — a second home for one fact, and the one nobody would look
+in first. `Serilog.Settings.Configuration` and a `Serilog` section — a new dependency to read a
+second, Serilog-shaped section alongside the standard one, which is the same two-homes problem with
+a package attached. Per-provider sections (`Logging:Console:LogLevel`) — Platform owns its sinks, so
+there is no provider for a consumer to address and the key would name something that does not exist.
+Reversibility: cheap — one private method and its tests; the prior behaviour is the no-section path.
+
 ## Open
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))
