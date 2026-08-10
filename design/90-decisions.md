@@ -580,6 +580,26 @@ which invariant 29's neighbors (30, 31) assume does not happen.
 Reversibility: cheap — S6 shipped code references the old two-argument signature and is updated in
 the same change that closes #102.
 
+### 2026-08-10 — The edge's two wire-visible codes: `workload_unreachable` and `workload_timeout`
+
+Context: Unresolved 2's edge half — `20-contract.md`'s `EdgeError` names two variants,
+`WorkloadUnreachable` (503) and `WorkloadTimeout` (504), but leaves their `code` strings unnamed.
+S7 is the slice that needs them: `EdgeError` crosses the wire in `WireErrorBody.code` the same way
+the workload's own codes do, so a first implementer would otherwise settle two more strings
+silently.
+Chosen: `workload_unreachable` and `workload_timeout` — lowercase snake_case, on the same terms as
+every other transport code the workload already emits (`malformed_payload`, `unsupported_version`,
+`unknown_operation`, `internal_failure`), and named for the condition the way those four are rather
+than for the status code. Neither joins `WireErrorCode` or the contract's status mapping —
+`20-contract.md` is explicit that the edge's two codes are `EdgeError`'s own and enter neither.
+Rejected: reusing `internal_failure` for both — collapses two distinguishable conditions (a caller
+can retry-with-a-read on either, per `EdgeError`'s own table, but an operator debugging a stuck
+process needs to tell "never connected" from "connected and hung" apart). A `503`/`504`-derived
+name (`service_unavailable`, `gateway_timeout`) — ties the code to the HTTP status rather than the
+condition, and the workload's own codes never do that (`unknown_session` is `404`,
+`invalid_state` is `409`, both named for the condition).
+Reversibility: cheap — both are new strings with no prior callers.
+
 ## Open
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))

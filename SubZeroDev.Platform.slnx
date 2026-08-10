@@ -14,4 +14,8 @@
   <Folder Name="/tests/">
     <Project Path="tests/SubZeroDev.Platform.Tests/SubZeroDev.Platform.Tests.csproj" />
   </Folder>
+  <Folder Name="/workloads/">
+    <Project Path="workloads/game-edge/SubZeroDev.Platform.GameEdge/SubZeroDev.Platform.GameEdge.csproj" />
+    <Project Path="workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/SubZeroDev.Platform.GameEdge.Tests.csproj" />
+  </Folder>
 </Solution>
