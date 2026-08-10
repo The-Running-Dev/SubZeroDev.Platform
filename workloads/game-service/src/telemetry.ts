@@ -93,6 +93,11 @@ export function createTracing(otlpEndpoint: string): Tracing {
       return tracer.startSpan(name, { kind: SpanKind.SERVER }, parent);
     },
     async shutdown() {
+      // `SimpleSpanProcessor.shutdown()` alone does not wait for exports already in flight — only
+      // `forceFlush()` does (checked against the installed package's own source: `shutdown()` calls
+      // the exporter's `shutdown()` directly, never draining `_pendingExports`). A request handled
+      // just before this runs would otherwise race the process exit and sometimes lose.
+      await provider.forceFlush();
       await provider.shutdown();
     },
   };
