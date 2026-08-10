@@ -37,8 +37,12 @@ async function waitForEdgeToExit(baseAddress: string, timeoutMs = 10_000): Promi
   while (Date.now() < deadline) {
     try {
       await fetch(`${baseAddress}/health/live`, { signal: AbortSignal.timeout(500) });
-    } catch {
-      return;
+    } catch (thrown) {
+      // A slow-but-alive edge (GC pause, CI contention, still draining its own OTel exporter)
+      // can trip the 500ms abort before the connection is ever refused — only a genuine refusal
+      // is evidence the process actually exited, so a mere timeout keeps polling instead.
+      const isTimeout = thrown instanceof DOMException && thrown.name === "TimeoutError";
+      if (!isTimeout) return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -76,6 +80,22 @@ function assertOneSharedTrace(spans: readonly CollectedSpan[], traceId: string):
   expect(workloadSpan!.parentSpanId).toBe(edgeSpan!.spanId);
 }
 
+/** `true` when `traceId` has a complete edge-parenting-workload pair in `spans` — the same shape
+ *  `assertOneSharedTrace` requires, but as a predicate rather than an assertion. */
+function hasCompleteSharedTrace(spans: readonly CollectedSpan[], traceId: string): boolean {
+  const inTrace = spans.filter((span) => span.traceId === traceId);
+  const workloadSpan = inTrace.find((span) => span.name === "game-service.request");
+  if (workloadSpan === undefined || workloadSpan.parentSpanId === null) return false;
+  return inTrace.some((span) => span.spanId === workloadSpan.parentSpanId);
+}
+
+// The edge's own sampler (`PlatformSampler`) applies a 10% ratio to every genuinely unparented
+// root — which is exactly what a malformed `traceparent` produces, since there is no valid header
+// to adopt. A single such request is only ~10% likely to be recorded at all, so this many attempts
+// are made (each with a fresh, independently-sampled trace id) to make "at least one gets sampled"
+// overwhelmingly likely (1 - 0.9^40 ≈ 98.5%) without touching the sampler itself.
+const MALFORMED_TRACEPARENT_ATTEMPTS = 40;
+
 describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
   "S8.1/S8.2/S8.4/S8.6 — requests through the edge, each its own shared trace, in a real collector",
   () => {
@@ -90,8 +110,12 @@ describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
       try {
         // S8.1/S8.2 — a well-formed inbound trace is adopted end to end.
         await requestThroughEdge(edge.target.baseAddress, `00-${traceId}-${parentSpanId}-01`);
-        // S8.4 — a malformed one still answers 200, under a fresh root shared by both hops.
-        await requestThroughEdge(edge.target.baseAddress, "not-a-traceparent");
+        // S8.4 — a malformed one still answers 200, under a fresh root shared by both hops. The
+        // edge's own sampler only records ~10% of these (see `MALFORMED_TRACEPARENT_ATTEMPTS`'s
+        // comment), so several independent attempts are made rather than relying on exactly one.
+        for (let attempt = 0; attempt < MALFORMED_TRACEPARENT_ATTEMPTS; attempt++) {
+          await requestThroughEdge(edge.target.baseAddress, "not-a-traceparent");
+        }
 
         const shutdown = await edge.target.shutdown();
         expect(shutdown.ok).toBe(true);
@@ -113,14 +137,25 @@ describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
       // S8.1 — one trace id, shared, for the well-formed request specifically.
       assertOneSharedTrace(spans, traceId);
 
-      // The malformed request's root is whichever trace id its pair of spans actually landed
-      // under — not the one above, and not knowable in advance, so it is found rather than
-      // asserted as a literal.
+      // Each malformed-traceparent attempt's root is whichever trace id its pair of spans actually
+      // landed under — not knowable in advance, so it is found rather than asserted as a literal.
+      // The edge's own sampler decides independently per attempt (see `MALFORMED_TRACEPARENT_ATTEMPTS`'s
+      // comment): an attempt the edge did not sample still surfaces a lone workload span here (the
+      // workload always records), with no edge span to pair it against, so only trace ids with a
+      // *complete* pairing are asserted on — the rest are attempts the edge itself dropped, not a
+      // pairing failure. At least one complete pairing is required so the S8.4 guarantee is still
+      // exercised, not merely attempted.
       const traceIds = new Set(spans.map((span) => span.traceId));
       traceIds.delete(traceId);
-      expect(traceIds.size, `expected exactly one other trace id among: ${JSON.stringify(spans)}`).toBe(1);
-      const [freshRootTraceId] = traceIds;
-      assertOneSharedTrace(spans, freshRootTraceId!);
+      const completeFreshRoots = [...traceIds].filter((id) => hasCompleteSharedTrace(spans, id));
+      expect(
+        completeFreshRoots.length,
+        `expected at least one fully-sampled fresh-root trace among ${MALFORMED_TRACEPARENT_ATTEMPTS} attempts; `
+          + `spans: ${JSON.stringify(spans)}`,
+      ).toBeGreaterThan(0);
+      for (const freshRootTraceId of completeFreshRoots) {
+        assertOneSharedTrace(spans, freshRootTraceId);
+      }
     });
   },
 );

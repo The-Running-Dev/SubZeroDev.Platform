@@ -40,15 +40,12 @@ let shuttingDown = false;
 function triggerShutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  void workload.shutdown().then(async (outcome) => {
+  void workload.shutdown().then((outcome) => {
     if (!outcome.ok) {
       process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
     }
-    // `shutdown()` already awaits the tracing provider's own `forceFlush()`, but that promise
-    // resolving is not the same guarantee as the underlying OS socket having finished writing —
-    // an immediate `process.exit()` can still race that last flush on some platforms. One macrotask
-    // turn costs nothing here and closes the gap.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // `shutdown()` already awaits the tracing provider's own flush (including its own
+    // exit-race delay, paid only when tracing is configured — see `telemetry.ts`).
     process.exit(outcome.ok ? 0 : 1);
   });
 }

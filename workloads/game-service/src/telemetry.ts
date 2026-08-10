@@ -11,31 +11,34 @@
  * together, with no parameter to hand it one — so `startRequestSpan` forces the next root trace id
  * through that generator, once, rather than minting twice and hoping the two agree.
  */
-import { ROOT_CONTEXT, SpanKind, trace } from "@opentelemetry/api";
+import { ROOT_CONTEXT, SpanKind, TraceFlags, trace } from "@opentelemetry/api";
 import type { Context, Span, SpanContext } from "@opentelemetry/api";
 import { BasicTracerProvider, RandomIdGenerator, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import type { IdGenerator } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { TRACEPARENT } from "./correlation.js";
 import type { CorrelationId } from "./types.js";
 
-/** `00-<32 hex trace-id>-<16 hex span-id>-<2 hex flags>` — the same shape `correlation.ts` parses. */
-const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
 const ALL_ZERO_TRACE = "0".repeat(32);
 const ALL_ZERO_SPAN = "0".repeat(16);
 
 /** A remote parent context when `inboundTraceParent` is well-formed and neither id is all-zero;
- *  `undefined` on anything else, which is what sends the span down the SDK's own root-span path. */
+ *  `undefined` on anything else, which is what sends the span down the SDK's own root-span path.
+ *  The parent is always marked sampled, regardless of the inbound flags byte: this workload
+ *  unconditionally records one span per request when tracing is on, and correlation.ts's own
+ *  `correlationFrom` makes the same promise independent of that byte — a spec-legal unsampled
+ *  parent must not silently produce a correlation with no matching span behind it. */
 function parentContextFrom(inboundTraceParent: string | null): Context | undefined {
   if (inboundTraceParent === null) return undefined;
   const matched = TRACEPARENT.exec(inboundTraceParent.trim());
   if (!matched) return undefined;
-  const [, traceId, spanId, flags] = matched as unknown as [string, string, string, string];
+  const [, traceId, spanId] = matched as unknown as [string, string, string, string];
   if (traceId === ALL_ZERO_TRACE || spanId === ALL_ZERO_SPAN) return undefined;
 
   const parent: SpanContext = {
     traceId,
     spanId,
-    traceFlags: Number.parseInt(flags, 16) & 0x1,
+    traceFlags: TraceFlags.SAMPLED,
     isRemote: true,
   };
   return trace.setSpanContext(ROOT_CONTEXT, parent);
@@ -65,8 +68,17 @@ function createIdGenerator(): { idGenerator: IdGenerator; forceNextTraceId: (tra
 export interface Tracing {
   /** Starts a server span for one request. Parented on `inboundTraceParent` when it is well-formed;
    *  otherwise a fresh root minted *as* `correlation`, so the exported span's trace id and the
-   *  response's correlation are the same value by construction rather than by coincidence. */
-  startRequestSpan(name: string, inboundTraceParent: string | null, correlation: CorrelationId): Span;
+   *  response's correlation are the same value by construction rather than by coincidence.
+   *  `startedAt`, when given, backdates the span's recorded start time to when the request actually
+   *  began — the span object itself is still constructed after the work finishes (its trace id can
+   *  depend on that work's outcome), but its exported timestamps should not lie about when the
+   *  request started just because the object was built late. */
+  startRequestSpan(
+    name: string,
+    inboundTraceParent: string | null,
+    correlation: CorrelationId,
+    startedAt?: number,
+  ): Span;
   /** Flushes every span still queued. Called once, at graceful shutdown, so a request handled just
    *  before shutdown is not silently dropped from the collector's view. */
   shutdown(): Promise<void>;
@@ -85,12 +97,12 @@ export function createTracing(otlpEndpoint: string): Tracing {
   const tracer = provider.getTracer("subzerodev.game-service");
 
   return {
-    startRequestSpan(name, inboundTraceParent, correlation) {
+    startRequestSpan(name, inboundTraceParent, correlation, startedAt) {
       const parent = parentContextFrom(inboundTraceParent);
       if (parent === undefined) {
         forceNextTraceId(correlation as string);
       }
-      return tracer.startSpan(name, { kind: SpanKind.SERVER }, parent);
+      return tracer.startSpan(name, { kind: SpanKind.SERVER, ...(startedAt !== undefined ? { startTime: startedAt } : {}) }, parent);
     },
     async shutdown() {
       // `SimpleSpanProcessor.shutdown()` alone does not wait for exports already in flight — only
@@ -99,6 +111,11 @@ export function createTracing(otlpEndpoint: string): Tracing {
       // just before this runs would otherwise race the process exit and sometimes lose.
       await provider.forceFlush();
       await provider.shutdown();
+      // `forceFlush()` resolving is not the same guarantee as the underlying OS socket having
+      // finished writing that last export — an immediate `process.exit()` right after this method
+      // returns can still race it on some platforms. Paid only here, so a shutdown with no tracing
+      // configured (`tracing` is `null` and this method is never called) never pays it.
+      await new Promise((resolve) => setTimeout(resolve, 50));
     },
   };
 }

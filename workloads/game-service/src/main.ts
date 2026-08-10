@@ -45,16 +45,17 @@ process.stdout.write(
   `${JSON.stringify({ listening: started.value.listening, readiness: started.value.probes.readiness().status })}\n`,
 );
 
+let shuttingDown = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    void started.value.shutdown().then(async (outcome) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void started.value.shutdown().then((outcome) => {
       if (!outcome.ok) {
         process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
       }
-      // `shutdown()` already awaits the tracing provider's own flush, but that promise resolving is
-      // not the same guarantee as the underlying OS socket having finished writing — an immediate
-      // `process.exit()` can still race that last write on some platforms.
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // `shutdown()` already awaits the tracing provider's own flush (including its own
+      // exit-race delay, paid only when tracing is configured — see `telemetry.ts`).
       process.exit(outcome.ok ? 0 : 1);
     });
   });

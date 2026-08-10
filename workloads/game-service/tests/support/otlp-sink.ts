@@ -6,25 +6,10 @@
  */
 import { createServer, type Server } from "node:http";
 
-export interface CollectedSpan {
-  readonly name: string;
-  readonly traceId: string;
-  readonly spanId: string;
-  readonly parentSpanId: string | null;
-}
+import { spansFromExportRequest } from "./otlp-json.js";
+import type { CollectedSpan } from "./otlp-json.js";
 
-interface OtlpJsonSpan {
-  readonly name: string;
-  readonly traceId: string;
-  readonly spanId: string;
-  readonly parentSpanId?: string;
-}
-
-interface OtlpJsonExportRequest {
-  readonly resourceSpans?: readonly {
-    readonly scopeSpans?: readonly { readonly spans?: readonly OtlpJsonSpan[] }[];
-  }[];
-}
+export type { CollectedSpan } from "./otlp-json.js";
 
 export interface OtlpSink {
   readonly url: string;
@@ -41,19 +26,8 @@ export async function startOtlpSink(): Promise<OtlpSink> {
     request.on("end", () => {
       if (request.url === "/v1/traces") {
         try {
-          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as OtlpJsonExportRequest;
-          for (const resourceSpan of parsed.resourceSpans ?? []) {
-            for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
-              for (const span of scopeSpan.spans ?? []) {
-                spans.push({
-                  name: span.name,
-                  traceId: span.traceId,
-                  spanId: span.spanId,
-                  parentSpanId: span.parentSpanId ?? null,
-                });
-              }
-            }
-          }
+          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          spans.push(...spansFromExportRequest(parsed));
         } catch {
           // A body this sink cannot parse fails the test's own assertions on `spans`, not this
           // handler — there is nothing useful to do with the parse error here.

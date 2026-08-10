@@ -17,27 +17,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect, createServer } from "node:net";
+import { connect } from "node:net";
 
-export interface CollectedSpan {
-  readonly name: string;
-  readonly traceId: string;
-  readonly spanId: string;
-  readonly parentSpanId: string | null;
-}
+import { freePort } from "./free-port.js";
+import { spansFromExportRequest } from "./otlp-json.js";
+import type { CollectedSpan } from "./otlp-json.js";
 
-interface ProtoJsonSpan {
-  readonly name: string;
-  readonly traceId: string;
-  readonly spanId: string;
-  readonly parentSpanId?: string;
-}
-
-interface ProtoJsonExportRequest {
-  readonly resourceSpans?: readonly {
-    readonly scopeSpans?: readonly { readonly spans?: readonly ProtoJsonSpan[] }[];
-  }[];
-}
+export type { CollectedSpan } from "./otlp-json.js";
 
 /** Every span the collector wrote to its output file across every export batch, oldest first. */
 export function readCollectedSpans(outputPath: string): CollectedSpan[] {
@@ -45,37 +31,9 @@ export function readCollectedSpans(outputPath: string): CollectedSpan[] {
   const spans: CollectedSpan[] = [];
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
-    const parsed = JSON.parse(line) as ProtoJsonExportRequest;
-    for (const resourceSpan of parsed.resourceSpans ?? []) {
-      for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
-        for (const span of scopeSpan.spans ?? []) {
-          spans.push({
-            name: span.name,
-            traceId: span.traceId,
-            spanId: span.spanId,
-            parentSpanId: span.parentSpanId ?? null,
-          });
-        }
-      }
-    }
+    spans.push(...spansFromExportRequest(JSON.parse(line)));
   }
   return spans;
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        server.close();
-        reject(new Error("could not allocate a free port"));
-        return;
-      }
-      const port = address.port;
-      server.close((closeError) => (closeError ? reject(closeError) : resolve(port)));
-    });
-  });
 }
 
 export interface RunningCollector {
