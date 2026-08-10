@@ -47,10 +47,14 @@ process.stdout.write(
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    void started.value.shutdown().then((outcome) => {
+    void started.value.shutdown().then(async (outcome) => {
       if (!outcome.ok) {
         process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
       }
+      // `shutdown()` already awaits the tracing provider's own flush, but that promise resolving is
+      // not the same guarantee as the underlying OS socket having finished writing — an immediate
+      // `process.exit()` can still race that last write on some platforms.
+      await new Promise((resolve) => setTimeout(resolve, 50));
       process.exit(outcome.ok ? 0 : 1);
     });
   });

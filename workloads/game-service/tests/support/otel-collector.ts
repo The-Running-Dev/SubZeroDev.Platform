@@ -3,9 +3,10 @@
  * is hardcoded to OTLP/HTTP protobuf (`PlatformObservabilityExtensions.ConfigureOtlp`, outside this
  * slice's `Touches`) and the workload's is OTLP/HTTP JSON (`telemetry.ts`); a real collector accepts
  * both on the same OTLP/HTTP receiver and normalises them, so nothing here decodes either wire
- * format itself. Its `file` exporter writes each export request through Go's own protojson
- * marshaler — trace and span ids as base64 there, the standard proto3 JSON mapping for `bytes`,
- * unlike the JS SDK's own JSON exporter (`otlp-sink.ts`'s hex, checked against the source directly).
+ * format itself. Its `file` exporter writes each export request as its own OTLP JSON — trace and
+ * span ids already lowercase hex there (checked against a real collector's own output directly,
+ * not assumed from the proto3 JSON mapping for `bytes`, which this deviates from the same way the
+ * JS SDK's own JSON exporter does — see `telemetry.ts`'s note).
  *
  * The binary's path comes from `OTEL_COLLECTOR_BIN`, set only in CI (`build.yml` downloads it before
  * the outbound-port block, the same step-ordering `dotnet`/`node` setup already uses). A test that
@@ -38,10 +39,6 @@ interface ProtoJsonExportRequest {
   }[];
 }
 
-function base64ToHex(value: string): string {
-  return Buffer.from(value, "base64").toString("hex");
-}
-
 /** Every span the collector wrote to its output file across every export batch, oldest first. */
 export function readCollectedSpans(outputPath: string): CollectedSpan[] {
   const text = readFileSync(outputPath, "utf8");
@@ -54,9 +51,9 @@ export function readCollectedSpans(outputPath: string): CollectedSpan[] {
         for (const span of scopeSpan.spans ?? []) {
           spans.push({
             name: span.name,
-            traceId: base64ToHex(span.traceId),
-            spanId: base64ToHex(span.spanId),
-            parentSpanId: span.parentSpanId ? base64ToHex(span.parentSpanId) : null,
+            traceId: span.traceId,
+            spanId: span.spanId,
+            parentSpanId: span.parentSpanId ?? null,
           });
         }
       }
