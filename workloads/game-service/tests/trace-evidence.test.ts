@@ -1,6 +1,8 @@
 /**
- * S8.1/S8.2/S8.6 — one request through the edge produces spans from both processes in a real
- * collector, sharing one trace id, with the workload's span parented on the edge's. Skipped unless
+ * S8.1/S8.2/S8.4/S8.6 — one request through the edge produces spans from both processes in a real
+ * collector, sharing one trace id, with the workload's span parented on the edge's — for a
+ * well-formed inbound trace and, separately, for a malformed one arriving at the edge (S8.4's other
+ * half, S3.7/`telemetry.test.ts` already covering it directly at the workload). Skipped unless
  * `OTEL_COLLECTOR_BIN` is set (`build.yml`'s `game-service` job sets it; nothing else does), so a
  * local `npm test` with no collector installed still runs everything else in this suite.
  *
@@ -70,6 +72,40 @@ describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
       expect(workloadSpan!.traceId).toBe(edgeSpan!.traceId);
       // S8.2 — the relationship is asserted directly, not inferred from the shared id alone: the
       // lookup above only succeeds because the workload span's own parentSpanId names it.
+      expect(workloadSpan!.parentSpanId).toBe(edgeSpan!.spanId);
+    });
+
+    it("S8.4 — a malformed traceparent arriving at the edge still answers 200, under one fresh root shared by both hops", async () => {
+      const collector = await startCollector();
+      const edge = await spawnHostedEdge(collector.otlpEndpoint);
+
+      try {
+        const response = await fetch(`${edge.target.baseAddress}/v1/create-session`, {
+          method: "POST",
+          headers: { "content-type": "application/json", traceparent: "not-a-traceparent" },
+          body: JSON.stringify({ campaignId: CAMPAIGN_ID }),
+        });
+        expect(response.status).toBe(200);
+
+        const shutdown = await edge.target.shutdown();
+        expect(shutdown.ok).toBe(true);
+        await waitForEdgeToExit(edge.target.baseAddress);
+      } finally {
+        edge.forceKill();
+        await collector.stop();
+      }
+
+      const spans = readCollectedSpans(collector.outputPath);
+      const workloadSpan = spans.find((span) => span.name === "game-service.request");
+      expect(workloadSpan, `no workload span among: ${JSON.stringify(spans)}`).toBeDefined();
+
+      const edgeSpan = spans.find((span) => span.spanId === workloadSpan!.parentSpanId);
+      expect(edgeSpan, `no edge span with spanId ${workloadSpan!.parentSpanId} among: ${JSON.stringify(spans)}`)
+        .toBeDefined();
+
+      // A malformed header at the edge still yields one shared, freshly minted root — same
+      // criterion as the well-formed case above, over a header neither hop can adopt.
+      expect(workloadSpan!.traceId).toBe(edgeSpan!.traceId);
       expect(workloadSpan!.parentSpanId).toBe(edgeSpan!.spanId);
     });
   },
