@@ -45,12 +45,17 @@ process.stdout.write(
   `${JSON.stringify({ listening: started.value.listening, readiness: started.value.probes.readiness().status })}\n`,
 );
 
+let shuttingDown = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     void started.value.shutdown().then((outcome) => {
       if (!outcome.ok) {
         process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
       }
+      // `shutdown()` already awaits the tracing provider's own flush (including its own
+      // exit-race delay, paid only when tracing is configured — see `telemetry.ts`).
       process.exit(outcome.ok ? 0 : 1);
     });
   });

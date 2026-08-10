@@ -42,11 +42,16 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
 
         // A malformed inbound header is not the caller's fault: it is ignored and fresh context is
         // minted, which is origination rather than fabrication.
+        //
+        // A well-formed one is adopted, but not forwarded byte-for-byte: `codec.CurrentHop` reports
+        // this request's own span (ASP.NET Core's own instrumentation, ambient by the time any
+        // middleware runs) rather than the caller's, so a downstream forward names this hop as the
+        // parent instead of skipping over it — the relationship S8.2 asserts.
         using var scope = codec.TryParse(
             traceParent,
             string.IsNullOrEmpty(traceState) ? null : traceState,
             out var established)
-            ? factory.Begin(established, new CorrelationId(established.TraceId), TenantId.Implicit, principal)
+            ? factory.Begin(codec.CurrentHop(established), new CorrelationId(established.TraceId), TenantId.Implicit, principal)
             : factory.Begin(TenantId.Implicit, principal);
 
         await next(context).ConfigureAwait(false);

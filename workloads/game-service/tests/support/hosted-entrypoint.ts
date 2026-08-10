@@ -23,7 +23,7 @@ function configuration(): WorkloadConfiguration {
       fixedInstant: process.env["GAME_SERVICE_FIXED_INSTANT"] ?? "",
       dumpPath: process.env["GAME_SERVICE_DUMP_PATH"] ?? "",
     },
-    otlpEndpoint: null,
+    otlpEndpoint: process.env["GAME_SERVICE_OTLP_ENDPOINT"] ?? null,
   };
 }
 
@@ -44,6 +44,8 @@ function triggerShutdown(): void {
     if (!outcome.ok) {
       process.stderr.write(`${JSON.stringify(outcome.error)}\n`);
     }
+    // `shutdown()` already awaits the tracing provider's own flush (including its own
+    // exit-race delay, paid only when tracing is configured — see `telemetry.ts`).
     process.exit(outcome.ok ? 0 : 1);
   });
 }

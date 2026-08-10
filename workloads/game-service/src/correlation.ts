@@ -9,8 +9,9 @@
 import { randomBytes } from "node:crypto";
 import type { CorrelationId } from "./types.js";
 
-/** `00-<32 hex trace-id>-<16 hex span-id>-<2 hex flags>`, W3C's own shape. */
-const TRACEPARENT = /^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$/;
+/** `00-<32 hex trace-id>-<16 hex span-id>-<2 hex flags>`, W3C's own shape — exported so
+ *  `telemetry.ts` parses the identical pattern rather than a second one that could drift from it. */
+export const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
 const ALL_ZERO = "0".repeat(32);
 
 export function mintCorrelation(): CorrelationId {

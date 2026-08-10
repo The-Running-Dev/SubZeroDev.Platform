@@ -5,10 +5,10 @@
  * states — the dump is a file the workload writes, never a value read out of the edge's memory.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createServer } from "node:net";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { freePort } from "./free-port.js";
 import { spawnHostedWorkload } from "./hosted-target.js";
 import type { HostedTarget, Outcome, ShutdownError } from "../../src/types.js";
 
@@ -25,22 +25,6 @@ export interface SpawnedHostedEdge {
   readonly target: HostedTarget;
   /** Only for a test that needs to abandon both processes without a clean shutdown. */
   forceKill(): void;
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        server.close();
-        reject(new Error("could not allocate a free port"));
-        return;
-      }
-      const port = address.port;
-      server.close((closeError) => (closeError ? reject(closeError) : resolve(port)));
-    });
-  });
 }
 
 /** Keeps the last `TAIL_LIMIT` characters of a child's output. Bounded because the edge writes
@@ -80,9 +64,11 @@ async function waitForLive(
 }
 
 /** Spawns the edge as a genuine child process — `dotnet <built dll>` over a real bound socket, in
- *  front of a genuinely separate workload process `spawnHostedWorkload` also spawns. */
-export async function spawnHostedEdge(): Promise<SpawnedHostedEdge> {
-  const workload = await spawnHostedWorkload();
+ *  front of a genuinely separate workload process `spawnHostedWorkload` also spawns. `otlpEndpoint`,
+ *  when given, points both processes at the same collector — S8's own hook; every other caller
+ *  omits it and gets today's no-telemetry behaviour on both sides unchanged. */
+export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHostedEdge> {
+  const workload = await spawnHostedWorkload(otlpEndpoint);
   const port = await freePort();
   const dllPath = process.env["GAME_EDGE_DLL"] ?? DEFAULT_DLL;
 
@@ -93,6 +79,10 @@ export async function spawnHostedEdge(): Promise<SpawnedHostedEdge> {
     GameEdge__WorkloadBaseAddress: workload.target.baseAddress,
     GameEdge__ForwardTimeout: "00:00:10",
     GameEdge__LivenessTimeout: "00:00:05",
+    // Read by `AddPlatformObservability` (`PlatformObservabilityExtensions.ResolveIdentity`) when
+    // there is no `PlatformOptions` singleton already registered ahead of it — the same section
+    // `AddPlatformWebHost` itself reads.
+    ...(otlpEndpoint ? { Platform__Telemetry__OtlpEndpoint: otlpEndpoint } : {}),
   };
 
   // The content root ASP.NET resolves appsettings.json against defaults to the process's working

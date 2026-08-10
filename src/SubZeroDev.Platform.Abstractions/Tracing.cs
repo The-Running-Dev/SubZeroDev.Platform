@@ -23,6 +23,17 @@ public interface ITraceContextCodec
     /// <param name="activityName">The name of the activity to start.</param>
     /// <returns>A handle that ends the trace when disposed.</returns>
     ITraceHandle StartLinked(TraceContext origin, string activityName);
+
+    /// <summary>Reports this hop's own span for <paramref name="origin"/>'s trace, when a listener
+    /// already started one for the current operation (ASP.NET Core's own request instrumentation,
+    /// for a host that carries it) — the ambient <c>System.Diagnostics.Activity</c>, not one this
+    /// call starts itself. A caller propagating <paramref name="origin"/> onward should propagate
+    /// this instead: it is the same trace, with this hop named as the parent rather than skipped
+    /// over. Returns <paramref name="origin"/> unchanged when no such activity shares its trace id —
+    /// a host with no listener still gets a coherent trace context to forward.</summary>
+    /// <param name="origin">The trace context this hop adopted from its own caller.</param>
+    /// <returns>The current hop's own trace context, or <paramref name="origin"/> unchanged.</returns>
+    TraceContext CurrentHop(TraceContext origin);
 }
 
 /// <summary>A started trace, exposing the context it established so the caller can populate a
