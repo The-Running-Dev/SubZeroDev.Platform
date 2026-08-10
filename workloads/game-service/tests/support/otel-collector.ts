@@ -136,8 +136,13 @@ export async function startCollector(): Promise<RunningCollector> {
 
   const child: ChildProcessWithoutNullStreams = spawn(binary, ["--config", configPath]);
 
+  // The collector's own log destination is not documented as fixed to one stream — captured from
+  // both, since a diagnostic that reads the wrong one is worse than one that reads too much.
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  child.stdout.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
   let hasExited = false;
