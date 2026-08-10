@@ -298,9 +298,14 @@ failed request. Nothing on this type is persisted, and nothing on it reaches a s
 
 **The MCP surface builds the same context without a version path.** A tool call carries no
 `/v<n>/` segment, so `wireVersion` is the artifact's own `wireVersion` — the contract carries
-exactly one, which is what makes the assignment a lookup rather than a negotiation. `correlation`
-is derived by the same rule, from the trace context adopted or minted for the MCP request, and
-`inboundTraceParent` is whatever the MCP HTTP transport carried, or null.
+exactly one, which is what makes the assignment a lookup rather than a negotiation. `operation` is
+the resolved row's `operation`, not the requested tool name — the two differ for the three rows
+whose `mcpTool` is a deliberate rename, so only `callTool`, which has looked the row up, can set it.
+`correlation` is derived by the same rule as the JSON wire, from the trace context adopted or minted
+for the MCP request. **`callTool` takes the raw `inboundTraceParent` the MCP HTTP transport carried**
+— the one piece of the context the transport holds and `callTool` does not — and derives
+`correlation` from it the same way `HttpSurface.handle` derives its own from the `WireRequest` it
+receives; the rest of the context is `callTool`'s own to build once the row is resolved.
 
 ### Workload — dispatch
 
@@ -658,12 +663,12 @@ export interface McpToolDescriptor {
 }
 
 export type McpToolOutcome =
-  | { readonly kind: "result"; readonly value: CanonicalJson }
+  | { readonly kind: "result"; readonly value: CanonicalJson; readonly correlation: CorrelationId }
   | { readonly kind: "error"; readonly error: WireErrorBody };
 
 export interface McpSurface {
   listTools(): readonly McpToolDescriptor[];
-  callTool(name: McpToolName, args: JsonValue): Promise<McpToolOutcome>;
+  callTool(name: McpToolName, args: JsonValue, inboundTraceParent: string | null): Promise<McpToolOutcome>;
 }
 
 export function buildMcpSurface(
@@ -678,6 +683,14 @@ no row that is not a tool.
 
 **`callTool` validates against the same request schema and calls the same `Dispatcher`.** It takes no
 row-specific argument type, because an MCP-specific path is precisely what must not exist.
+
+**`callTool` takes the raw `inboundTraceParent`, derives one `correlation` from it, and both outcome
+arms carry that correlation** — the result arm on `correlation` directly, the error arm inside
+`WireErrorBody` as every error body already does. A successful tool call is a response like any
+other under invariant 29. `callTool` derives, rather than receives, the rest of the `RequestContext`:
+`operation` from the row `name` resolves to, `wireVersion` from the contract, `correlation` from
+`inboundTraceParent` — none of it is the transport's to supply, because none of it is knowable before
+the row lookup `callTool` alone performs.
 
 ### Probes and process lifecycle — workload
 

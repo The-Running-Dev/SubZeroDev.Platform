@@ -549,6 +549,37 @@ rather than a permanent boundary. The hedge that keeps it cheap is opaque, stabl
 every product from the start, which makes later linking a retrofit rather than a migration.
 Reversibility: cheap now; expensive once any product's principal ids become externally meaningful
 
+### 2026-08-10 — `callTool` takes the raw `inboundTraceParent`; the MCP result arm carries the derived correlation
+
+Context: `20-contract.md` contradicted itself, tracked as
+[#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102). "Workload — request
+context" said the MCP surface adopts whatever `traceparent` the transport carried, and invariant 29
+said every response carries the correlation. `McpSurface.callTool` gave the MCP HTTP transport no
+parameter to hand a trace in through, and `McpToolOutcome`'s result arm gave a successful call no
+member to carry a correlation out — so a successful tool result carried no correlation anywhere, and
+even an error's correlation was always freshly minted rather than adopted from an inbound trace,
+found by the S6 code review.
+Chosen: `callTool(name, args, inboundTraceParent: string | null)`, and `McpToolOutcome`'s result arm
+gains a `correlation: CorrelationId` sibling to `value`. `callTool` derives `correlation` from
+`inboundTraceParent` by the same rule `correlationFrom` already applies on the JSON wire, and builds
+the rest of `RequestContext` itself — `operation` from the row `name` resolves to, `wireVersion` from
+the contract. A full `RequestContext` was considered and rejected as the parameter: its `operation`
+member must be the resolved row's `operation`, not the requested `name`, because three rows carry a
+deliberately renamed `mcpTool` — only `callTool`, which performs the lookup, can set it correctly, so
+handing in a `RequestContext` built before that lookup would hand in a context that is wrong for
+exactly those three tools. This mirrors the JSON wire, where `10-design.md`'s "the correlation
+travels on the response either way" already means outside the body a schema validates — HTTP carries
+it on a response header, MCP has no header channel of its own, so it carries it as a sibling field on
+the outcome rather than inside `value`. `value` stays exactly the canonically-encoded projected
+shape, so S6.3's "identical to the JSON wire's for the same arguments" still holds.
+Rejected: a full `RequestContext` parameter — see above. Folding correlation into `value` — would
+make the MCP result byte-different from the JSON wire's body for the same call, breaking the "one
+dispatch, one shape" claim S6 exists to prove. Leaving `callTool` to mint its own correlation
+unconditionally, as the shipped S6 code does — silently drops every inbound trace on the MCP surface,
+which invariant 29's neighbors (30, 31) assume does not happen.
+Reversibility: cheap — S6 shipped code references the old two-argument signature and is updated in
+the same change that closes #102.
+
 ## Open
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))

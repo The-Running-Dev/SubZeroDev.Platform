@@ -257,6 +257,20 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
     });
   });
 
+  it("carries the correlation on a successful tool call too, not only on an error (#102)", async () => {
+    await bound(async (base) => {
+      const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+      const response = await fetch(`${base}/mcp/call-tool`, {
+        method: "POST",
+        headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
+        body: JSON.stringify({ name: "start_game", arguments: { campaignId: CAMPAIGN_ID } }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-correlation-id")).toBe(traceId);
+    });
+  });
+
   it("still lists the tools on POST", async () => {
     await bound(async (base) => {
       const response = await fetch(`${base}/mcp/list-tools`, { method: "POST" });

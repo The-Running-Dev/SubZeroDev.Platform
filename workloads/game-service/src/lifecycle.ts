@@ -127,16 +127,16 @@ interface McpRequest {
   readonly path: string;
   readonly method: string;
   readonly body: Uint8Array;
+  readonly inboundTraceParent: string | null;
+  /** For a refusal this transport raises itself, before `callTool` is reached — same rule
+   *  (`correlationFrom`), applied here because there is no row lookup to wait on. */
   readonly correlation: CorrelationId;
 }
 
 interface McpResponse {
   readonly status: HttpStatus;
   readonly body: string;
-  /** `null` only on a successful tool result: `McpToolOutcome`'s result arm carries no correlation
-   *  and `callTool` takes no context parameter, so the transport has none to report. That is a
-   *  contract gap against invariant 29, recorded in `mcp-surface.ts` — not a choice made here. */
-  readonly correlation: CorrelationId | null;
+  readonly correlation: CorrelationId;
 }
 
 /**
@@ -163,7 +163,7 @@ async function handleMcp(contract: ContractPackage, mcp: McpSurface, request: Mc
     if (!encoded.ok) {
       return errorResponse(contract, INTERNAL_FAILURE, request.correlation);
     }
-    return { status: 200, body: encoded.value as string, correlation: null };
+    return { status: 200, body: encoded.value as string, correlation: request.correlation };
   }
 
   if (request.path !== MCP_CALL_TOOL) {
@@ -184,11 +184,15 @@ async function handleMcp(contract: ContractPackage, mcp: McpSurface, request: Mc
     return errorResponse(contract, "malformed_payload" as WireErrorCode, request.correlation);
   }
 
-  const outcome = await mcp.callTool(parsed.name as McpToolName, (parsed.arguments ?? {}) as JsonValue);
+  const outcome = await mcp.callTool(
+    parsed.name as McpToolName,
+    (parsed.arguments ?? {}) as JsonValue,
+    request.inboundTraceParent,
+  );
   if (outcome.kind === "result") {
-    return { status: 200, body: outcome.value as string, correlation: null };
+    return { status: 200, body: outcome.value as string, correlation: outcome.correlation };
   }
-  // The surface has already resolved the code and minted the correlation; re-encoding it through
+  // The surface has already derived the code and the correlation; re-encoding it through
   // `wireError` is what attaches the status, and produces the same bytes the wire would.
   return errorResponse(contract, outcome.error.code, outcome.error.correlation);
 }
@@ -218,19 +222,20 @@ function serve(contract: ContractPackage, surface: HttpSurface, mcp: McpSurface,
 
       if (path === MCP_LIST_TOOLS || path === MCP_CALL_TOOL) {
         const inbound = message.headers["traceparent"];
+        const inboundTraceParent = typeof inbound === "string" ? inbound : null;
         const result = await handleMcp(contract, mcp, {
           path,
           method: message.method ?? "POST",
           body: await readRequestBody(message),
-          // Adopted here, where the header is in hand, so a transport-level refusal is at least
-          // reachable from the caller's trace. A refusal the *surface* raises is not — see the
-          // note in `mcp-surface.ts`.
-          correlation: correlationFrom(typeof inbound === "string" ? inbound : null),
+          inboundTraceParent,
+          // For a refusal this transport raises itself (bad method, unknown path, unparsable
+          // body), before a row lookup is reached for `callTool` to derive its own.
+          correlation: correlationFrom(inboundTraceParent),
         });
-        const headers: Record<string, string> = { "content-type": "application/json" };
-        if (result.correlation !== null) {
-          headers["x-correlation-id"] = result.correlation as string;
-        }
+        const headers: Record<string, string> = {
+          "content-type": "application/json",
+          "x-correlation-id": result.correlation as string,
+        };
         response.writeHead(result.status, headers);
         response.end(result.body);
         return;

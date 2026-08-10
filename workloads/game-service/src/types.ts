@@ -167,12 +167,12 @@ export interface McpToolDescriptor {
 }
 
 export type McpToolOutcome =
-  | { readonly kind: "result"; readonly value: CanonicalJson }
+  | { readonly kind: "result"; readonly value: CanonicalJson; readonly correlation: CorrelationId }
   | { readonly kind: "error"; readonly error: WireErrorBody };
 
 export interface McpSurface {
   listTools(): readonly McpToolDescriptor[];
-  callTool(name: McpToolName, args: JsonValue): Promise<McpToolOutcome>;
+  callTool(name: McpToolName, args: JsonValue, inboundTraceParent: string | null): Promise<McpToolOutcome>;
 }
 
 // ---------------------------------------------------------------------------- composition
