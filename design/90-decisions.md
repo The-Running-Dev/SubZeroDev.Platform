@@ -580,6 +580,67 @@ which invariant 29's neighbors (30, 31) assume does not happen.
 Reversibility: cheap — S6 shipped code references the old two-argument signature and is updated in
 the same change that closes #102.
 
+### 2026-08-10 — The edge's two wire-visible codes: `workload_unreachable` and `workload_timeout`
+
+Context: Unresolved 2's edge half — `20-contract.md`'s `EdgeError` names two variants,
+`WorkloadUnreachable` (503) and `WorkloadTimeout` (504), but leaves their `code` strings unnamed.
+S7 is the slice that needs them: `EdgeError` crosses the wire in `WireErrorBody.code` the same way
+the workload's own codes do, so a first implementer would otherwise settle two more strings
+silently.
+Chosen: `workload_unreachable` and `workload_timeout` — lowercase snake_case, on the same terms as
+every other transport code the workload already emits (`malformed_payload`, `unsupported_version`,
+`unknown_operation`, `internal_failure`), and named for the condition the way those four are rather
+than for the status code. Neither joins `WireErrorCode` or the contract's status mapping —
+`20-contract.md` is explicit that the edge's two codes are `EdgeError`'s own and enter neither.
+Rejected: reusing `internal_failure` for both — collapses two distinguishable conditions (a caller
+can retry-with-a-read on either, per `EdgeError`'s own table, but an operator debugging a stuck
+process needs to tell "never connected" from "connected and hung" apart). A `503`/`504`-derived
+name (`service_unavailable`, `gateway_timeout`) — ties the code to the HTTP status rather than the
+condition, and the workload's own codes never do that (`unknown_session` is `404`,
+`invalid_state` is `409`, both named for the condition).
+Reversibility: cheap — both are new strings with no prior callers.
+
+### 2026-08-10 — `workload_unreachable` covers a forward that fails after the headers arrive
+
+Context: `20-contract.md` describes `WorkloadUnreachable` as "the forward cannot connect", which
+reads as the connect phase alone. The forwarder uses `HttpCompletionOption.ResponseHeadersRead`, so
+a workload killed mid-response fails at the body read instead, and that read had no classification —
+the `HttpRequestException` escaped the edge entirely and Platform's envelope answered `500`
+`UnhandledRequestFailure`. Reproduced against a workload that writes headers and then destroys the
+socket.
+Chosen: classify a transport failure during the body read as `workload_unreachable`, the same as one
+during the send. The contract's neighbouring sentence — "the edge produces no other error; every
+other status a caller sees came from the workload" — leaves no third answer available, and the two
+cases are the same lost hop from the caller's side. The wording in `20-contract.md` is narrower than
+this behaviour and is worth widening at the next `/contract` pass; the behaviour is what the
+invariant requires either way.
+Rejected: letting it escape to the `500` envelope — that status came from neither the workload nor
+`EdgeError`, so it breaks the invariant while telling the caller nothing about which hop failed.
+A third code for "died mid-response" — `EdgeError` is deliberately two variants, the retry answer is
+identical for both, and a caller cannot act on the distinction; an operator gets it from the log
+line the correlation identifies.
+Reversibility: cheap — one `catch` clause and its test.
+
+### 2026-08-10 — `Logging:LogLevel` is the one home for log levels, and Observability reads it
+
+Context: `AddPlatformObservability` fixed `MinimumLevel.Information()` and never read
+configuration, so the `Logging` section every .NET consumer writes was dead config that reads as
+live — an operator setting `Microsoft.AspNetCore: Warning` still got a log line per request and per
+outbound call. It is not an ordinary filtering gap: `AddSerilog` replaces the logger factory
+outright, so `Microsoft.Extensions.Logging`'s own rules never run and there was nowhere else the
+section could take effect. Found in S7 review, where the edge's own `appsettings.json` carried such
+a section and 70 KB of per-request logging fell out of it.
+Chosen: translate `Logging:LogLevel` into Serilog's minimum level and per-prefix overrides inside
+`ConfigureLogging`. `Default` is the minimum, every other key an override on that category prefix,
+`None` mapped one past the highest level so it admits nothing. Absent section keeps `Information`,
+so nothing already deployed changes.
+Rejected: a level on `TelemetryOptions` — a second home for one fact, and the one nobody would look
+in first. `Serilog.Settings.Configuration` and a `Serilog` section — a new dependency to read a
+second, Serilog-shaped section alongside the standard one, which is the same two-homes problem with
+a package attached. Per-provider sections (`Logging:Console:LogLevel`) — Platform owns its sinks, so
+there is no provider for a consumer to address and the key would name something that does not exist.
+Reversibility: cheap — one private method and its tests; the prior behaviour is the no-section path.
+
 ## Open
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))

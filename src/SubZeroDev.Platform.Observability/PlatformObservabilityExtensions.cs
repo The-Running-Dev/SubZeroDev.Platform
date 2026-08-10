@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -51,13 +52,18 @@ public static class PlatformObservabilityExtensions
         var fileName = $"{SanitiseForFileName(identity.ServiceName)}-{identity.HostRole}-.jsonl";
         var filePath = Path.Combine(identity.Telemetry.LogDirectory, fileName);
 
+        // Read out here rather than off the builder inside the callback, which runs when the
+        // container is built and has no business reaching back into a builder by then.
+        var configuration = builder.Configuration;
+
         builder.Services.AddSerilog(
             (services, loggerConfiguration) =>
             {
                 var accessor = services.GetService<IOperationScopeAccessor>();
 
+                ApplyConfiguredLevels(loggerConfiguration, configuration);
+
                 loggerConfiguration
-                    .MinimumLevel.Information()
                     .Enrich.WithProperty("service.name", identity.ServiceName)
                     .Enrich.WithProperty("service.version", identity.ServiceVersion)
                     .Enrich.WithProperty("deployment.environment.name", identity.Environment)
@@ -89,6 +95,66 @@ public static class PlatformObservabilityExtensions
             },
             writeToProviders: false);
     }
+
+    /// <summary>Applies the standard <c>Logging:LogLevel</c> section to the Serilog pipeline:
+    /// <c>Default</c> becomes the minimum level and every other key becomes an override on that
+    /// category prefix.</summary>
+    /// <remarks>The section is honoured here rather than left to
+    /// <c>Microsoft.Extensions.Logging</c> because <c>AddSerilog</c> replaces the logger factory
+    /// outright, so MEL's own filter rules never run and the section would otherwise be
+    /// configuration that reads as live and does nothing. There is deliberately no second home for
+    /// the level in <see cref="TelemetryOptions"/> — one fact, one place, and this is the place
+    /// every .NET consumer already knows. Per-provider sections (<c>Logging:Console:LogLevel</c>)
+    /// are not read: Platform owns its sinks, so there is no provider for a consumer to address.
+    /// With no section present the pipeline stays at <c>Information</c>, which is what it was
+    /// before the section was read at all.</remarks>
+    /// <param name="loggerConfiguration">The pipeline being configured.</param>
+    /// <param name="configuration">The host's configuration.</param>
+    internal static void ApplyConfiguredLevels(
+        LoggerConfiguration loggerConfiguration,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(loggerConfiguration);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var section = configuration.GetSection("Logging:LogLevel");
+
+        loggerConfiguration.MinimumLevel.Is(
+            TranslateLevel(section["Default"]) ?? LogEventLevel.Information);
+
+        foreach (var entry in section.GetChildren())
+        {
+            if (string.Equals(entry.Key, "Default", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (TranslateLevel(entry.Value) is { } level)
+            {
+                loggerConfiguration.MinimumLevel.Override(entry.Key, level);
+            }
+        }
+    }
+
+    /// <summary>Translates one <c>Microsoft.Extensions.Logging</c> level name to Serilog's. An
+    /// unrecognised or absent name yields <see langword="null"/> — a typo silences nothing and
+    /// raises nothing, it simply does not apply, which is what MEL itself does with one.</summary>
+    /// <param name="name">The configured level name.</param>
+    /// <returns>The Serilog level, or <see langword="null"/> when there is nothing to apply.</returns>
+    private static LogEventLevel? TranslateLevel(string? name) => name switch
+    {
+        "Trace" => LogEventLevel.Verbose,
+        "Debug" => LogEventLevel.Debug,
+        "Information" => LogEventLevel.Information,
+        "Warning" => LogEventLevel.Warning,
+        "Error" => LogEventLevel.Error,
+        "Critical" => LogEventLevel.Fatal,
+        // Serilog has no "off": one past the highest level admits nothing, since no event carries
+        // it. MEL's `None` means the same thing, so the translation is exact rather than a
+        // near-enough.
+        "None" => LogEventLevel.Fatal + 1,
+        _ => null,
+    };
 
     private static void ConfigureOpenTelemetry(IHostApplicationBuilder builder, TelemetryIdentity identity)
     {

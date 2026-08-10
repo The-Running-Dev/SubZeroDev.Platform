@@ -69,6 +69,16 @@ jobs:
         with:
           node-version: '24'
 
+      # S7.8/S7.9: replay-edge.test.ts spawns the .NET edge as a real child process in front of the
+      # spawned Node workload, so the edge must be built before the suite runs. GAME_EDGE_DLL tells
+      # the test harness where to find it rather than guessing a configuration string.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the edge
+        run: dotnet build workloads/game-edge/SubZeroDev.Platform.GameEdge/SubZeroDev.Platform.GameEdge.csproj --configuration Release
+
       # S3.13 / invariant 32: with no OTLP endpoint configured the workload must construct no
       # exporter and attempt no outbound connection. Rejecting both OTLP ports before the suite
       # runs is what makes that enforced rather than merely unobserved, exactly as the .NET job
@@ -89,4 +99,6 @@ jobs:
 
       - name: Test
         working-directory: workloads/game-service
+        env:
+          GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
         run: npm test
