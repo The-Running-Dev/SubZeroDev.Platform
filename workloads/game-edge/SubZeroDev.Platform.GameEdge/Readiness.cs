@@ -13,8 +13,16 @@ public interface IGameWorkloadProbe
 }
 
 /// <inheritdoc cref="IGameWorkloadProbe"/>
-internal sealed class GameWorkloadProbe(HttpClient httpClient, GameEdgeOptions options) : IGameWorkloadProbe
+/// <remarks>Takes the factory rather than an <see cref="HttpClient"/>: the readiness check that
+/// holds this probe is registered once and kept for the process lifetime by the health registry, so
+/// a captured client would pin one handler chain forever and never pick up a change in the address
+/// <see cref="GameEdgeOptions.WorkloadBaseAddress"/> resolves to.</remarks>
+internal sealed class GameWorkloadProbe(IHttpClientFactory httpClientFactory, GameEdgeOptions options)
+    : IGameWorkloadProbe
 {
+    /// <summary>The named client this probe asks the factory for.</summary>
+    internal const string HttpClientName = "game-workload-probe";
+
     private const string LivenessPath = "/livez";
 
     /// <inheritdoc/>
@@ -25,6 +33,7 @@ internal sealed class GameWorkloadProbe(HttpClient httpClient, GameEdgeOptions o
 
         try
         {
+            var httpClient = httpClientFactory.CreateClient(HttpClientName);
             using var response = await httpClient
                 .GetAsync(new Uri(options.WorkloadBaseAddress, LivenessPath), budget.Token)
                 .ConfigureAwait(false);

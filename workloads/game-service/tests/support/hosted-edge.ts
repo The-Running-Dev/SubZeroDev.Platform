@@ -43,10 +43,30 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForLive(baseAddress: string, timeoutMs: number): Promise<void> {
+/** Keeps the last `TAIL_LIMIT` characters of a child's output. Bounded because the edge writes
+ *  every log line to its own stdout and the whole point of reading it is to keep the pipe drained,
+ *  not to hold the transcript. */
+const TAIL_LIMIT = 16_384;
+
+function appendTail(existing: string, chunk: string): string {
+  const combined = existing + chunk;
+  return combined.length > TAIL_LIMIT ? combined.slice(combined.length - TAIL_LIMIT) : combined;
+}
+
+/** Polls until the edge answers liveness, giving up early when the child is already gone — a child
+ *  that exited immediately (a missing dll, a rejected setting) is never going to answer, and waiting
+ *  the full budget for it reports a timeout in place of the real cause. */
+async function waitForLive(
+  baseAddress: string,
+  timeoutMs: number,
+  deadChild: () => string | null,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
+    const dead = deadChild();
+    if (dead !== null) throw new Error(`edge process is gone before it became live: ${dead}`);
+
     try {
       const response = await fetch(`${baseAddress}/health/live`);
       if (response.status === 200) return;
@@ -85,7 +105,16 @@ export async function spawnHostedEdge(): Promise<SpawnedHostedEdge> {
 
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
+    stderr = appendTail(stderr, chunk.toString("utf8"));
+  });
+
+  // Read, not ignored. The edge writes its whole log — startup, every request, every outbound call —
+  // to stdout, roughly 70 KB for this fixture's ten steps, and an unread pipe stops draining at the
+  // operating system's 64 KB buffer: the child then blocks inside its own logger. Reading it also
+  // puts the edge's own account of a failed startup into the error below, where stderr is empty.
+  let stdout = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout = appendTail(stdout, chunk.toString("utf8"));
   });
 
   let hasExited = false;
@@ -93,14 +122,31 @@ export async function spawnHostedEdge(): Promise<SpawnedHostedEdge> {
     hasExited = true;
   });
 
+  // Without a listener Node escalates a spawn failure — `dotnet` not on PATH is the likely one — to
+  // an uncaught exception, which takes the whole test worker down instead of failing this call.
+  let spawnError: string | null = null;
+  child.once("error", (thrown: Error) => {
+    spawnError = thrown.message;
+    hasExited = true;
+  });
+
   const baseAddress = `http://127.0.0.1:${port}`;
 
+  const deadChild = (): string | null => {
+    if (spawnError !== null) return `could not spawn 'dotnet ${dllPath}': ${spawnError}`;
+    if (hasExited) return `edge exited with code ${String(child.exitCode)}`;
+    return null;
+  };
+
   try {
-    await waitForLive(baseAddress, 30_000);
+    await waitForLive(baseAddress, 30_000, deadChild);
   } catch (thrown) {
-    child.kill("SIGKILL");
+    if (!hasExited) child.kill("SIGKILL");
     workload.forceKill();
-    throw new Error(`${thrown instanceof Error ? thrown.message : String(thrown)}; edge stderr:\n${stderr}`);
+    throw new Error(
+      `${thrown instanceof Error ? thrown.message : String(thrown)}`
+        + `; edge stderr:\n${stderr}\nedge stdout (last ${TAIL_LIMIT} chars):\n${stdout}`,
+    );
   }
 
   const target: HostedTarget = {

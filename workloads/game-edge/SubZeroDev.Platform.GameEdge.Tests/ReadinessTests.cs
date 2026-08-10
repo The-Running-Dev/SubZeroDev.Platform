@@ -75,7 +75,8 @@ public sealed class ReadinessTests
             .WithServices(services =>
             {
                 services.AddSingleton(options);
-                services.AddSingleton<IGameWorkloadProbe>(new GameWorkloadProbe(new HttpClient(), options));
+                services.AddHttpClient(GameWorkloadProbe.HttpClientName);
+                services.TryAddSingleton<IGameWorkloadProbe, GameWorkloadProbe>();
                 services.TryAddEnumerable(
                     ServiceDescriptor.Singleton<IHealthCheck, GameWorkloadReadinessCheck>());
             })

@@ -600,7 +600,36 @@ condition, and the workload's own codes never do that (`unknown_session` is `404
 `invalid_state` is `409`, both named for the condition).
 Reversibility: cheap — both are new strings with no prior callers.
 
+### 2026-08-10 — `workload_unreachable` covers a forward that fails after the headers arrive
+
+Context: `20-contract.md` describes `WorkloadUnreachable` as "the forward cannot connect", which
+reads as the connect phase alone. The forwarder uses `HttpCompletionOption.ResponseHeadersRead`, so
+a workload killed mid-response fails at the body read instead, and that read had no classification —
+the `HttpRequestException` escaped the edge entirely and Platform's envelope answered `500`
+`UnhandledRequestFailure`. Reproduced against a workload that writes headers and then destroys the
+socket.
+Chosen: classify a transport failure during the body read as `workload_unreachable`, the same as one
+during the send. The contract's neighbouring sentence — "the edge produces no other error; every
+other status a caller sees came from the workload" — leaves no third answer available, and the two
+cases are the same lost hop from the caller's side. The wording in `20-contract.md` is narrower than
+this behaviour and is worth widening at the next `/contract` pass; the behaviour is what the
+invariant requires either way.
+Rejected: letting it escape to the `500` envelope — that status came from neither the workload nor
+`EdgeError`, so it breaks the invariant while telling the caller nothing about which hop failed.
+A third code for "died mid-response" — `EdgeError` is deliberately two variants, the retry answer is
+identical for both, and a caller cannot act on the distinction; an operator gets it from the log
+line the correlation identifies.
+Reversibility: cheap — one `catch` clause and its test.
+
 ## Open
+
+- Platform's Serilog pipeline ignores the standard `Logging:LogLevel` configuration section.
+  `AddPlatformObservability` fixes `MinimumLevel.Information()` and passes `writeToProviders: false`
+  without reading configuration, so a `Logging` section in a consumer's `appsettings.json` is dead
+  config that looks live — an operator who sets `Microsoft.AspNetCore: Warning` still gets a log
+  line per request, per outbound call. The edge's own `appsettings.json` carried such a section and
+  it was removed in S7 rather than left to mislead; the framework-side gap belongs to whichever
+  slice owns Observability configuration, not to S7.
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))
 

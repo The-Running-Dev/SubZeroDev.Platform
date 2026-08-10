@@ -102,6 +102,53 @@ public sealed class EdgeHostTests
         Assert.Matches("^[0-9a-f]{32}$", body.GetProperty("correlation").GetString());
     }
 
+    [Fact]
+    public async Task An_unconfigured_workload_address_fails_startup_rather_than_every_request()
+    {
+        // appsettings.json carries the GameEdge section with both timeouts and no WorkloadBaseAddress,
+        // and `required` is not something the configuration binder enforces — so without the check in
+        // Program.cs this host starts, answers liveness 200, and 500s every forward instead.
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
+            builder.UseSetting("GameEdge:LivenessTimeout", "00:00:01");
+        });
+
+        var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
+        Assert.Contains("WorkloadBaseAddress", Flatten(thrown), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_non_positive_forward_timeout_fails_startup()
+    {
+        // An absent ForwardTimeout binds to TimeSpan.Zero, which makes CancelAfter fire immediately
+        // and turns every forward into a 504. Zero is stated here rather than omitted, because
+        // appsettings.json supplies one and UseSetting cannot remove it.
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
+            builder.UseSetting("GameEdge:ForwardTimeout", "00:00:00");
+        });
+
+        var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
+        Assert.Contains("ForwardTimeout", Flatten(thrown), StringComparison.Ordinal);
+    }
+
+    /// <summary>The entry point's failure reaches the caller wrapped, so the assertion reads the
+    /// whole chain rather than guessing which layer carries the message.</summary>
+    private static string Flatten(Exception exception)
+    {
+        var text = new System.Text.StringBuilder();
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            text.AppendLine(current.Message);
+        }
+
+        return text.ToString();
+    }
+
     private static WebApplicationFactory<Program> CreateFactory(Uri workloadBaseAddress) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

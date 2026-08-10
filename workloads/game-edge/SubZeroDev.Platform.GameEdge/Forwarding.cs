@@ -101,6 +101,15 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
             {
                 return Result<ForwardedResponse, EdgeError>.Failure(EdgeError.WorkloadTimeout());
             }
+            catch (Exception thrown) when (thrown is HttpRequestException or IOException)
+            {
+                // `ResponseHeadersRead` above means the body is still on the wire here, so a
+                // workload that dies mid-response fails at this read rather than at the send. It is
+                // the same lost hop and the same answer: letting it escape would return a `500`
+                // carrying Platform's `UnhandledRequestFailure`, which is neither the workload's
+                // status nor one of the edge's two (`20-contract.md`, *The edge — EdgeError*).
+                return Result<ForwardedResponse, EdgeError>.Failure(EdgeError.WorkloadUnreachable());
+            }
 
             return Result<ForwardedResponse, EdgeError>.Success(new ForwardedResponse(
                 (int)response.StatusCode,
