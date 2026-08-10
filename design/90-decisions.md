@@ -551,18 +551,7 @@ Reversibility: cheap now; expensive once any product's principal ids become exte
 
 ## Open
 
-- **`20-contract.md` contradicts itself about the MCP surface's correlation, and the code cannot
-  satisfy both halves.** "Workload — request context" says the MCP surface adopts whatever
-  `traceparent` the transport carried, and invariant 29 says every response carries the
-  correlation. The `McpSurface` declared under "MCP surface — workload" gives `callTool` no context
-  parameter to receive one and gives `McpToolOutcome`'s result arm no member to return one, so a
-  successful tool result carries no correlation anywhere and no inbound trace reaches an MCP call.
-  Closing it amends the contract (`callTool` takes the request context; the result arm carries the
-  correlation) and is `/contract`'s to make — recorded rather than silently reconciled, per
-  *Source of truth*. Found by the S6 code review; the seven findings that did not need a contract
-  change are fixed on `slice/S6`.
-
-_(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100))
+_(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))
 
 ---
 
