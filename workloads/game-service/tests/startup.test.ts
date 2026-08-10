@@ -19,6 +19,7 @@ import { createDispatcher } from "../src/dispatch.js";
 import { compose } from "../src/compose.js";
 import { startWorkload, createProbeSurface, CONTRACT_PATH_VARIABLE } from "../src/lifecycle.js";
 import { contract, recordingStore } from "./support/harness.js";
+import { CAMPAIGN_ID } from "./support/real-workload.js";
 
 const DEFAULT_CONFIGURATION = {
   listen: { host: "127.0.0.1", port: 0 },
@@ -144,10 +145,126 @@ describe("S6.4 — the table is the only source: one row removed takes it out of
 
       const mcpResponse = await fetch(`http://127.0.0.1:${port}/mcp/list-tools`, { method: "POST" });
       const mcpBody = (await mcpResponse.json()) as { tools: { name: string }[] };
+      // The count is asserted alongside the absence: `not.toContain` alone is satisfied by an
+      // empty list, so the criterion would pass against a surface that had stopped reflecting the
+      // table at all — which is the one regression this test exists to catch.
+      expect(mcpBody.tools.length).toBe(rowRemoved.operations.length);
       expect(mcpBody.tools.map((tool) => tool.name)).not.toContain(removed.mcpTool as string);
     } finally {
       await started.value.shutdown();
     }
+  });
+});
+
+/**
+ * The MCP HTTP transport answers with the JSON wire's codes and the JSON wire's statuses, because
+ * `20-contract.md` heads one `WireError` table "HTTP and MCP surfaces". These are regression tests
+ * for a transport that had its own vocabulary: it accepted any HTTP verb, called a caller's bad
+ * envelope an `internal_failure`, and returned `200` for every failure.
+ */
+describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () => {
+  async function bound<T>(use: (base: string) => Promise<T>): Promise<T> {
+    const started = await startWorkload(DEFAULT_CONFIGURATION);
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error("the workload did not start");
+    try {
+      return await use(`http://127.0.0.1:${started.value.listening.port}`);
+    } finally {
+      await started.value.shutdown();
+    }
+  }
+
+  it("refuses every method but POST, so no verb variant can list or run a tool", async () => {
+    await bound(async (base) => {
+      for (const method of ["GET", "PUT", "DELETE"]) {
+        const listed = await fetch(`${base}/mcp/list-tools`, { method });
+        expect([listed.status, ((await listed.json()) as { code: string }).code]).toEqual([
+          404,
+          "unknown_operation",
+        ]);
+      }
+
+      // The body would have created a session had the verb been honoured, so this asserts the
+      // refusal happens before the tool runs and not merely that the status changed.
+      const called = await fetch(`${base}/mcp/call-tool`, {
+        method: "DELETE",
+        body: JSON.stringify({ name: "start_game", arguments: { campaignId: CAMPAIGN_ID } }),
+      });
+      expect(called.status).toBe(404);
+      expect(((await called.json()) as { code: string }).code).toBe("unknown_operation");
+    });
+  });
+
+  it("calls a caller's bad envelope malformed_payload, not an internal failure", async () => {
+    await bound(async (base) => {
+      for (const body of ["{", JSON.stringify({ arguments: {} }), JSON.stringify({ name: 7 })]) {
+        const response = await fetch(`${base}/mcp/call-tool`, { method: "POST", body });
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as { code: string }).code).toBe("malformed_payload");
+      }
+    });
+  });
+
+  it("answers an unknown tool and an engine error with the statuses the mapping names", async () => {
+    await bound(async (base) => {
+      const unknownTool = await fetch(`${base}/mcp/call-tool`, {
+        method: "POST",
+        body: JSON.stringify({ name: "no_such_tool", arguments: {} }),
+      });
+      expect(unknownTool.status).toBe(404);
+      expect(((await unknownTool.json()) as { code: string }).code).toBe("unknown_operation");
+
+      // The same failure over both surfaces: the same code, and now the same status.
+      const viaMcp = await fetch(`${base}/mcp/call-tool`, {
+        method: "POST",
+        body: JSON.stringify({ name: "get_scene", arguments: { sessionId: "no-such-session" } }),
+      });
+      const viaHttp = await fetch(`${base}/v1/get-scene`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "no-such-session" }),
+      });
+
+      expect(viaMcp.status).toBe(viaHttp.status);
+      expect(viaMcp.status).toBe(404);
+      expect(((await viaMcp.json()) as { code: string }).code).toBe(
+        ((await viaHttp.json()) as { code: string }).code,
+      );
+    });
+  });
+
+  it("carries the correlation on every error, in the body and in the header, as one value", async () => {
+    await bound(async (base) => {
+      const response = await fetch(`${base}/mcp/call-tool`, { method: "POST", body: "{" });
+      const body = (await response.json()) as { code: string; correlation?: string };
+
+      expect(typeof body.correlation).toBe("string");
+      expect(body.correlation).toMatch(/^[0-9a-f]{32}$/);
+      expect(response.headers.get("x-correlation-id")).toBe(body.correlation);
+    });
+  });
+
+  it("adopts an inbound traceparent for a transport-level refusal", async () => {
+    await bound(async (base) => {
+      const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+      const response = await fetch(`${base}/mcp/call-tool`, {
+        method: "POST",
+        headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
+        body: "{",
+      });
+
+      expect(((await response.json()) as { correlation: string }).correlation).toBe(traceId);
+    });
+  });
+
+  it("still lists the tools on POST", async () => {
+    await bound(async (base) => {
+      const response = await fetch(`${base}/mcp/list-tools`, { method: "POST" });
+      const body = (await response.json()) as { tools: { name: string }[] };
+
+      expect(response.status).toBe(200);
+      expect(body.tools.length).toBe(contract.operations.length);
+    });
   });
 });
 

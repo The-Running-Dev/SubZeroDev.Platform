@@ -4,13 +4,20 @@
  * surface uses — no row-specific argument type and no MCP-specific path, because that is precisely
  * what must not exist.
  *
- * `callTool`'s signature carries no header or trace-context parameter, so unlike the HTTP surface's
- * correlation (adopted from `traceparent` when present) every MCP call mints a fresh one.
+ * **Known gap — the correlation, pending a contract amendment.** `20-contract.md` says two things
+ * this surface cannot satisfy at once: "Workload — request context" has the MCP surface adopt
+ * whatever `traceparent` the transport carried, and invariant 29 has every response carry the
+ * correlation — while the `McpSurface` declared in "MCP surface — workload" gives `callTool` no
+ * context parameter to receive one and `McpToolOutcome`'s result arm no member to return one. So
+ * every call mints a fresh correlation that no inbound trace reaches, and a successful tool result
+ * carries none at all. That is a contradiction inside the contract, not a shortcut taken here;
+ * closing it is a contract amendment, tracked rather than silently reconciled.
  */
 import type { ContractPackage, McpToolName, OperationRow } from "@subzerodev/service-contract";
 import { canonicalEncode } from "./canonical.js";
 import { mintCorrelation } from "./correlation.js";
-import { schemaPresent, validateRequest, validateResponse } from "./validate.js";
+import { schemaPresent, validateRequest, validateResponse, validatorsFor } from "./validate.js";
+import { INTERNAL_FAILURE, resolvedCode } from "./wire-error.js";
 import { err, ok } from "./types.js";
 import type {
   Dispatcher,
@@ -23,8 +30,6 @@ import type {
   SurfaceBuildError,
   WireErrorCode,
 } from "./types.js";
-
-const INTERNAL_FAILURE = "internal_failure" as WireErrorCode;
 
 export function buildMcpSurface(
   contract: ContractPackage,
@@ -44,6 +49,16 @@ export function buildMcpSurface(
       }
     }
     tools.set(name, row);
+  }
+
+  // Compiled before the bind, alongside the presence check above — a schema ajv cannot resolve is a
+  // startup refusal, not a tool that fails the first time it is asked to validate anything
+  // (invariant 19). `buildHttpSurface` forces the same compilation; neither surface may depend on
+  // the other having been built first for the refusal to happen.
+  try {
+    validatorsFor(contract);
+  } catch (thrown) {
+    return err({ code: "SchemaCompile", detail: thrown instanceof Error ? thrown.message : String(thrown) });
   }
 
   const descriptors: readonly McpToolDescriptor[] = contract.operations.map((row) => ({
@@ -76,8 +91,10 @@ export function buildMcpSurface(
         const outcome = await dispatcher.invoke(row.operation as OperationId, validated.value);
 
         if (outcome.kind === "error") {
-          // The engine's code travels verbatim — no MCP-specific error vocabulary (S6.6).
-          return errorOutcome(outcome.code as unknown as WireErrorCode);
+          // The engine's code travels verbatim — no MCP-specific error vocabulary (S6.6) — and a
+          // code the mapping does not name resolves to the same `internal_failure` the JSON wire
+          // answers with, so the two surfaces cannot disagree about a code the artifact left out.
+          return errorOutcome(resolvedCode(contract, outcome.code as unknown as WireErrorCode));
         }
 
         const checked = validateResponse(contract, row, outcome.value);
