@@ -109,6 +109,55 @@ jobs:
         working-directory: workloads/game-service
         run: npm run typecheck
 
+      # S9.1/S9.2: workloads/game-service/README.md's own commands, run here rather than a
+      # private equivalent -- if a documented command stops existing or stops starting a server
+      # that answers its documented health paths, this step is what fails.
+      - name: Start the workload and the edge, the documented way
+        run: |
+          set -e
+          cd workloads/game-service
+          GAME_SERVICE_PORT=8080 npm start > /tmp/workload.log 2>&1 &
+          WORKLOAD_PID=$!
+          cd "$GITHUB_WORKSPACE"
+
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/livez >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8080/livez
+          echo
+          curl -sf http://127.0.0.1:8080/readyz
+          echo
+
+          cd workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0
+          GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 \
+          ASPNETCORE_URLS=http://127.0.0.1:5080 \
+          ASPNETCORE_ENVIRONMENT=Production \
+            dotnet SubZeroDev.Platform.GameEdge.dll > /tmp/edge.log 2>&1 &
+          cd "$GITHUB_WORKSPACE"
+
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5080/health/live >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5080/health/live
+          echo
+          curl -sf http://127.0.0.1:5080/health/ready
+          echo
+
+          pkill -f "SubZeroDev.Platform.GameEdge.dll" || true
+          kill "$WORKLOAD_PID" || true
+
+      - name: Run the replay against the workload
+        working-directory: workloads/game-service
+        run: npx vitest run tests/replay.test.ts
+
+      - name: Run the replay against the edge
+        working-directory: workloads/game-service
+        env:
+          GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
+        run: npx vitest run tests/replay-edge.test.ts
+
       - name: Test
         working-directory: workloads/game-service
         env:
