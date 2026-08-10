@@ -1015,13 +1015,14 @@ Each is written to be assertable, with the module responsible for maintaining it
 | 37 | The golden transcript is never written by a passing test | Proof harness |
 | 38 | Two perturbations are asserted red: one transposing two actions must fail comparison A, one substituting a response field must fail comparison B | Proof harness |
 | 39 | Stage 1's single-hop replay remains in the suite and green after the edge lands | Proof harness |
-| 40 | The edge forwards method, path, body and `traceparent` and alters none of them; the response is returned byte-for-byte | Edge |
+| 40 | The edge forwards method, path and body and alters none of them; the response is returned byte-for-byte | Edge |
 | 41 | The edge holds no per-session state, no connection affinity and no cache, and never reorders, batches or coalesces | Edge |
 | 42 | The edge's readiness check is `Required` and declares `TouchesExternalDependency`; its liveness declares no external dependency | Edge |
 | 43 | The edge retries nothing and records no attempt | Edge |
 | 44 | The edge is composed by Platform's standard registration call and no second Platform-shaped call | Edge |
 | 45 | No project under `src/` or `samples/` references the workload | Build |
 | 46 | The listener binds loopback unless explicitly configured otherwise | Composition |
+| 47 | The edge's outbound `traceparent` carries the inbound trace-id and sampling flag unaltered, with the span-id naming this hop's own span (ASP.NET Core's own request instrumentation) rather than the caller's — so the workload's span parents on the edge's, not on whatever the edge's own caller sent | Edge |
 
 ---
 

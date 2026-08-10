@@ -1,6 +1,6 @@
 {
-  "manifestHash": "f120f58229c57d98684248013ca0116654a30f264e466f0c2734e335d566c32e",
-  "generated": "2026-08-08",
+  "manifestHash": "abc9efde9a3c5d592cd0f42dc66db83c231a45fc52b3a807d58354711bfa832b",
+  "generated": "2026-08-10",
   "gates": [
     {
       "name": "dotnet build",
@@ -11,12 +11,32 @@
       "command": "dotnet test --no-build --configuration Release --verbosity normal"
     },
     {
+      "name": "Test-WorkloadIsolation",
+      "command": "pwsh -File build/Test-WorkloadIsolation.ps1"
+    },
+    {
+      "name": "Test-SampleRoundTrip",
+      "command": "pwsh -File build/Test-SampleRoundTrip.ps1 (Linux-only)"
+    },
+    {
       "name": "Test-Documentation",
       "command": "pwsh -File build/Test-Documentation.ps1"
     },
     {
       "name": "Test-SliceStatusMarkers",
       "command": "pwsh -File build/Test-SliceStatusMarkers.ps1"
+    },
+    {
+      "name": "game-service typecheck",
+      "command": "npm --prefix workloads/game-service run typecheck"
+    },
+    {
+      "name": "game-service test",
+      "command": "npm --prefix workloads/game-service test"
+    },
+    {
+      "name": "docs-ci verify (container)",
+      "command": "requires ghcr.io/the-running-dev/docs-template container"
     }
   ]
 }

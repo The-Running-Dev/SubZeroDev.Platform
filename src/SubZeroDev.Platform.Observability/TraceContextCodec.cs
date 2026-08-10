@@ -74,6 +74,18 @@ internal sealed class TraceContextCodec : ITraceContextCodec
             : new Handle(activity, FromActivity(activity), activity.TraceStateString ?? origin.TraceState);
     }
 
+    public TraceContext CurrentHop(TraceContext origin)
+    {
+        var activity = Activity.Current;
+
+        // "Shares origin's trace id" rather than "exists" — an unrelated ambient activity (a
+        // different request, a background scope that outlived its request) must not be mistaken
+        // for this hop's own span.
+        return activity is not null && string.Equals(activity.TraceId.ToHexString(), origin.TraceId, StringComparison.OrdinalIgnoreCase)
+            ? new TraceContext($"00-{origin.TraceId}-{activity.SpanId}-{Flags(activity.Recorded)}", origin.TraceState)
+            : origin;
+    }
+
     private static bool TryContext(TraceContext origin, out ActivityContext context)
     {
         context = default;
