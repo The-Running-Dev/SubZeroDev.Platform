@@ -117,6 +117,7 @@ jobs:
           set -e
           cd workloads/game-service
           GAME_SERVICE_PORT=8080 npm start > /tmp/workload.log 2>&1 &
+          WORKLOAD_PID=$!
           cd "$GITHUB_WORKSPACE"
 
           for i in $(seq 1 30); do
@@ -145,7 +146,7 @@ jobs:
           echo
 
           pkill -f "SubZeroDev.Platform.GameEdge.dll" || true
-          pkill -f "tsx src/main.ts" || true
+          kill "$WORKLOAD_PID" || true
 
       - name: Run the replay against the workload
         working-directory: workloads/game-service
