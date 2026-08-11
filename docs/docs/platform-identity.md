@@ -93,7 +93,7 @@ would be the speculative-package habit the guard exists to break, arriving as a 
 
 ---
 
-## 4. The Extraction Guard Has Its Second Consumer, and Now a Third
+## 4. The Extraction Guard Has Its Second Consumer, and Now a Third and a Fourth
 
 The guard exists because the original draft specified twenty-four Platform packages before
 a single one had a consumer. It was written with only the Automator in view. **Game Engine
@@ -102,26 +102,37 @@ once. **BarStrad is the third** — a running Discord-and-web bar ordering produ
 unrelated to both of the others. It adds two candidates that previously had one consumer between
 them.
 
+**SkyNet HR is the fourth**, and the only one admitted as a *hosted workload* rather than as
+evidence — [ADR-007](adr/ADR-007-second-hosted-workload.md). A self-hosted browser console driving
+already-installed coding-agent CLIs, Node on the server, its transport SSE when standalone and
+WebSocket when proxied, and its operators authenticated by an upstream reverse proxy rather than by
+an account it owns. It is what justifies the `Api` row below, and it is the first consumer whose
+principal is **delegated** rather than owned — a shape none of the other three has.
+
 **This table is the canonical count of which candidate has which consumer.** The capability table in
 [`application-modules.md`](application-modules.md) §2 is a view of it from BarStrad's side, adding a
 standing column and the framework rows; where the two disagree, this one is right and the other is
 stale.
 
-| Candidate package | Consumer 1 — Automator | Consumer 2 — Game Engine as a Service | Consumer 3 — BarStrad |
-|---|---|---|---|
-| Identity | users, API keys, service accounts | player accounts | a table, established by QR link and never an account |
-| Organizations / Tenancy | teams | studios, white-label, custom domains | a venue |
-| Billing | open-core; agents as the paid dimension | Free / Creator / Studio tiers | undecided — see below |
-| Mcp | brokered plugin tools | the game tool surface | chat commands |
-| Storage | execution artifacts | saves, campaign assets | item photography |
-| Notifications | execution alerts | session and publication events | orders reaching a staff channel |
-| Configuration — localized content | — | campaign, localization and culture packs | a bilingual menu |
+| Candidate package | Consumer 1 — Automator | Consumer 2 — Game Engine as a Service | Consumer 3 — BarStrad | Consumer 4 — SkyNet HR |
+|---|---|---|---|---|
+| Identity | users, API keys, service accounts | player accounts | a table, established by QR link and never an account | an operator, asserted by an upstream proxy and never an account |
+| Organizations / Tenancy | teams | studios, white-label, custom domains | a venue | — |
+| Billing | open-core; agents as the paid dimension | Free / Creator / Studio tiers | undecided — see below | — |
+| Mcp | brokered plugin tools | the game tool surface | chat commands | — |
+| Storage | execution artifacts | saves, campaign assets | item photography | — |
+| Notifications | execution alerts | session and publication events | orders reaching a staff channel | — |
+| Configuration — localized content | — | campaign, localization and culture packs | a bilingual menu | — |
+| Api — the edge: transport termination, routing, correlation, probes | — | the game wire, terminated in front of the Node workload | — | SSE and WebSocket console transport |
 
 This is the guard being **satisfied**, not bypassed. Two unrelated products wanting the same
 concern is exactly the evidence the guard asks for, and it is stronger evidence than one
 product wanting it twice. A third is stronger again, and it is the one that moved Notifications
 past [`implementation-plan.md`](implementation-plan.md) §D4's stated condition — *two named
-consumers, not one and a plan* — with one of them in production.
+consumers, not one and a plan* — with one of them in production. **The `Api` row is the fourth's
+contribution**, and it is the only row where the guard was satisfied by something already built:
+the G1 edge is one consumer of a capability that has never been packaged, and SkyNet HR is the
+second.
 
 **BarStrad's own status carries two caveats**, stated because a consumer that does not hold up
 weakens every row it appears in. It does not run on Platform today, so it is evidence rather than a
@@ -129,6 +140,14 @@ deployed dependent — the diagram in §1 is unchanged deliberately. And its com
 unsettled, which is why its billing cell is empty rather than guessed: self-hosted and licensed per
 installation contradicts nothing, and a service operated for venues contradicts two binding
 statements in the D3 brief.
+
+**SkyNet HR carries the first of those caveats and not the second.** It does not run on Platform
+today either, which is why the §1 diagram stays as it is; it gains its third arm when the workload
+actually runs behind the edge. What makes SkyNet HR's case different from BarStrad's is that a
+decision has been taken to host it — so the gap between evidence and deployed dependent is a
+schedule rather than an open question, and
+[ADR-007](adr/ADR-007-second-hosted-workload.md) rule 4 is what stops that distinction from being
+assumed rather than earned.
 
 **It does not promote these packages on its own.** It moves them from "speculative" to
 "justified", which is the precondition for building them — see

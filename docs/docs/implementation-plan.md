@@ -127,8 +127,17 @@ consumer needs bespoke wiring has not proven anything.
 Configuration, Events, Notifications, Storage, BackgroundJobs, Scheduling, Api — extracted
 from the Automator once a second consumer exists.
 
-**Done when** each extracted package has **two** named consumers in the repository, not one
-and a plan. The guard is only worth having if it is applied at the moment it is inconvenient.
+**Done when** each extracted package has **two** named consumers, not one and a plan, **and at
+least one of them actually runs on the package before it reaches 1.0.** The guard is only worth
+having if it is applied at the moment it is inconvenient.
+
+> **This wording was amended, and the amendment is a loosening.** It read *"two named consumers in
+> the repository"*, and [ADR-007](adr/ADR-007-second-hosted-workload.md) removed *in the
+> repository* so that a consumer living in its own repository counts — SkyNet HR, admitted as a
+> second hosted workload and deliberately not brought in-tree. Those three words were doing real
+> work: a consumer inside the tree is checkable by a build, and one outside it is asserted. The
+> deploy condition above is the replacement, and it is weaker than what it replaces. ADR-007 states
+> that cost rather than absorbing it.
 
 ### D5 — Commercial *(ecosystem Phase 8)*
 

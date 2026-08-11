@@ -38,6 +38,7 @@ elsewhere:
 - [ADR-004 — Platform is built in-house, with ABP as an architecture reference](adr/ADR-004-framework-build-not-adopt.md)
 - [ADR-005 — Boundary contracts are projected, not authored](adr/ADR-005-service-contract.md)
 - [ADR-006 — Platform is a framework plus optional application modules](adr/ADR-006-application-modules.md)
+- [ADR-007 — SkyNet HR is a second hosted workload, and the edge becomes a Platform package](adr/ADR-007-second-hosted-workload.md)
 
 ## The one rule underneath all of it
 
