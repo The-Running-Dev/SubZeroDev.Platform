@@ -319,7 +319,7 @@ comparing the dump against anything, which is the next slice's whole subject.
 ---
 
 ## S5 — The byte-identity proof
-**Status:** in progress
+**Status:** shipped
 
 Delivers: the question this effort exists to answer gets an answer that anyone can re-run — a game
 played across the network is the same game, byte for byte, as the same game played in-process. And
@@ -380,7 +380,7 @@ edge (S7).
 ---
 
 ## S6 — The same game, through an assistant
-**Status:** queued
+**Status:** shipped
 
 Delivers: an assistant that speaks MCP can play the same game, in the same service, against the same
 sessions a network caller sees — and there is now a test that proves neither surface has a mind of
@@ -427,7 +427,7 @@ any tool that is not a row, any richer view for MCP, any per-surface narrowing.
 ---
 
 ## S7 — The edge in front, and an honest answer when the service behind it is gone
-**Status:** queued
+**Status:** shipped
 
 Delivers: an operator can put the .NET edge in front of the game service and play through it with no
 difference the caller can detect. When the service behind it is stopped, the edge stays up, says
@@ -479,7 +479,7 @@ G1 deliberately does not build; a client-side span for the hop.
 ---
 
 ## S8 — One trace across two languages
-**Status:** queued
+**Status:** shipped
 
 Delivers: an operator looking at their telemetry sees a single request crossing from the .NET edge
 into the Node service as one trace, with one identifier running through both — so a question about a
@@ -520,7 +520,7 @@ collector reachable over the network.
 ---
 
 ## S9 — A fresh clone can re-run everything this effort proved
-**Status:** queued
+**Status:** shipped
 
 Delivers: someone arriving at the repository with nothing but a clone can start both processes,
 replay the byte-identity proof, and regenerate the contract, by following what is written — and the
