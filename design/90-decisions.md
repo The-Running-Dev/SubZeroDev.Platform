@@ -702,6 +702,25 @@ correctly, and it duplicates work a widely-used, independently-tested product al
 Reversibility: cheap — confined to one CI step, one test-support module, and one test file; nothing
 outside CI depends on the collector existing.
 
+### 2026-08-11 — `/install` reconciled the kit upgrade from `78ff0de` to `af610a6`
+
+Context: `/install SubZeroDev.Platform` found the target three commits behind the kit
+(`3516c15` `/done` auto-run/auto-stash, `8386545` the design freeze mechanism, `af610a6`
+`/freeze`/`/unfreeze`). `Sync-Kit -DryRun` found zero `Divergent-Skipped`/`Collision-Skipped`
+rows — nothing here had been independently edited since the last sync — so this was a clean
+upgrade, not a fork needing adjudication.
+Chosen: ran `Sync-Kit.ps1` for real (updates `.claude/commands/{contract,design,done,reconcile,
+slices,track}.md` and `tools/Invoke-DoneHousekeeping.ps1`; adds `freeze.md`/`unfreeze.md`), then
+hand-merged three purely-additive pieces into `AGENTS.md`: the `/code-review`, `/freeze`,
+`/unfreeze` rows in *Command routing*; the full `## The design freeze` section; and the `/done`
+branch-deletion delegation paragraph in *Git and delivery*. Everything else in `AGENTS.md` —
+project identity, the ADR system, the generic effort/model table, the extraction guard, phase
+vocabulary, dependency policy, the junction-path note — is prior, signed-off customization and
+was left untouched.
+Rejected: skipping the upgrade — no cost to adopting it, and the target hadn't diverged from
+any of the incoming content.
+Reversibility: cheap
+
 ## Open
 
 _(previously tracked out of this section: issues [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98), [#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100), [#102](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/102))
