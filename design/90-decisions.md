@@ -9,6 +9,58 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-12 — The design's remaining open questions close; the adjudication is re-verified at engine `0.6.1`
+
+Context: a second `/design` pass against an unchanged brief. The document was already complete and
+questions 1, 2 and 7 already signed off, so the pass had nothing to derive — but it did have
+something to *check*, and the check found the design citing the engine at `0.5.0` while the working
+copy stands at `0.6.1`. Two of the four remaining questions then turned out not to need a decision
+at all.
+
+Chosen:
+
+**(6) The wire-visible single-instance behaviour change is accepted.** Two concurrent same-session
+actions on one instance produce one success and one `409` where G1 queued and applied both. It is
+already the two-instance semantics, so the alternative is a deployment whose wire behaviour changes
+when it scales; and it is what makes the brief's single-instance contention criterion reachable,
+which the brief itself flags as at risk.
+
+**(3, 4) Closed by reading the engine, not by deciding.** `SessionStoreErrorCode` is a closed union
+of seven whose doc comment already requires a `core.reason.*` message per member, so
+`concurrent_modification` is a widening with a message obligation and nothing further; and
+`SessionStoreError` already discriminates by assigning `this.name`, so the design's duck-typed brand
+is the engine's existing idiom rather than a new convention. `09-clients.md` §4 defines its columns
+as one per **client**, with *"Hosted transport (Platform G1/S5)"* already the fifth and carrying its
+effort tag in the header — so a durable store cannot be a column, and the annotation convention
+already exists. Recorded because the cost of *not* recording it is that a later session re-asks a
+question the source answers.
+
+**(5) Routed to `/contract`, not answered.** Whether the regenerated contract package is vendored as
+G1 did or consumed from the registry changes nothing in `10-design.md`, which is the test for
+whether it was a design question.
+
+**The adjudication is re-verified at `0.6.1`.** Every load-bearing claim reads off current source:
+cache-then-persistence `getSession`, `attemptCounter` incrementing before dispatch against a
+`writeSession` that runs only on the accepted branch, a freshly minted `saveId` per `saveGame`, and
+`writeSession`'s parameterless `catch` discarding the cause. The only `v0.5.0..HEAD` change on the
+serialization path is `sha256Hex` extracted into `canonical.ts` with `computeChecksum` delegating to
+it — `canonicalStringify` untouched, so byte-identity is unaffected.
+
+Rejected: **re-deriving `10-design.md` from the brief**, which is `/design`'s default path — rejected
+because the brief has not changed, so the pass would restate an existing document and put the
+signed-off wording on questions 1, 2 and 7 at risk of being quietly reworded. **Stopping and changing
+nothing** — the design is complete and `/contract` could start; rejected because it would carry a
+stale `0.5.0` citation and two needlessly-open questions into the two stages most likely to implement
+them as written. **Answering (5) here to close all seven** — tidier; rejected because settling a
+delivery question inside a design document is how a document acquires content no later stage
+believes it owns. **Editing the earlier entry's `0.5.0`** — rejected as a matter of form: this log is
+append-only, and "verified at `0.5.0`" was true of the work it describes.
+
+Reversibility: cheap — every item is a document edit; the one behavioural commitment, (6), is
+already what the two-instance path does
+
+---
+
 ### 2026-08-12 — The design's three open questions that needed my answer are signed off: tenant in the key, the TTL values, and §6.1 corrected here
 
 Context: `/design` closed with seven open questions. Three of them could not be answered from the

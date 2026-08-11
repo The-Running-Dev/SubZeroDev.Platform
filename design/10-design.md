@@ -31,7 +31,7 @@ Four facts shape almost everything below.
 > **The §6.1 contradiction the brief logged is adjudicated here, and §6.1 is the side that is wrong.**
 > It resolves concurrency with "compare-and-swap on the sequence number… the engine's save handle
 > already exposes `savedAtSeq` — so the version is present and needs no new concept." Verified against
-> the engine at `0.5.0`, that is wrong twice over:
+> the engine at `0.6.1`, that is wrong twice over:
 >
 > - **`savedAtSeq` is on the wrong record.** It is `state.actionLog.length` stamped onto a
 >   `StoredSaveRecord` whose `saveId` is freshly minted by every `saveGame`. Saves are insert-only.
@@ -56,6 +56,14 @@ Four facts shape almost everything below.
 > is server-side and lives entirely between one instance's read and that same instance's write; no
 > caller supplies a version and no response carries one. The narrowing stands, and the contract needs
 > no widening for concurrency.
+>
+> **Re-verified at `0.6.1`.** The adjudication was first made against `0.5.0`, and the engine has moved
+> since. Between the two, the only change on the serialization path is `sha256Hex` being extracted into
+> `canonical.ts` with `computeChecksum` delegating to it; `canonicalStringify` and its writer are
+> untouched, so **the byte-identity criterion is unaffected by the version change**. Every claim above
+> reads off the current source: the cache-then-persistence `getSession`, the increment before dispatch
+> against a write that happens only on the accepted branch, the freshly minted `saveId`, and the
+> parameterless `catch` in `writeSession` that discards the cause.
 
 ---
 
@@ -748,9 +756,12 @@ the suite exists to make meaningful.
 
 Each needs information the brief does not give, and each changes something concrete.
 
-**Questions 1, 2 and 7 were answered on 2026-08-12** and are recorded in
+**Six of the seven are now closed, all on 2026-08-12**, and are recorded in
 [`90-decisions.md`](90-decisions.md). Their original numbers are kept and their answers stated in
-place, so nothing later cites a number that has quietly moved.
+place, so nothing later cites a number that has quietly moved. They closed in two different ways, and
+the distinction is worth keeping: **1, 2, 6 and 7 needed a decision** and got one; **3 and 4 turned out
+not to be open at all** — they were answerable by reading the engine repository, which a later session
+would otherwise have re-asked. **Only 5 remains, and it belongs to `/contract`.**
 
 1. **Does the tenant column belong in the primary key, given the non-goal's wording?**
    **Settled: yes — in the primary key, with the implicit constant supplied in every query.** §7's
@@ -769,30 +780,49 @@ place, so nothing later cites a number that has quietly moved.
    the artifact a player would notice losing, so it gets an absolute year from insert. The horizon
    only has to exceed any request's duration; 30 days is generous for a tombstone a few columns wide.
 
-3. **What is the engine's conflict code called, and how is the brand shaped?** The design needs one new
-   `SessionStoreErrorCode` with a registered `core.reason.*` message, and one documented, duck-typed
-   brand a `SessionPersistence` implementation throws to mean *conflict* rather than *outage* —
-   duck-typed rather than `instanceof`, because a duplicated package copy would break identity
-   checking. `concurrent_modification` is the name this design would choose. The vocabulary is the
-   engine repository's, and the PR is cross-repository.
+3. **What is the engine's conflict code called, and how is the brand shaped?**
+   **Settled: `concurrent_modification`, as an eighth member of `SessionStoreErrorCode`, with a
+   name-based duck-typed brand.** This was not a decision so much as a reading of the engine, which
+   answers both halves. `SessionStoreErrorCode` is a closed union of seven members whose doc comment
+   states that every member is a registered `ReasonCode` with a shipped `core.reason.*` message, so
+   widening it carries a message obligation and nothing more exotic. And the brand needs no new
+   convention: `SessionStoreError` already discriminates itself by assigning `this.name`, so a
+   name-carrying plain throw is the engine's own existing idiom rather than something G2 invents —
+   which is what makes duck-typing the conservative choice here rather than the loose one, since a
+   duplicated package copy breaks `instanceof` and leaves `name` intact. The engine's three
+   `ProfileWarningCode` members are likewise already exactly `profile_missing`, `profile_corrupt` and
+   `profile_write_failed`, so *Failure modes* names real codes throughout and invents none. The PR is
+   still cross-repository and the vocabulary is still the engine's to ratify.
 
 4. **How does the engine's API coverage checklist record "exercised against the durable
-   implementation"?** The checklist's columns are *clients*, and the hosted transport is already the
-   fifth. A durable store is not a sixth client, so my reading is that this is an annotation on the
-   existing hosted column rather than a new one — but the document is generated from the engine
-   repository's own design file and its conventions are not this repository's to set.
+   implementation"?**
+   **Settled: an annotation on the existing hosted column, not a sixth one.** `09-clients.md` §4
+   defines the checklist as one row per operation and **one column per client**, and *"Hosted transport
+   (Platform G1/S5)"* is already the fifth column — carrying, in its own header, the effort that filled
+   it. A durable store is not a client, so it cannot be a column; and the header's existing provenance
+   tag is the convention for recording which effort produced the evidence. The design's reading was
+   correct and needed confirming rather than deciding. The engine repository still owns the wording.
 
 5. **Is the contract package's release path for G2 the same as G1's?** The new engine code forces a
    regeneration (the error-coverage gate fails otherwise), and `session_expired` and `save_expired`
    widen `TransportErrorCode`, which is a closed union in the published package. That is a contract
    minor version and a republish. G1 consumed it as a vendored tarball; whether G2 does the same or
    switches to the registry is a delivery decision, not a design one.
+   **Left open deliberately, and routed to [`/contract`](../.claude/commands/contract.md)** — signed
+   off 2026-08-12 as belonging to the stage that owns the contract artifact. Nothing in this document
+   changes on either answer, which is the test for whether it was ever a design question.
 
-6. **Is the wire-visible change to single-instance behaviour acceptable?** Two concurrent same-session
-   actions on one instance now produce one success and one `409`, where G1 queued and applied both. It
-   is what makes the brief's single-instance criterion reachable, and it is already the two-instance
-   semantics — but it is a behaviour change on the existing wire, and the brief did not ask for it in
-   those terms.
+6. **Is the wire-visible change to single-instance behaviour acceptable?**
+   **Settled: yes, accepted as the correct semantics.** Two concurrent same-session actions on one
+   instance now produce one success and one `409`, where G1 queued and applied both. Three things
+   carried it. It is **already** the two-instance semantics, so the alternative is a deployment whose
+   wire behaviour changes when it scales — the failure being bought is worse than the one being sold.
+   It is what makes the brief's single-instance contention criterion **reachable**: the engine's
+   `sessionLocks` would otherwise serialise the race away, and the brief anticipates exactly that risk
+   when it says a gate that cannot go red proves nothing. And the queue it replaces never protected
+   anything across processes in the first place, so what looks like a removed guarantee was only ever
+   a single-process one. The cost is stated plainly in *Concurrency and ordering* and is not restated
+   here.
 
 7. **Who corrects §6.1?**
    **Settled: this effort does, and it is done.**
