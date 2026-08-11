@@ -174,10 +174,24 @@ produced. **It is a determinism break that presents as a lost update.**
 
 The in-memory store never faced this because it was one process.
 
-**Resolution: compare-and-swap on the sequence number.** The envelope already carries a
-sequenced action log, and the engine's save handle already exposes `savedAtSeq` — so the
-version is present and needs no new concept. A write asserts the sequence it read; a
-mismatch is a rejection the caller must handle, never a merge.
+**Resolution: compare-and-swap on a version the store owns.** A write asserts the version it
+read; a mismatch is a rejection the caller must handle, never a merge. The version is the
+host's: the store advances it by exactly the write it guards, the engine never sees it, no
+caller supplies it, and no response carries it.
+
+**The contended row is the session.** That is what two `submitAction` calls arrive at, and it
+is the row the lock must guard. A save row has one writer in its lifetime, because a save id
+is minted fresh by every save, so saves are insert-only and need no lock at all.
+
+> **Corrected 2026-08-12.** This paragraph resolved the question with `savedAtSeq` — *"the
+> version is present and needs no new concept"* — and that named the wrong row: `savedAtSeq`
+> is on the **save** record, so versioning it would guard a row with no second writer while
+> leaving the session unguarded, which is the failure this section opens by describing. The
+> session's own `attemptCounter` is no substitute either — it advances on submission,
+> including for a submission the engine goes on to reject without writing, so it is not in
+> one-to-one correspondence with the writes a lock guards. A version must advance exactly
+> when a guarded write lands, which is why it is the store's own and not the engine's.
+> Adjudicated in G2's design against the engine at `0.5.0`.
 
 **Merging is not available and should not be attempted.** Two actions applied to the same
 base state are two different games; there is no rule that combines them, because the engine

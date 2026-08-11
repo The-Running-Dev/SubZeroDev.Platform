@@ -47,8 +47,9 @@ Four facts shape almost everything below.
 >
 > **The resolution: the version is a store-owned column, incremented by the store on exactly the
 > writes it guards, and invisible to the engine.** §6.1's "needs no new concept" is the part that does
-> not survive. Correcting §6.1 itself is a `docs/docs/` edit the brief declined to take in this
-> effort; it is carried in *Open questions* so it is scheduled rather than lost.
+> not survive. **§6.1 has been corrected to say so** — signed off 2026-08-12, on the grounds that the
+> brief's deferral was conditional on `/design` adjudicating, and it has. The contract document is the
+> source of truth for the corrected rule; this section owns the adjudication that produced it.
 >
 > **A consequence worth stating, because G1 predicted the opposite.** G1's design recorded that
 > narrowing `savedAtSeq` off the wire was a cost "G2 will need it back" for. **It does not.** The lock
@@ -747,19 +748,26 @@ the suite exists to make meaningful.
 
 Each needs information the brief does not give, and each changes something concrete.
 
-1. **Does the tenant column belong in the primary key, given the non-goal's wording?** This design says
-   yes and supplies the implicit constant in every query, because §7's purpose is that the *shape* is
-   right from the first migration and the non-goal is about caller-visible behaviour. The literal
-   reading — column present, in no key and in no query — is defensible and would make the brief's
-   sentence true without interpretation, at the cost of the correctness migration §7 wanted avoided.
-   **This is the one place the design brushes a binding non-goal, so it is yours rather than mine.**
+**Questions 1, 2 and 7 were answered on 2026-08-12** and are recorded in
+[`90-decisions.md`](90-decisions.md). Their original numbers are kept and their answers stated in
+place, so nothing later cites a number that has quietly moved.
 
-2. **What are the two TTLs and the retention horizon?** The design requires a session idle TTL, a save
-   TTL and a retention horizon with horizon ≫ request duration, and requires all three to be
-   configuration so tests can set them to seconds. It does not pick production defaults, because a
-   number chosen against no usage is the thing G1 declined to invent and would be no better invented
-   here. Sensible starting points are 30 days idle for sessions, longer for saves, and 30 days of
-   retention — but they are yours to set.
+1. **Does the tenant column belong in the primary key, given the non-goal's wording?**
+   **Settled: yes — in the primary key, with the implicit constant supplied in every query.** §7's
+   purpose is that the *shape* is right from the first migration, and the non-goal is about
+   caller-visible behaviour: nothing resolves a tenant, no request carries one, and no behaviour
+   varies by it, all of which remain literally true when the value is a constant. The literal
+   reading — column present, in no key and in no query — was defensible and was rejected because
+   adding the column later is easy while adding it to the keys and queries later is the correctness
+   migration §7 exists to prevent.
+
+2. **What are the two TTLs and the retention horizon?**
+   **Settled: session idle TTL 30 days, save TTL 365 days, retention horizon 30 days.** The design
+   requires all three to be configuration so tests can set them to seconds, and that is unchanged —
+   these are the production defaults, not the mechanism. Sessions and saves deliberately do **not**
+   share a number: a session is resumable working state on an idle clock, a save is immutable and is
+   the artifact a player would notice losing, so it gets an absolute year from insert. The horizon
+   only has to exceed any request's duration; 30 days is generous for a tombstone a few columns wide.
 
 3. **What is the engine's conflict code called, and how is the brand shaped?** The design needs one new
    `SessionStoreErrorCode` with a registered `core.reason.*` message, and one documented, duck-typed
@@ -786,9 +794,11 @@ Each needs information the brief does not give, and each changes something concr
    semantics — but it is a behaviour change on the existing wire, and the brief did not ask for it in
    those terms.
 
-7. **Who corrects §6.1?** The brief declined to fix it in this effort and recorded the retained risk as
-   lasting "for the duration of the design stage". That stage ends with this document, and the
-   correction — §6.1 versions the wrong table, and the version is the store's own — is now written
-   down somewhere `/contract` and `/slices` will read. Whether it is amended in this effort or booked
-   as follow-up work is yours; leaving a known-wrong resolution in a document G3 and G4 both read is
-   the risk being carried either way.
+7. **Who corrects §6.1?**
+   **Settled: this effort does, and it is done.**
+   [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 now resolves
+   concurrency with a store-owned version, names the session as the contended row, and states that
+   saves need no lock — with a dated note recording what the paragraph used to say and why it was
+   wrong. The brief's deferral was conditional on `/design` adjudicating which side was wrong; that
+   condition is met by the blockquote near the top of this document, so the retained risk ends here
+   rather than being carried into `/contract`, `/slices`, G3 and G4.

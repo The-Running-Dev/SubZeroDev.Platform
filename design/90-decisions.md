@@ -9,6 +9,54 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-12 — The design's three open questions that needed my answer are signed off: tenant in the key, the TTL values, and §6.1 corrected here
+
+Context: `/design` closed with seven open questions. Three of them could not be answered from the
+brief, the engine or the code — they needed a decision from me — and `/contract` cannot start
+without them. Taken together in one sitting so the answers are consistent with each other rather
+than accreted.
+
+Chosen, in the order the design numbers them:
+
+**(1) The tenant column goes in every primary key, with the implicit constant supplied in every
+query.** This confirms what the design already proposed and had flagged as brushing a binding
+non-goal; the flag is discharged rather than overruled. The non-goal's three clauses — nothing
+reads it, nothing filters on it, no request carries one — all stay literally true when the value
+is a compile-time constant rather than a resolved one. What is being bought is that the *key
+shape* is right from the first migration.
+
+**(2) Session idle TTL 30 days; save TTL 365 days; retention horizon 30 days.** Production
+defaults only — all three stay configuration, so the suite still sets them to seconds. Sessions
+and saves deliberately take different numbers: a session is resumable working state on an idle
+clock, a save is immutable and is the artifact a player would notice losing, so it takes an
+absolute year from insert. The horizon's only stated requirement is that it exceed any request's
+duration.
+
+**(3) §6.1 is corrected in this effort, before `/contract`.**
+[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 now resolves
+concurrency with a host-owned version, names the session as the contended row, states that saves
+need no lock, and carries a dated note recording what the paragraph used to say and why it was
+wrong.
+
+Rejected: **the literal reading of the tenant non-goal** — column present, in no key and in no
+query; it would make the brief's sentence true without interpretation, and was rejected because it
+defers the expensive half of the migration §7 exists to prevent, shipping the appearance of the
+requirement rather than the requirement. **One TTL shared by sessions and saves** — one number to
+reason about, rejected because it treats a resumable working state and a player's artifact as the
+same kind of thing, and the artifact is the one whose loss is user-visible. **A tighter save TTL
+(90 days)** — bounds storage sooner and makes the save-expiry path easy to exercise; rejected for
+the same reason. **Booking the §6.1 correction as a follow-up issue** — keeps G2's PRs to code and
+schema, rejected because the brief's deferral was explicitly conditional on `/design` adjudicating,
+that condition is now met, and the retained risk was scoped to "the duration of the design stage",
+which ends here. **Folding the correction into the slice that builds the lock** — the document
+would change when the code proves it; rejected because the wrong text would then sit in front of
+`/contract` and `/slices`, the two stages most likely to implement it as written.
+
+Reversibility: cheap for the TTL values and for the §6.1 text; **expensive for the key shape**,
+which is the reason it was taken before any row exists
+
+---
+
 ### 2026-08-12 — The two-instance contention proof addresses the instances directly; the edge's only change is its readiness probe
 
 Context: `/design`. The contention proof needs two workload instances sharing one store. The edge has
