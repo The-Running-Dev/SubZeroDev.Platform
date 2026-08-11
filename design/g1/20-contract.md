@@ -2,12 +2,12 @@
 
 **Document status:** Contract. Derived from [`10-design.md`](10-design.md). Authoritative for the
 artifacts and modules it describes; [`00-brief.md`](00-brief.md) stays authoritative for scope and
-non-goals, and [`platform-identity.md`](../docs/docs/platform-identity.md) for what this repository
+non-goals, and [`platform-identity.md`](../../docs/docs/platform-identity.md) for what this repository
 is.
 
 Two languages, because G1 has two processes. **TypeScript** with `strict` for the contract package,
 its generator, and the Node workload. **C#** with nullable reference types enabled for the .NET
-edge, which composes on the types [`d3/20-contract.md`](d3/20-contract.md) already declares and
+edge, which composes on the types [`d3/20-contract.md`](../d3/20-contract.md) already declares and
 declares nothing of its own that duplicates one.
 
 Types and signatures only. No package names and no namespace declarations — the contract package's
@@ -59,7 +59,7 @@ contains the contract's major version; **it is an identifier and is never derefe
 time or at run time. `SemanticVersion` is a complete `MAJOR.MINOR.PATCH` with optional pre-release.
 `CanonicalJson` is the output of `canonicalEncode` and nothing else. `CorrelationId` is 32 lowercase
 hexadecimal characters, never all-zero — the same constraint
-[`d3/20-contract.md`](d3/20-contract.md) puts on Platform's own, so the two processes name one value
+[`d3/20-contract.md`](../d3/20-contract.md) puts on Platform's own, so the two processes name one value
 the same way.
 
 ```ts

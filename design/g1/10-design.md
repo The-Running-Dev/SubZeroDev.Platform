@@ -4,8 +4,8 @@
 re-derived, not patched.
 
 The boundary this effort crosses is already specified.
-[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) owns who owns what and the
-four things a hosted deployment must answer; [ADR-005](../docs/docs/adr/ADR-005-service-contract.md)
+[`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) owns who owns what and the
+four things a hosted deployment must answer; [ADR-005](../../docs/docs/adr/ADR-005-service-contract.md)
 owns how a boundary contract comes to exist; the engine's own client contract owns what a client may
 do. None of that is restated here. This document decides what those leave open: **what the operation
 table is and where each of its fields comes from, how two surfaces are built from it without either
@@ -78,7 +78,7 @@ one response shape, used by the JSON wire and by the MCP projection alike. If th
 projection of it, and the brief's second decision would be false in the one place it is checkable.
 
 > **What that costs, stated rather than hidden.** `saveGame`'s `savedAtSeq` is narrowed away, and
-> [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 names it as the version
+> [`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §6.1 names it as the version
 > G2's compare-and-swap will assert on. G2 will need it back. Widening a response is an additive
 > change to one row — a contract minor version — which is the mechanism working rather than a cost
 > avoided.
@@ -130,7 +130,7 @@ attempt counter, the projection audience, a replay-compatibility flag, and an op
 Two properties of that split matter downstream:
 
 - **The canonical serialization contains no host metadata.** That is the engine's own rule
-  ([`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §7), and it is what makes
+  ([`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §7), and it is what makes
   a byte comparison of serializations possible at all — wall-clock instants live on the record, not in
   the blob.
 - **Nothing on these records is derived by the workload.** The workload allocates no id, computes no
@@ -349,7 +349,7 @@ ordered blob set to the dump path.
 **Comparison A — the engine invariant surviving hosting.** Run 2's dumped blobs against Run 1's, byte for
 byte. This is the comparison that reaches around the wire, and that is deliberate: it asks whether the game
 the hosted service produced is the same game, which is what
-[`implementation-plan.md`](../docs/docs/implementation-plan.md) §5 records as unknown.
+[`implementation-plan.md`](../../docs/docs/implementation-plan.md) §5 records as unknown.
 
 **Comparison B — the wire being deterministic.** Run 2's transcript against the committed golden transcript,
 byte for byte. Run 1's transcript is asserted against the same golden file in the same suite, so one artifact

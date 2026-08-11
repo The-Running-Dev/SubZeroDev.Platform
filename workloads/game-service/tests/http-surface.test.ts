@@ -1,6 +1,6 @@
 /**
  * S3.1–S3.8 — the request/response cycle. One slice, so the happy path and the defined answers to
- * asking wrongly are asserted together (`design/30-slices.md`, S3).
+ * asking wrongly are asserted together (`design/g1/30-slices.md`, S3).
  */
 import { describe, expect, it } from "vitest";
 import { contract, post, bodyJson, bodyText, recordingStore, surfaceOver, throwingStore } from "./support/harness.js";
