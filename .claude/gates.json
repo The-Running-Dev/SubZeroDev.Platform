@@ -1,42 +1,34 @@
 {
-  "manifestHash": "abc9efde9a3c5d592cd0f42dc66db83c231a45fc52b3a807d58354711bfa832b",
-  "generated": "2026-08-10",
+  "manifestHash": "ec4e10a2dc2cd107a4009e9b2dcd44eb2d60a37625929b5e3687cbd492b1eb5a",
+  "generated": "2026-08-12",
   "gates": [
     {
-      "name": "dotnet build",
-      "command": "dotnet build --no-restore --configuration Release"
+      "name": ".NET build and tests",
+      "command": "dotnet restore; dotnet build --no-restore --configuration Release; dotnet test --no-build --configuration Release --verbosity normal"
     },
     {
-      "name": "dotnet test",
-      "command": "dotnet test --no-build --configuration Release --verbosity normal"
+      "name": "Sample round trip",
+      "command": "pwsh ./build/Test-SampleRoundTrip.ps1"
     },
     {
-      "name": "Test-WorkloadIsolation",
-      "command": "pwsh -File build/Test-WorkloadIsolation.ps1"
+      "name": "Workload isolation",
+      "command": "pwsh ./build/Test-WorkloadIsolation.ps1"
     },
     {
-      "name": "Test-SampleRoundTrip",
-      "command": "pwsh -File build/Test-SampleRoundTrip.ps1 (Linux-only)"
+      "name": "Game-service suite",
+      "command": "npm install; npm run typecheck; npm test"
     },
     {
-      "name": "Test-Documentation",
-      "command": "pwsh -File build/Test-Documentation.ps1"
+      "name": "Documentation gate",
+      "command": "pwsh ./build/Test-Documentation.ps1"
     },
     {
-      "name": "Test-SliceStatusMarkers",
-      "command": "pwsh -File build/Test-SliceStatusMarkers.ps1"
+      "name": "Slice status markers",
+      "command": "pwsh ./build/Test-SliceStatusMarkers.ps1"
     },
     {
-      "name": "game-service typecheck",
-      "command": "npm --prefix workloads/game-service run typecheck"
-    },
-    {
-      "name": "game-service test",
-      "command": "npm --prefix workloads/game-service test"
-    },
-    {
-      "name": "docs-ci verify (container)",
-      "command": "requires ghcr.io/the-running-dev/docs-template container"
+      "name": "Documentation build and site check",
+      "command": "./docs.ps1 -BuildOnly; npm --prefix site ci; npm --prefix site run check"
     }
   ]
 }
