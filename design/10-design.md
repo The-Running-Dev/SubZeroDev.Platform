@@ -90,19 +90,20 @@ is the store's own and the engine never sees it.** A column is on exactly one si
 | `session_id` | `text not null` | Engine | Minted by the engine's `RecordIdSource`. |
 | `blob` | `text not null` | Engine | The canonical serialization, byte for byte. |
 | `audience` | `text not null` | Engine | `StoredSessionRecord.audience`. |
-| `attempt_counter` | `integer not null` | Engine | Stored because the record carries it. **Not the lock.** |
+| `attempt_counter` | `integer not null` | Engine | Stored because the record carries it. **Not the lock.** Its persisted value differs between the two configurations — *Module boundaries*, fourth consequence. |
 | `replay_compatible` | `boolean not null` | Engine | |
 | `engine_created_at` | `text not null` | Engine | The engine's `Clock` output, stored as text. |
 | `engine_updated_at` | `text not null` | Engine | Likewise. |
 | `profile_id` | `text null` | Engine | `null` ⇄ **key absent**, never `undefined`-valued. |
 | `version` | `bigint not null` | **Host** | **The optimistic lock.** Starts at 1 on insert, `+1` on every accepted update. |
+| `engine_version` | `text not null` | Host | The engine package version that produced `blob`. Stamped from the version startup already resolves. |
 | `row_created_at` | `timestamptz not null default now()` | Host | Database clock. |
 | `row_updated_at` | `timestamptz not null` | Host | Database clock, set on every accepted write. |
 | `expires_at` | `timestamptz not null` | Host | **Derived**, in SQL, as `now() + <session idle TTL>` on every accepted write. |
 
 Primary key `(tenant_id, session_id)`.
 
-**Three things about this table are decisions, not transcription.**
+**Four things about this table are decisions, not transcription.**
 
 - **`blob` is `text`, never `json` or `jsonb`.** `jsonb` is a normalised representation: it reorders
   members, collapses duplicates and renormalises numbers. A blob that round-trips through it is not
@@ -117,6 +118,15 @@ Primary key `(tenant_id, session_id)`.
   adjudication above; not `savedAtSeq`, which is on another table. It is incremented by exactly the
   statement that performs the guarded write, which makes "the version advanced" and "a write landed"
   the same event by construction.
+- **`engine_version` records which engine wrote the bytes, and it is the one host column that cannot
+  be backfilled.** Two instances share one store and are not restarted atomically, so a rolling
+  deploy puts blobs from two engine versions in one table. *Failure modes* already says a blob that
+  will not deserialise is "store corruption or a blob written by an incompatible engine version;
+  either way the workload must not guess" — without this column it cannot even determine which, and
+  the provenance of a row written before the column existed is gone permanently. It is stamped, never
+  read on the serving path, and never compared against anything at runtime: it is evidence for an
+  operator, not a gate. This is §7's own argument for the tenant column applied to the second fact
+  that is cheap now and unreconstructable later.
 
 #### `save`
 
@@ -129,6 +139,7 @@ Primary key `(tenant_id, session_id)`.
 | `saved_at_seq` | `integer not null` | Engine |
 | `audience` | `text not null` | Engine |
 | `profile_id` | `text null` | Engine |
+| `engine_version` | `text not null` | Host — the engine package version that produced `blob` |
 | `row_created_at` | `timestamptz not null default now()` | Host |
 | `expires_at` | `timestamptz not null` | Host — **derived** as `now() + <save TTL>` at insert |
 
@@ -136,7 +147,17 @@ Primary key `(tenant_id, save_id)`. **No `version` column**, and the absence is 
 has exactly one writer in its lifetime because `saveGame` mints its id, so an optimistic lock would
 guard nothing. `saves.put` is nonetheless written as an upsert rather than a bare insert, because the
 port's method is `put` and an implementation that fails on a re-put would be narrower than the
-interface it claims to fill.
+interface it claims to fill. **On a re-put every host column is recomputed** — `expires_at` from the
+current clock, `engine_version` from the writing process — because a re-put is a write and a host
+column that described the first one would then describe nothing.
+
+**The absence of the lock rests on read engine source, not on an assumption.** Verified at `0.6.1`:
+`saveGame` calls `newSaveId(recordIds)` on every invocation and writes through `writeSave` only, and
+**it never calls `writeSession` at all** — the save path touches no session row. That is the same
+standard the adjudication above applies when it rejects `attemptCounter`; the difference is that this
+claim reads off the source rather than off a coincidence, which is what makes it usable. The
+consequence for what a save's *contents* can race is in *Concurrency and ordering*, and is not the
+same question as whether its row is contended.
 
 #### `profile` and `profile_achievement`
 
@@ -157,6 +178,23 @@ against a normalised store, the same reason the engine's in-memory profile store
 replaces. A `save` omitting a previously-stored achievement removes nothing. The engine never issues
 such a save, and a test asserts the divergence deliberately rather than leaving it to be discovered.
 
+**"The engine never issues such a save" is verified, not assumed.** At `0.6.1`, `upsertAchievements`
+loads the profile, computes the ids not already present, and saves
+`{ ...profile, achievements: [...profile.achievements, ...newRecords] }` — strictly the loaded set
+plus additions, on every path. **The divergence also runs in the durable store's favour**, which is
+worth stating because it inverts the usual reading of a named cost: when a load degrades to
+`profile_corrupt` and returns an empty set, the engine's next `save` carries only the new
+achievements, so a *replacing* store discards everything the player had earned and an *additive* one
+does not.
+
+**Neither profile table has an `expires_at` and the sweep does not touch them** — a deliberate
+absence, recorded here rather than left to be inferred from a table that simply lacks a column. The
+brief's lifecycle criteria bound *sessions*, and a profile is the row an account surface will own:
+G3 attaches ownership to it, at which point deleting one is an account decision and not housekeeping.
+The consequence to accept knowingly is that `profile` and `profile_achievement` grow monotonically
+for the life of the deployment, with no principal to scope a bound to and nothing to reclaim a
+profile whose sessions have all been swept.
+
 #### Schema bookkeeping
 
 One migrations table, owned by the migration tool, not by this design.
@@ -167,9 +205,20 @@ One migrations table, owned by the migration tool, not by this design.
 |---|---|
 | `session.expires_at`, `save.expires_at` | The **database** clock at write time, plus the configured TTL |
 | `session.version` | Its own previous value, in the guarded statement |
+| `engine_version` | The engine package version startup already resolved, stamped at write time |
 | Liveness of a session id (`live` / `expired` / `absent`) | Row presence and `expires_at` versus the database clock |
 | The wire's `session_expired` / `save_expired` | The classification above, consulted only on the failure path |
-| The determinism dump | `select session_id, blob … order by session_id`, and the same for saves |
+| The determinism dump | `select session_id, blob … order by session_id collate "C"`, and the same for saves |
+
+**The dump's ordering is pinned to `collate "C"`, and that is load-bearing rather than decorative.**
+Ordering `text` under a locale-aware collation is locale-dependent — ICU treats punctuation as
+ignorable at the primary level where `C` compares by byte — and the replay's ids are hyphen-and-digit
+dense (`counting-session-id-0`, `counting-session-id-10`). An unpinned collation makes the ordered
+blob set depend on the database image's locale, so the in-memory run and the durable run could differ
+in *order* while agreeing on every byte. That failure presents as a byte-identity failure, which is
+the one signal in the suite that must mean exactly one thing. For the same reason the compose file
+pins the server encoding to `UTF8` and the initdb locale explicitly rather than inheriting the
+image's default.
 
 Nothing on the engine's side of the table is derived by the workload. The workload allocates no id,
 computes no sequence, and stamps no engine field — G1's rule, unchanged.
@@ -252,6 +301,22 @@ in the system, which is what makes it provable.
 - **Composition is cheap.** `createSessionLayer` allocates four maps and closures over an engine and a
   registry it does not own. Nothing is rebuilt per request except that.
 
+**A fourth consequence follows and is merely accepted, which is why it is listed apart from the three
+above.** `attemptCounter` increments before dispatch and a rejected submission never writes — the
+adjudication at the head of this document establishes both, and they are the reason the counter is
+not the lock. Under G1's long-lived layer a rejected submission's increment survived in the cached
+record and was persisted by the next accepted write; under per-request composition it dies with the
+request. **So the durable configuration stores a lower `attempt_counter` than the in-memory one for
+the same sequence of inputs**, and the workload's composition choice determines the value of a column
+the engine owns. Three things bound how far that reaches. It does not touch the blob: `attempt` is
+observability, stamped onto emitted records by the command decorator, and the engine's own test
+asserts it appears in no response body — so **byte-identity is unaffected**, which is the fact that
+decides whether this matters. It does not reach the wire. And the counter remains monotonic, since
+what changes is which increments are durable, not their order. What it does change is the numbering
+in G1's cross-language trace, where `attempt` now counts accepted submissions rather than all of
+them. Recorded rather than fixed, because every fix is either a second engine change or a write on
+the rejection path, and both cost more than the numbering is worth.
+
 ### The Node workload
 
 | Module | Owns | Depends on | Exposes |
@@ -304,6 +369,18 @@ existed, and the engine — correctly — has one answer for both. This is the s
 by intention: **a host lifecycle fact about a host-owned column is Platform's side of the ownership
 table, and nothing about it can change the outcome of a game.**
 
+**One constraint on it is G3's, and it is stated here because G3 cannot discover it.** The brief's
+*Lifespan* says G3 wraps *these stores* with an authorization decorator. The probe is not a store
+port — it is Store's own interface, reached from Dispatch — so a decorator over `SessionPersistence`
+and `ProfileStore` does not sit in its path, and G3 would inherit an interface its stated mechanism
+does not cover. With no principal in G2 that is harmless and trusted-local; with a principal it is an
+existence oracle, answering *live / expired / absent* for any id a caller cares to supply, which is
+precisely the distinction the engine refuses to make. **The probe is therefore composed behind the
+same seam the stores are**, so that whatever decorates them decorates it, and the three structural
+guards it has today — no route, no tool, no table row — are recorded as what they are: guards on
+*reachability*, not on *authority*. Nothing in G2 depends on this; it exists so the constraint is
+inherited rather than rediscovered.
+
 ### The .NET edge
 
 Unchanged except in one place. **Its readiness check now probes the workload's *readiness* endpoint
@@ -311,6 +388,17 @@ rather than its liveness endpoint.** G1's edge asked "is the workload alive"; wi
 workload can be alive and unable to serve, and an edge that reports ready while every forward will
 `503` tells an operator less than nothing. It remains `Unhealthy` + `Required`, for G1's reason: one
 backend, one job.
+
+**Readiness therefore reports whether the store is usable now, not whether it was usable once.** A
+check that only ever recorded the outcome of startup would leave the workload reporting ready through
+exactly the outage the sentence above changes the edge to surface — the change would buy nothing but
+a different endpoint name, and the only case it caught would be a store that was never reachable,
+which the first log line already reports. The readiness check evaluates the store on each probe;
+`storage_failure` on the serving path and an unready readiness check are two views of one condition
+rather than two mechanisms. **The cost, stated:** readiness can now flap, so a transient store blip
+takes the edge unready for as long as it lasts. That is the correct direction for a single-backend
+edge whose forwards would fail anyway, and it is the reason the check is a probe of the store rather
+than a latch on the last request that failed.
 
 Nothing else at the edge moves. No load balancing across the two instances, no session affinity, no
 streaming, no package boundary. **The two-instance contention proof addresses the two workload
@@ -351,6 +439,14 @@ than *unknown*, and the horizon is what bounds how long that costs storage.
 duration, which is what makes it impossible for a sweep to delete a row between a live request's read
 and its write.
 
+**A sweep that fails is a first-class outcome, not an exception that escapes a timer.** Its statement
+runs under a statement timeout, its failure is caught, and the next tick simply tries again — the
+work is idempotent, so a missed sweep costs retained rows and nothing else. A tick never starts while
+the previous one is still running. The failure is what a readiness check will not show and what a
+serving request will not hit, so it is the one condition in G2 that could persist unobserved; it is
+therefore logged at each occurrence with the row count it did not remove, which is the whole of the
+observability the brief's non-goal leaves room for.
+
 ### 2. One operation, end to end — triggered by a caller
 
 Everything through validation is G1's, unchanged: version prefix, operation segment, closed request
@@ -367,12 +463,31 @@ Then, for the durable configuration:
    enforced at read time and does not depend on when a sweep last ran.
 3. **Any `sessions.put` is guarded.** For an id in the read-version map:
    `update … set … version = version + 1, row_updated_at = now(), expires_at = now() + ttl
-   where tenant_id = … and session_id = … and version = <the value read>`. For an id not in the map:
-   `insert`. On success the map is advanced to the new version.
-4. **Zero rows affected is classified, never assumed.** The adapter re-reads the row. Present with a
-   different version → **conflict**. Absent → also **conflict**, because the caller's read is no longer
-   authoritative either way and the only correct client action is identical; the retention horizon
-   makes this branch unreachable in practice, and it is written down rather than left to a comment.
+   where tenant_id = … and session_id = … and version = <the value read> and expires_at > now()`. For
+   an id not in the map: `insert`. On success the map is advanced to the new version.
+
+   **The `expires_at` predicate is what stops the guarded write resurrecting a session the wire has
+   already declared gone.** Reads treat an expired row as absent, so a request that read a live row
+   microseconds before its TTL elapsed would otherwise extend it by a full TTL while a concurrent
+   read on the other instance was answering `session_expired`. The predicate is cheap here and would
+   be a data-correcting migration once rows exist; test TTLs are set in seconds, which makes the
+   window routine rather than theoretical.
+4. **Zero rows affected is classified, never assumed, and the classification has three branches.**
+   The adapter re-reads the row.
+   - Present with a **different version** → **conflict**.
+   - Present with the **same version but expired** → **expired**, not conflict. This is the branch the
+     `expires_at` predicate creates; without it the re-read would have no outcome that was not
+     "conflict", and a re-read that cannot change an answer is not a classification.
+   - **Absent** → **conflict**, because the caller's read is no longer authoritative either way and the
+     only correct client action is identical; the retention horizon makes this branch unreachable in
+     practice, and it is written down rather than left to a comment.
+
+   **A re-read that itself fails is classified as conflict, never as `storage_failure`.** Zero rows
+   affected has already established the one fact a caller acts on — the write did not land — and
+   every branch above tells them to re-read and decide. Letting the classifier's own driver error
+   escape would convert a known non-outage into a `503` precisely when the store is degraded and
+   races are most likely, which is the criterion the brief says cannot otherwise be met, defeated by
+   the mechanism added to serve it.
 5. **A conflict is signalled to the engine as a conflict.** The adapter throws a value carrying the
    engine's documented conflict brand. The engine's `writeSession` — which today catches everything and
    rethrows `storage_failure`, discarding the cause — recognises the brand and raises the new
@@ -382,6 +497,27 @@ Then, for the durable configuration:
    does, and maps to **409**. `storage_failure` maps to **503**, unchanged. The two are now different
    answers to different questions, which is the criterion the brief says cannot otherwise be met.
 7. **The store is discarded** with the request, cache and all.
+
+**The guarded statement requires `read committed`, and that is a precondition rather than a
+preference.** At `read committed` the losing `update` blocks on the winner's row lock, re-evaluates
+its `where` against the committed row, finds no match and reports zero rows — which is the entire
+premise of step 4. At `repeatable read` or `serializable` the same statement raises a serialization
+failure instead, which is an ordinary throw, which *Failure modes* routes to `storage_failure` and a
+`503`. **Every conflict would become an outage code**, and the one criterion the brief says no amount
+of work on this side can otherwise deliver would fail by configuration. PostgreSQL's default is
+`read committed`; the design depends on it, so the connection asserts it rather than inheriting it,
+and a server default or a pooler that overrides it is a misconfiguration the store refuses at startup
+rather than discovers under contention.
+
+**Within one operation the unguarded writes are ordered by the engine, and that ordering is what
+makes "the loser leaves no trace" true.** Read at `0.6.1` rather than assumed: `submitAction` calls
+`writeSession` on the accepted branch and only then `upsertAchievements`, so a `sessions.put` that
+loses the race throws before any achievement row is written — the loser cannot leave a durable
+achievement behind. `saveGame` calls `writeSave` and **never calls `writeSession`**, so a save cannot
+be orphaned by a conflict either: there is no session write in that path to lose. **This design
+depends on both facts**, which is why they are named here with the version they were read at; an
+engine change that wrote a profile before its session, or that made `saveGame` write the session
+record, would invalidate *Failure modes*' claim that a conflict leaves nothing of the loser's.
 
 **Expiry classification happens only on the failure path.** When the engine raises `unknown_session` or
 `unknown_save`, Dispatch consults the lifecycle probe. Expired-and-retained → the transport code
@@ -401,6 +537,24 @@ per-session queueing. It has no compare-and-swap, so removing the queue would in
 G2 exists to eliminate — into the one configuration whose proof must stay green for reasons that have
 nothing to do with durability.
 
+**Dispatch is shared by both configurations, so the classification step is defined for both.** The
+in-memory configuration has no `expires_at`, no rows and no lifecycle probe; Composition supplies a
+probe that classifies every id as `absent`, so `unknown_session` and `unknown_save` pass through
+verbatim and Dispatch carries no branch on which store was built. A no-op implementation rather than
+a conditional is the point: the alternative puts configuration-dependent behaviour into the module
+whose job is to be transport-neutral, and it is the shape that later grows a second one.
+
+**The two configurations answer some requests differently, and the axis is durability, not instance
+count.** *Concurrency and ordering* states the behaviour change and Open question 6 accepts it, both
+in terms of one instance versus two; the sharper statement is that **the in-memory configuration and
+the durable configuration are not wire-equivalent** — two concurrent same-session actions are queued
+and both applied by the first, and one-success-one-`409` by the second. Since the in-memory
+configuration is retained indefinitely (G1's replay must stay green), this is a standing property of
+the workload and not a migration state. **What follows from it:** the in-memory configuration is a
+proof fixture, never a supported deployment shape, and nothing outside the replay may be developed or
+demonstrated against it — the byte-identity proof compares serialization, not concurrency semantics,
+so no gate would catch a caller that had taken a dependency on the queued behaviour.
+
 ### 3. The three proofs — triggered by the test suite, in CI
 
 **The store is provisioned by one committed compose file, and CI runs the same command the README
@@ -417,6 +571,18 @@ the brief's reason: a way to run two instances against one store is in scope, an
 not. The line is that compose owns the *dependency*, the harness owns the *instances*, and neither
 crosses.
 
+**The harness's spawn step is therefore reachable as a documented command, not only as a test.** The
+brief requires the repository to tell a reader how to *"provision the store, run two instances, replay
+the proof, and roll the schema forward"*, and compose is barred from the second clause by the
+paragraph above — so without this the one clause of four with no artifact behind it would be the one
+the brief added G2's whole deployment allowance for. The harness exposes its instance-spawning entry
+point as a script the README names, and the contention proof invokes that same entry point rather
+than a private copy of it. This is the compose file's own argument applied a second time: the
+documented path and the proven path are one artifact, because a documented command nothing runs is
+the failure the fresh-clone job exists to prevent. It remains the harness the brief's *Lifespan*
+allows to be replaced without ceremony — what may not be replaced without ceremony is the README
+naming *something* that runs two instances.
+
 **Proof one: byte identity against the durable store.** G1's replay, run twice more. A run under the
 replay profile against the in-memory store, and a run under the replay profile against the durable
 store, each producing the ordered blob set through the same shutdown dump; the durable run's handle
@@ -431,6 +597,19 @@ database schema, migrating it, and dropping it afterwards.** The counting `Recor
 `counting-session-id-0` on every run, so a second run against a dirty schema collides on the primary
 key. **The tenant column must not be used for this** — isolating runs by tenant is tenancy behaviour,
 which is a binding non-goal, and it is exactly the shortcut a durable store makes tempting.
+
+**The durable replay runs with TTLs that cannot elapse during it.** All three lifecycle values are
+configuration so that the expiry proofs can set them to seconds, and the replay is the one proof for
+which that setting is poison: a session that expires between two of the ten steps returns
+`unknown_session`, diverges from the golden transcript, and reports a serialization failure for a
+clock problem. The replay takes the production defaults; only the lifecycle proofs shorten them.
+
+**Comparison A asserts the dumps are non-empty before it asserts they are equal.** Two empty ordered
+sets compare byte-identical, so a dump that reads the wrong schema — a `search_path` that does not
+match the per-run schema is the obvious way — passes Comparison A while Comparison B passes on its
+own merits, because the responses were served correctly and only the dump was misdirected. The row
+count is asserted against the fixture's own expected count rather than against zero, since "not
+empty" is satisfied by one row as easily as by all of them.
 
 **Proof two: contention, asserted twice.**
 
@@ -468,15 +647,28 @@ passing over the engine's own is what says the durable one *fills the port* — 
 the engine's composition root recorded as unanswerable until a second implementation existed, and
 which the brief makes a deliverable.
 
+**The answer it returns is "yes for five methods, and conditionally for the sixth", and saying so is
+the deliverable.** `profiles.save` is the one method where the two implementations are asserted to
+*differ* rather than to agree, so for that method the shared assertion cannot be the thing that
+establishes conformance. What stands in its place is narrower and is stated as such: the durable
+`save` conforms **given that every `save` the engine issues carries the loaded set plus additions**,
+which is read off `upsertAchievements` at `0.6.1` rather than assumed, and which the suite asserts
+directly as a property of the engine's caller rather than of either store. A conformance suite that
+reported an unqualified yes here would be reporting agreement it did not test — and the question the
+engine deferred deserves the qualified answer rather than the flattering one.
+
 **The fixture and the golden transcript are untouched.** Adding a profile-carrying step to the replay
 would have reached the same methods, and it would have made the byte-identity proof carry a second
 job — a red run would no longer point at one thing.
 
-**The gate is proven able to go red, three ways.** A run with the guard removed — the update's `where`
+**The gate is proven able to go red, four ways.** A run with the guard removed — the update's `where`
 clause not asserting the version — must fail the two-instance assertion with two `200`s. A direct
-adapter test that writes an artificially stale version must be rejected. And a run against an
+adapter test that writes an artificially stale version must be rejected. A run against an
 unreachable store must produce `503`, not `409`, which is the criterion's *distinguishable* half
-tested from the other side.
+tested from the other side. **And a run whose dump is pointed at an empty schema must fail
+Comparison A** — the byte-identity proof is the effort's first criterion and the previous three
+perturbations all attack the compare-and-swap, which would leave the older and more load-bearing of
+the two proofs as the only one never shown able to fail.
 
 **Merging is asserted absent**, not argued: after a conflict, the loser's action is shown to have left
 no trace in the winner's state.
@@ -516,7 +708,12 @@ store did not answer*. **Retry:** the caller's, and only after re-reading. Never
 
 **Partial failure has one shape here and it is benign:** the winner's action is fully applied and the
 loser's is fully absent. There is no state in which half of an action landed, because the guarded update
-is a single statement.
+is a single statement — **and because the engine's own ordering puts every unguarded write after the
+guarded one.** `writeSession` precedes `upsertAchievements` on the accepted branch and `saveGame`
+writes no session row at all, both read at `0.6.1` (*Control flow* 2), so a losing `sessions.put`
+throws before an achievement row or a save row can be written. The claim is a consequence of that
+ordering rather than of the single statement alone; if the ordering changes, this paragraph is the
+one that stops being true.
 
 ### A profile write fails
 
@@ -530,6 +727,27 @@ A missing profile yields `profile_missing` and an empty achievement set. A row w
 is not 1, or an achievement row that fails shape validation, yields `profile_corrupt` and an empty
 achievement set. **Neither ever produces a broken game**, and both are asserted — by the
 port-conformance suite (*Control flow* 3), which is the only proof that reaches these ports at all.
+
+**`format_version` may not be bumped in the same release that first writes the new format.** The
+degradation above is designed for a corrupt row, and a rolling deploy would otherwise reuse it as the
+answer to a routine one: a newer instance writes `format_version` 2, an older instance reads it,
+classifies it `profile_corrupt`, and the same player has achievements on one instance and none on the
+other for the length of the deploy — silently, since `profile_corrupt` is a warning on a `200`. The
+migration rule under *The two instances are running different schema versions* is therefore a rule
+about **data formats as well as column shapes**: a format bump ships as read-support first and
+write-support in a later release, the same two-step every additive column takes.
+
+### The sweep fails
+
+**Detection:** the caught error from the sweep's own statement — a driver failure, a statement
+timeout, or a lock held by the other instance's concurrent sweep. **What the system does:** logs the
+failure and the rows it did not remove, and tries again on the next tick; a tick never overlaps its
+predecessor. **State left behind:** rows past the retention horizon, retained. **What the operator
+sees:** the log line, and nothing else — this is the one condition in G2 that no readiness check and
+no request can surface, because the sweep is not on either path. **Retry:** automatic, every tick,
+indefinitely. **Why it is not more than this:** the sweep bounds storage, not correctness — an
+un-swept row is answered `expired` rather than `unknown_session`, which is the *more* informative of
+the two answers, so a sweep that has not run for a week costs disk and nothing else.
 
 ### A session or save has expired
 
@@ -547,7 +765,12 @@ documented, and it is not a defect — it is the price of not keeping tombstones
 **Detection:** the engine's own `deserialize`, which throws rather than returning a result. **Response:**
 `500` with `internal_failure` and the correlation — never the exception text. **State left behind:** the
 unreadable row, untouched. This is store corruption or a blob written by an incompatible engine version;
-either way the workload must not guess, and a caller cannot fix it.
+either way the workload must not guess, and a caller cannot fix it. **Which of the two it is, an
+operator can now determine**: the row's `engine_version` names the package that wrote the bytes, and
+comparing it against the reading instance's own resolved version separates a version skew from
+corruption without inference. The workload does not make that comparison itself — it would be a
+runtime gate on a column that exists to be read after the fact, and a wrong guess in that direction
+refuses to serve a blob that was fine.
 
 ### An id collides on insert
 
@@ -565,6 +788,15 @@ makes this safe is a rule on migrations rather than a check:** every migration m
 compatible with the previously deployed code, because two instances share one store and are not
 restarted atomically. Additive columns with defaults, never a rename or a narrowing in one step.
 **State left behind:** whatever the older instance wrote, which the newer one must be able to read.
+
+**The same skew applies to engine versions, and there it is not checked either.** Startup asserts the
+contract's recorded engine version against *its own* resolved package; nothing compares one instance's
+engine to the other's, and nothing could without inventing the instance identity the design refuses
+elsewhere. So a rolling deploy can put two serializations in one table — which byte-identity, proven
+within a single-instance replay, does not cover. **The mitigation is a rule and a column, not a
+gate:** the same two-step every schema change takes applies to an engine upgrade, and
+`engine_version` records which version wrote each row so the skew is legible afterwards rather than
+inferred. **State left behind:** blobs from two engine versions, each labelled.
 
 ### Concurrent startup migrations
 
@@ -620,13 +852,36 @@ semantics changed when it scaled.
 `profileLocks` is likewise now per-request and orders nothing across requests; the achievement merge's
 set union is what makes that safe, which is the second reason it is a merge rather than a replace.
 
-**Saves are never contended.** A fresh `saveId` per `saveGame` means one writer per row, for the row's
-whole life.
+**Save rows are never contended; a save's *contents* are.** A fresh `saveId` per `saveGame` means one
+writer per row, for the row's whole life — that is a statement about the row, and it is the reason
+there is no `version` column on `save`. It is not a statement about what the row holds.
+`saveGame` reads the session and writes only the save (`0.6.1`, *Data model*), so nothing guards the
+interval between them: instance **A** reads session *S*, instance **B** submits an action and wins
+the compare-and-swap, and **A** then writes a save of the state *before* B's action. Both requests
+succeed, correctly — no update was lost, and the save is a faithful snapshot of a state the session
+genuinely held.
 
-**Expiry cannot race a live request.** Expiry is evaluated at read against the database clock — one
-clock, so two instances cannot disagree and process clock skew is irrelevant. Deletion happens only
-past the retention horizon, which is required to exceed any request's duration by a wide margin, so no
-sweep can fall between a request's read and its write.
+**This is accepted rather than fixed, and the reasoning is the design's own.** The alternative is to
+make `saveGame` write the session so it can be guarded, which is a second engine behaviour change
+bought to ease persistence — named as a non-goal in the brief in those words — to convert a
+successful save into a `409` for a snapshot that was never wrong, only superseded. A save is
+already a branch: `loadGame` mints a new session, so two loads of one save are two games by design,
+and a save taken a moment before another instance's action is the same shape. **What would not be
+acceptable and is not the case:** the save does not overwrite anything, does not affect the winner's
+session, and cannot be mistaken for the session's current state, because nothing reads a save except
+`loadGame`.
+
+**Expiry cannot race a live request, and it takes two mechanisms rather than one to say so.** Expiry
+is evaluated at read against the database clock — one clock, so two instances cannot disagree and
+process clock skew is irrelevant. Deletion happens only past the retention horizon, which is required
+to exceed any request's duration by a wide margin, so no sweep can fall between a request's read and
+its write. **The horizon does not cover the expiry boundary itself**, which is a different event from
+the sweep: a request that reads a row a moment before its TTL elapses and writes a moment after would,
+with no further guard, extend a session that a concurrent read on the other instance is already
+answering `session_expired` for. The `expires_at` predicate on the guarded update (*Control flow* 2)
+is what closes that, and the resulting outcome is `expired` rather than `conflict` — which is the
+third branch of the re-read classification and the reason that classification has more than one
+answer.
 
 **The replay is strictly sequential and single-instance.** Unchanged from G1, and now load-bearing for
 a second reason: counting record ids and two instances are incompatible, so the replay and the
@@ -848,12 +1103,18 @@ records: a criterion that reads as covered because an adjacent gate is green.
 
 Each needs information the brief does not give, and each changes something concrete.
 
-**Six of the seven are now closed, all on 2026-08-12**, and are recorded in
+**Six of the original seven are closed, all on 2026-08-12**, and are recorded in
 [`90-decisions.md`](90-decisions.md). Their original numbers are kept and their answers stated in
 place, so nothing later cites a number that has quietly moved. They closed in two different ways, and
 the distinction is worth keeping: **1, 2, 6 and 7 needed a decision** and got one; **3 and 4 turned out
 not to be open at all** — they were answerable by reading the engine repository, which a later session
-would otherwise have re-asked. **Only 5 remains, and it belongs to `/contract`.**
+would otherwise have re-asked. **5 remains and belongs to `/contract`.**
+
+**8 through 11 were opened by the red-team pass of 2026-08-12** and are numbered after the original
+seven for the same reason those keep their numbers. **9 and 10 are not this document's to close:
+they are conflicts with the brief, and the brief is not a document a model may author.** They are
+recorded here so that the disagreement is visible to `/contract` and `/slices` rather than resolved
+by whichever document a later session happens to read first.
 
 1. **Does the tenant column belong in the primary key, given the non-goal's wording?**
    **Settled: yes — in the primary key, with the implicit constant supplied in every query.** §7's
@@ -924,3 +1185,51 @@ would otherwise have re-asked. **Only 5 remains, and it belongs to `/contract`.*
    wrong. The brief's deferral was conditional on `/design` adjudicating which side was wrong; that
    condition is met by the blockquote near the top of this document, so the retained risk ends here
    rather than being carried into `/contract`, `/slices`, G3 and G4.
+
+8. **What refreshes a session's idle clock — every use, or only an accepted write?**
+   As designed, `expires_at` advances on accepted writes only, because that is the one statement
+   the store issues. `getScene`, `getView`, `getStrings`, `resumeSession`, `previewAction` and
+   `saveGame` all read the session and write no session row (`0.6.1`), so **a session read
+   continuously for the whole idle TTL still expires**, and the caller is told `session_expired` —
+   "the session existed and no longer does" — about a session it was using. Calling the mechanism an
+   *idle* TTL when it measures write recency is the part that does not survive contact with a
+   reader.
+   **Open, because the two answers cost differently and neither is obviously right.** Refreshing on
+   read makes every read a write: it puts query operations inside the compare-and-swap's blast
+   radius, doubles the statements on the cheapest path, and undoes *"every read reaches the
+   database"* being a read-only property. Leaving it as it is costs a name and a caller-visible
+   surprise, both fixable by saying "30 days since the last action" wherever the TTL is documented.
+   Nothing else in this document changes on either answer, which is what keeps it a question rather
+   than a redesign.
+
+9. **Does the brief's tenant non-goal get amended, or does the design get narrowed to it?**
+   The non-goal says, in words, *"Nothing reads it, nothing filters on it, and no request carries
+   one."* Every query this design specifies filters on `tenant_id = <the implicit constant>`, which
+   is the shape Open question 1 settled and `90-decisions.md` records twice. Both readings were
+   argued at the time and the key shape won on §7's own grounds; what was never done is the
+   consequent edit to the brief, so the binding list still forbids what this document specifies.
+   **This is a brief conflict, not a design defect** — the design is the side that was adjudicated
+   and signed off. It stays open here because `AGENTS.md` makes non-goals binding *until that file
+   changes*, and a design document cannot discharge a constraint by disagreeing with it.
+
+10. **Does session lifecycle extend to saves, or only to sessions?**
+    The brief's lifecycle criteria name sessions in every clause. This design gives saves a 365-day
+    absolute TTL, a `save_expired` wire code that widens a closed union in a published package, and a
+    sweep that hard-deletes them — settled as Open question 2 and logged, but derived from a criterion
+    that did not ask for it. The consequence is that G2 permanently destroys the artifact this
+    document elsewhere calls *"immutable and… the artifact a player would notice losing"*, on a clock
+    the brief never set and before G3 exists to own or warn about it. **Also a brief conflict rather
+    than a defect**, and it resolves either way in one edit: the brief admits saves to the lifecycle
+    scope, or the sweep stops at sessions and `save_expired` comes out of the contract.
+
+11. **What happens between now and the engine ratifying `concurrent_modification`?**
+    Every conflict assertion in *Control flow* 3 — both contention proofs, the perturbation red-gate,
+    the 409 mapping — depends on an eighth member of `SessionStoreErrorCode` that exists in no
+    published engine version, and Open question 3 records that *"the vocabulary is still the engine's
+    to ratify."* Startup asserts the contract's recorded engine version against the resolved package's,
+    so an instance cannot be pointed at a branch build without regenerating the contract first.
+    **The design's own position is that the engine PR is the first deliverable and the proofs that
+    assert the code are sequenced behind it**, which is a statement about ordering and costs nothing;
+    what is genuinely open is what G2 does if the engine ratifies a different name or a different
+    brand shape. Nothing in this document changes on the name — the adapter throws a branded value and
+    Dispatch maps a code — so the exposure is rework in `/contract` and one slice, not here.

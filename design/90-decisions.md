@@ -9,6 +9,85 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-12 — A red-team pass hardens the design against fifteen findings; two are brief conflicts and two do not survive the engine source
+
+Context: `/redteam` against `10-design.md`, followed by an instruction to fix everything it found.
+Every load-bearing claim was then checked against the engine at `0.6.1` (`275aab1`) rather than
+argued, which is what separated the findings that stood from the two that did not.
+
+Chosen — **the corrections the design absorbs**, each closing a claim the document made but had not
+established:
+
+**`read committed` is a stated precondition of the compare-and-swap.** At `repeatable read` or
+`serializable` the guarded `update` raises a serialization failure instead of reporting zero rows, so
+every conflict would arrive as `storage_failure` and a `503` — the criterion the brief says no work
+on this side can otherwise deliver, defeated by a server default or a pooler. Asserted at connect
+rather than inherited.
+
+**`engine_version` joins `session` and `save` as a host column.** Two instances share one store and
+are not restarted atomically, so a rolling deploy mixes serializations; *Failure modes* already said
+a bad blob is "corruption or an incompatible engine version… the workload must not guess", and
+without the column it could not determine which. It is the second fact after `tenant_id` that is
+cheap now and unreconstructable later, which is §7's own argument.
+
+**The guarded update gains an `expires_at` predicate, and the zero-rows re-read gains a third
+branch.** Without it a request that read a live row just before its TTL elapsed would resurrect the
+session while a concurrent read answered `session_expired` — falsifying *Concurrency and ordering*'s
+"expiry cannot race a live request", which covered the sweep but not the boundary. The predicate
+gives the re-read an outcome that is not "conflict", which is what makes it a classification;
+**a re-read that itself fails is classified as conflict, never `storage_failure`**, since zero rows
+already established the fact the caller acts on.
+
+**Readiness reports whether the store is usable now.** A startup-only check would leave the workload
+ready through exactly the outage the edge's new readiness probe was introduced to surface. Cost
+stated: readiness can flap.
+
+**The dump is pinned to `collate "C"` and Comparison A asserts a non-empty result.** Locale-aware
+collation makes the ordered blob set depend on the database image's locale, and two empty dumps
+compare identical — so the effort's first criterion could go red for a locale or green for a
+misdirected `search_path`. A fourth red-gate perturbation covers the dump, which the previous three
+all left untested.
+
+**Six further gaps closed by statement:** the sweep's own failure as a `Failure modes` entry; the
+replay pinned to production TTLs so it cannot expire mid-run; a `format_version` bump made a two-step
+release so a rolling deploy cannot silently empty a player's achievements; the README naming a
+command that runs two instances, which is the one clause of the brief's four-clause fresh-clone
+criterion that had no artifact behind it; the lifecycle probe composed behind the seam G3's
+authorization decorator wraps, since it is not a store port and G3's stated mechanism would miss it;
+and a no-op lifecycle probe for the in-memory configuration, so Dispatch carries no branch on which
+store was built.
+
+**Two consequences recorded rather than fixed.** Per-request composition drops a rejected
+submission's `attemptCounter` increment, so the durable configuration stores a lower value than the
+in-memory one — bounded, because `attempt` is observability that the engine's own test asserts
+appears in no response body, so byte-identity is unaffected. And `saveGame` reads the session but
+writes only the save, so a save's *contents* can capture a superseded state even though its row is
+never contended; fixing it would mean making `saveGame` write the session, which is the second engine
+behaviour change the brief names as a non-goal, to turn a correct save into a `409`.
+
+Rejected: **fixing the two brief conflicts** — the tenant non-goal's "nothing filters on it" against
+a design that filters on the implicit constant, and a save lifecycle the brief's criteria never
+asked for. Both were adjudicated in the design's favour and logged, but the consequent brief edit was
+never made, so the binding list still forbids what the design specifies. Rejected because
+`00-brief.md` states that a model may interrogate it and not author it, and because `AGENTS.md` makes
+non-goals binding *until that file changes* — a design document cannot discharge a constraint by
+disagreeing with it. Recorded as open questions 9 and 10 so `/contract` and `/slices` see the
+disagreement instead of resolving it by reading order.
+
+**Two findings withdrawn against the source, and the withdrawal is the point.** A claimed orphan —
+a committed save or achievement row left behind by an action whose session write lost the race — does
+not exist: `submitAction` calls `writeSession` *before* `upsertAchievements` on the accepted branch,
+and `saveGame` never calls `writeSession` at all. And the `attemptCounter` divergence was claimed as
+a possible determinism break; `attempt` reaches only the event decorator, and an engine test already
+forbids it in every response body. Both are now stated in the design *with the version they were read
+at*, because "the loser leaves no trace" is a consequence of that ordering rather than of the guarded
+statement alone.
+
+Reversibility: cheap for every statement and precondition; **expensive for `engine_version`**, which
+is the reason it was taken before rows exist, and which is also the only schema change in the pass
+
+---
+
 ### 2026-08-12 — The store is provisioned by one committed compose file, and a third proof exercises the ports directly
 
 Context: a third `/design` pass against an unchanged brief and an unchanged engine (`0.6.1`,
