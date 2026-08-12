@@ -243,7 +243,7 @@ decorator inherits the constraint rather than rediscovering that an undecorated 
 oracle.
 
 **A probe that fails is read as `absent`, so the engine's own code passes through verbatim**
-([Unresolved 1](#1-resolved--what-dispatch-answers-when-the-lifecycle-probe-itself-fails), settled
+([Unresolved 1](#1-what-dispatch-answers-when-the-lifecycle-probe-itself-fails), settled
 2026-08-12). The failure arm exists because the probe crosses a module boundary and every error that
 does is an `Outcome` failure; what Dispatch does with it is to answer the less specific of the two
 true things rather than the more alarming of them.
