@@ -13,7 +13,8 @@ unchanged except where durable state forces a change, and every such change is n
 This document decides what the brief leaves open: **what the schema is and which column is the
 optimistic lock, how a compare-and-swap can work at all given where the engine caches, how a conflict
 reaches a caller as something other than an outage, what bounds a session that no longer clears
-itself on restart, and what every one of those does when it fails.**
+itself on restart, how the store comes to exist for a suite that must run from a fresh clone, and
+what every one of those does when it fails.**
 
 Four facts shape almost everything below.
 
@@ -263,7 +264,7 @@ in the system, which is what makes it provable.
 | **HTTP surface** | Routing, validation, canonical encoding, status mapping | Contract, Dispatch | The versioned JSON wire |
 | **MCP surface** | Tool list and invocation | Contract, Dispatch | The MCP projection |
 | **Probes** | Liveness, and readiness that now includes the store | Composition's readiness | Two endpoints |
-| **Proof harnesses** *(test-scope)* | The replay fixture, the two-instance contention harness, the perturbations | Composition, Dispatch, the HTTP surface over real sockets, Store for schema setup only | Nothing — leaves |
+| **Proof harnesses** *(test-scope)* | The replay fixture, the two-instance contention harness, the port-conformance suite, the perturbations | Composition, Dispatch, the HTTP surface over real sockets, Store for schema setup and — for the conformance suite alone — for the ports themselves | Nothing — leaves |
 
 **Dependency direction:**
 
@@ -400,13 +401,28 @@ per-session queueing. It has no compare-and-swap, so removing the queue would in
 G2 exists to eliminate — into the one configuration whose proof must stay green for reasons that have
 nothing to do with durability.
 
-### 3. The two proofs — triggered by the test suite, in CI
+### 3. The three proofs — triggered by the test suite, in CI
+
+**The store is provisioned by one committed compose file, and CI runs the same command the README
+documents.** The workload's `game-service` CI job today runs on a bare runner with no database, and
+every proof below needs one. A compose file under `workloads/game-service/` brings up PostgreSQL;
+the job runs it as a step before the suite, and the README's fresh-clone story names the identical
+command. **One provisioning path, documented and proven by the same artifact** — the reason that job
+exists as a separate one in the first place is that its steps are the README's own commands, and a
+CI-only mechanism the developer never runs would make the documented path the untested one.
+
+**The compose file provisions the store and nothing else.** It does not start a workload instance,
+supervise one, or describe a deployment. The two-instance harness still spawns its own processes, for
+the brief's reason: a way to run two instances against one store is in scope, and orchestration is
+not. The line is that compose owns the *dependency*, the harness owns the *instances*, and neither
+crosses.
 
 **Proof one: byte identity against the durable store.** G1's replay, run twice more. A run under the
 replay profile against the in-memory store, and a run under the replay profile against the durable
 store, each producing the ordered blob set through the same shutdown dump; the durable run's handle
-reads `select id, blob … order by id` instead of a map. **Comparison A** is those two blob sets, byte
-for byte. **Comparison B** is each run's response transcript against the committed golden transcript.
+reads `select session_id, blob … order by session_id` instead of a map. **Comparison A** is those two
+blob sets, byte for byte. **Comparison B** is each run's response transcript against the committed
+golden transcript.
 G1's existing in-memory replay stays in the suite and stays green — two proofs passing is not evidence
 that the first still does.
 
@@ -429,6 +445,32 @@ configured pause between a session read and the corresponding write, defaulting 
 under test is started with a pause; the second request is sent inside it. **A test asserts the seam is
 inert when unconfigured**, on the same terms G1 asserts that the default profile writes no dump — a
 diagnostic that is merely usually off is on.
+
+**Proof three: port conformance, against both implementations.** The replay reaches four of the six
+port methods and no more. Its ten steps carry no `profileId`, so `profiles.load` and `profiles.save`
+are never called — the profile store is composed and never exercised, which is how G1 left it and
+which the brief's *"every store operation is exercised against the durable implementation"* does not
+allow to stand. The proof is a conformance suite written **against the ports, not the wire**, and run
+twice: once over the engine's in-memory implementations and once over the durable ones, asserting the
+same behaviour from both.
+
+It covers `sessions.get/put`, `saves.get/put` and `profiles.load/save`; the three profile outcomes
+*Failure modes* commits to — `profile_missing`, `profile_corrupt` from a bad `format_version`, and
+`profile_write_failed` leaving a committed session write in place; the set-union merge, including the
+divergence the durable `save` deliberately carries; and the round trip that keeps host metadata out
+of game state — the blob read back is exactly the bytes written, and no host column reaches the
+`StoredSessionRecord`. **It is the only proof that addresses the store directly**, which is why
+*Module boundaries* grants it the one dependency on Store that no other module has.
+
+**Running it over both implementations is what makes it a conformance suite rather than a second set
+of unit tests.** A durable-only assertion states what this implementation does; the same assertion
+passing over the engine's own is what says the durable one *fills the port* — which is the question
+the engine's composition root recorded as unanswerable until a second implementation existed, and
+which the brief makes a deliverable.
+
+**The fixture and the golden transcript are untouched.** Adding a profile-carrying step to the replay
+would have reached the same methods, and it would have made the byte-identity proof carry a second
+job — a red run would no longer point at one thing.
 
 **The gate is proven able to go red, three ways.** A run with the guard removed — the update's `where`
 clause not asserting the version — must fail the two-instance assertion with two `200`s. A direct
@@ -486,7 +528,8 @@ re-derivable on the next action because the store's merge is a set union.
 
 A missing profile yields `profile_missing` and an empty achievement set. A row whose `format_version`
 is not 1, or an achievement row that fails shape validation, yields `profile_corrupt` and an empty
-achievement set. **Neither ever produces a broken game**, and both are asserted.
+achievement set. **Neither ever produces a broken game**, and both are asserted — by the
+port-conformance suite (*Control flow* 3), which is the only proof that reaches these ports at all.
 
 ### A session or save has expired
 
@@ -586,8 +629,8 @@ past the retention horizon, which is required to exceed any request's duration b
 sweep can fall between a request's read and its write.
 
 **The replay is strictly sequential and single-instance.** Unchanged from G1, and now load-bearing for
-a second reason: counting record ids and two instances are incompatible, so the two proofs never share
-a configuration.
+a second reason: counting record ids and two instances are incompatible, so the replay and the
+contention proof never share a configuration.
 
 **Startup ordering is unconstrained.** Either instance may start first; either may be first to migrate.
 The edge reports not-ready until the workload does, and the workload reports not-ready until the store
@@ -708,6 +751,30 @@ compare-and-swap primitives directly. Rejected because the tenant column, the ac
 expiry sweep all want a relation, and because the schema is the artifact the brief says must survive G3
 and G4 — a schema is a better thing to inherit than a key convention.
 
+### Provisioning the store — one compose file, run by CI and by the reader
+
+**Chosen:** a compose file committed under `workloads/game-service/`, brought up by a step in the
+`game-service` CI job and by the identical command in that workload's README.
+
+**Rejected — a GitHub Actions `services:` container in CI, with a compose file for developers.** More
+idiomatic for Actions, less YAML, and the container is reachable on loopback so the job's existing
+OTLP port rejections are unaffected. Rejected because it makes the path CI proves and the path the
+README documents two different things, and that job exists as a separate one precisely so its steps
+*are* the README's commands — a documented command nothing runs is the failure the fresh-clone job
+was built to prevent.
+
+**Rejected — Testcontainers, with the suite starting its own container.** One code path, identical in
+CI and locally, and per-run isolation would come free. Rejected because it is a new dependency bought
+to solve a problem a file already solves; because it moves provisioning inside the test process,
+where the brief's *"tells a reader how to provision the store"* is satisfied by a library's internals
+rather than by an artifact a reader can open; and because running two instances against one store by
+hand would still need something else to exist.
+
+**Rejected — assuming an externally provisioned store from a connection string.** Nothing to commit,
+and it is what a real deployment looks like. Rejected because "the evidence runs in CI from a fresh
+clone" then depends on a step nothing in the repository performs, which is the anecdote-on-my-machine
+result G1 already refused once.
+
 ### Profiles — append-only achievement rows, merged by union
 
 **Chosen:** one row per achievement, `insert … on conflict do nothing`, assembled into a `PlayerProfile`
@@ -746,9 +813,34 @@ because using it is shipping tenancy behaviour, which the brief forbids in those
 first thing that reads the tenant column should not be a test fixture.
 
 **Rejected — truncating between runs.** Cheaper than creating a schema. Rejected because it leaves the
-two proofs sharing one namespace, so a leaked connection or a stray instance from an earlier test
-contaminates a later one — and the symptom would be a byte-identity failure, which is the exact signal
-the suite exists to make meaningful.
+replay and the contention proof sharing one namespace, so a leaked connection or a stray instance from
+an earlier test contaminates a later one — and the symptom would be a byte-identity failure, which is
+the exact signal the suite exists to make meaningful.
+
+### The profile port — a conformance suite over both implementations, not a wider fixture
+
+**Chosen:** a third proof, written against the ports and run twice — over the engine's in-memory
+implementations and over the durable ones — covering all six port methods and the three profile
+outcomes.
+
+**Rejected — a profile-carrying step added to the replay fixture.** It reaches the same methods
+through the real wire and through the same byte-identity comparison, which is the strongest kind of
+evidence available. Rejected because it invalidates the committed golden transcript, and more
+importantly because it gives the byte-identity proof a second job: a red run would then mean either
+that serialization diverged or that the profile path broke, and the proof's whole value is that it
+means exactly one thing.
+
+**Rejected — unit tests on the durable adapter, named as such in this document.** Honest, cheap, and
+it would close the gap in the sense that the code is covered. Rejected because it tests one
+implementation against its own behaviour, which cannot answer whether the durable store *fills the
+port* — the question the engine's composition root deferred *"until a second `SessionStore`
+implementation is actually needed"*, and which the brief makes a deliverable rather than a side
+effect. Only running the same assertions over both implementations answers it.
+
+**Rejected — leaving profiles to the failure-mode tests already implied and saying nothing.** The
+design's *Failure modes* already commits to the three outcomes, so a reader could reasonably assume
+they are covered. Rejected because that assumption is exactly the shape of the failure `agent.md`
+records: a criterion that reads as covered because an adjacent gate is green.
 
 ---
 

@@ -9,6 +9,60 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-12 — The store is provisioned by one committed compose file, and a third proof exercises the ports directly
+
+Context: a third `/design` pass against an unchanged brief and an unchanged engine (`0.6.1`,
+`3831051`), so again nothing to derive. Checking the design against the brief's *Definition of done*
+found two criteria with no mechanism behind them — the first two gaps either of the previous two
+passes left, and both are structural rather than editorial.
+
+Chosen:
+
+**The store is provisioned by one compose file under `workloads/game-service/`, run by the CI job and
+by the README's own command.** The brief requires the evidence to run *"in CI from a fresh clone,
+including the two-instance case and the store it shares"*, and `build.yml`'s `game-service` job runs
+on a bare runner with no database — so every proof in `10-design.md` needed something that did not
+exist. That job is deliberately separate so its steps *are* the README's commands, which is what
+makes the fresh-clone story checkable rather than asserted; a compose file is the one option that
+keeps the documented path and the proven path the same artifact. **Compose owns the dependency, the
+harness owns the instances** — it starts no workload and supervises nothing, which is what keeps this
+on the right side of the deployment-machinery non-goal.
+
+**A third proof — port conformance over both implementations — exercises `profiles.load` and
+`profiles.save`.** G1's committed fixture is ten steps and no step carries a `profileId`, so the
+replay reaches four of the six port methods and the profile store is composed and never called. The
+brief requires every store operation exercised against the durable implementation, and separately
+requires the three profile degradations asserted; `10-design.md` committed to all three in *Failure
+modes* while naming no proof that reaches them. The suite is written against the ports and run twice,
+over the engine's in-memory implementations and over the durable ones. Running it over both is the
+part that matters: a durable-only assertion says what this implementation does, and only the same
+assertion passing over the engine's own says it *fills the port* — which is the question the engine's
+composition root recorded as unanswerable *"until a second `SessionStore` implementation is actually
+needed"*, and which the brief makes a deliverable.
+
+Rejected: **a GitHub Actions `services:` container in CI with a compose file for developers** — more
+idiomatic and less YAML, rejected because the path CI proves and the path the README documents become
+two different things, which is the failure the fresh-clone job was built to prevent.
+**Testcontainers** — one code path and free per-run isolation; rejected as a new dependency bought to
+solve a problem a file already solves, because it satisfies *"tells a reader how to provision the
+store"* with a library's internals rather than an artifact a reader can open, and because running two
+instances by hand would still need something else to exist. **Assuming an externally provisioned
+store from a connection string** — what a real deployment looks like; rejected because "runs in CI
+from a fresh clone" would then depend on a step nothing in the repository performs.
+**A profile-carrying step added to the replay fixture** — the strongest evidence available, through
+the real wire and the same byte-identity comparison; rejected because it invalidates the golden
+transcript and gives that proof a second job, so a red run would stop meaning exactly one thing.
+**Unit tests on the durable adapter, named as such** — honest and cheap; rejected because testing one
+implementation against its own behaviour cannot answer the fill-the-port question. **Saying nothing
+and leaving profiles to the failure-mode tests already implied** — rejected because that is the
+shape `agent.md` records as having cost a shipped release: a criterion that reads as covered because
+an adjacent gate is green.
+
+Reversibility: cheap for the compose file; cheap for the conformance suite's existence, and it is the
+kind of artifact that gets more expensive to add the longer the durable adapters exist without it
+
+---
+
 ### 2026-08-12 — The design's remaining open questions close; the adjudication is re-verified at engine `0.6.1`
 
 Context: a second `/design` pass against an unchanged brief. The document was already complete and
