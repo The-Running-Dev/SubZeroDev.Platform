@@ -9,6 +9,27 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-12 — The implicit tenant participates in storage keys without becoming request tenancy
+
+Context: `/contract` stopped because the brief's tenancy non-goal said nothing filters on the tenant
+identifier while the design and contract require the implicit tenant in every primary key and
+statement. Non-goals are binding, so the contract could not treat the earlier design sign-off as an
+amendment to the brief.
+
+Chosen by Ben: **the store supplies the single implicit tenant as a constant in every key and
+statement, while no request resolves or carries a tenant and no behaviour varies by tenant.** The
+brief now says this directly. The schema therefore keeps `tenant_id` in every primary key from the
+first migration without claiming that G2 ships tenant selection or tenant-dependent behaviour.
+
+Rejected: **the literal former wording** — keep the column present but remove it from keys and
+statements. It would make the old sentence true by deferring the correctness migration §7 exists to
+prevent: adding a column later is cheap; adding it to every key and query after rows exist is not.
+
+Reversibility: expensive once rows exist, which is why the brief and contract are aligned before the
+first migration
+
+---
+
 ### 2026-08-12 — The contract is derived; a failed lifecycle probe answers `absent`, the tarball stays vendored, and the engine's error union has one more member than the design says
 
 Context: `/contract` against `10-design.md`. Three things came out of the derivation that the design

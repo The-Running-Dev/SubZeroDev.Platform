@@ -1015,20 +1015,16 @@ lost update needs, and the sweep's failure is already the one condition granted 
 merely expired is answered as one that never existed, and nothing on the wire says which. Readiness is
 what surfaces the underlying condition.
 
-### 2. Two binding-document conflicts the design records and cannot discharge
+### 2. One binding-document conflict remains
 
-Design Open questions 9 and 10. **The substance of both is already signed off**; what is missing is
-the consequent edit to [`00-brief.md`](00-brief.md), which is not a document a model may author.
-They are recorded here so `/slices` sees the disagreement rather than resolving it by reading order.
+Design Open questions 9 and 10. **Question 9 is resolved by Ben's 2026-08-12 amendment to
+[`00-brief.md`](00-brief.md); question 10 remains open.** Both keep their place here so a later
+citation resolves rather than disappearing.
 
-- **The tenant non-goal.** The brief says, in words, *"Nothing reads it, nothing filters on it, and no
-  request carries one."* Every statement this contract specifies filters on `tenant_id = <the
-  implicit constant>` (invariant 51), which is the shape design Open question 1 settled and
-  [`90-decisions.md`](90-decisions.md) records. **`AGENTS.md` makes non-goals binding until the brief
-  changes**, so the binding list currently forbids what invariant 51 requires. **What reverses on the
-  literal reading:** `tenant_id` leaves all four primary keys and every statement, which is a
-  correctness migration on every table at once once rows exist — which is the direction §7 exists to
-  prevent, and the reason the key shape won.
+- ~~**The tenant non-goal.**~~ **Resolved 2026-08-12, by Ben: the store supplies the implicit tenant
+  as a constant in every key and statement, while no request resolves or carries a tenant and no
+  behaviour varies by tenant.** The brief now permits invariant 51 directly rather than requiring
+  the design to interpret around a binding non-goal.
 - **Save lifecycle.** The brief's lifecycle criteria name *sessions* in every clause. This contract
   gives saves a 365-day absolute TTL, an `expires_at` column, a sweep that hard-deletes them, and a
   `save_expired` code that widens a closed union in a published package. **What reverses:**
