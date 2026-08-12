@@ -1,723 +1,1235 @@
-# Design — one session, over the wire, then the edge (G1)
+# Design — durable sessions (G2)
 
 **Document status:** Design. Derived from [`00-brief.md`](00-brief.md); if the brief changes, this is
 re-derived, not patched.
 
-The boundary this effort crosses is already specified.
-[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) owns who owns what and the
-four things a hosted deployment must answer; [ADR-005](../docs/docs/adr/ADR-005-service-contract.md)
-owns how a boundary contract comes to exist; the engine's own client contract owns what a client may
-do. None of that is restated here. This document decides what those leave open: **what the operation
-table is and where each of its fields comes from, how two surfaces are built from it without either
-becoming the source, how the byte-identity proof reaches the store's serialization without a
-raw-state endpoint, and what every boundary does when it fails.**
+What this document does **not** decide is already owned elsewhere.
+[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) owns the ownership split and
+§7's port obligations; [ADR-005](../docs/docs/adr/ADR-005-service-contract.md) owns how a boundary
+contract comes to exist; [`g1/10-design.md`](g1/10-design.md) owns the operation table, the two
+surfaces, the wire's error semantics and the byte-identity proof's shape. G2 inherits all of it
+unchanged except where durable state forces a change, and every such change is named here.
 
-Four facts shape almost everything below, stated once rather than rediscovered per section:
-**in-memory state and scale of one** (sessions lost on restart, by design); **two processes started
-by hand** (the Node workload, and later the .NET edge); **fully offline** — nothing at startup or in
-steady state requires outbound network; and **trusted-local reachability** — no principal exists, so
-nothing here may be designed as though an untrusted caller arrives.
+This document decides what the brief leaves open: **what the schema is and which column is the
+optimistic lock, how a compare-and-swap can work at all given where the engine caches, how a conflict
+reaches a caller as something other than an outage, what bounds a session that no longer clears
+itself on restart, how the store comes to exist for a suite that must run from a fresh clone, and
+what every one of those does when it fails.**
 
-> **Three facts verified against the published engine and the engine's own repository, which the
-> brief stated differently.** They changed no decision the brief took, and they sharpened two. They
-> are stated here because the design must be correct against what exists. **The first two are now
-> adjudicated** — the brief carries the correction, and the resolutions are recorded in
-> [`90-decisions.md`](90-decisions.md), 2026-08-08.
+Four facts shape almost everything below.
+
+1. **The engine's session layer caches.** `getSession` returns from an in-process `Map` and only
+   falls through to `SessionPersistence` on a miss. A second instance's write is invisible to the
+   first instance's cache. **Compare-and-swap at the persistence port is necessary and not
+   sufficient**, and the whole of *Module boundaries* turns on that sentence.
+2. **The contended row is the session, and only the session.** `saveGame` mints a fresh `saveId` on
+   every call, so saves are insert-only and no two writers ever target one save row.
+3. **Two instances, one store, anonymous and interchangeable.** Nothing keys on which instance
+   served a request; that is what makes the two-instance proof mean anything.
+4. **Trusted-local, offline in steady state, no principal.** Unchanged from G1, and nothing here may
+   be designed as though an untrusted caller arrives.
+
+> **The §6.1 contradiction the brief logged is adjudicated here, and §6.1 is the side that is wrong.**
+> It resolves concurrency with "compare-and-swap on the sequence number… the engine's save handle
+> already exposes `savedAtSeq` — so the version is present and needs no new concept." Verified against
+> the engine at `0.6.1`, that is wrong twice over:
 >
-> 1. **`previewAction` is already merged on the engine's `main`, unreleased.** The published
->    `@the-running-dev/game-engine` 0.4.0 carries **nine** store operations; the engine's `main`
->    carries **ten**, and its `SessionStore` doc comment already reads *"ten operations, ten MCP
->    tools"*. The `world-graph` kind is likewise `main`-only — nothing of it
->    exists at the 0.4.0 tag. **Resolved:** S1 cuts its
->    release from `main`, so G1 pins a **ten**-operation engine and the table is ten rows.
->    `previewAction` is consumed, never authored here — which is what the brief's non-goal forbids.
-> 2. **The engine's API coverage checklist already has four client columns** — text client, MCP tool,
->    simulation kind, browser demo — over ten rows, every box ticked. **Resolved:** the hosted
->    transport's is the **fifth**, the brief says so, and because G1 pins the ten-operation engine the
->    column has ten ticks and no blank row.
-> 3. **`09-clients.md` is generated**, from the engine repository's own `design/10-design.md`. The
->    PR that adds the hosted column edits that source, not the rendered document.
+> - **`savedAtSeq` is on the wrong record.** It is `state.actionLog.length` stamped onto a
+>   `StoredSaveRecord` whose `saveId` is freshly minted by every `saveGame`. Saves are insert-only.
+>   Versioning them guards a row that has no second writer, and would leave the session — the row two
+>   `submitAction` calls actually contend for — unguarded, which is precisely the failure §6.1 opens by
+>   describing.
+> - **The session's own counter is not a version either.** `attemptCounter` increments *before*
+>   dispatch, including for a submission the engine goes on to reject — and a rejected submission
+>   never calls `writeSession`. So the counter advances without a write, and is not in one-to-one
+>   correspondence with the writes a lock must guard. That it happens to increment on every session
+>   *update* today is a property of the current implementation, not a stated engine invariant, and
+>   an optimistic lock must not be built on a coincidence in another repository's private code.
+>
+> **The resolution: the version is a store-owned column, incremented by the store on exactly the
+> writes it guards, and invisible to the engine.** §6.1's "needs no new concept" is the part that does
+> not survive. **§6.1 has been corrected to say so** — signed off 2026-08-12, on the grounds that the
+> brief's deferral was conditional on `/design` adjudicating, and it has. The contract document is the
+> source of truth for the corrected rule; this section owns the adjudication that produced it.
+>
+> **A consequence worth stating, because G1 predicted the opposite.** G1's design recorded that
+> narrowing `savedAtSeq` off the wire was a cost "G2 will need it back" for. **It does not.** The lock
+> is server-side and lives entirely between one instance's read and that same instance's write; no
+> caller supplies a version and no response carries one. The narrowing stands, and the contract needs
+> no widening for concurrency.
+>
+> **Re-verified at `0.6.1`.** The adjudication was first made against `0.5.0`, and the engine has moved
+> since. Between the two, the only change on the serialization path is `sha256Hex` being extracted into
+> `canonical.ts` with `computeChecksum` delegating to it; `canonicalStringify` and its writer are
+> untouched, so **the byte-identity criterion is unaffected by the version change**. Every claim above
+> reads off the current source: the cache-then-persistence `getSession`, the increment before dispatch
+> against a write that happens only on the accepted branch, the freshly minted `saveId`, and the
+> parameterless `catch` in `writeSession` that discards the cause.
 
 ---
 
 ## Data model
 
-Nothing in G1 is durable. Every entity below is either **an artifact** — a file produced by a build
-step and published — or **in-memory state** lost on restart. There is no database, and the absence is
-the brief's non-goal rather than an omission.
+Everything in G2 is one of three things: **a row in the durable store**, **per-request state that dies
+with the request**, or **an artifact inherited from G1 unchanged**. The in-memory records G1 modelled
+still exist — the in-memory configuration is retained, not replaced — but they are no longer the only
+answer, and the durable rows below are what the brief's criteria are asserted against.
 
-### Artifact — the operation table
+### The store — engine-owned values, host-owned columns
 
-The single row-set from which both surfaces are built. It is **authored data**, versioned and
-published with the contract, and it lives in `SubZeroDev.ServiceContract`.
+The split is the schema's organising rule and it is
+[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §7 made literal: **every field
+the engine puts on its record is stored verbatim and given back unchanged; every column the host needs
+is the store's own and the engine never sees it.** A column is on exactly one side of that line.
 
-| Field | Type | Source |
+#### `session`
+
+| Column | Type | Owner | Notes |
+|---|---|---|---|
+| `tenant_id` | `text not null default` the implicit tenant | Host | §7's requirement. Part of the primary key from the first migration. Nothing computes it. |
+| `session_id` | `text not null` | Engine | Minted by the engine's `RecordIdSource`. |
+| `blob` | `text not null` | Engine | The canonical serialization, byte for byte. |
+| `audience` | `text not null` | Engine | `StoredSessionRecord.audience`. |
+| `attempt_counter` | `integer not null` | Engine | Stored because the record carries it. **Not the lock.** Its persisted value differs between the two configurations — *Module boundaries*, fourth consequence. |
+| `replay_compatible` | `boolean not null` | Engine | |
+| `engine_created_at` | `text not null` | Engine | The engine's `Clock` output, stored as text. |
+| `engine_updated_at` | `text not null` | Engine | Likewise. |
+| `profile_id` | `text null` | Engine | `null` ⇄ **key absent**, never `undefined`-valued. |
+| `version` | `bigint not null` | **Host** | **The optimistic lock.** Starts at 1 on insert, `+1` on every accepted update. |
+| `engine_version` | `text not null` | Host | The engine package version that produced `blob`. Stamped from the version startup already resolves. |
+| `row_created_at` | `timestamptz not null default now()` | Host | Database clock. |
+| `row_updated_at` | `timestamptz not null` | Host | Database clock, set on every accepted write. |
+| `expires_at` | `timestamptz not null` | Host | **Derived**, in SQL, as `now() + <session idle TTL>` on every accepted write. |
+
+Primary key `(tenant_id, session_id)`.
+
+**Four things about this table are decisions, not transcription.**
+
+- **`blob` is `text`, never `json` or `jsonb`.** `jsonb` is a normalised representation: it reorders
+  members, collapses duplicates and renormalises numbers. A blob that round-trips through it is not
+  the same bytes, and the byte-identity proof is the effort's first criterion. `text` also makes the
+  column opaque to the database, which is the correct relationship — the store must not be able to
+  reason about game state.
+- **The engine's two instants are `text`, and the host's three are `timestamptz`.** Storing the
+  engine's strings as timestamps would reformat them on read, so a record would not round-trip; under
+  the replay profile the fixed instant would come back in the database's rendering rather than the
+  engine's. Two kinds of time, two column types, and the type is what keeps them from being confused.
+- **`version` is host-owned and never leaves the store.** Not `attemptCounter`, for the reason in the
+  adjudication above; not `savedAtSeq`, which is on another table. It is incremented by exactly the
+  statement that performs the guarded write, which makes "the version advanced" and "a write landed"
+  the same event by construction.
+- **`engine_version` records which engine wrote the bytes, and it is the one host column that cannot
+  be backfilled.** Two instances share one store and are not restarted atomically, so a rolling
+  deploy puts blobs from two engine versions in one table. *Failure modes* already says a blob that
+  will not deserialise is "store corruption or a blob written by an incompatible engine version;
+  either way the workload must not guess" — without this column it cannot even determine which, and
+  the provenance of a row written before the column existed is gone permanently. It is stamped, never
+  read on the serving path, and never compared against anything at runtime: it is evidence for an
+  operator, not a gate. This is §7's own argument for the tenant column applied to the second fact
+  that is cheap now and unreconstructable later.
+
+#### `save`
+
+| Column | Type | Owner |
 |---|---|---|
-| `operation` | Stable id, kebab-case | Authored. The row's identity. |
-| `storeMethod` | Method name on the engine's `SessionStore` | Authored, **checked against the engine's type** |
-| `mcpTool` | Tool name | Authored — `submitAction` → `choose` is a naming choice no type expresses |
-| `httpPath` | Path segment under the version prefix | **Derived** from `operation`, mechanically |
-| `requestShape` | Reference into the generated schema set | Authored reference; the shape itself is derived |
-| `responseShape` | Reference into the generated schema set | Authored reference; the shape itself is derived |
-| `narrowings` | Fields of the store's own signature deliberately not exposed | Authored |
-| `reachableErrors` | The subset of the closed error-code set this row can produce | Authored, **checked against the mapping** |
+| `tenant_id` | `text not null default` implicit | Host |
+| `save_id` | `text not null` | Engine |
+| `campaign_id` | `text not null` | Engine |
+| `blob` | `text not null` | Engine — the save envelope's serialization |
+| `saved_at_seq` | `integer not null` | Engine |
+| `audience` | `text not null` | Engine |
+| `profile_id` | `text null` | Engine |
+| `engine_version` | `text not null` | Host — the engine package version that produced `blob` |
+| `row_created_at` | `timestamptz not null default now()` | Host |
+| `expires_at` | `timestamptz not null` | Host — **derived** as `now() + <save TTL>` at insert |
 
-**The authored/derived split is the central decision of this design, and it is forced.** The engine's
-types are the source of truth for *what a request and a response contain* — ADR-005 Rule 2, and the
-whole reason the schema is generated rather than written. They are not, and cannot be, the source of
-truth for *what each operation is called on each surface*: nothing in `SessionStore`'s declaration
-says `submitAction` is `choose`, that `start_game` drops `audience`, or that `save_game` returns
-`{ saveId }` and not the store's `SaveHandle`. Those are contract narrowings the engine's own MCP
-adapter already applies in code. Deriving them is impossible; authoring them twice — once per surface
-— is the drift ADR-005 exists to prevent. **Authoring them once, as data, is the only remaining
-option**, and it is what "the operation table held as data" means concretely.
+Primary key `(tenant_id, save_id)`. **No `version` column**, and the absence is a decision: a save row
+has exactly one writer in its lifetime because `saveGame` mints its id, so an optimistic lock would
+guard nothing. `saves.put` is nonetheless written as an upsert rather than a bare insert, because the
+port's method is `put` and an implementation that fails on a re-put would be narrower than the
+interface it claims to fill. **On a re-put every host column is recomputed** — `expires_at` from the
+current clock, `engine_version` from the writing process — because a re-put is a write and a host
+column that described the first one would then describe nothing.
 
-**The narrowings are the table's, and both surfaces inherit them.** A row has one request shape and
-one response shape, used by the JSON wire and by the MCP projection alike. If the wire returned
-`savedAtSeq` and MCP did not, MCP would be a differently-narrowed sibling of the wire rather than a
-projection of it, and the brief's second decision would be false in the one place it is checkable.
+**The absence of the lock rests on read engine source, not on an assumption.** Verified at `0.6.1`:
+`saveGame` calls `newSaveId(recordIds)` on every invocation and writes through `writeSave` only, and
+**it never calls `writeSession` at all** — the save path touches no session row. That is the same
+standard the adjudication above applies when it rejects `attemptCounter`; the difference is that this
+claim reads off the source rather than off a coincidence, which is what makes it usable. The
+consequence for what a save's *contents* can race is in *Concurrency and ordering*, and is not the
+same question as whether its row is contended.
 
-> **What that costs, stated rather than hidden.** `saveGame`'s `savedAtSeq` is narrowed away, and
-> [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 names it as the version
-> G2's compare-and-swap will assert on. G2 will need it back. Widening a response is an additive
-> change to one row — a contract minor version — which is the mechanism working rather than a cost
-> avoided.
+#### `profile` and `profile_achievement`
 
-**Two completeness gates run at generation, and they are what make the table load-bearing rather
-than descriptive:**
+`profile`: `(tenant_id, profile_id)` primary key, plus `format_version integer not null`,
+`row_created_at`, `row_updated_at`.
 
-- **Arity.** The row set must exactly cover the exported `SessionStore` interface's methods. A method
-  with no row, or a row naming no method, fails generation. This is what makes a tenth operation a
-  table entry rather than a rewrite — and, more usefully, what makes forgetting the entry impossible:
-  the engine version bump does not build until the row exists.
-- **Error coverage.** Every `SessionStoreErrorCode` the engine declares must appear in the code→status
-  mapping. A code added upstream fails generation rather than silently becoming a 500.
+`profile_achievement`: `(tenant_id, profile_id, campaign_id, achievement_id)` primary key, plus
+`row_created_at`. **Append-only.**
 
-### Artifact — the generated schema set
+**Achievements are stored as rows and merged by set union, not as a blob replaced wholesale.** The
+engine's only mutation is `upsertAchievements`, which adds; an `insert … on conflict do nothing` per
+achievement is therefore faithful to every mutation that exists, and it is *conflict-free* — two
+instances awarding two different achievements to one profile at the same moment both land, with no
+lock and no lost write. `format_version` exists so "corrupt" stays a reachable, testable outcome
+against a normalised store, the same reason the engine's in-memory profile store keeps raw entries.
 
-JSON Schema documents projected from the engine's published TypeScript declarations, one per request
-and response shape the table references, with the row's narrowings applied. Wholly derived; nothing
-in it is authored. Every response schema is **closed** — no additional properties — which is one half
-of the projection-boundary gate. **Request schemas are closed too**: a member the row's request shape
-does not declare fails validation as `malformed_payload`, which is what makes a request narrowing
-irreversible from the wire — a dropped field cannot be re-supplied by a caller — and what leaves the
-determinism profile with no caller-reachable path.
+**The named cost:** the durable `ProfileStore.save` is *additive*, where the engine's in-memory one
+replaces. A `save` omitting a previously-stored achievement removes nothing. The engine never issues
+such a save, and a test asserts the divergence deliberately rather than leaving it to be discovered.
 
-Identity is the schema's `$id`, a version-pathed URL per ADR-005 Rule 5. **The URL is an identifier,
-not a fetch.** Nothing dereferences it at build time or at runtime; a validator that resolved `$ref`s
-over the network would break the offline constraint on its first request. The artifact travels in the
-contract package; the URL exists so a pinned `1.0` reference cannot be overwritten by a `2.0`.
+**"The engine never issues such a save" is verified, not assumed.** At `0.6.1`, `upsertAchievements`
+loads the profile, computes the ids not already present, and saves
+`{ ...profile, achievements: [...profile.achievements, ...newRecords] }` — strictly the loaded set
+plus additions, on every path. **The divergence also runs in the durable store's favour**, which is
+worth stating because it inverts the usual reading of a named cost: when a load degrades to
+`profile_corrupt` and returns an empty set, the engine's next `save` carries only the new
+achievements, so a *replacing* store discards everything the player had earned and an *additive* one
+does not.
 
-### Artifact — the contract package
+**Neither profile table has an `expires_at` and the sweep does not touch them** — a deliberate
+absence, recorded here rather than left to be inferred from a table that simply lacks a column. The
+brief's lifecycle criteria bound *sessions*, and a profile is the row an account surface will own:
+G3 attaches ownership to it, at which point deleting one is an account decision and not housekeeping.
+The consequence to accept knowingly is that `profile` and `profile_achievement` grow monotonically
+for the life of the deployment, with no principal to scope a bound to and nothing to reclaim a
+profile whose sessions have all been swept.
 
-What the generator publishes and the workload consumes: the operation table, the schema set, the
-code→status mapping, and **the exact engine version the schemas were projected from**. That last field
-is not decoration — it is what lets a reader answer "which engine does this contract describe?" without
-inference, and what makes a stale contract detectable rather than merely suspected.
+#### Schema bookkeeping
 
-Lifecycle: regenerated when the engine's types change, published under its own semantic version, pinned
-by the workload. Per ADR-005 Rule 5 and the contract repository's own rule 4, it does not reach `1.0.0`
-before its generator has rejected something.
+One migrations table, owned by the migration tool, not by this design.
 
-### In-memory — session and save records
+### Derived, and from what
 
-**Owned by the engine, not by this design.** The workload supplies the engine's optional
-`SessionPersistence` port with a map-backed implementation; the engine defines the record shapes and
-writes through to them. Each session record carries the canonical serialization as an opaque string
-plus host-owned metadata the engine keeps deliberately outside it — created and updated instants, an
-attempt counter, the projection audience, a replay-compatibility flag, and an optional profile id.
+| Value | Derived from |
+|---|---|
+| `session.expires_at`, `save.expires_at` | The **database** clock at write time, plus the configured TTL |
+| `session.version` | Its own previous value, in the guarded statement |
+| `engine_version` | The engine package version startup already resolved, stamped at write time |
+| Liveness of a session id (`live` / `expired` / `absent`) | Row presence and `expires_at` versus the database clock |
+| The wire's `session_expired` / `save_expired` | The classification above, consulted only on the failure path |
+| The determinism dump | `select session_id, blob … order by session_id collate "C"`, and the same for saves |
 
-Two properties of that split matter downstream:
+**The dump's ordering is pinned to `collate "C"`, and that is load-bearing rather than decorative.**
+Ordering `text` under a locale-aware collation is locale-dependent — ICU treats punctuation as
+ignorable at the primary level where `C` compares by byte — and the replay's ids are hyphen-and-digit
+dense (`counting-session-id-0`, `counting-session-id-10`). An unpinned collation makes the ordered
+blob set depend on the database image's locale, so the in-memory run and the durable run could differ
+in *order* while agreeing on every byte. That failure presents as a byte-identity failure, which is
+the one signal in the suite that must mean exactly one thing. For the same reason the compose file
+pins the server encoding to `UTF8` and the initdb locale explicitly rather than inheriting the
+image's default.
 
-- **The canonical serialization contains no host metadata.** That is the engine's own rule
-  ([`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §7), and it is what makes
-  a byte comparison of serializations possible at all — wall-clock instants live on the record, not in
-  the blob.
-- **Nothing on these records is derived by the workload.** The workload allocates no id, computes no
-  sequence, and stamps no field. Every value is the engine's.
+Nothing on the engine's side of the table is derived by the workload. The workload allocates no id,
+computes no sequence, and stamps no engine field — G1's rule, unchanged.
 
-Identity: session id and save id, both minted by the engine's **`RecordIdSource`** port — the seam G1
-adds, and the reason S1 exists. The engine mints these with `crypto.randomUUID()` behind no seam
-today; `IdSource` is an `EngineHost` port and governs `gameId` and `seed` only, not these. The
-consequence of the gap and the decision to close it are in [`90-decisions.md`](90-decisions.md),
-2026-08-08, and the port's shape is [`20-contract.md`](20-contract.md)'s. Lifecycle: created on
-`createSession`/`loadGame`, mutated in place on `submitAction`, never evicted, lost on restart. There
-is no expiry, no quota and no size limit — the brief's non-goal, and the reason is that a limit sized
-against no measurement is a number G2 would have to relitigate.
+### Per-request, in memory
 
-### In-memory — the determinism profile
+**The read-version map.** One `Map<sessionId, version>` per request, held by the persistence adapter
+that request composes, recording the `version` each `sessions.get` observed. `sessions.put` for an id
+in the map is a guarded update asserting that version; for an id not in the map it is an insert. The
+map dies with the request, which is the entire reason it cannot go stale.
 
-Startup configuration selecting which implementations of the engine's `IdSource`, `RecordIdSource` and
-`Clock` ports the composition supplies, and, when the replay profile is selected, the path to write the
-store's canonical serialization to at graceful shutdown.
+**The composed session layer.** For the durable configuration, one per request — see *Module
+boundaries*. It holds the engine's own caches, which now live and die inside a single operation.
 
-**Default profile:** the engine's random `IdSource`, no `RecordIdSource` — so the engine mints record
-ids as it does today — and a real clock; no dump path; nothing written.
-**Replay profile:** the engine's exported counting `IdSource`, a counting `RecordIdSource` on
-independent counters, and a fixed clock; a dump path. Neither counting source takes a starting value:
-the engine's `createCountingIds()` counts from zero and accepts no argument, and G1's
-`RecordIdSource` matches it rather than inventing a second convention.
+**Request context.** Operation id, wire version, inbound `traceparent`, correlation — G1's, unchanged,
+and still never persisted.
 
-Three constraints, and each exists to stop this becoming something else:
+### Process-lived, in memory
 
-- It is **startup configuration only** — never a request field, never a header, never a route. A gate
-  asserts no operation row carries it.
-- The dump is **written at shutdown, to a path**, and is not reachable by any caller. It is not an
-  endpoint, and the design that would make it one — serving it over the wire — is the permanent
-  non-goal.
-- With the default profile, **no dump is written**. A test asserts that, because a diagnostic that is
-  merely usually off is on.
+The engine instance, the content registry, the `RecordIdSource`, the `Clock`, the connection pool, and
+— for the in-memory configuration only — the persistence maps and the single session layer. **The
+counting sources must be process-lived**: a per-request counting `RecordIdSource` would restart at zero
+on every request and mint colliding ids, which would present as a primary-key violation in the middle
+of the replay.
 
-### In-memory — request context
+### Inherited unchanged
 
-Per request, on the Node workload: the operation id, the wire version from the path, the inbound
-`traceparent` if the caller sent one, and the correlation. Correlation is **derived** — it is the
-trace-id of the adopted or minted trace context, which is the same rule Platform's own hosts follow, so
-one greppable value spans both processes. A malformed inbound `traceparent` yields a fresh root and
-never fails the request, matching Platform's stated behaviour at its own edge.
-
-Nothing here is persisted. Nothing here reaches game state — writing a correlation into a session record
-would be host metadata inside the determinism boundary, which is the failure §7 of the hosting contract
-names.
-
-### Committed fixture — the replay
-
-A campaign id, a fixed seed, and an ordered action list that exercises **every** row in the operation
-table. No counter start: both counting sources begin at zero and take no argument. Because the record
-ids are reproducible, a step may name a session or save id an earlier step returned, as a literal.
-Committed to the repository, because a proof whose input is generated per run compares two things
-nobody has read.
-
-Its companion, also committed, is **the golden transcript**: the canonically-encoded responses of the
-in-process run, in order. It is an output of the proof and an input to it — regenerated deliberately,
-reviewed as a diff, never rewritten by a passing test.
+The operation table, the generated schema set, the contract package, the replay fixture and the golden
+transcript — all G1's, all still authoritative. The fixture gains no rows: the same ten operations are
+replayed, against a different store.
 
 ### Not modelled
 
-No principal, no owner, no tenant, no account, no entitlement, no metering record, no rate-limit bucket,
-no idempotency key. Each is a binding non-goal, and each is named here so a later reader can see the
-absence was decided.
+No principal, owner, account, entitlement, metering record, rate-limit bucket or idempotency key. No
+per-player save index. No instance identity. Each is a binding non-goal and each absence is decided.
 
 ---
 
 ## Module boundaries
 
+### The problem this section exists to solve
+
+`getSession` reads the engine's in-process `Map` first and only consults `SessionPersistence` on a
+miss. Compose one long-lived session layer per instance and the following happens with two instances
+and a compare-and-swap that works exactly as specified:
+
+1. Instance **A** serves a request for session *S*, caching the record at `version` 1.
+2. Instance **B** serves an action on *S*, reading `version` 1 and writing `version` 2.
+3. **A** serves an action on *S*. Cache hit — the store never reads the database. It mutates the
+   cached record's blob in place, then writes asserting `version` 1. **The CAS rejects it.** Correct.
+4. **A** serves another action on *S*. Cache hit again, on a record whose blob is now the *losing*
+   state and whose `attemptCounter` has advanced. It writes asserting `version` 1 again, and is
+   rejected again — *and the session is now permanently unusable on instance A*, because A's cache is
+   never invalidated and nothing in the engine's read path can bring it back.
+
+Compare-and-swap converts a silent lost update into a permanently wedged session. That is better, and
+it is not good enough. It also does nothing at all for **reads**: `getScene` on A serves the cached,
+superseded scene with no write, no conflict and no way to notice.
+
+**The fix is compositional rather than algorithmic: for the durable configuration, the engine's
+session layer is composed per request.**
+
+- The **persistence** — the pool, the schema, the adapters — is process-lived.
+- The **session layer** built on top of it is not. Each inbound operation composes one, uses it, and
+  discards it.
+
+A cache that never outlives one request cannot serve a stale read and cannot carry a losing write
+forward. Every read reaches the database; the compare-and-swap is then the only concurrency mechanism
+in the system, which is what makes it provable.
+
+**Three consequences follow, and all three are wanted.**
+
+- **The engine's per-session queue no longer serialises across requests.** `sessionLocks` lives inside
+  the store instance, so two concurrent same-session requests on one instance now genuinely race. The
+  CAS catches them. This is what makes the brief's single-instance criterion *reachable* — the brief
+  anticipates that it might not be, and a gate that cannot go red proves nothing.
+- **G1's inherited finding is closed.** G1 recorded that the engine mutates `record.blob` before
+  writing through, so a failing persistence leaves the record ahead of the store, and that G2 must
+  answer it. A record that does not survive the request cannot be ahead of anything after it.
+- **Composition is cheap.** `createSessionLayer` allocates four maps and closures over an engine and a
+  registry it does not own. Nothing is rebuilt per request except that.
+
+**A fourth consequence follows and is merely accepted, which is why it is listed apart from the three
+above.** `attemptCounter` increments before dispatch and a rejected submission never writes — the
+adjudication at the head of this document establishes both, and they are the reason the counter is
+not the lock. Under G1's long-lived layer a rejected submission's increment survived in the cached
+record and was persisted by the next accepted write; under per-request composition it dies with the
+request. **So the durable configuration stores a lower `attempt_counter` than the in-memory one for
+the same sequence of inputs**, and the workload's composition choice determines the value of a column
+the engine owns. Three things bound how far that reaches. It does not touch the blob: `attempt` is
+observability, stamped onto emitted records by the command decorator, and the engine's own test
+asserts it appears in no response body — so **byte-identity is unaffected**, which is the fact that
+decides whether this matters. It does not reach the wire. And the counter remains monotonic, since
+what changes is which increments are durable, not their order. What it does change is the numbering
+in G1's cross-language trace, where `attempt` now counts accepted submissions rather than all of
+them. Recorded rather than fixed, because every fix is either a second engine change or a write on
+the rejection path, and both cost more than the numbering is worth.
+
 ### The Node workload
 
 | Module | Owns | Depends on | Exposes |
 |---|---|---|---|
-| **Contract** | Nothing — it is the pinned external artifact | The contract package only | The table, the schemas, the code→status mapping |
-| **Composition** | The engine instance, the content registry, the in-memory `SessionPersistence` and `ProfileStore`, the determinism profile | The engine package, Contract (for nothing but version assertion) | A built `SessionStore`, and a **store-serialization handle** |
-| **Dispatch** | The operation id → store call mapping, and the translation of store outcomes into a transport-neutral result | Contract, Composition | One call: an operation id plus validated arguments, in; a result or an error code, out |
-| **HTTP surface** | Routing, request validation, response validation, canonical encoding, status mapping | Contract, Dispatch | The versioned JSON wire |
-| **MCP surface** | The tool list and tool invocation | Contract, Dispatch | The MCP projection |
-| **Probes** | Liveness and readiness for the workload | Nothing but Composition's readiness | Two endpoints |
-| **Proof harness** *(test-scope)* | The fixture, the two comparisons, the perturbations | Composition's serialization handle, Dispatch (run 1), and the HTTP surface **as a client over a real socket** (run 2) | Nothing — it is a leaf |
+| **Contract** | Nothing — the pinned external artifact | The contract package | Table, schemas, code→status mapping |
+| **Migrations** | The ordered schema definitions and the runner invocation | The database driver | One call: bring this schema to head |
+| **Store** | The pool, the SQL, the CAS, expiry evaluation, the tenant constant, blob-to-column mapping | Migrations, the engine's port *types* only | A **per-request persistence factory**, a `ProfileStore`, a **lifecycle probe**, a **serialization handle** |
+| **Composition** | The engine, the registry, the record-id source, the clock, the determinism profile, and **which of the two store shapes is built** | Contract, Store, the engine package | A **store provider**, the lifecycle probe, the serialization handle, a readiness signal |
+| **Dispatch** | Operation id → store call; store outcome → transport-neutral result; **conflict and expiry classification** | Contract, Composition | One call in, a result or a code out |
+| **HTTP surface** | Routing, validation, canonical encoding, status mapping | Contract, Dispatch | The versioned JSON wire |
+| **MCP surface** | Tool list and invocation | Contract, Dispatch | The MCP projection |
+| **Probes** | Liveness, and readiness that now includes the store | Composition's readiness | Two endpoints |
+| **Proof harnesses** *(test-scope)* | The replay fixture, the two-instance contention harness, the port-conformance suite, the perturbations | Composition, Dispatch, the HTTP surface over real sockets, Store for schema setup and — for the conformance suite alone — for the ports themselves | Nothing — leaves |
 
 **Dependency direction:**
 
 ```text
-        Contract  ←──────────────┐
-           ↑                     │
-      Composition  ←── Dispatch ─┴─→  HTTP surface
-           ↑              ↑                ↑
-           │              └────────── MCP surface
-           │
-      Proof harness ──(as an HTTP client, over the wire)──→ HTTP surface
-                    ──(run 1, in-process)───────────────→ Dispatch
+            Contract  ←───────────────────────────┐
+               ↑                                  │
+  Migrations ← Store ← Composition ←── Dispatch ──┴──→ HTTP surface
+                            ↑             ↑                ↑
+                            │             └────────── MCP surface
+                            │
+        Proof harnesses ────┴──(as HTTP clients, over real sockets)──→ HTTP surface
 ```
 
-Acyclic, and confirmed by inspection: Contract depends on nothing local; Composition depends on Contract
-and the engine; Dispatch depends on both; the two surfaces depend on Dispatch and Contract and on each
-other not at all; the harness depends on Composition, on Dispatch and on the HTTP surface but nothing
-depends on the harness.
+Acyclic, by inspection: Contract and Migrations depend on nothing local; Store depends on Migrations
+and on the engine's *type* declarations; Composition depends on Store and Contract; Dispatch on
+Composition and Contract; the two surfaces on Dispatch and Contract and on each other not at all;
+nothing depends on a harness.
 
-**Two edges deliberately absent, and each is gated rather than promised:**
+**Three edges deliberately absent, each gated rather than promised.**
 
-- **Neither surface imports Composition's store-serialization handle.** That handle is how the byte-identity
-  proof reaches the canonical serialization, and it is the only thing in the workload that can produce raw
-  engine state. Keeping it out of the surfaces' import graph is the structural half of the
-  projection-boundary gate — a route cannot return what its module cannot name.
-- **Dispatch does not know it is being called over HTTP.** It receives an operation id and validated
-  arguments and returns a result or a code; it maps nothing to a status and formats nothing. That is what
-  makes the MCP surface a second consumer of one dispatch rather than a second implementation of the wire.
+- **No surface imports Store.** The durable store can read every blob in the system, which makes it the
+  one module that could put engine state on the wire. G1's dependency-direction test — the structural
+  half of the projection-boundary gate — gains Store as a second forbidden target alongside the
+  serialization handle. A route cannot return what its module cannot name.
+- **No surface imports the serialization handle.** Unchanged from G1.
+- **Store does not import the engine's runtime**, only its type declarations. The store maps columns to
+  a `StoredSessionRecord`; it never deserialises, never validates game state, and never calls the
+  engine. That is what keeps "the store is a store" checkable rather than asserted.
 
-**Dispatch holds no game logic**, and the engine's own client contract makes that testable rather than
-asserted: removing the transport and driving the store directly must not change the game. Dispatch
-translates names and shapes. It does not retry, does not reinterpret a reason code, does not decide which
-actions are available, and does not cache anything to decide with.
+**The lifecycle probe is the one new interface, and it is deliberately not an operation.** It answers
+one question — *does a row exist for this id, and has it expired?* — as a classification, never as
+data. It returns no blob, no scene and no record. It is reachable from Dispatch and from nowhere else,
+has no route, no tool and no table row, and the arity gate will fail generation if anyone gives it one.
+It exists because the brief requires the wire to distinguish an evicted session from one that never
+existed, and the engine — correctly — has one answer for both. This is the shape the brief's
+"eleventh operation" non-goal warns about, so it is named here and constrained by structure rather than
+by intention: **a host lifecycle fact about a host-owned column is Platform's side of the ownership
+table, and nothing about it can change the outcome of a game.**
+
+**One constraint on it is G3's, and it is stated here because G3 cannot discover it.** The brief's
+*Lifespan* says G3 wraps *these stores* with an authorization decorator. The probe is not a store
+port — it is Store's own interface, reached from Dispatch — so a decorator over `SessionPersistence`
+and `ProfileStore` does not sit in its path, and G3 would inherit an interface its stated mechanism
+does not cover. With no principal in G2 that is harmless and trusted-local; with a principal it is an
+existence oracle, answering *live / expired / absent* for any id a caller cares to supply, which is
+precisely the distinction the engine refuses to make. **The probe is therefore composed behind the
+same seam the stores are**, so that whatever decorates them decorates it, and the three structural
+guards it has today — no route, no tool, no table row — are recorded as what they are: guards on
+*reachability*, not on *authority*. Nothing in G2 depends on this; it exists so the constraint is
+inherited rather than rediscovered.
 
 ### The .NET edge
 
-One host. It depends on Platform's Abstractions, Core, Hosting and Observability, and on **nothing in
-`workloads/game-service/`** — the Node workload is reached over a socket, not referenced.
+Unchanged except in one place. **Its readiness check now probes the workload's *readiness* endpoint
+rather than its liveness endpoint.** G1's edge asked "is the workload alive"; with a durable store a
+workload can be alive and unable to serve, and an edge that reports ready while every forward will
+`503` tells an operator less than nothing. It remains `Unhealthy` + `Required`, for G1's reason: one
+backend, one job.
 
-It owns: transport termination, routing to the workload, trace propagation across the language boundary,
-and its own probes. It owns nothing else. No authorization, no persistence, no rate limiting, no caching —
-each a binding non-goal, and a widened edge is G3 pulled into G1.
+**Readiness therefore reports whether the store is usable now, not whether it was usable once.** A
+check that only ever recorded the outcome of startup would leave the workload reporting ready through
+exactly the outage the sentence above changes the edge to surface — the change would buy nothing but
+a different endpoint name, and the only case it caught would be a store that was never reachable,
+which the first log line already reports. The readiness check evaluates the store on each probe;
+`storage_failure` on the serving path and an unready readiness check are two views of one condition
+rather than two mechanisms. **The cost, stated:** readiness can now flap, so a transient store blip
+takes the edge unready for as long as it lasts. That is the correct direction for a single-backend
+edge whose forwards would fail anyway, and it is the reason the check is a probe of the store rather
+than a latch on the last request that failed.
 
-**It is composed by Platform's standard registration call and nothing else.** Health, readiness, correlation
-and telemetry arrive with that call. Two things the edge adds are application code rather than composition,
-and the distinction matters because the brief's criterion is about wiring, not about the host having no
-behaviour: a forwarding route, and one readiness check registered as an ordinary service.
+Nothing else at the edge moves. No load balancing across the two instances, no session affinity, no
+streaming, no package boundary. **The two-instance contention proof addresses the two workload
+instances directly, not through the edge** — a balancer in front would add a component the brief
+excludes and would prove nothing the direct addressing does not.
 
-### The dependency rule, and its gate
+### The dependency rule
 
-Platform is not a product and never references one. The rule already holds; G1 gives it a first opportunity
-to be violated, so it gains a gate: **a build-time check fails if any project under `src/` or `samples/`
-references anything under `workloads/`.** The reverse direction — the edge referencing Platform — is the
-whole point and is unaffected. A rule with no gate is a comment.
+`build/Test-WorkloadIsolation.ps1` is unchanged and must stay green. Everything G2 adds lives under
+`workloads/game-service/`; Platform's `Persistence` package gains no consumer, which is the brief's
+second decision and is checkable by the same build-time assertion that already exists.
 
 ---
 
 ## Control flow
 
-### 1. Startup — triggered by process start
+### 1. Startup, and the background sweep — triggered by process start
 
-**The Node workload.** Read configuration, including the determinism profile. Load the pinned contract
-package. Assert the contract's recorded engine version equals the resolved engine package's version; a
-mismatch aborts startup with a named error rather than serving a wire the schemas do not describe. Build
-the engine, the content registry, the in-memory persistence and profile store, and the session store, with
-the profile's `IdSource`, `RecordIdSource` and `Clock`. Build the HTTP routes and the MCP tool list **from the table, at this
-moment** — both surfaces are constructed from the same in-memory row set, not from generated source. Bind
-the listener. Report live, then ready.
+Read configuration, including the store's connection settings, the two TTLs and the determinism
+profile. **Bind the listener and report live immediately**; report **not ready** until the store is
+usable. Then, with backoff: connect, and run migrations to head under the migration tool's own advisory
+lock — two instances starting together must not both apply the same migration, and a lock the tool
+already owns is not machinery this design should reimplement. On success, compose the process-lived
+parts, assert the contract's recorded engine version against the resolved package's (G1's invariant,
+unchanged), and report ready.
 
-The order matters in one place: **the surfaces are built before the listener binds**, so a table the
-service cannot satisfy fails startup rather than producing a route that 500s on first use.
+**Starting-but-not-ready is the deliberate choice**, and it is G1's own precedent from the edge: a host
+that refuses to start tells an operator that something is wrong, while a host that starts and names its
+failing readiness check tells them *what*.
 
-**The edge.** `AddPlatformWebHost()`. Register the forwarding route and the workload-reachability readiness
-check. Bind. The edge starts whether or not the workload is up, and reports not-ready until it is — the same
-shape Platform already uses for a database that is not yet reachable, and for the same reason: a host that
-refuses to start tells an operator less than one that starts and says why it cannot serve.
+**The sweep** runs on a timer in every instance and is a plain `delete` — idempotent, so two instances
+sweeping concurrently need no coordination and none is added. It removes session and save rows whose
+`expires_at` is older than the configured **retention horizon**, and nothing else. It does not touch a
+row that has merely expired: an expired-but-retained row is what lets the wire answer *expired* rather
+than *unknown*, and the horizon is what bounds how long that costs storage.
+
+**The retention horizon is also a safety margin.** It is required to be far larger than any request's
+duration, which is what makes it impossible for a sweep to delete a row between a live request's read
+and its write.
+
+**A sweep that fails is a first-class outcome, not an exception that escapes a timer.** Its statement
+runs under a statement timeout, its failure is caught, and the next tick simply tries again — the
+work is idempotent, so a missed sweep costs retained rows and nothing else. A tick never starts while
+the previous one is still running. The failure is what a readiness check will not show and what a
+serving request will not hit, so it is the one condition in G2 that could persist unobserved; it is
+therefore logged at each occurrence with the row count it did not remove, which is the whole of the
+observability the brief's non-goal leaves room for.
 
 ### 2. One operation, end to end — triggered by a caller
 
-**Single hop, JSON wire.** A request arrives at `/v1/<operation>` with a JSON object body. The version
-prefix is matched; an unrecognised one is `unsupported_version`. The operation segment is matched against the
-table; an unrecognised one is `unknown_operation`. The body is validated against the row's request schema;
-a failure is `malformed_payload` and the engine is never reached. Dispatch calls the named store method.
-The store returns a result, or throws a `SessionStoreError` carrying an engine reason code. On success the
-result is projected to the row's response shape, validated against the row's response schema — closed, so an
-added field fails — encoded canonically, and returned `200`. On a store error the code maps to a status and
-an error body. The correlation travels on the response either way.
+Everything through validation is G1's, unchanged: version prefix, operation segment, closed request
+schema, `malformed_payload` before the engine is ever reached.
 
-**The branch that is not an error.** A rejected action — an unknown action id, an unmet requirement — is a
-**`200` carrying the store's own unsuccessful result**, not a 4xx. HTTP status describes the transport's
-ability to deliver the operation's result; it never describes the game's verdict on the action. A transport
-that turned a gated choice into a 403 would be interpreting game outcomes, which is the definition of
-participating.
+Then, for the durable configuration:
 
-**Same operation, MCP projection.** The tool list is the same rows. A tool call validates its arguments
-against the same request schema, calls the same Dispatch entry, and returns the same projected shape. There
-is no MCP-specific path, no richer view, and no tool that is not a row — checkable by counting, which is the
-engine's own standard for this claim. The MCP surface is served by the **same process** as the JSON wire, over
-MCP's HTTP transport, sharing one store: two surfaces over two stores would agree about their shapes and
-disagree about which sessions exist.
+1. **Dispatch asks the store provider for a store.** A fresh persistence adapter is constructed with an
+   empty read-version map, and a session layer is composed over it with the process-lived engine,
+   registry, record-id source and clock.
+2. **The store call runs.** Any `sessions.get` issues a `select`, records the row's `version` in the
+   read-version map, and returns a `StoredSessionRecord` — engine columns only, `null` mapped to an
+   absent key. A row whose `expires_at` has passed is returned as **not found**, so the bound is
+   enforced at read time and does not depend on when a sweep last ran.
+3. **Any `sessions.put` is guarded.** For an id in the read-version map:
+   `update … set … version = version + 1, row_updated_at = now(), expires_at = now() + ttl
+   where tenant_id = … and session_id = … and version = <the value read> and expires_at > now()`. For
+   an id not in the map: `insert`. On success the map is advanced to the new version.
 
-**Two hops, Stage 2.** The edge terminates the request, opens or adopts its operation scope, and forwards
-method, path, body and the `traceparent` **it sets explicitly from the ambient scope's trace context**. It
-does not rewrite the path, does not inspect the body, and does not know which operation it is carrying. The
-workload adopts the inbound trace as its parent. The response is returned unaltered — byte-for-byte, because
-Stage 2's replay asserts against the same golden transcript Stage 1 does, and any re-encoding at the edge
-would fail it.
+   **The `expires_at` predicate is what stops the guarded write resurrecting a session the wire has
+   already declared gone.** Reads treat an expired row as absent, so a request that read a live row
+   microseconds before its TTL elapsed would otherwise extend it by a full TTL while a concurrent
+   read on the other instance was answering `session_expired`. The predicate is cheap here and would
+   be a data-correcting migration once rows exist; test TTLs are set in seconds, which makes the
+   window routine rather than theoretical.
+4. **Zero rows affected is classified, never assumed, and the classification has three branches.**
+   The adapter re-reads the row.
+   - Present with a **different version** → **conflict**.
+   - Present with the **same version but expired** → **expired**, not conflict. This is the branch the
+     `expires_at` predicate creates; without it the re-read would have no outcome that was not
+     "conflict", and a re-read that cannot change an answer is not a classification.
+   - **Absent** → **conflict**, because the caller's read is no longer authoritative either way and the
+     only correct client action is identical; the retention horizon makes this branch unreachable in
+     practice, and it is written down rather than left to a comment.
 
-> **Why the edge sets the header itself, and why that is not bespoke wiring.** Platform's Observability
-> package deliberately does not wire HttpClient instrumentation — enabling it activates .NET's process-wide
-> diagnostics handler, which overwrites a `traceparent` a caller set deliberately. The edge therefore reads
-> the ambient trace context, which Platform's operation scope carries as a first-class member for exactly
-> this kind of use, and sets the header. That is the sanctioned path, not a workaround. **The cost:** no
-> client-side span, so the edge cannot attribute latency to the hop. Accepted — performance is a binding
-> non-goal, and the trace is still one trace.
+   **A re-read that itself fails is classified as conflict, never as `storage_failure`.** Zero rows
+   affected has already established the one fact a caller acts on — the write did not land — and
+   every branch above tells them to re-read and decide. Letting the classifier's own driver error
+   escape would convert a known non-outage into a `503` precisely when the store is degraded and
+   races are most likely, which is the criterion the brief says cannot otherwise be met, defeated by
+   the mechanism added to serve it.
+5. **A conflict is signalled to the engine as a conflict.** The adapter throws a value carrying the
+   engine's documented conflict brand. The engine's `writeSession` — which today catches everything and
+   rethrows `storage_failure`, discarding the cause — recognises the brand and raises the new
+   `SessionStoreError` code instead. **This is G2's single engine deliverable.** Anything else thrown
+   still becomes `storage_failure`, so every existing implementation of the port is unaffected.
+6. **Dispatch translates.** The conflict code travels to the wire verbatim, as every engine reason code
+   does, and maps to **409**. `storage_failure` maps to **503**, unchanged. The two are now different
+   answers to different questions, which is the criterion the brief says cannot otherwise be met.
+7. **The store is discarded** with the request, cache and all.
 
-### 3. The byte-identity proof — triggered by the test suite, in CI
+**The guarded statement requires `read committed`, and that is a precondition rather than a
+preference.** At `read committed` the losing `update` blocks on the winner's row lock, re-evaluates
+its `where` against the committed row, finds no match and reports zero rows — which is the entire
+premise of step 4. At `repeatable read` or `serializable` the same statement raises a serialization
+failure instead, which is an ordinary throw, which *Failure modes* routes to `storage_failure` and a
+`503`. **Every conflict would become an outage code**, and the one criterion the brief says no amount
+of work on this side can otherwise deliver would fail by configuration. PostgreSQL's default is
+`read committed`; the design depends on it, so the connection asserts it rather than inheriting it,
+and a server default or a pooler that overrides it is a misconfiguration the store refuses at startup
+rather than discovers under contention.
 
-Two runs, then two comparisons that are asserted separately because neither answers §5 alone.
+**Within one operation the unguarded writes are ordered by the engine, and that ordering is what
+makes "the loser leaves no trace" true.** Read at `0.6.1` rather than assumed: `submitAction` calls
+`writeSession` on the accepted branch and only then `upsertAchievements`, so a `sessions.put` that
+loses the race throws before any achievement row is written — the loser cannot leave a durable
+achievement behind. `saveGame` calls `writeSave` and **never calls `writeSession`**, so a save cannot
+be orphaned by a conflict either: there is no session write in that path to lose. **This design
+depends on both facts**, which is why they are named here with the version they were read at; an
+engine change that wrote a profile before its session, or that made `saveGame` write the session
+record, would invalidate *Failure modes*' claim that a conflict leaves nothing of the loser's.
 
-**Run 1, in-process.** Compose the engine and store directly with the replay profile's counting sources
-and fixed clock. Play the fixture's action list **through the same dispatcher the surfaces use**, not
-against the store directly: the store returns `SaveHandle` and the wire returns `{ saveId }`, so a run
-that called the store would diverge from run 2 on `save-game` before any determinism defect could.
-Only the transport differs between the two runs. Collect each operation's returned value, canonically
-encoded, as the transcript. At the end, read every session and save blob from the supplied persistence,
-ordered by id.
+**Expiry classification happens only on the failure path.** When the engine raises `unknown_session` or
+`unknown_save`, Dispatch consults the lifecycle probe. Expired-and-retained → the transport code
+`session_expired` or `save_expired`; genuinely absent, or swept past the horizon → the engine's own code
+verbatim. **Both expired codes map to 404, not 410**, and the *code* carries the distinction — G1
+already established that `unsupported_version` and `unknown_operation` share a status and are told apart
+by their codes, and one convention is worth more than a semantically prettier second one.
 
-**Run 2, hosted.** Start the workload **as a real process** under the replay profile. Play the identical
-action list through the HTTP wire, strictly sequentially — each response fully read before the next request
-is sent. Collect the response bodies as the transcript. Signal graceful shutdown; the profile writes the same
-ordered blob set to the dump path.
+**No retry, anywhere.** Not on conflict, not on `storage_failure`, not at the edge. A retried
+`submitAction` is a second action, and merging two is explicitly unavailable.
 
-**Comparison A — the engine invariant surviving hosting.** Run 2's dumped blobs against Run 1's, byte for
-byte. This is the comparison that reaches around the wire, and that is deliberate: it asks whether the game
-the hosted service produced is the same game, which is what
-[`implementation-plan.md`](../docs/docs/implementation-plan.md) §5 records as unknown.
+**A rejected action is still a `200`.** Unchanged from G1, and a conflict is not a rejected action: a
+rejection is the game's verdict on a legal request, a conflict is the transport failing to commit one.
 
-**Comparison B — the wire being deterministic.** Run 2's transcript against the committed golden transcript,
-byte for byte. Run 1's transcript is asserted against the same golden file in the same suite, so one artifact
-carries both claims: that the wire reproduces the projection, and that the projection has not moved since it
-was last reviewed.
+**The in-memory configuration keeps G1's single long-lived session layer**, and therefore G1's
+per-session queueing. It has no compare-and-swap, so removing the queue would introduce the lost update
+G2 exists to eliminate — into the one configuration whose proof must stay green for reasons that have
+nothing to do with durability.
 
-**The perturbations, which are what make the comparisons known to compare anything.** Two negative cases, each
-targeting one comparison: a run with two actions transposed must fail A, and a run with one response field
-substituted must fail B. A suite that has never gone red is not evidence.
+**Dispatch is shared by both configurations, so the classification step is defined for both.** The
+in-memory configuration has no `expires_at`, no rows and no lifecycle probe; Composition supplies a
+probe that classifies every id as `absent`, so `unknown_session` and `unknown_save` pass through
+verbatim and Dispatch carries no branch on which store was built. A no-op implementation rather than
+a conditional is the point: the alternative puts configuration-dependent behaviour into the module
+whose job is to be transport-neutral, and it is the shape that later grows a second one.
 
-**What the dump is, precisely.** The canonical serializations only — the blobs, keyed by id, in id order —
-and never the host-owned record fields around them. Instants and counters live on the record, outside the
-engine's serialization, and including them would compare wall clocks. Excluding them is not a normalization
-that weakens the assertion; it is the boundary the engine already drew.
+**The two configurations answer some requests differently, and the axis is durability, not instance
+count.** *Concurrency and ordering* states the behaviour change and Open question 6 accepts it, both
+in terms of one instance versus two; the sharper statement is that **the in-memory configuration and
+the durable configuration are not wire-equivalent** — two concurrent same-session actions are queued
+and both applied by the first, and one-success-one-`409` by the second. Since the in-memory
+configuration is retained indefinitely (G1's replay must stay green), this is a standing property of
+the workload and not a migration state. **What follows from it:** the in-memory configuration is a
+proof fixture, never a supported deployment shape, and nothing outside the replay may be developed or
+demonstrated against it — the byte-identity proof compares serialization, not concurrency semantics,
+so no gate would catch a caller that had taken a dependency on the queued behaviour.
 
-**Stage 2 re-runs this against the edge.** Run 2 is started behind the edge, the client addresses the edge,
-and both comparisons are asserted again — A works across two processes because the dump is a file the
-workload writes, not a value the harness reads out of memory. Stage 1's single-hop run stays in the suite and
-must stay green; two hops passing is not evidence that one still does.
+### 3. The three proofs — triggered by the test suite, in CI
+
+**The store is provisioned by one committed compose file, and CI runs the same command the README
+documents.** The workload's `game-service` CI job today runs on a bare runner with no database, and
+every proof below needs one. A compose file under `workloads/game-service/` brings up PostgreSQL;
+the job runs it as a step before the suite, and the README's fresh-clone story names the identical
+command. **One provisioning path, documented and proven by the same artifact** — the reason that job
+exists as a separate one in the first place is that its steps are the README's own commands, and a
+CI-only mechanism the developer never runs would make the documented path the untested one.
+
+**The compose file provisions the store and nothing else.** It does not start a workload instance,
+supervise one, or describe a deployment. The two-instance harness still spawns its own processes, for
+the brief's reason: a way to run two instances against one store is in scope, and orchestration is
+not. The line is that compose owns the *dependency*, the harness owns the *instances*, and neither
+crosses.
+
+**The harness's spawn step is therefore reachable as a documented command, not only as a test.** The
+brief requires the repository to tell a reader how to *"provision the store, run two instances, replay
+the proof, and roll the schema forward"*, and compose is barred from the second clause by the
+paragraph above — so without this the one clause of four with no artifact behind it would be the one
+the brief added G2's whole deployment allowance for. The harness exposes its instance-spawning entry
+point as a script the README names, and the contention proof invokes that same entry point rather
+than a private copy of it. This is the compose file's own argument applied a second time: the
+documented path and the proven path are one artifact, because a documented command nothing runs is
+the failure the fresh-clone job exists to prevent. It remains the harness the brief's *Lifespan*
+allows to be replaced without ceremony — what may not be replaced without ceremony is the README
+naming *something* that runs two instances.
+
+**Proof one: byte identity against the durable store.** G1's replay, run twice more. A run under the
+replay profile against the in-memory store, and a run under the replay profile against the durable
+store, each producing the ordered blob set through the same shutdown dump; the durable run's handle
+reads `select session_id, blob … order by session_id` instead of a map. **Comparison A** is those two
+blob sets, byte for byte. **Comparison B** is each run's response transcript against the committed
+golden transcript.
+G1's existing in-memory replay stays in the suite and stays green — two proofs passing is not evidence
+that the first still does.
+
+**The durable replay requires a pristine schema, and the harness provides one by creating a per-run
+database schema, migrating it, and dropping it afterwards.** The counting `RecordIdSource` mints
+`counting-session-id-0` on every run, so a second run against a dirty schema collides on the primary
+key. **The tenant column must not be used for this** — isolating runs by tenant is tenancy behaviour,
+which is a binding non-goal, and it is exactly the shortcut a durable store makes tempting.
+
+**The durable replay runs with TTLs that cannot elapse during it.** All three lifecycle values are
+configuration so that the expiry proofs can set them to seconds, and the replay is the one proof for
+which that setting is poison: a session that expires between two of the ten steps returns
+`unknown_session`, diverges from the golden transcript, and reports a serialization failure for a
+clock problem. The replay takes the production defaults; only the lifecycle proofs shorten them.
+
+**Comparison A asserts the dumps are non-empty before it asserts they are equal.** Two empty ordered
+sets compare byte-identical, so a dump that reads the wrong schema — a `search_path` that does not
+match the per-run schema is the obvious way — passes Comparison A while Comparison B passes on its
+own merits, because the responses were served correctly and only the dump was misdirected. The row
+count is asserted against the fixture's own expected count rather than against zero, since "not
+empty" is satisfied by one row as easily as by all of them.
+
+**Proof two: contention, asserted twice.**
+
+- **One instance.** Two `submitAction` requests for one session, dispatched concurrently to a single
+  process. Assert exactly one `200` and one `409` carrying the conflict code.
+- **Two instances.** Two processes, two ports, one schema, started by the harness. The session is
+  created through one; two `submitAction` requests are then dispatched, one to each, arranged so both
+  read before either writes. Assert exactly one `200` and one `409`.
+
+**The race is made deterministic by a perturbation seam, not by hope.** The store adapter accepts a
+configured pause between a session read and the corresponding write, defaulting to none. The instance
+under test is started with a pause; the second request is sent inside it. **A test asserts the seam is
+inert when unconfigured**, on the same terms G1 asserts that the default profile writes no dump — a
+diagnostic that is merely usually off is on.
+
+**Proof three: port conformance, against both implementations.** The replay reaches four of the six
+port methods and no more. Its ten steps carry no `profileId`, so `profiles.load` and `profiles.save`
+are never called — the profile store is composed and never exercised, which is how G1 left it and
+which the brief's *"every store operation is exercised against the durable implementation"* does not
+allow to stand. The proof is a conformance suite written **against the ports, not the wire**, and run
+twice: once over the engine's in-memory implementations and once over the durable ones, asserting the
+same behaviour from both.
+
+It covers `sessions.get/put`, `saves.get/put` and `profiles.load/save`; the three profile outcomes
+*Failure modes* commits to — `profile_missing`, `profile_corrupt` from a bad `format_version`, and
+`profile_write_failed` leaving a committed session write in place; the set-union merge, including the
+divergence the durable `save` deliberately carries; and the round trip that keeps host metadata out
+of game state — the blob read back is exactly the bytes written, and no host column reaches the
+`StoredSessionRecord`. **It is the only proof that addresses the store directly**, which is why
+*Module boundaries* grants it the one dependency on Store that no other module has.
+
+**Running it over both implementations is what makes it a conformance suite rather than a second set
+of unit tests.** A durable-only assertion states what this implementation does; the same assertion
+passing over the engine's own is what says the durable one *fills the port* — which is the question
+the engine's composition root recorded as unanswerable until a second implementation existed, and
+which the brief makes a deliverable.
+
+**The answer it returns is "yes for five methods, and conditionally for the sixth", and saying so is
+the deliverable.** `profiles.save` is the one method where the two implementations are asserted to
+*differ* rather than to agree, so for that method the shared assertion cannot be the thing that
+establishes conformance. What stands in its place is narrower and is stated as such: the durable
+`save` conforms **given that every `save` the engine issues carries the loaded set plus additions**,
+which is read off `upsertAchievements` at `0.6.1` rather than assumed, and which the suite asserts
+directly as a property of the engine's caller rather than of either store. A conformance suite that
+reported an unqualified yes here would be reporting agreement it did not test — and the question the
+engine deferred deserves the qualified answer rather than the flattering one.
+
+**The fixture and the golden transcript are untouched.** Adding a profile-carrying step to the replay
+would have reached the same methods, and it would have made the byte-identity proof carry a second
+job — a red run would no longer point at one thing.
+
+**The gate is proven able to go red, four ways.** A run with the guard removed — the update's `where`
+clause not asserting the version — must fail the two-instance assertion with two `200`s. A direct
+adapter test that writes an artificially stale version must be rejected. A run against an
+unreachable store must produce `503`, not `409`, which is the criterion's *distinguishable* half
+tested from the other side. **And a run whose dump is pointed at an empty schema must fail
+Comparison A** — the byte-identity proof is the effort's first criterion and the previous three
+perturbations all attack the compare-and-swap, which would leave the older and more load-bearing of
+the two proofs as the only one never shown able to fail.
+
+**Merging is asserted absent**, not argued: after a conflict, the loser's action is shown to have left
+no trace in the winner's state.
 
 ---
 
 ## Failure modes
 
-### GitHub Packages unreachable — build time, both packages
+### The store is unreachable at startup
 
-**What fails:** the engine package or the contract package cannot be restored. **Detection:** the package
-manager's own failure, at restore. **What the system does:** the build fails. **What the operator sees:** a
-restore error naming the package and the registry. **State left behind:** none — no partial install is used.
-**Retry:** the operator's, or CI's rerun. Nothing retries automatically, because a silent retry over an
-authentication failure is how a credential problem gets recorded as flakiness.
+**Detection:** connection failure, or the migration runner's. **What the system does:** the process
+stays up, reports live, reports **not ready**, and retries with backoff. It never serves an operation.
+**What the operator sees:** the readiness body naming the store check, and a log line naming the host
+and the failure. **State left behind:** none — no partial migration, because the runner applies each
+migration in its own transaction under its advisory lock. **Retry:** automatic, at startup only. Once
+ready, a later outage is handled below rather than by returning to this state.
 
-This is the only outbound network dependency in G1, and it is build-time. Runtime has none.
+### The store is unreachable, or fails, during a request
 
-### Contract and engine disagree
+**Detection:** the driver's error, surfaced through the adapter as an ordinary throw — *not* branded as
+a conflict. **Response:** the engine's `storage_failure`, mapped to **503**, with the correlation.
+**State left behind:** on a read, none. On a write, none: either the guarded statement committed or it
+did not, and the engine's mutated record is discarded with the per-request store. **Retry:** none
+automatic; the caller re-reads with a query operation to learn whether the action landed. This is the
+partial-failure case and that is the honest answer to it.
 
-**What fails:** the contract package's recorded engine version does not match the resolved engine package's,
-or the arity gate finds a store method with no row.
+**`storage_failure` is now genuinely reachable**, where G1 recorded it as declared and unreachable. A
+test forces it and asserts the 503, which is what stops the code being an untested branch.
 
-**Detection is in two places, deliberately.** The arity and error-coverage gates run **at generation**, in the
-contract repository, and fail the contract build. The version assertion runs **at workload startup** and fails
-the process. Generation-time detection catches the change at its source; startup detection catches a workload
-that pinned a contract generated against a different engine than the one it resolved.
+### A write loses the race
 
-**What the system does:** neither builds nor starts. **What the operator sees:** a named startup error stating
-both versions. **State left behind:** none; the listener never binds. **Why not a warning:** a service that
-starts against a contract describing a different engine serves a wire its own schemas do not describe, and every
-downstream assertion in this design becomes conditional.
+**Detection:** zero rows affected, classified by the re-read. **Response:** the engine's new conflict
+code, mapped to **409**. **State left behind:** none of the loser's — the winner's row is untouched by
+the losing statement, and the loser's in-memory record dies with its request. **What the caller sees:**
+a code that means *your read is stale; re-read and decide*, distinguishable from 503, which means *the
+store did not answer*. **Retry:** the caller's, and only after re-reading. Never automatic.
 
-### Malformed payload
+**Partial failure has one shape here and it is benign:** the winner's action is fully applied and the
+loser's is fully absent. There is no state in which half of an action landed, because the guarded update
+is a single statement — **and because the engine's own ordering puts every unguarded write after the
+guarded one.** `writeSession` precedes `upsertAchievements` on the accepted branch and `saveGame`
+writes no session row at all, both read at `0.6.1` (*Control flow* 2), so a losing `sessions.put`
+throws before an achievement row or a save row can be written. The claim is a consequence of that
+ordering rather than of the single statement alone; if the ordering changes, this paragraph is the
+one that stops being true.
 
-**Detection:** request-schema validation, before Dispatch. **Response:** `400`, error body with code
-`malformed_payload`. **State:** none — the store is not reached, so no session is created and no action is
-attempted. **Retry:** the caller's, after fixing the payload; nothing is idempotency-sensitive because nothing
-happened.
+### A profile write fails
 
-### Unsupported wire version, unknown operation
+**Detection:** the adapter catches its own driver errors and returns `ok: false` with a
+`profile_write_failed` warning; it does not throw. **Response:** the game action's `200`, carrying the
+warning. **State left behind:** the session write, which already committed and is not rolled back —
+§7's rule and the brief's criterion, asserted rather than argued. **Retry:** none; achievements are
+re-derivable on the next action because the store's merge is a set union.
 
-**Detection:** path matching against the table. **Response:** `404` with code `unsupported_version` or
-`unknown_operation`. The status is the same for both and the **code** distinguishes them, which is the engine's
-own convention — a client renders the code and never parses the message. **State:** none.
+A missing profile yields `profile_missing` and an empty achievement set. A row whose `format_version`
+is not 1, or an achievement row that fails shape validation, yields `profile_corrupt` and an empty
+achievement set. **Neither ever produces a broken game**, and both are asserted — by the
+port-conformance suite (*Control flow* 3), which is the only proof that reaches these ports at all.
 
-> These two are the answers G2's persistence and G3's principals inherit. They are stated as a closed set with a
-> mapping rather than as per-route decisions for that reason.
+**`format_version` may not be bumped in the same release that first writes the new format.** The
+degradation above is designed for a corrupt row, and a rolling deploy would otherwise reuse it as the
+answer to a routine one: a newer instance writes `format_version` 2, an older instance reads it,
+classifies it `profile_corrupt`, and the same player has achievements on one instance and none on the
+other for the length of the deploy — silently, since `profile_corrupt` is a warning on a `200`. The
+migration rule under *The two instances are running different schema versions* is therefore a rule
+about **data formats as well as column shapes**: a format bump ships as read-support first and
+write-support in a later release, the same two-step every additive column takes.
 
-### Unknown session, unknown save
+### The sweep fails
 
-**Detection:** the engine throws a `SessionStoreError`. **Response:** `404`, carrying the engine's code
-verbatim — `unknown_session`, `unknown_save`. Verbatim matters: those codes are registered engine reason codes
-with shipped messages, and a transport that paraphrased one would make a client's lookup fail. **State:** none.
+**Detection:** the caught error from the sweep's own statement — a driver failure, a statement
+timeout, or a lock held by the other instance's concurrent sweep. **What the system does:** logs the
+failure and the rows it did not remove, and tries again on the next tick; a tick never overlaps its
+predecessor. **State left behind:** rows past the retention horizon, retained. **What the operator
+sees:** the log line, and nothing else — this is the one condition in G2 that no readiness check and
+no request can surface, because the sweep is not on either path. **Retry:** automatic, every tick,
+indefinitely. **Why it is not more than this:** the sweep bounds storage, not correctness — an
+un-swept row is answered `expired` rather than `unknown_session`, which is the *more* informative of
+the two answers, so a sweep that has not run for a week costs disk and nothing else.
 
-### Other engine store errors
+### A session or save has expired
 
-`invalid_state`, `unknown_kind`, `save_requires_migration`, `migration_failed` → `409`. `unknown_campaign` →
-`404`. `storage_failure` → `503`. Every code in the engine's declared set has a mapping, enforced by the
-error-coverage gate; there is no default branch, because a default branch is where a new upstream code goes to
-be misreported.
+**Detection:** the adapter treats an expired row as absent; the engine raises `unknown_session` or
+`unknown_save`; Dispatch consults the lifecycle probe. **Response:** `session_expired` or
+`save_expired`, at **404**. **State left behind:** the retained row, until the sweep. **What the caller
+sees:** a code that says the session existed and no longer does.
 
-**`storage_failure` is unreachable in G1**, and saying why is worth more than the mapping: the workload's
-`SessionPersistence` implementation is map-backed and total — it has no failure mode. **The finding G2
-inherits:** the engine writes the mutated blob to its in-memory record *before* writing through to persistence,
-so a persistence implementation that can fail leaves the record ahead of the store. G1 cannot hit it and G2 must
-answer it. It is recorded here rather than discovered there.
+**Past the retention horizon the answer honestly degrades to `unknown_session`.** The row is gone and
+nothing distinguishes it from an id that never existed. The horizon is configuration, the degradation is
+documented, and it is not a defect — it is the price of not keeping tombstones forever.
 
-### An unexpected exception in the workload
+### The stored blob does not deserialise
 
-**Detection:** an unhandled rejection reaching the surface. **Response:** `500`, error body with a generic code
-and the correlation, **never exception text and never payload content** — the same envelope discipline Platform
-applies on its own side, so the two hops do not disagree about what an error body may contain. The detail goes
-to the log line the correlation identifies. **State:** whatever the store had already committed; the engine's
-per-session lock means a partially-applied action is not among the possibilities.
+**Detection:** the engine's own `deserialize`, which throws rather than returning a result. **Response:**
+`500` with `internal_failure` and the correlation — never the exception text. **State left behind:** the
+unreadable row, untouched. This is store corruption or a blob written by an incompatible engine version;
+either way the workload must not guess, and a caller cannot fix it. **Which of the two it is, an
+operator can now determine**: the row's `engine_version` names the package that wrote the bytes, and
+comparing it against the reading instance's own resolved version separates a version skew from
+corruption without inference. The workload does not make that comparison itself — it would be a
+runtime gate on a column that exists to be read after the fact, and a wrong guess in that direction
+refuses to serve a blob that was fine.
 
-### The Node workload is unreachable from the edge
+### An id collides on insert
 
-**Detection:** the edge's readiness check probes the workload's liveness endpoint. **What the edge does:**
-reports **not ready** — `Unhealthy`, `Required`, and therefore an unhealthy aggregate. **What the operator sees:**
-the readiness body enumerating the failed check by name; Platform's probe body lists every registered check, so
-the failure is named rather than inferred from a status code.
+**Detection:** primary-key violation on a `createSession` or `loadGame` insert. **Response:**
+`storage_failure` → **503**, *not* the conflict code — a collision is a storage anomaly, not a lost
+update, and conflating them would make the conflict code mean two things. **State left behind:** the
+existing row, untouched. Under the default profile the ids are the engine's random ones and this is not
+expected; under the replay profile it means the schema was not pristine, which the per-run schema exists
+to prevent.
 
-**The decision the brief demands, made explicitly.** Readiness is unhealthy, not degraded. The edge has exactly
-one backend and one job; an edge reporting ready while it can serve nothing tells an operator nothing.
-`Degraded` — which Platform produces automatically for an unhealthy *optional* check — would be right if there
-were other backends to fall back to. There are not.
+### The two instances are running different schema versions
 
-**Liveness does not depend on the workload**, and this is structural rather than a convention: Platform rejects a
-liveness check that declares it touches an external dependency, at registration. An edge whose liveness followed
-its backend would be restarted by an orchestrator for a fault it cannot fix.
+**Detection:** none at runtime, deliberately. **What the system does:** serves. **The constraint that
+makes this safe is a rule on migrations rather than a check:** every migration must be backward
+compatible with the previously deployed code, because two instances share one store and are not
+restarted atomically. Additive columns with defaults, never a rename or a narrowing in one step.
+**State left behind:** whatever the older instance wrote, which the newer one must be able to read.
 
-**In-flight requests during the outage:** the forward fails. The edge returns `503` with the correlation. It does
-not retry — a retry against a `submitAction` whose outcome is unknown is a second action, and merging two is
-explicitly not available.
+**The same skew applies to engine versions, and there it is not checked either.** Startup asserts the
+contract's recorded engine version against *its own* resolved package; nothing compares one instance's
+engine to the other's, and nothing could without inventing the instance identity the design refuses
+elsewhere. So a rolling deploy can put two serializations in one table — which byte-identity, proven
+within a single-instance replay, does not cover. **The mitigation is a rule and a column, not a
+gate:** the same two-step every schema change takes applies to an engine upgrade, and
+`engine_version` records which version wrote each row so the skew is legible afterwards rather than
+inferred. **State left behind:** blobs from two engine versions, each labelled.
 
-### The edge forwards, the workload answers slowly or not at all
+### Concurrent startup migrations
 
-**Detection:** the forward's timeout. **Response:** `504`, correlation carried. **State:** unknown to the edge and
-knowable only at the workload — which is exactly the partial-failure case, and G1's honest answer is that the
-caller must re-read with a query operation rather than resubmit. **No automatic retry**, for the reason above. The
-edge holds no record of the attempt; there is no idempotency key, and inventing one is Platform's API-conventions
-work, not G1's.
+**Detection:** the migration tool's advisory lock. **What the system does:** one instance applies, the
+other waits and then finds the schema at head. **State left behind:** none partial. **Why not a
+first-one-wins race:** two concurrent `create table` statements is a failed startup on one instance for
+a reason an operator would have to reconstruct.
 
-### The OTLP collector is absent, slow, or unreachable
+### The connection pool is exhausted
 
-**Detection:** the exporter's own. **What both processes do:** nothing that affects serving. Telemetry export is
-opt-in on both sides — configured endpoint present or absent — and absence is normal rather than a failure, which
-is what keeps the offline constraint true. On the .NET side this is Platform's existing behaviour, unchanged. The
-Node side must match it: **no endpoint configured, no exporter started, no outbound connection attempted.**
-
-**Consequence for evidence:** the distributed-trace criterion is not satisfiable without a collector, so CI runs
-one on loopback and points both processes at it. Loopback is not outbound network, and the existing CI job already
-accepts loopback while rejecting the OTLP ports outbound — the precedent is in place.
-
-### A response does not match its schema
-
-**Detection:** response validation, on every response, in the replay run and in the surfaces' own tests.
-**Response:** the request fails as a `500` rather than returning an unvalidated body. **Why validate outbound at
-all, when the shapes are generated from the types:** generation proves the schema describes the type; it does not
-prove the handler returned that type unaltered. The done-criterion says exactly this, and closed schemas are what
-give it teeth — an added field is a failure, not a tolerated extra.
+**Detection:** an acquisition timeout. **Response:** `storage_failure` → **503**. **State:** none. The
+pool is sized by configuration with a stated default and **is not tuned** — performance is a binding
+non-goal, and a number presented as a result would be exactly the thing the brief forbids.
 
 ### The projection boundary is crossed
 
-**Detection, in two independent places.** Statically, at generation: every response schema is closed and none
-resolves to the engine's envelope type. Structurally, in the workload: neither surface's module graph reaches
-Composition's serialization handle, asserted as a dependency-direction test in the same shape as the
-Platform-references-workload gate. Dynamically, in the replay: no response body anywhere in the transcript contains
-a canonical serialization.
+Unchanged from G1 in effect, wider in scope. Statically, every response schema is closed and none
+resolves to the envelope type. Structurally, neither surface's module graph reaches the serialization
+handle **or Store**. Dynamically, no response body in either transcript contains a canonical
+serialization. **What the system does:** fails the build. Durable storage makes this more tempting, not
+less, which is why the structural gate grows rather than merely persisting.
 
-**What the system does:** fails the build. This is the one non-goal declared permanent, so it is the one gate that
-must not be a runtime check that nobody watches.
+### Inherited unchanged
 
-### The MCP surface is not reachable through the edge
-
-Not a failure at runtime — a **stated gap**. The edge routes the JSON wire only; an MCP caller addresses the
-workload directly. In G1 that is harmless: reachability is trusted-local and no principal exists. **It stops being
-harmless at G3**, where authorization is enforced at the edge and a surface that bypasses the edge bypasses
-authorization. Named here so G3 inherits a known gap rather than discovering one.
+Package restore failure, contract/engine version mismatch, malformed payload, unsupported version,
+unknown operation, unexpected exception, edge-to-workload unreachability and timeout, absent OTLP
+collector, response-schema mismatch — all G1's, all unchanged, and none of them is restated here.
 
 ---
 
 ## Concurrency and ordering
 
-**Within the Node workload, same-session commands cannot interleave, and the engine is what enforces it.** The
-session store queues commands per session id behind their predecessor; a second `submitAction` against one session
-waits rather than reading the same blob. That is the engine's own mechanism, verified in its store, and it is the
-reason G1 needs no compare-and-swap of its own. Cross-session commands genuinely interleave, and are independent
-by construction — no state is shared between sessions except the profile store, which the engine locks on a second,
-independent domain keyed by profile id.
+**What can now happen simultaneously.** Two operations against one session, on one instance or on two.
+Two operations against different sessions, always. Two profile upserts against one profile, from
+anywhere. Two sweeps. Two startups.
 
-**Compare-and-swap is G2's, and G1 does not partially implement it.** §6.1 of the hosting contract describes the
-lost update that arrives with *two instances*. G1 has one, by the brief's "scale is one". A CAS built now would be
-built against no failure and proven by no test.
+**What must not happen: two writes derived from one read both landing.** The guarded update enforces it,
+in the database, in one statement. Nothing else does, and nothing else is asked to.
 
-**What must not happen: two workload instances.** Each would hold its own memory, and a session created against one
-is unknown to the other — which presents as `unknown_session`, not as corruption. Nothing enforces single-instance;
-what stands in for enforcement is that G1's operations story is two processes started by hand. **This is a
-genuinely unguarded invariant, and naming it is the honest treatment**: the guard is G2's durable store, and until
-then a second instance is an operator error with a confusing symptom.
+**Same-session serialisation is gone for the durable configuration, and that is the design rather than a
+regression.** The engine's `sessionLocks` lives inside a session layer that now lives inside one
+request, so it orders nothing across requests. It could not have helped in any case: it is per-process,
+and §6.1's failure is between processes. Replacing an in-process queue with a cross-process
+compare-and-swap is the whole effort.
 
-**The replay is strictly sequential, and that is a requirement rather than an artefact of how the harness happens to
-be written.** Each response is fully read before the next request is sent. Pipelining would let two actions reach
-one session in an order the fixture did not specify, and the failure would present as a byte-identity break —
-a determinism defect's exact symptom, in a harness that caused it. The reordering perturbation is the same
-mechanism used deliberately, which is what makes the sequencing requirement testable rather than a comment.
+**The cost, stated plainly.** A client that fires two actions against one session concurrently used to
+have both applied in some order; it now has one applied and one rejected. That is a wire-visible
+behaviour change on a single instance, and it is the *correct* one — it is already what happens across
+two instances, and a single-instance deployment that behaved differently would be a deployment whose
+semantics changed when it scaled.
 
-**The edge is stateless and its concurrency is its host's.** It holds no per-session state, no connection affinity
-and no cache, so two requests against one session are ordered by whichever reaches the workload first — and the
-workload's per-session queue then orders them. The edge must not reorder, batch, or coalesce; it does none of
-these, and none is a feature it is missing.
+**Cross-session concurrency is unrestricted** and shares nothing but the pool. The engine's
+`profileLocks` is likewise now per-request and orders nothing across requests; the achievement merge's
+set union is what makes that safe, which is the second reason it is a merge rather than a replace.
 
-**Startup ordering between the two processes is unconstrained.** Either may start first. The edge reports not-ready
-until the workload answers, which is the entire ordering contract between them.
+**Save rows are never contended; a save's *contents* are.** A fresh `saveId` per `saveGame` means one
+writer per row, for the row's whole life — that is a statement about the row, and it is the reason
+there is no `version` column on `save`. It is not a statement about what the row holds.
+`saveGame` reads the session and writes only the save (`0.6.1`, *Data model*), so nothing guards the
+interval between them: instance **A** reads session *S*, instance **B** submits an action and wins
+the compare-and-swap, and **A** then writes a save of the state *before* B's action. Both requests
+succeed, correctly — no update was lost, and the save is a faithful snapshot of a state the session
+genuinely held.
+
+**This is accepted rather than fixed, and the reasoning is the design's own.** The alternative is to
+make `saveGame` write the session so it can be guarded, which is a second engine behaviour change
+bought to ease persistence — named as a non-goal in the brief in those words — to convert a
+successful save into a `409` for a snapshot that was never wrong, only superseded. A save is
+already a branch: `loadGame` mints a new session, so two loads of one save are two games by design,
+and a save taken a moment before another instance's action is the same shape. **What would not be
+acceptable and is not the case:** the save does not overwrite anything, does not affect the winner's
+session, and cannot be mistaken for the session's current state, because nothing reads a save except
+`loadGame`.
+
+**Expiry cannot race a live request, and it takes two mechanisms rather than one to say so.** Expiry
+is evaluated at read against the database clock — one clock, so two instances cannot disagree and
+process clock skew is irrelevant. Deletion happens only past the retention horizon, which is required
+to exceed any request's duration by a wide margin, so no sweep can fall between a request's read and
+its write. **The horizon does not cover the expiry boundary itself**, which is a different event from
+the sweep: a request that reads a row a moment before its TTL elapses and writes a moment after would,
+with no further guard, extend a session that a concurrent read on the other instance is already
+answering `session_expired` for. The `expires_at` predicate on the guarded update (*Control flow* 2)
+is what closes that, and the resulting outcome is `expired` rather than `conflict` — which is the
+third branch of the re-read classification and the reason that classification has more than one
+answer.
+
+**The replay is strictly sequential and single-instance.** Unchanged from G1, and now load-bearing for
+a second reason: counting record ids and two instances are incompatible, so the replay and the
+contention proof never share a configuration.
+
+**Startup ordering is unconstrained.** Either instance may start first; either may be first to migrate.
+The edge reports not-ready until the workload does, and the workload reports not-ready until the store
+does. That chain is the entire ordering contract between the three processes.
 
 ---
 
 ## Alternatives considered
 
-### Endpoint shape — one route per operation, not one dispatch route
+### The stale-cache problem — per-request composition, not cache invalidation
 
-**Chosen:** every operation is `POST /v1/<operation>` with a JSON object body, the path segment derived
-mechanically from the operation id.
+**Chosen:** for the durable configuration, the engine's session layer is composed per request over a
+process-lived persistence.
 
-**Rejected — a single `POST /v1/dispatch` carrying `{ operation, args }`.** Smallest routing surface, and the edge
-would need to know nothing at all. Rejected because it is MCP's own shape: adopting it would make the JSON wire a
-transcription of the MCP surface rather than the thing MCP projects from, inverting the brief's second decision at
-the one place it is visible. It also collapses every operation into one route template, and route template is the
-only per-operation label Platform's metric allowlist permits — so the dispatch route buys its simplicity by making
-per-operation telemetry unavailable to G4's metering without a second mechanism.
+**Rejected — one long-lived session layer plus a compare-and-swap at the port.** The obvious reading of
+§6.1, and the cheapest change. Rejected because it is *wrong*, not merely weak: the losing instance's
+cache is never invalidated, so the session becomes permanently unusable on that instance, and reads are
+not guarded at all — `getScene` on the stale instance serves a superseded scene with nothing to detect
+it. A concurrency fix that leaves reads silently stale has not fixed the class of defect.
 
-**Rejected — REST resource shaping** (`POST /v1/sessions/{id}/actions`, `GET /v1/sessions/{id}/scene`). More
-conventional, and it would make the four queries cacheable. Rejected because it invents a resource model the engine
-does not have, and the row-to-route mapping stops being one-to-one — at which point "every store operation is
-exercised through the hosted surface" stops being checkable by counting, which is the engine's own standard for
-this class of claim.
+**Rejected — a long-lived layer plus an engine change that evicts the cache on conflict.** Repairs the
+wedged-session half. Rejected because it leaves the stale-read half untouched, and because it is a
+second engine behaviour change bought to make persistence easier, which the brief names as a non-goal
+in those words.
 
-**Rejected — GET for the four read operations.** Idiomatic, and it is what a reviewer will ask for. Rejected because
-the split cannot be uniform: `previewAction` is a query whose arguments include an arbitrary action-parameter object,
-which has no defensible URL encoding. One rule with one exception is a hand-written special case inside a generated
-table. **The cost of the uniform rule, stated:** no HTTP caching and no method-level idempotency. Caching is a
-non-goal; idempotency is Platform's, per the hosting contract's ownership table.
+**Rejected — session affinity at the edge.** Routes one session to one instance, so one cache is
+authoritative. Rejected on three grounds: it makes the edge stateful, which is a binding non-goal; it
+fails on failover, when the session moves to a cold instance holding the same problem; and it would
+make the two-instance proof unreachable by construction — the design would prevent the failure from
+occurring rather than refusing to lose the update, which is not what the brief asks for.
 
-### How the surfaces are built — from the data at startup, not from generated source
+### The lock — a store-owned version column, not an engine field
 
-**Chosen:** both surfaces are constructed at startup by reading the table.
+**Chosen:** a `version` column owned, incremented and asserted by the store, invisible to the engine and
+to the wire.
 
-**Rejected — build-time code generation into the workload**, producing typed handlers per operation. Better
-type-safety at the seam, no startup construction, and a reviewable diff when the contract changes. Rejected on two
-grounds: it puts a generated copy of the contract inside the workload, which is what "the workload reads the contract
-from `SubZeroDev.ServiceContract`, not a local copy" forbids in substance rather than only in location; and it moves
-the "removing a row breaks both surfaces" proof from an assertion about the running surfaces to a diff of generated
-files, which tests the generator instead.
+**Rejected — `savedAtSeq`, as §6.1 specifies.** It is on the save record; saves are insert-only; it
+would guard a row with no second writer while leaving the contended row unguarded. Adjudicated at the
+head of this document.
 
-**Rejected — the workload authoring its own routes and tool list, validated against the generated schemas.** Cheapest
-by a wide margin, and the schemas still constrain every payload. Rejected because the table would then *check* the
-surfaces rather than *be* them: a row could exist with no route, and the failure mode is a contract that promises an
-operation the service does not serve — which is precisely the two-copies-disagreeing defect ADR-005 was written
-against.
+**Rejected — `attemptCounter`.** It is at least on the right record, and today it does advance on every
+session update. Rejected because it advances on rejected submissions that never write, so it is not in
+one-to-one correspondence with the writes a lock must guard; because that correspondence is a property
+of another repository's current implementation and not a stated invariant; and because it makes the
+lock's correctness depend on engine internals the store cannot see change.
 
-### Reaching the store's serialization — a shutdown dump under the replay profile
+**Rejected — an `xmin`-style system column or a content hash of the blob.** Needs no column at all.
+Rejected because both make the lock depend on the storage engine's or the serialization's incidental
+behaviour, and because a hash makes an identical-result write indistinguishable from no write.
 
-**Chosen:** the replay profile writes the ordered blob set to a configured path at graceful shutdown, and the harness
-compares files.
+### The concurrency mechanism — optimistic, not pessimistic
 
-**Rejected — hosting the workload in the harness's own process** and reading the blobs through the supplied
-persistence port. Genuinely clean, needs no dump path at all, and the wire is still real — real sockets, real
-encoding, real routing. Rejected because comparison A then cannot run through the edge: the harness cannot read the
-memory of a workload that lives behind another process, so Stage 2's "the same byte-identity replay passes through
-two hops" would quietly narrow to the response comparison only. Paying for a dump path buys the literal criterion at
-both stages.
+**Chosen:** optimistic locking. No transaction spans the read, the engine call and the write.
 
-**Rejected — an endpoint returning the serialization**, however named, however restricted. It is the brief's one
-permanent non-goal, and the brief anticipates this exact temptation by name.
+**Rejected — `select … for update` inside a transaction spanning the engine call.** Also prevents lost
+updates, and both callers succeed in turn. Rejected decisively because it produces a *serialised
+success*, and the brief's criterion is "one success and one explicit rejection" — under a pessimistic
+lock that criterion cannot be met at all. It also holds a database transaction open across a
+computation the database does not control, pins a connection per in-flight request, and converts a
+conflict into a lock-wait timeout, which is the failure mode that is hardest to tell from an outage
+precisely when telling them apart is the point.
 
-**Rejected — deriving the hosted serialization from the response transcript.** No new path at all, and it stays wholly
-behind the projection boundary. Rejected because it is comparison B wearing comparison A's name: reconstructing state
-from projections proves the projections were consistent, and says nothing about the bytes the engine actually holds.
+**Rejected — `serializable` isolation with automatic retry.** Idiomatic PostgreSQL. Rejected because
+the retry is the problem: re-running a `submitAction` is a second action against a state that has moved,
+and merging two is explicitly unavailable.
 
-### Edge routing depth — prefix forwarding, not a contract-aware edge
+**Rejected — an `ETag`/`If-Match` version on the wire, with the client supplying it.** Pushes the
+conflict to where a client can reason about it. Rejected because it puts engine-adjacent state into the
+client contract, which has no room for it, and because the transport would then be participating in the
+game's state model rather than projecting it.
 
-**Chosen:** the edge declares one route template covering the version and operation segments and forwards. It does
-not consult the table.
+### Expiry — an idle TTL on the database clock, with a retained tombstone
 
-**Rejected — the edge consuming the contract artifact** and routing per operation. The right answer for G3, where
-authorization must be enforced per operation on every call carrying an id. Rejected for G1 because it requires a
-second distribution channel for the contract — the artifact is consumed by a Node workload today, and a .NET consumer
-needs a .NET package — which doubles the cross-repository release path the brief accepted once, inside the effort
-whose virtue is being the cheapest informative failure. **The cost:** the edge cannot reject an unknown operation
-locally, and G3 pays for the channel.
+**Chosen:** `expires_at`, computed in SQL from the database clock at every accepted write, treated as
+absent on read, and hard-deleted by a sweep only past a retention horizon. Saves take an absolute TTL
+from insert, since they are immutable.
 
-**Rejected — the edge terminating and re-serializing each operation.** Full knowledge, and the edge could validate
-independently. Rejected outright: it puts a second implementation of the wire in a second language, which is the
-drift failure this ecosystem has recorded three times.
+**Rejected — deleting the row at expiry.** Simplest, and it bounds storage immediately. Rejected because
+the brief requires that "a session that has been evicted is not the same answer as a session that never
+existed", and a deleted row cannot carry that distinction.
 
-### Error semantics — engine codes verbatim, status derived by a closed mapping
+**Rejected — a count or size quota instead of a clock.** Bounds storage directly, which a TTL does not.
+Rejected because there is no principal to scope a quota to until G3, and a global cap would evict one
+player's live game to admit another's new one — strictly worse than unbounded growth in a
+trusted-local, single-operator deployment. The bound G2 can honestly take is time.
 
-**Chosen:** the wire carries the engine's `SessionStoreErrorCode` unchanged, plus a small closed set of transport-only
-codes; status is a function of the code, held in the contract and gated for completeness.
+**Rejected — expiry evaluated against the process clock.** No SQL involvement, and it composes with the
+engine's `Clock` port. Rejected because two instances would disagree under skew, and the same session
+would be alive on one and expired on the other — a second lost-update-shaped defect in a design whose
+subject is the first one.
 
-**Rejected — transport-normalized codes**, translating engine codes into an HTTP-shaped vocabulary. Tidier as a wire,
-and independent of engine changes. Rejected because the engine ships a registered, localized message for every reason
-code and its client contract requires clients to render the code rather than parse the message. Translating breaks
-that lookup, and a hosted client would be the only client that could not resolve its own errors.
+**Rejected — a distinct `410 Gone` status for the expired answer.** Semantically the better HTTP.
+Rejected because G1 established that the status never carries the distinction and the code always does,
+and one convention with no exceptions is worth more than a nicer status on two codes.
 
-**Rejected — status alone, with no body code.** Fewer concepts. Rejected because `unsupported_version` and
-`unknown_operation` share a status by design, and `unknown_session` and `unknown_campaign` do too; the status cannot
-carry the distinction, and the body is where the meaning already lives.
+### The store — PostgreSQL over plain `pg`, with a migration tool
 
-### A rejected action is a success at the transport layer
+**Chosen:** PostgreSQL, driven by `pg`, schema managed by an existing migration runner
+(`node-pg-migrate`), all inside `workloads/game-service/`.
 
-**Chosen:** `200`, carrying the store's unsuccessful result.
+**Rejected — SQLite.** Zero provisioning, and it would make the whole suite hermetic. Rejected because
+two processes over one file is not the deployment the brief describes, and a store that cannot credibly
+be shared by two instances cannot exhibit §6.1's failure — which is the one thing G2 must reproduce.
 
-**Rejected — mapping a rejected action to `403` or `422`.** More conventional HTTP, and a caller could branch on
-status. Rejected because it requires the transport to classify a game outcome, and the client contract's sharpest rule
-is that a client which reasons about game verdicts has stopped being a projection. The transport is a client. **The
-cost:** a caller cannot tell success from rejection by status alone and must read the result — which is the same thing
-every other client of this engine already does.
+**Rejected — a hand-rolled migration runner.** Two tables and a few indexes hardly need one. Rejected
+because the standing rule is that hand-rolling needs the justification, and because the property that is
+genuinely hard here is not applying SQL — it is the advisory lock that makes two instances migrating
+concurrently safe, which the tool already owns.
 
-### Trace evidence — a loopback collector in CI, not an operator demonstration
+**Rejected — Prisma or Drizzle.** Migrations, types and a query builder in one. Rejected because both
+introduce a schema-first model that becomes a second source of truth for a schema whose shape is dictated
+by the engine's record types, and because a code-generation step between the engine's types and the
+columns is exactly the drift seam ADR-005 exists to close. Prisma's engine binaries also sit poorly with
+the offline, self-hostable constraint.
 
-**Chosen:** CI runs an OTLP sink on loopback, both processes export to it, and the assertion is over the collected
-spans: one trace id spanning both processes, correlation unchanged.
+**Rejected — a key-value store.** A blob per session is the natural shape, and several offer
+compare-and-swap primitives directly. Rejected because the tenant column, the achievement set and the
+expiry sweep all want a relation, and because the schema is the artifact the brief says must survive G3
+and G4 — a schema is a better thing to inherit than a key convention.
 
-**Rejected — asserting only on the propagated header**, with visibility demonstrated by the operator. Needs no
-collector, and it is what the offline constraint first suggests. Rejected because it proves propagation rather than
-the criterion, which says *visible in Platform's telemetry* — and because "the evidence runs in CI from a fresh clone"
-binds both stages. An operator-demonstrated criterion is the anecdote that criterion exists to rule out.
+### Provisioning the store — one compose file, run by CI and by the reader
 
-**Rejected — a collector reachable over the network.** Straightforwardly against the offline constraint.
+**Chosen:** a compose file committed under `workloads/game-service/`, brought up by a step in the
+`game-service` CI job and by the identical command in that workload's README.
 
-### MCP transport — the same process, over HTTP
+**Rejected — a GitHub Actions `services:` container in CI, with a compose file for developers.** More
+idiomatic for Actions, less YAML, and the container is reachable on loopback so the job's existing
+OTLP port rejections are unaffected. Rejected because it makes the path CI proves and the path the
+README documents two different things, and that job exists as a separate one precisely so its steps
+*are* the README's commands — a documented command nothing runs is the failure the fresh-clone job
+was built to prevent.
 
-**Chosen:** the MCP surface is served by the workload process, sharing one Dispatch and one store.
+**Rejected — Testcontainers, with the suite starting its own container.** One code path, identical in
+CI and locally, and per-run isolation would come free. Rejected because it is a new dependency bought
+to solve a problem a file already solves; because it moves provisioning inside the test process,
+where the brief's *"tells a reader how to provision the store"* is satisfied by a library's internals
+rather than by an artifact a reader can open; and because running two instances against one store by
+hand would still need something else to exist.
 
-**Rejected — a separate stdio MCP server process.** The common MCP deployment shape, and it needs no HTTP transport
-work. Rejected because a second process composes a second store: a session started over the JSON wire would be unknown
-to the MCP surface, and two surfaces that agree about their shapes while disagreeing about which sessions exist are
-not one service. It also makes G1's operations story three processes, against the brief's two.
+**Rejected — assuming an externally provisioned store from a connection string.** Nothing to commit,
+and it is what a real deployment looks like. Rejected because "the evidence runs in CI from a fresh
+clone" then depends on a step nothing in the repository performs, which is the anecdote-on-my-machine
+result G1 already refused once.
+
+### Profiles — append-only achievement rows, merged by union
+
+**Chosen:** one row per achievement, `insert … on conflict do nothing`, assembled into a `PlayerProfile`
+on load.
+
+**Rejected — one blob per profile, guarded by its own compare-and-swap.** Symmetric with sessions, and
+it reuses the mechanism. Rejected because the losing writer's achievement is then lost or must be
+retried, and an achievement is exactly the thing a player notices going missing — for a mutation that is
+a set union and needs no ordering, choosing a mechanism that can lose one is choosing a defect.
+
+**Rejected — one blob per profile, last write wins.** What Adventures does. Rejected for the same
+reason, more sharply: it is a silent lost update, which is the class of defect this entire effort exists
+to eliminate.
+
+### The tenant column — in the primary key, supplied as a constant
+
+**Chosen:** `tenant_id` is `not null` with a default, is part of every table's primary key from the
+first migration, and every query supplies the implicit constant.
+
+**Rejected — the column present but named in no query, and not in any key.** The literal reading of the
+brief's "nothing reads it, nothing filters on it". Rejected because it defers the expensive half of the
+migration §7 exists to prevent: adding the column later is easy and adding it *to the keys and the
+queries* later is the correctness migration on every table at once. The column's presence without the
+key shape is the appearance of the requirement rather than the requirement.
+
+**The cost, stated:** a constant appears in the store's SQL, which is one step closer to tenancy than
+the brief's wording. It is still not tenancy — no request carries a tenant, nothing resolves one, and no
+behaviour varies by it. This brushes a binding non-goal, so it is also raised in *Open questions*.
+
+### The proofs — a per-run schema, not a per-run tenant
+
+**Chosen:** the harness creates a database schema per run, migrates it, and drops it.
+
+**Rejected — isolating runs by tenant id.** The column is right there and it costs nothing. Rejected
+because using it is shipping tenancy behaviour, which the brief forbids in those words, and because the
+first thing that reads the tenant column should not be a test fixture.
+
+**Rejected — truncating between runs.** Cheaper than creating a schema. Rejected because it leaves the
+replay and the contention proof sharing one namespace, so a leaked connection or a stray instance from
+an earlier test contaminates a later one — and the symptom would be a byte-identity failure, which is
+the exact signal the suite exists to make meaningful.
+
+### The profile port — a conformance suite over both implementations, not a wider fixture
+
+**Chosen:** a third proof, written against the ports and run twice — over the engine's in-memory
+implementations and over the durable ones — covering all six port methods and the three profile
+outcomes.
+
+**Rejected — a profile-carrying step added to the replay fixture.** It reaches the same methods
+through the real wire and through the same byte-identity comparison, which is the strongest kind of
+evidence available. Rejected because it invalidates the committed golden transcript, and more
+importantly because it gives the byte-identity proof a second job: a red run would then mean either
+that serialization diverged or that the profile path broke, and the proof's whole value is that it
+means exactly one thing.
+
+**Rejected — unit tests on the durable adapter, named as such in this document.** Honest, cheap, and
+it would close the gap in the sense that the code is covered. Rejected because it tests one
+implementation against its own behaviour, which cannot answer whether the durable store *fills the
+port* — the question the engine's composition root deferred *"until a second `SessionStore`
+implementation is actually needed"*, and which the brief makes a deliverable rather than a side
+effect. Only running the same assertions over both implementations answers it.
+
+**Rejected — leaving profiles to the failure-mode tests already implied and saying nothing.** The
+design's *Failure modes* already commits to the three outcomes, so a reader could reasonably assume
+they are covered. Rejected because that assumption is exactly the shape of the failure `agent.md`
+records: a criterion that reads as covered because an adjacent gate is green.
 
 ---
 
 ## Open questions
 
-Each of these needs information the brief does not give, and each changes something concrete.
-**Resolved questions keep their number and are struck through rather than removed**, because
-[`20-contract.md`](20-contract.md) and [`30-slices.md`](30-slices.md) cite these by number and
-renumbering would silently break every reference.
+Each needs information the brief does not give, and each changes something concrete.
 
-### ~~1. Which engine version does G1 pin~~
+**Six of the original seven are closed, all on 2026-08-12**, and are recorded in
+[`90-decisions.md`](90-decisions.md). Their original numbers are kept and their answers stated in
+place, so nothing later cites a number that has quietly moved. They closed in two different ways, and
+the distinction is worth keeping: **1, 2, 6 and 7 needed a decision** and got one; **3 and 4 turned out
+not to be open at all** — they were answerable by reading the engine repository, which a later session
+would otherwise have re-asked. **5 remains and belongs to `/contract`.**
 
-**Resolved 2026-08-08, by Ben: S1 cuts its release from the engine's `main`, so G1 pins a
-ten-operation engine.** 0.4.0 was never available — [S1](30-slices.md#s1--session-and-save-ids-the-host-can-supply)
-requires a *released* engine carrying `RecordIdSource`, and 0.4.0 carries no such port, so the pinned
-version is necessarily the one S1 cuts and the only real choice was its base. The table is ten rows;
-`previewAction` is consumed, never authored here. The reasoning and the rejected alternative are in
-[`90-decisions.md`](90-decisions.md).
+**8 through 11 were opened by the red-team pass of 2026-08-12** and are numbered after the original
+seven for the same reason those keep their numbers. **9 and 10 are not this document's to close:
+they are conflicts with the brief, and the brief is not a document a model may author.** They are
+recorded here so that the disagreement is visible to `/contract` and `/slices` rather than resolved
+by whichever document a later session happens to read first.
 
-### ~~2. Which column does the hosted transport add to the engine's coverage checklist~~
+1. **Does the tenant column belong in the primary key, given the non-goal's wording?**
+   **Settled: yes — in the primary key, with the implicit constant supplied in every query.** §7's
+   purpose is that the *shape* is right from the first migration, and the non-goal is about
+   caller-visible behaviour: nothing resolves a tenant, no request carries one, and no behaviour
+   varies by it, all of which remain literally true when the value is a constant. The literal
+   reading — column present, in no key and in no query — was defensible and was rejected because
+   adding the column later is easy while adding it to the keys and queries later is the correctness
+   migration §7 exists to prevent.
 
-**Resolved 2026-08-08 by question 1.** It is the **fifth** — the checklist already carries text
-client, MCP tool, simulation kind and browser demo — and the brief now says so. Because G1 pins the
-ten-operation engine, the column has ten ticks and no blank row, so the "is a blank row acceptable"
-question does not arise. The PR edits the engine's `design/10-design.md`, from which `09-clients.md`
-is generated, not the rendered document.
+2. **What are the two TTLs and the retention horizon?**
+   **Settled: session idle TTL 30 days, save TTL 365 days, retention horizon 30 days.** The design
+   requires all three to be configuration so tests can set them to seconds, and that is unchanged —
+   these are the production defaults, not the mechanism. Sessions and saves deliberately do **not**
+   share a number: a session is resumable working state on an idle clock, a save is immutable and is
+   the artifact a player would notice losing, so it gets an absolute year from insert. The horizon
+   only has to exceed any request's duration; 30 days is generous for a tombstone a few columns wide.
 
-3. **Does `SubZeroDev.ServiceContract`'s "depends on nothing" survive a generator that reads the engine's types?** The
-   contract repository's rule 5 states the property flatly. The generator the brief places there must resolve
-   `@the-running-dev/game-engine` at build time to project its declarations. There is no cycle — the engine does not
-   depend on the contract — so my reading is that the rule governs the **published artifact's** dependency graph, and
-   the generator's build inputs are outside it. That reading needs stating in that repository's own document, which is
-   a cross-repository edit and not this design's to make.
+3. **What is the engine's conflict code called, and how is the brand shaped?**
+   **Settled: `concurrent_modification`, as an eighth member of `SessionStoreErrorCode`, with a
+   name-based duck-typed brand.** This was not a decision so much as a reading of the engine, which
+   answers both halves. `SessionStoreErrorCode` is a closed union of seven members whose doc comment
+   states that every member is a registered `ReasonCode` with a shipped `core.reason.*` message, so
+   widening it carries a message obligation and nothing more exotic. And the brand needs no new
+   convention: `SessionStoreError` already discriminates itself by assigning `this.name`, so a
+   name-carrying plain throw is the engine's own existing idiom rather than something G2 invents —
+   which is what makes duck-typing the conservative choice here rather than the loose one, since a
+   duplicated package copy breaks `instanceof` and leaves `name` intact. The engine's three
+   `ProfileWarningCode` members are likewise already exactly `profile_missing`, `profile_corrupt` and
+   `profile_write_failed`, so *Failure modes* names real codes throughout and invents none. The PR is
+   still cross-repository and the vocabulary is still the engine's to ratify.
 
-4. **Does comparison B compare the hosted run against the in-process run, or two hosted runs?** The brief says "the
-   projected responses of the two runs against each other — the wire being deterministic". "The two runs" reads as the
-   in-process and hosted runs; "the wire being deterministic" reads as two passes through the wire. This design
-   satisfies both with one committed golden transcript, so the answer changes no machinery — but it changes what the
-   criterion is understood to assert, and that is worth settling before it is cited.
+4. **How does the engine's API coverage checklist record "exercised against the durable
+   implementation"?**
+   **Settled: an annotation on the existing hosted column, not a sixth one.** `09-clients.md` §4
+   defines the checklist as one row per operation and **one column per client**, and *"Hosted transport
+   (Platform G1/S5)"* is already the fifth column — carrying, in its own header, the effort that filled
+   it. A durable store is not a client, so it cannot be a column; and the header's existing provenance
+   tag is the convention for recording which effort produced the evidence. The design's reading was
+   correct and needed confirming rather than deciding. The engine repository still owns the wording.
 
-5. **Is the shutdown serialization dump acceptable, or does the permanent non-goal reach it?** The non-goal forbids a
-   raw-state *endpoint* "under any name" and explicitly exempts the proof's in-process serialization. The dump is a
-   file written by a non-default startup profile at graceful shutdown, unreachable by any caller. I read it as outside
-   the non-goal and as what buys Stage 2's criterion literally. If it is inside, comparison A cannot run through the
-   edge and Stage 2's replay criterion narrows to the response comparison — which is a defensible position, but it is a
-   change to a done-criterion and therefore yours.
+5. **Is the contract package's release path for G2 the same as G1's?** The new engine code forces a
+   regeneration (the error-coverage gate fails otherwise), and `session_expired` and `save_expired`
+   widen `TransportErrorCode`, which is a closed union in the published package. That is a contract
+   minor version and a republish. G1 consumed it as a vendored tarball; whether G2 does the same or
+   switches to the registry is a delivery decision, not a design one.
+   **Left open deliberately, and routed to [`/contract`](../.claude/commands/contract.md)** — signed
+   off 2026-08-12 as belonging to the stage that owns the contract artifact. Nothing in this document
+   changes on either answer, which is the test for whether it was ever a design question.
 
-6. **Should the edge cover the MCP surface too?** In G1 it need not, and the design routes only the JSON wire. The gap
-   is stated in Failure modes and is harmless while reachability is trusted-local. Closing it in G1 costs edge routing
-   for a second protocol; leaving it open hands G3 a surface that bypasses the authorization point.
+6. **Is the wire-visible change to single-instance behaviour acceptable?**
+   **Settled: yes, accepted as the correct semantics.** Two concurrent same-session actions on one
+   instance now produce one success and one `409`, where G1 queued and applied both. Three things
+   carried it. It is **already** the two-instance semantics, so the alternative is a deployment whose
+   wire behaviour changes when it scales — the failure being bought is worse than the one being sold.
+   It is what makes the brief's single-instance contention criterion **reachable**: the engine's
+   `sessionLocks` would otherwise serialise the race away, and the brief anticipates exactly that risk
+   when it says a gate that cannot go red proves nothing. And the queue it replaces never protected
+   anything across processes in the first place, so what looks like a removed guarantee was only ever
+   a single-process one. The cost is stated plainly in *Concurrency and ordering* and is not restated
+   here.
 
-7. **Is there a name and registry decision to take for the contract package?** ADR-005 fixes the repository and the
-   versioning discipline but not what the published artifact is called or where it is published. The engine publishes
-   to GitHub Packages under an existing scope; mirroring that is the obvious default, and defaults about published
-   names are the kind of thing this repository's own rules say to ask about rather than assume.
+7. **Who corrects §6.1?**
+   **Settled: this effort does, and it is done.**
+   [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 now resolves
+   concurrency with a store-owned version, names the session as the contended row, and states that
+   saves need no lock — with a dated note recording what the paragraph used to say and why it was
+   wrong. The brief's deferral was conditional on `/design` adjudicating which side was wrong; that
+   condition is met by the blockquote near the top of this document, so the retained risk ends here
+   rather than being carried into `/contract`, `/slices`, G3 and G4.
+
+8. **What refreshes a session's idle clock — every use, or only an accepted write?**
+   As designed, `expires_at` advances on accepted writes only, because that is the one statement
+   the store issues. `getScene`, `getView`, `getStrings`, `resumeSession`, `previewAction` and
+   `saveGame` all read the session and write no session row (`0.6.1`), so **a session read
+   continuously for the whole idle TTL still expires**, and the caller is told `session_expired` —
+   "the session existed and no longer does" — about a session it was using. Calling the mechanism an
+   *idle* TTL when it measures write recency is the part that does not survive contact with a
+   reader.
+   **Open, because the two answers cost differently and neither is obviously right.** Refreshing on
+   read makes every read a write: it puts query operations inside the compare-and-swap's blast
+   radius, doubles the statements on the cheapest path, and undoes *"every read reaches the
+   database"* being a read-only property. Leaving it as it is costs a name and a caller-visible
+   surprise, both fixable by saying "30 days since the last action" wherever the TTL is documented.
+   Nothing else in this document changes on either answer, which is what keeps it a question rather
+   than a redesign.
+
+9. **Does the brief's tenant non-goal get amended, or does the design get narrowed to it?**
+   The non-goal says, in words, *"Nothing reads it, nothing filters on it, and no request carries
+   one."* Every query this design specifies filters on `tenant_id = <the implicit constant>`, which
+   is the shape Open question 1 settled and `90-decisions.md` records twice. Both readings were
+   argued at the time and the key shape won on §7's own grounds; what was never done is the
+   consequent edit to the brief, so the binding list still forbids what this document specifies.
+   **This is a brief conflict, not a design defect** — the design is the side that was adjudicated
+   and signed off. It stays open here because `AGENTS.md` makes non-goals binding *until that file
+   changes*, and a design document cannot discharge a constraint by disagreeing with it.
+
+10. **Does session lifecycle extend to saves, or only to sessions?**
+    The brief's lifecycle criteria name sessions in every clause. This design gives saves a 365-day
+    absolute TTL, a `save_expired` wire code that widens a closed union in a published package, and a
+    sweep that hard-deletes them — settled as Open question 2 and logged, but derived from a criterion
+    that did not ask for it. The consequence is that G2 permanently destroys the artifact this
+    document elsewhere calls *"immutable and… the artifact a player would notice losing"*, on a clock
+    the brief never set and before G3 exists to own or warn about it. **Also a brief conflict rather
+    than a defect**, and it resolves either way in one edit: the brief admits saves to the lifecycle
+    scope, or the sweep stops at sessions and `save_expired` comes out of the contract.
+
+11. **What happens between now and the engine ratifying `concurrent_modification`?**
+    Every conflict assertion in *Control flow* 3 — both contention proofs, the perturbation red-gate,
+    the 409 mapping — depends on an eighth member of `SessionStoreErrorCode` that exists in no
+    published engine version, and Open question 3 records that *"the vocabulary is still the engine's
+    to ratify."* Startup asserts the contract's recorded engine version against the resolved package's,
+    so an instance cannot be pointed at a branch build without regenerating the contract first.
+    **The design's own position is that the engine PR is the first deliverable and the proofs that
+    assert the code are sequenced behind it**, which is a statement about ordering and costs nothing;
+    what is genuinely open is what G2 does if the engine ratifies a different name or a different
+    brand shape. Nothing in this document changes on the name — the adapter throws a branded value and
+    Dispatch maps a code — so the exposure is rework in `/contract` and one slice, not here.

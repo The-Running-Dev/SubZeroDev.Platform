@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
     Fails any project under src/ or samples/ that references anything under
-    workloads/: S3.14 of design/30-slices.md, invariant 45 of
-    design/20-contract.md.
+    workloads/: S3.14 of design/g1/30-slices.md, invariant 45 of
+    design/g1/20-contract.md.
 
 .DESCRIPTION
     G1's game service is a hosted product workload, not part of the framework
     this repository is (ADR-001). It lives under workloads/ -- a top-level tree
     outside src/ -- precisely so the product/framework boundary stays auditable
-    at a glance (design/90-decisions.md, 2026-08-08).
+    at a glance (design/g1/90-decisions.md, 2026-08-08).
 
     The direction is what matters. A workload may consume the framework's
     packages; the framework may never consume a workload, because a framework

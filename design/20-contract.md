@@ -1,1163 +1,1103 @@
-# Contract — one session, over the wire, then the edge (G1)
+# Contract — durable sessions (G2)
 
 **Document status:** Contract. Derived from [`10-design.md`](10-design.md). Authoritative for the
 artifacts and modules it describes; [`00-brief.md`](00-brief.md) stays authoritative for scope and
 non-goals, and [`platform-identity.md`](../docs/docs/platform-identity.md) for what this repository
 is.
 
-Two languages, because G1 has two processes. **TypeScript** with `strict` for the contract package,
-its generator, and the Node workload. **C#** with nullable reference types enabled for the .NET
-edge, which composes on the types [`d3/20-contract.md`](d3/20-contract.md) already declares and
-declares nothing of its own that duplicates one.
+Two languages, unchanged from G1. **TypeScript** with `strict` for the contract package and the Node
+workload. **C#** with nullable reference types enabled for the .NET edge.
 
-Types and signatures only. No package names and no namespace declarations — the contract package's
-identity is [Unresolved 4](#unresolved), and the edge's placement is
-[`90-decisions.md`](90-decisions.md)'s.
+**[`g1/20-contract.md`](g1/20-contract.md) stays authoritative for everything it declares.** This
+document declares only what durable state adds, and names every G1 declaration it amends — it never
+restates one. A type that appears below unchanged from G1 appears because a G2 member was added to
+it; a type that does not appear is unchanged and is still G1's.
 
-> **This contract depends on one engine change, decided 2026-08-08.** The design states that session
-> and save ids are minted by the engine's `IdSource` port; the engine mints them with
-> `crypto.randomUUID()` behind no seam, which made the response comparison unachievable for three
-> rows. G1 adds the seam — see [*The engine seam G1 adds*](#the-engine-seam-g1-adds) — and
-> [Unresolved 1](#unresolved) records what was blocked and what unblocked it.
+**Invariant numbering continues G1's**, from 48. G1's 1–47 keep their numbers and their home; the
+seven of them G2 amends are listed under [*Amended invariants*](#amended-invariants) rather than
+rewritten in place, so a citation to a number resolves to exactly one statement.
+
+> **This contract depends on one engine change**, which is G2's single engine deliverable and is
+> declared under [*The engine seam G2 adds*](#the-engine-seam-g2-adds). Every conflict assertion in
+> the design's proofs depends on it, and the design's Open question 11 records that the vocabulary is
+> the engine's to ratify.
+
+> **One count in [`10-design.md`](10-design.md) does not survive the source, and this contract takes
+> the source's side.** Open question 3 calls `SessionStoreErrorCode` *"a closed union of seven
+> members"* and `concurrent_modification` *"an eighth member"*; the decision log of 2026-08-12
+> repeats it. Read at `0.6.1` on the engine's `main` (`src/engine/src/core/session/types.ts`), the
+> union has **eight** members — `unknown_session`, `unknown_save`, `storage_failure`,
+> `unknown_campaign`, `invalid_state`, `unknown_kind`, `save_requires_migration`, `migration_failed`
+> — so `concurrent_modification` is the **ninth**. Nothing else in the design turns on the count: the
+> widening carries a `core.reason.*` message obligation whichever ordinal it takes, which is the part
+> the design was actually establishing. The correction belongs to `/design`, not here; this contract
+> declares nine members and says why.
 
 ---
 
 ## Types
 
-### Contract package — identifiers and constrained values
+### The engine seam G2 adds
 
 ```ts
-export type OperationId = string & { readonly __brand: "OperationId" };
-
-export type StoreMethodName = string & { readonly __brand: "StoreMethodName" };
-
-export type McpToolName = string & { readonly __brand: "McpToolName" };
-
-export type HttpPathSegment = string & { readonly __brand: "HttpPathSegment" };
-
-export type WireVersion = string & { readonly __brand: "WireVersion" };
-
-export type SchemaRef = string & { readonly __brand: "SchemaRef" };
-
-export type SemanticVersion = string & { readonly __brand: "SemanticVersion" };
-
-export type CanonicalJson = string & { readonly __brand: "CanonicalJson" };
-
-export type CorrelationId = string & { readonly __brand: "CorrelationId" };
+export type SessionStoreErrorCode =
+  | "unknown_session"
+  | "unknown_save"
+  | "storage_failure"
+  | "unknown_campaign"
+  | "invalid_state"
+  | "unknown_kind"
+  | "save_requires_migration"
+  | "migration_failed"
+  | "concurrent_modification";
 ```
 
-**Invariants carried by these types, not by their callers.** `OperationId` is non-empty, lowercase
-kebab-case, and unique within one table. `StoreMethodName` is a member name of the engine's exported
-`SessionStore` interface at the contract's recorded engine version — the arity gate is what makes
-that true, and it is the reason this is a branded string rather than `keyof SessionStore`: the
-published artifact carries no type dependency on the engine. `McpToolName` is lowercase snake_case
-and unique within one table. `HttpPathSegment` is derived, and equals its row's `OperationId`
-verbatim — the operation id is already the path's spelling, so the mechanical derivation is
-identity, and any other rule would be a second name for one thing. `WireVersion` matches `v` followed
-by a positive decimal integer with no leading zero. `SchemaRef` is an absolute `https` URL whose path
-contains the contract's major version; **it is an identifier and is never dereferenced**, at build
-time or at run time. `SemanticVersion` is a complete `MAJOR.MINOR.PATCH` with optional pre-release.
-`CanonicalJson` is the output of `canonicalEncode` and nothing else. `CorrelationId` is 32 lowercase
-hexadecimal characters, never all-zero — the same constraint
-[`d3/20-contract.md`](d3/20-contract.md) puts on Platform's own, so the two processes name one value
-the same way.
+**Declared in the engine, widened by one member**, and carrying the same obligation every other
+member carries: a registered `ReasonCode` with a shipped `core.reason.*` message. The engine's own
+doc comment on the union states that obligation, so the widening is a message and a union member and
+nothing more exotic.
 
 ```ts
-export type JsonPrimitive = string | number | boolean | null;
+export const SESSION_PERSISTENCE_CONFLICT = "SessionPersistenceConflict";
 
-export type JsonValue = JsonPrimitive | readonly JsonValue[] | JsonObject;
-
-export interface JsonObject {
-  readonly [member: string]: JsonValue;
+export interface SessionPersistenceConflict extends Error {
+  readonly name: typeof SESSION_PERSISTENCE_CONFLICT;
 }
 ```
 
-**`JsonValue` is the widest type anything on the wire may hold**, and it is closed: no `unknown`, no
-`any`, no `object`. A value the engine returns that is not a `JsonValue` cannot be encoded, and
-`canonicalEncode` rejects it rather than coercing it.
+**The brand is the `name` property and nothing else.** `SessionStoreError` already discriminates
+itself by assigning `this.name`, so a name-carrying throw is the engine's existing idiom rather than
+a convention G2 invents — and duck-typing on `name` survives a duplicated package copy, where
+`instanceof` does not. **The spelling is the engine repository's to ratify**; this contract names it
+so the G2 slices and the engine pull request describe one thing
+([Additions](#additions-requiring-a-decision-log-entry), item 1).
+
+**What the engine change is, exactly.** `writeSession`'s `catch` today is parameterless and rethrows
+`SessionStoreError("session", "storage_failure")`, discarding the cause. It gains one branch: a
+caught value whose `name` is `SESSION_PERSISTENCE_CONFLICT` raises
+`SessionStoreError("session", "concurrent_modification")` instead. **Everything else thrown still
+becomes `storage_failure`**, so every existing implementation of `SessionPersistence` is unaffected.
+`writeSave`, `getSession` and `getSave` are untouched: saves have no second writer, and a read that
+fails is an outage on any reading.
+
+### Contract package — the widened transport codes
 
 ```ts
-export type ValidatedArguments = JsonObject & { readonly __brand: "ValidatedArguments" };
-```
-
-**`ValidatedArguments` is produced by request-schema validation and by nothing else.** It is the one
-type Dispatch accepts, which is what makes "the engine is never reached on a malformed payload"
-structural rather than a sequencing convention.
-
-### Contract package — error codes and status
-
-```ts
-export type EngineErrorCode = string & { readonly __brand: "EngineErrorCode" };
-
 export type TransportErrorCode =
   | "malformed_payload"
   | "unsupported_version"
-  | "unknown_operation";
-
-export type WireErrorCode = EngineErrorCode | TransportErrorCode;
-
-export type HttpStatus = 200 | 400 | 404 | 409 | 500 | 503;
+  | "unknown_operation"
+  | "internal_failure"
+  | "session_expired"
+  | "save_expired";
 ```
 
-**`EngineErrorCode` is branded rather than enumerated, and that is the only way to state it once.**
-The closed set is the engine's `SessionStoreErrorCode`, declared in the engine and re-declared
-nowhere: a union copied here would be a second home for the engine's own vocabulary, and the
-error-coverage gate exists precisely because a copy cannot be trusted to stay equal. What the
-contract owns is the *mapping's* completeness against that set, asserted at generation.
+**Six members**, two of them G2's. `TransportErrorCode` is closed and is the contract package's own
+because no engine concept corresponds to either new code: the engine has one answer for an evicted
+session and a session that never existed, correctly, and the distinction the brief requires is a host
+lifecycle fact about a host-owned column.
 
-**`TransportErrorCode` is closed and is the contract's own**, because no engine concept corresponds
-to any of the three. The fourth code the design describes — the generic code on an unhandled
-failure — is unnamed by the design and is [Unresolved 2](#unresolved); so are the edge's two.
-Until 2 resolves, `WireErrorCode` cannot represent the `InternalFailure` body's `code`: naming the
-workload's generic code makes it this union's fourth member, and invariant 2 and S2.3's gate track
-the union's membership rather than a count, so the mapping gains that code's `500` entry in the
-same change. The edge's two are `EdgeError`'s own — their statuses are fixed in its table, and
-they enter neither this union nor the mapping.
+`EngineErrorCode`, `WireErrorCode` and `HttpStatus` are **unchanged**. `concurrent_modification`
+enters through `EngineErrorCode`, which is branded rather than enumerated precisely so the engine's
+vocabulary has one home; `409` and `404` are already members of `HttpStatus`, so no status widens.
 
-**`HttpStatus` is the closed set the workload can return.** The edge adds `503` and `504` on its own
-account and returns nothing else the workload did not produce.
+**The status mapping gains three entries** — `concurrent_modification` → `409`, `session_expired` →
+`404`, `save_expired` → `404` — and the generator's error-coverage gate is what requires them rather
+than this sentence.
+
+### Workload — the store's own identifiers and constrained values
 
 ```ts
-export interface StatusMappingEntry {
-  readonly code: WireErrorCode;
-  readonly status: HttpStatus;
-}
+export type TenantId = string & { readonly __brand: "TenantId" };
 
-export interface StatusMapping {
-  readonly entries: readonly StatusMappingEntry[];
-}
+export type EngineInstant = string & { readonly __brand: "EngineInstant" };
+
+export type DatabaseInstant = Date & { readonly __brand: "DatabaseInstant" };
+
+export type SessionRowVersion = bigint & { readonly __brand: "SessionRowVersion" };
+
+export type SchemaName = string & { readonly __brand: "SchemaName" };
 ```
 
-**There is no default branch and no fallback entry**, and the type is a list rather than a partial
-record for that reason: a lookup that misses is a failed gate, not a `500`.
+**`TenantId` is non-empty and, in G2, is one value.** The implicit tenant is a constant the store
+supplies to every statement. Nothing resolves it, no request carries one, and no behaviour varies by
+it — which is what keeps *tenancy behaviour* out while the key shape is right from the first
+migration.
 
-### Contract package — the operation table
+**`EngineInstant` and `DatabaseInstant` are two kinds of time and the types are what stop them being
+confused.** `EngineInstant` is whatever the engine's `Clock.now()` returned, stored and returned as
+the same string; under the replay profile it is the fixed instant, and a round trip that reformatted
+it would break the replay. `DatabaseInstant` is the database clock's, never the process clock's, and
+never enters a `StoredSessionRecord`.
 
-```ts
-export type NarrowingSide = "request" | "response";
+**`SessionRowVersion` is never computed in TypeScript.** The store reads it, holds it, and passes it
+back as a statement parameter; the guarded `update` increments it in SQL. It is `bigint` and not
+`number` because the column is `bigint`, and the driver's `int8` parser is configured to produce
+`bigint` — an unconfigured `pg` returns `int8` as a `string`, and a version silently typed `string`
+would still compare equal on a round trip while making any future arithmetic on it a concatenation.
 
-export interface NarrowedField {
-  readonly side: NarrowingSide;
-  readonly field: string;
-}
+**`SchemaName` is the per-run PostgreSQL schema the proof harness creates and drops.** It exists so
+run isolation has a type of its own and is visibly not `TenantId`.
 
-export interface AuthoredRow {
-  readonly operation: OperationId;
-  readonly storeMethod: StoreMethodName;
-  readonly mcpTool: McpToolName;
-  readonly narrowings: readonly NarrowedField[];
-  readonly reachableErrors: readonly WireErrorCode[];
-}
+### Workload — the durable rows
 
-export interface OperationRow extends AuthoredRow {
-  readonly httpPath: HttpPathSegment;
-  readonly requestShape: SchemaRef;
-  readonly responseShape: SchemaRef;
-}
-```
-
-**The two interfaces are the authored/derived split made structural.** `AuthoredRow` is what a
-human writes and reviews; `OperationRow` is what generation emits, and the three added members are
-exactly the derived ones. Nothing can author a `requestShape`, and nothing can derive an `mcpTool`.
-
-**`NarrowedField.field` names a top-level member** of the store method's argument object or of its
-result — the design's two worked examples, `audience` dropped from the request and `savedAtSeq`
-dropped from the response, are both top-level, and a nested narrowing is not implied by anything the
-design says. A narrowing naming a member the engine's declaration does not have fails generation.
-
-**A row's narrowings are the table's and both surfaces inherit them.** There is no per-surface
-narrowing type, and its absence is the contract's expression of the design's second decision.
-
-### Contract package — the generated schema set
+Every row type below is the store's internal shape. **None of them crosses the port**: the adapter
+maps a row to a `StoredSessionRecord` or a `StoredSaveRecord`, which carry engine-owned members only.
 
 ```ts
-export type SchemaDialect = string & { readonly __brand: "SchemaDialect" };
-
-export interface JsonSchemaDocument {
-  readonly $id: SchemaRef;
-  readonly $schema: SchemaDialect;
-  readonly [keyword: string]: JsonValue | undefined;
-}
-```
-
-**Every response schema is closed** — `additionalProperties` is `false` at every object level — and
-no response schema resolves to the engine's envelope type. Both are asserted at generation, and
-together they are the static half of the projection-boundary gate.
-
-**Every request schema is closed on the same terms**, asserted at generation. A request member the
-row's shape does not declare is a `malformed_payload`, never a tolerated extra — which is what makes
-a request narrowing irreversible from the wire (a dropped `audience` cannot be re-supplied) and the
-determinism profile unreachable by any caller.
-
-**The dialect is one value for the whole set**, and which value it is is
-[Unresolved 3](#unresolved).
-
-### Contract package — the artifact
-
-```ts
-export interface ContractPackage {
-  readonly contractVersion: SemanticVersion;
+export interface SessionRow {
+  readonly tenantId: TenantId;
+  readonly sessionId: string;
+  readonly blob: string;
+  readonly audience: ProjectionAudience;
+  readonly attemptCounter: number;
+  readonly replayCompatible: boolean;
+  readonly engineCreatedAt: EngineInstant;
+  readonly engineUpdatedAt: EngineInstant;
+  readonly profileId: string | null;
+  readonly version: SessionRowVersion;
   readonly engineVersion: SemanticVersion;
-  readonly wireVersion: WireVersion;
-  readonly operations: readonly OperationRow[];
-  readonly schemas: readonly JsonSchemaDocument[];
-  readonly statusMapping: StatusMapping;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
+  readonly expiresAt: DatabaseInstant;
+}
+
+export interface SaveRow {
+  readonly tenantId: TenantId;
+  readonly saveId: string;
+  readonly campaignId: string;
+  readonly blob: string;
+  readonly savedAtSeq: number;
+  readonly audience: ProjectionAudience;
+  readonly profileId: string | null;
+  readonly engineVersion: SemanticVersion;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly expiresAt: DatabaseInstant;
+}
+
+export interface ProfileRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly formatVersion: number;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
+}
+
+export interface ProfileAchievementRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly campaignId: string;
+  readonly achievementId: string;
+  readonly rowCreatedAt: DatabaseInstant;
 }
 ```
 
-**`engineVersion` is the exact version the schemas were projected from**, and it is what the
-workload's startup assertion compares against the engine package it actually resolved. It is a
-member of the artifact rather than a build annotation because a reader must be able to answer "which
-engine does this contract describe?" from the artifact alone.
+**`ProjectionAudience` is the engine's own type** — `"player" | "ai"` at `0.6.1` — imported, never
+re-declared. The column carries the constraint, so a value the engine does not name cannot be stored.
 
-**One `wireVersion` per artifact.** Serving two at once is a binding non-goal; the member exists so
-the path prefix has a single stated source, not so a set can grow.
+**`profileId` is `string | null` on the row and an *absent key* on the record.** The engine's
+`StoredSessionRecord.profileId` is an optional member, and the design's rule is `null` ⇄ key absent,
+never a member whose value is `undefined`. A record carrying `profileId: undefined` serializes
+differently from one that omits the member, which is the whole reason the mapping is stated as a type
+rule rather than left to a spread.
 
-### The engine seam G1 adds
+**`SessionRow.version` has no counterpart on `StoredSessionRecord` and never will.** The engine
+cannot read it, cannot supply it, and cannot be made to depend on it, which is the property that
+makes the lock the store's and the design's adjudication load-bearing rather than stylistic.
+
+**`SaveRow` carries no `version`.** `saveGame` mints a fresh `saveId` on every call and writes
+through `writeSave` only — verified at `0.6.1` — so a save row has exactly one writer for its whole
+life and an optimistic lock would guard nothing.
+
+### Workload — the guarded write and the lifecycle classification
 
 ```ts
-export interface RecordIdSource {
-  newSessionId(): string;
-  newSaveId(): string;
+export type GuardedWriteOutcome = "applied" | "conflict" | "expired";
+
+export type LifecycleState = "live" | "expired" | "absent";
+```
+
+**`GuardedWriteOutcome` has exactly three members and the third is why the re-read is a
+classification.** Zero rows affected is re-read: a different `version` is `conflict`, the same
+`version` past its `expires_at` is `expired`, and an absent row is `conflict` because the caller's
+read is no longer authoritative either way. **A re-read that itself fails is `conflict`**, never a
+storage outcome — zero rows has already established the one fact the caller acts on.
+
+**`LifecycleState` is a classification and never data.** It answers *does a row exist for this id,
+and has it expired* and returns no blob, no scene and no record.
+
+```ts
+export interface LifecycleProbe {
+  session(sessionId: string): Promise<Outcome<LifecycleState, StoreError>>;
+  save(saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
 }
 ```
 
-**Declared in the engine and supplied by the host**, as an optional member of the session layer's
-composition root alongside `clock`, `persistence` and `profiles`. Omitted, the engine's present
-behaviour is unchanged: `crypto.randomUUID()` for both.
+**It is not a store port and it is not an operation.** It has no route, no MCP tool and no row in the
+operation table, and the generator's arity gate fails if anyone gives it one. It is reachable from
+Dispatch and from nowhere else.
 
-**It is permitted by the engine's own rule** — a host may supply anything that cannot change
-`serialize()` output, and a session id and a save id never enter `GameState`, which is the engine's
-own stated reason for minting them where it does. It is a second port beside `IdSource` rather than a
-widening of it, because `IdSource` supplies `gameId` and `seed`, which *are* serialized inputs, and
-one port covering both would put two categories behind one name.
+**It is composed behind the same seam `SessionPersistence` and `ProfileStore` are**, so that whatever
+decorates them decorates it. Nothing in G2 depends on that; it is stated so G3's authorization
+decorator inherits the constraint rather than rediscovering that an undecorated probe is an existence
+oracle.
 
-**This is a G1 deliverable into the engine**, and the second one — the coverage-checklist column is
-the other. Without it the Stage 1 byte-identity criterion is unachievable rather than merely hard.
+**A probe that fails is read as `absent`, so the engine's own code passes through verbatim**
+([Unresolved 1](#1-what-dispatch-answers-when-the-lifecycle-probe-itself-fails), settled
+2026-08-12). The failure arm exists because the probe crosses a module boundary and every error that
+does is an `Outcome` failure; what Dispatch does with it is to answer the less specific of the two
+true things rather than the more alarming of them.
 
-### Workload — configuration and the determinism profile
+### Workload — the store provider and the per-request seam
 
 ```ts
-export interface ListenEndpoint {
-  readonly host: string;
-  readonly port: number;
+export interface StoreProvider {
+  forRequest(): SessionStore;
+}
+```
+
+**One method, and the two configurations differ only in what it returns.** The durable configuration
+constructs a fresh persistence adapter with an empty read-version map and composes a session layer
+over it with the process-lived engine, registry, record-id source and clock; the in-memory
+configuration returns G1's single long-lived layer on every call.
+
+**A cache that cannot outlive one request is what makes the compare-and-swap the only concurrency
+mechanism in the system.** The type is the seam that makes it so: Dispatch cannot hold a store across
+requests because it is never handed one that lasts.
+
+```ts
+export interface ReadVersionMap {
+  observed(sessionId: string): SessionRowVersion | undefined;
+  record(sessionId: string, version: SessionRowVersion): void;
+  advance(sessionId: string, version: SessionRowVersion): void;
+}
+```
+
+**One per request, and it dies with the request** — which is the entire reason it cannot go stale.
+`sessions.put` for an id the map holds is a guarded update asserting that version; for an id it does
+not hold, an insert. `advance` is called only after a write lands, so the map's value and the row's
+value are the same event.
+
+### Workload — configuration
+
+```ts
+export interface StoreConnection {
+  readonly connectionString: string;
+  readonly poolSize: number;
+  readonly connectTimeoutMs: number;
+  readonly schema: SchemaName | null;
 }
 
-export interface DefaultDeterminismProfile {
-  readonly kind: "default";
+export interface LifecycleBounds {
+  readonly sessionIdleTtlSeconds: number;
+  readonly saveTtlSeconds: number;
+  readonly retentionHorizonSeconds: number;
+  readonly sweepIntervalSeconds: number;
+  readonly sweepStatementTimeoutMs: number;
 }
 
-export interface ReplayDeterminismProfile {
-  readonly kind: "replay";
-  readonly fixedInstant: string;
-  readonly dumpPath: string;
+export interface DurableStoreConfiguration {
+  readonly connection: StoreConnection;
+  readonly bounds: LifecycleBounds;
+  readonly readWritePauseMs: number;
 }
 
-export type DeterminismProfile = DefaultDeterminismProfile | ReplayDeterminismProfile;
+export type StorageProfile =
+  | { readonly kind: "in-memory" }
+  | { readonly kind: "durable"; readonly store: DurableStoreConfiguration };
 
 export interface WorkloadConfiguration {
   readonly listen: ListenEndpoint;
   readonly determinism: DeterminismProfile;
   readonly otlpEndpoint: string | null;
+  readonly storage: StorageProfile;
 }
 ```
 
-**The discriminated union is what makes "with the default profile, no dump is written" a type-level
-fact.** `dumpPath` exists only on the replay member, so no code path holds a default profile with a
-dump path, and the assertion the design demands is over a value that cannot be constructed the wrong
-way.
+**The discriminated union is G1's determinism trick applied a second time.** No code path holds an
+in-memory profile with a connection string, so "the in-memory configuration reaches no database" is a
+type-level fact rather than a branch anyone has to keep correct.
 
-**`fixedInstant` is what the replay profile's `Clock.now()` returns**, unchanging, as an ISO-8601
-instant. It reaches only the host-owned record fields, which the dump excludes — so it constrains
-neither comparison and exists to keep the run free of a wall clock rather than to be compared.
+**All three lifecycle bounds are configuration, and the production defaults are 30 days, 365 days and
+30 days.** Sessions and saves deliberately do not share a number. The defaults are values, not the
+mechanism — the expiry proofs set them to seconds, and the replay takes the defaults precisely
+because a session that expired between two of its ten steps would report a serialization failure for
+a clock problem.
 
-**The replay profile has no counting-`IdSource` start value**, and the design's "from a stated start"
-is not satisfiable: the engine's exported `createCountingIds()` takes no argument and counts from
-zero. The replay profile supplies that source unchanged, and a counting `RecordIdSource` on the same
-terms — independent counters, each from zero, no argument. Two fixtures that count from different
-starts prove nothing a single start does not, and a start value is one more thing two runs can
-disagree about.
+**`retentionHorizonSeconds` is required to exceed any request's duration by a wide margin**, and that
+requirement is what makes it impossible for a sweep to fall between a live request's read and its
+write.
 
-**`otlpEndpoint` is nullable and null is normal.** Null means no exporter is constructed and no
-outbound connection is attempted — not a disabled exporter, and not a default endpoint.
+**`readWritePauseMs` is the perturbation seam and its default is `0`.** It pauses the store adapter
+between a session read and the corresponding write, and it is what makes the contention race
+deterministic rather than hoped for. A test asserts it is inert at `0`, on the same terms G1 asserts
+that the default profile writes no dump: a diagnostic that is merely usually off is on.
 
-### Workload — request context
+**`StoreConnection.schema` is `null` outside the proof harness.** It names the per-run PostgreSQL
+schema the durable replay is isolated by. **The tenant column is never used for run isolation** —
+that is tenancy behaviour, and it is the shortcut a durable store makes tempting.
 
-```ts
-export interface RequestContext {
-  readonly operation: OperationId;
-  readonly wireVersion: WireVersion;
-  readonly inboundTraceParent: string | null;
-  readonly correlation: CorrelationId;
-}
-```
-
-**`correlation` is derived and never supplied.** It is the trace-id of the adopted-or-minted trace
-context; a malformed `inboundTraceParent` yields a fresh root and a fresh correlation, and never a
-failed request. Nothing on this type is persisted, and nothing on it reaches a session record.
-
-**The MCP surface builds the same context without a version path.** A tool call carries no
-`/v<n>/` segment, so `wireVersion` is the artifact's own `wireVersion` — the contract carries
-exactly one, which is what makes the assignment a lookup rather than a negotiation. `operation` is
-the resolved row's `operation`, not the requested tool name — the two differ for the three rows
-whose `mcpTool` is a deliberate rename, so only `callTool`, which has looked the row up, can set it.
-`correlation` is derived by the same rule as the JSON wire, from the trace context adopted or minted
-for the MCP request. **`callTool` takes the raw `inboundTraceParent` the MCP HTTP transport carried**
-— the one piece of the context the transport holds and `callTool` does not — and derives
-`correlation` from it the same way `HttpSurface.handle` derives its own from the `WireRequest` it
-receives; the rest of the context is `callTool`'s own to build once the row is resolved.
-
-### Workload — dispatch
+### Workload — readiness
 
 ```ts
-export type DispatchOutcome =
-  | { readonly kind: "result"; readonly value: JsonValue }
-  | { readonly kind: "error"; readonly code: EngineErrorCode };
-
-export interface Dispatcher {
-  invoke(operation: OperationId, args: ValidatedArguments): Promise<DispatchOutcome>;
-}
-```
-
-**`DispatchOutcome` carries no status, no headers and no encoding**, and that absence is what makes
-the MCP surface a second consumer rather than a second wire.
-
-**`value` is already projected to the row's response shape.** Projection is Dispatch's, not each
-surface's — if it were each surface's, the row's narrowings would be applied twice and "MCP inherits
-the wire's narrowings" would be a convention instead of a mechanism.
-
-**The error arm carries an `EngineErrorCode` only.** A transport code cannot originate in Dispatch,
-because everything the three transport codes describe is decided before Dispatch is entered.
-
-### Workload — the store-serialization handle
-
-```ts
-export interface StoredBlob {
-  readonly id: string;
-  readonly blob: string;
-}
-
-export interface StoreSerializationSnapshot {
-  readonly sessions: readonly StoredBlob[];
-  readonly saves: readonly StoredBlob[];
-}
-
-export interface StoreSerializationHandle {
-  snapshot(): Promise<StoreSerializationSnapshot>;
-}
-
-export interface DeterminismDump {
-  readonly sessions: Readonly<Record<string, string>>;
-  readonly saves: Readonly<Record<string, string>>;
-}
-```
-
-**`blob` is the engine's canonical serialization and nothing around it** — no `createdAt`, no
-`updatedAt`, no `attemptCounter`, no `audience`, no `profileId`, no `savedAtSeq`. The host-owned
-record fields are excluded because they are outside the engine's serialization boundary, not because
-they are noisy.
-
-**`DeterminismDump` is keyed by id** and is written with `canonicalEncode`, whose key ordering is
-what makes "in id order" a property of the encoding rather than a step the writer must remember.
-
-**Neither surface's module graph may name `StoreSerializationHandle`.** That is asserted as a
-dependency-direction test, and it is the structural half of the projection-boundary gate.
-
-### Workload — probes and the error envelope
-
-```ts
-export type ProbeStatus = "healthy" | "unhealthy";
-
-export interface ProbeResult {
-  readonly status: ProbeStatus;
-}
-
 export interface ProbeSurface {
   liveness(): ProbeResult;
-  readiness(): ProbeResult;
-}
-
-export interface WireErrorBody {
-  readonly code: WireErrorCode;
-  readonly correlation: CorrelationId;
+  readiness(): Promise<ProbeResult>;
 }
 ```
 
-**`WireErrorBody` has two members and the design determines exactly these two** — the same envelope
-discipline Platform applies on its own side, so the two hops do not disagree about what an error body
-may contain. **Never exception text and never payload content.** The detail goes to the log line the
-correlation identifies.
+**`readiness` becomes asynchronous and that is forced rather than chosen.** It evaluates the store on
+each probe, so it reports whether the store is usable *now* rather than whether it was usable once —
+a latch on startup would leave the workload reporting ready through exactly the outage the edge's new
+readiness probe was introduced to surface. **The stated cost is that readiness can flap.**
+`liveness` never consults the store and stays synchronous.
 
-**The workload's liveness does not consult the store**, and its readiness reports healthy once both
-surfaces are built and the listener is bound.
-
-### Workload — the transport envelope
+### Workload — the sweep
 
 ```ts
-export type HttpHeaders = ReadonlyMap<string, string>;
-
-export interface WireRequest {
-  readonly method: string;
-  readonly path: string;
-  readonly headers: HttpHeaders;
-  readonly body: Uint8Array;
-}
-
-export interface WireResponse {
-  readonly status: HttpStatus;
-  readonly headers: HttpHeaders;
-  readonly body: Uint8Array;
+export interface SweepResult {
+  readonly sessionsRemoved: number;
+  readonly savesRemoved: number;
 }
 ```
 
-**Bodies are bytes on both sides.** A response the surface produced as `CanonicalJson` is the bytes
-of that string; nothing between the encoder and the socket re-encodes, because comparison B is a byte
-comparison and a re-encoding would be invisible until it broke it.
+**The sweep is a plain `delete` and is idempotent**, so two instances sweeping concurrently need no
+coordination and none is added. It removes only rows whose `expires_at` is older than the retention
+horizon; a row that has merely expired is retained, because an expired-but-retained row is what lets
+the wire answer `session_expired` rather than `unknown_session`.
 
-### Proof harness — fixture, transcript, comparisons
+**A failed sweep reports what it removed, which on failure is nothing.** The design asks for "the row
+count it did not remove"; that number is not knowable from a failed `delete` without a second query
+against a store that has just failed one, so the honest report is the failing statement and a removed
+count of zero ([Additions](#additions-requiring-a-decision-log-entry), item 5).
+
+### Proof harness — the durable replay, the two instances, the conformance suite
 
 ```ts
-export interface ReplayStep {
-  readonly operation: OperationId;
-  readonly arguments: JsonObject;
+export interface RunSchema {
+  readonly name: SchemaName;
+  drop(): Promise<Outcome<void, HarnessError>>;
 }
 
-export interface ReplayFixture {
-  readonly campaignId: string;
-  readonly seed: string;
-  readonly steps: readonly ReplayStep[];
-}
-
-export type Transcript = readonly CanonicalJson[];
-
-export interface Divergence {
-  readonly locator: string;
-  readonly expected: string;
-  readonly actual: string;
-}
-
-export interface ComparisonResult {
-  readonly matched: boolean;
-  readonly firstDivergence: Divergence | null;
-}
-
-export interface RunResult {
-  readonly transcript: Transcript;
-  readonly serialization: StoreSerializationSnapshot;
-}
+export function createRunSchema(
+  connectionString: string,
+): Promise<Outcome<RunSchema, HarnessError>>;
 ```
 
-**`Transcript` is a list of encoded values and carries no status.** Run 1 has no HTTP status to
-carry, and both runs are asserted against one golden file — so a status member would make the two
-transcripts structurally different things that happen to be compared.
+**A pristine schema per run, created and dropped by the harness.** The counting `RecordIdSource`
+mints `counting-session-id-0` on every run, so a second run against a dirty schema is a primary-key
+violation in the middle of the replay.
 
-**`ReplayFixture.steps` covers every row in the table**, asserted by the harness rather than by
-inspection: the set of operations the steps name equals the set the table declares.
-
-**`ReplayFixture` carries no counting-`IdSource` start value**, for the reason given with the replay
-profile.
-
-**`ReplayStep.arguments` is literal, including ids.** A step following `create-session` names the
-session id that call returned, written out in the fixture — which is possible only because the
-replay profile's `RecordIdSource` makes it the same string in every run. A fixture that captured ids
-at run time would be a harness that reproduces itself rather than a committed input two runs share.
-
-### Edge — options, forwarding, and readiness
-
-```csharp
-public sealed record GameEdgeOptions
-{
-    public required Uri WorkloadBaseAddress { get; init; }
-    public required TimeSpan ForwardTimeout { get; init; }
-    public required TimeSpan LivenessTimeout { get; init; }
+```ts
+export interface WorkloadInstance {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, HarnessError>>;
 }
 
-public sealed record ForwardedRequest(
-    HttpMethod Method,
-    string PathAndQuery,
-    ReadOnlyMemory<byte> Body,
-    string? ContentType,
-    TraceContext Trace);
+export interface TwoInstanceOptions {
+  readonly connectionString: string;
+  readonly schema: SchemaName;
+  readonly readWritePauseMs: readonly [number, number];
+}
 
-public sealed record ForwardedResponse(
-    int StatusCode,
-    ReadOnlyMemory<byte> Body,
-    string? ContentType);
+export function spawnInstances(
+  options: TwoInstanceOptions,
+): Promise<Outcome<readonly [WorkloadInstance, WorkloadInstance], HarnessError>>;
 ```
 
-**`ForwardedRequest` carries no operation id and no parsed body**, and that is the whole of "the edge
-does not know which operation it is carrying". `PathAndQuery` is forwarded unaltered; the edge
-rewrites nothing.
+**`spawnInstances` is both a test entry point and the README's documented command.** The brief
+requires the repository to tell a reader how to run two instances against one store, and the compose
+file is barred from that clause — it provisions the dependency and starts no instance. One artifact
+serves both, because a documented command nothing runs is the failure the fresh-clone job exists to
+prevent.
 
-**`ForwardedResponse.Body` is bytes and is returned unaltered.** Stage 2 asserts against the same
-golden transcript Stage 1 does, so any re-encoding at the edge fails it.
+**`readWritePauseMs` is a pair because the two instances are configured differently**: the instance
+under test carries the pause, the second is sent inside it. Nothing else distinguishes them — the
+instances are anonymous and interchangeable, which is what makes the two-instance proof mean
+anything.
 
-**`Trace` is the ambient scope's `TraceContext`**, read from `IOperationScopeAccessor` and written to
-the outbound `traceparent` by the forwarder. The edge sets the header itself because Platform's
-Observability package deliberately does not wire HttpClient instrumentation; there is consequently no
-client-side span for the hop, and no member here to carry one.
+```ts
+export interface ConformanceTarget {
+  readonly label: string;
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  seedCorruptProfile(profileId: string): Promise<void>;
+  seedProfileWriteFailure(profileId: string): Promise<void>;
+}
+
+export function runPortConformance(
+  target: ConformanceTarget,
+): Promise<Outcome<void, ConformanceError>>;
+```
+
+**One assertion set, run over two targets**, which is what makes it a conformance suite rather than a
+second set of unit tests. It covers `sessions.get/put`, `saves.get/put` and `profiles.load/save`; the
+three profile outcomes; the set-union merge including the divergence the durable `save` deliberately
+carries; and the round trip that keeps host metadata out of game state.
+
+**The two seeding methods exist because the two targets reach the same outcome by different
+mechanisms** — a malformed raw entry against the engine's in-memory profile store, a row with an
+unrecognised `format_version` against the durable one. `seedProfileWriteFailure` must break the
+profile write and **only** the profile write, since the criterion it serves is that a committed
+session write survives it.
+
+**The reference target's `persistence` is the workload's own map-backed implementation, not the
+engine's.** The engine exports the `SessionPersistence` *type* and no implementation of it — its
+in-memory session store keeps private `Map`s and treats `persistence` as an optional host port
+(verified at `0.6.1`). `createInMemoryProfileStore` *is* an engine-supplied `ProfileStore`, so half
+of the design's *"the engine's in-memory implementations"* is literal and half resolves to G1's
+`inMemoryPersistence()` ([Additions](#additions-requiring-a-decision-log-entry), item 2).
+
+**The answer the suite returns is "yes for five methods, conditionally for the sixth."**
+`profiles.save` is the one method where the two implementations are asserted to *differ* — the
+durable store's merge is additive where the engine's replaces — so for that method the shared
+assertion cannot establish conformance. What stands in its place is a property of the engine's
+*caller*, asserted directly: every `save` the engine issues carries the loaded set plus additions,
+read off `upsertAchievements` at `0.6.1`.
 
 ---
 
 ## Persisted schemas
 
-**There is no database, no table and no collection.** Sessions and saves live in the workload's
-process memory and are lost on restart, by design. Nothing in G1 survives a process, and the absence
-is the brief's non-goal rather than an omission — so there is no schema to migrate and no existing
-data for a migration to act on.
+**G2 is this repository's first schema.** There is no existing data on any table below, so each
+table's migration story begins at creation; what governs every migration *after* the first is the
+standing rule in the last subsection.
 
-Five files carry state across a process boundary. Each is listed with what happens to an existing
-one when it changes.
+All four tables live in one PostgreSQL database, in one schema, provisioned by the committed compose
+file and brought to head by `node-pg-migrate` under its own advisory lock.
+
+### `session`
+
+| Column | Type | Null | Owner | Notes |
+|---|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host | Primary-key member |
+| `session_id` | `text` | not null | Engine | Primary-key member; minted by `RecordIdSource` |
+| `blob` | `text` | not null | Engine | The canonical serialization, byte for byte |
+| `audience` | `text` | not null | Engine | `check (audience in ('player','ai'))` |
+| `attempt_counter` | `integer` | not null | Engine | Stored because the record carries it. **Not the lock** |
+| `replay_compatible` | `boolean` | not null | Engine | |
+| `engine_created_at` | `text` | not null | Engine | The engine's `Clock` output, verbatim |
+| `engine_updated_at` | `text` | not null | Engine | Likewise |
+| `profile_id` | `text` | null | Engine | `null` ⇄ key absent on the record |
+| `version` | `bigint` | not null | **Host** | **The optimistic lock.** `1` on insert, `+1` on every accepted update |
+| `engine_version` | `text` | not null | Host | The engine package version that produced `blob` |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host | Database clock |
+| `row_updated_at` | `timestamptz` | not null | Host | Database clock, on every accepted write |
+| `expires_at` | `timestamptz` | not null | Host | Derived in SQL as `now() + <session idle TTL>` on every accepted write |
+
+- **Primary key** `(tenant_id, session_id)`.
+- **Index** on `(expires_at)`, for the sweep. It is the only non-key access path any statement in G2
+  takes.
+- **`blob` is `text`, never `json` or `jsonb`.** `jsonb` reorders members, collapses duplicates and
+  renormalises numbers; a blob that round-trips through it is not the same bytes, and byte identity
+  is the effort's first criterion. `text` also makes the column opaque to the database, which is the
+  correct relationship — the store must not be able to reason about game state.
+- **The engine's two instants are `text` and the host's three are `timestamptz`.** Storing the
+  engine's strings as timestamps would reformat them on read, so under the replay profile the fixed
+  instant would come back in the database's rendering rather than the engine's.
+- **Migration story:** created by the first migration, empty. No backfill exists and none is
+  possible; `engine_version` in particular is the one host column that cannot be reconstructed for a
+  row written before it existed, which is why it is taken now.
+
+### `save`
+
+| Column | Type | Null | Owner |
+|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host |
+| `save_id` | `text` | not null | Engine |
+| `campaign_id` | `text` | not null | Engine |
+| `blob` | `text` | not null | Engine |
+| `saved_at_seq` | `integer` | not null | Engine |
+| `audience` | `text` | not null, `check (audience in ('player','ai'))` | Engine |
+| `profile_id` | `text` | null | Engine |
+| `engine_version` | `text` | not null | Host |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host |
+| `expires_at` | `timestamptz` | not null | Host — derived as `now() + <save TTL>` at write |
+
+- **Primary key** `(tenant_id, save_id)`. **Index** on `(expires_at)`.
+- **No `version` column**, and the absence is a decision — see `SaveRow` above.
+- **`saves.put` is an upsert, not a bare insert**, because the port's method is `put` and an
+  implementation that failed on a re-put would be narrower than the interface it claims to fill. **On
+  a re-put every host column is recomputed**: a re-put is a write, and a host column describing the
+  first one would then describe nothing.
+- **Migration story:** as `session`.
+
+### `profile`
+
+| Column | Type | Null | Owner |
+|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host |
+| `profile_id` | `text` | not null | Engine |
+| `format_version` | `integer` | not null | Engine — `1` at this release |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host |
+| `row_updated_at` | `timestamptz` | not null | Host |
+
+- **Primary key** `(tenant_id, profile_id)`. No `expires_at` and no index beyond the key.
+- **`format_version` exists so `profile_corrupt` stays a reachable, testable outcome** against a
+  normalised store — the same reason the engine's in-memory profile store keeps raw entries.
+- **Migration story:** created empty. **`format_version` may not be bumped in the release that first
+  writes the new format.** A rolling deploy would otherwise have a newer instance write `2`, an older
+  instance classify it `profile_corrupt`, and the same player hold achievements on one instance and
+  none on the other for the length of the deploy — silently, since `profile_corrupt` is a warning on
+  a `200`. Read support ships first; write support ships in a later release.
+
+### `profile_achievement`
+
+| Column | Type | Null | Owner |
+|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host |
+| `profile_id` | `text` | not null | Engine |
+| `campaign_id` | `text` | not null | Engine |
+| `achievement_id` | `text` | not null | Engine |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host |
+
+- **Primary key** `(tenant_id, profile_id, campaign_id, achievement_id)`. **Append-only**, written by
+  `insert … on conflict do nothing`.
+- **Achievement ids are unique only within a campaign**, which is why `campaign_id` is in the key.
+- Set union is *conflict-free*: two instances awarding two different achievements to one profile at
+  the same moment both land, with no lock and no lost write.
+- **Migration story:** created empty. **Neither profile table has an `expires_at` and the sweep does
+  not touch them.** The accepted consequence is that both grow monotonically for the life of the
+  deployment — there is no principal to scope a bound to until G3, and a profile is the row an
+  account surface will own.
+
+### Schema bookkeeping and the rule for every migration after the first
+
+One migrations table, owned by `node-pg-migrate` and not by this contract. Each migration applies in
+its own transaction under the tool's advisory lock, so two instances starting together cannot both
+apply one migration and no partial schema survives a failure.
+
+**Every migration after the first must be backward compatible with the previously deployed code**,
+because two instances share one store and are not restarted atomically. Additive columns with
+defaults; never a rename or a narrowing in one step. **This is a rule about data formats as well as
+column shapes** — `profile.format_version` above is the same two-step.
+
+### Artifacts carried across a process boundary
+
+G1's five — the contract package, the authored row set, the replay fixture, the golden transcript and
+the determinism dump — are unchanged, and [`g1/20-contract.md`](g1/20-contract.md) stays their home.
+**The fixture and the golden transcript gain no rows**: the same ten operations are replayed against
+a different store, and adding a profile-carrying step would have given the byte-identity proof a
+second job.
+
+Two are added:
 
 | Artifact | Written by | Read by | Migration story |
 |---|---|---|---|
-| **The contract package** | The generator, in the contract repository | The workload, at startup | Published under its own semantic version and pinned by the workload. A regeneration produces a new version; an existing one is never rewritten, which is what a version-pathed `$id` exists to guarantee. Does not reach `1.0.0` before its generator has rejected something. |
-| **The authored row set** | A human, in the contract repository | The generator | Reviewed as a diff. Adding a row is additive; removing one is a contract major version, because a pinned consumer's routes would disappear. An engine version bump with no matching row edit fails the arity gate, so the row set cannot silently fall behind. |
-| **The replay fixture** | A human, committed | Both runs of the proof | Committed, never generated per run. A change to it invalidates the golden transcript, and the two are regenerated and reviewed in one change or the suite goes red — which is the intended coupling, not a hazard. |
-| **The golden transcript** | The proof, regenerated deliberately | Both comparisons | Committed. Regenerated only as an explicit act and reviewed as a diff; **never rewritten by a passing test.** A regeneration that changes bytes is a change to the projection and is reviewed as one. |
-| **The determinism dump** | The workload, at graceful shutdown, replay profile only | The harness, once | Ephemeral. Overwritten each run, never committed, never read by anything but the harness in the same run. With the default profile it is not written at all, and a test asserts that. |
-
-**None of these is reachable by a caller.** The dump in particular is a file written by a non-default
-startup profile, is not an endpoint, and no route names it.
+| **The compose file** | A human, committed under `workloads/game-service/` | The `game-service` CI job and the README's reader, by the identical command | Reviewed as a diff. It provisions the store and **nothing else** — it starts no workload instance, supervises none, and describes no deployment. It pins the server encoding to `UTF8` and the initdb locale explicitly rather than inheriting the image's |
+| **The migration set** | A human, committed, ordered | `node-pg-migrate`, at every startup | Append-only. A migration that has been applied anywhere is never edited; a correction is a new migration. The backward-compatibility rule above governs each one |
 
 ---
 
 ## Public signatures
 
 Internal helpers are out of scope. Everything below crosses a module boundary named in the design.
+A signature G1 declared and G2 does not change is not repeated.
 
-### The generator — contract repository
+### Migrations — workload
 
 ```ts
-export interface GenerationInput {
-  readonly engineVersion: SemanticVersion;
-  readonly contractVersion: SemanticVersion;
-  readonly wireVersion: WireVersion;
-  readonly rows: readonly AuthoredRow[];
-  readonly statusMapping: StatusMapping;
+export function migrateToHead(
+  connection: StoreConnection,
+): Promise<Outcome<void, MigrationError>>;
+```
+
+**One call: bring this schema to head.** It runs under the migration tool's own advisory lock, which
+is the property that makes two instances starting together safe and is the reason the tool was taken
+rather than a runner hand-rolled for two tables.
+
+### Store — workload
+
+```ts
+export interface DurableStore {
+  persistenceForRequest(): SessionPersistence;
+  readonly profiles: ProfileStore;
+  readonly lifecycle: LifecycleProbe;
+  readonly serialization: StoreSerializationHandle;
+  check(): Promise<Outcome<void, StoreError>>;
+  sweepOnce(): Promise<Outcome<SweepResult, StoreError>>;
+  close(): Promise<void>;
 }
 
-export function generate(
-  input: GenerationInput,
-): Promise<Outcome<ContractPackage, GenerationError>>;
+export function openDurableStore(
+  configuration: DurableStoreConfiguration,
+  engineVersion: SemanticVersion,
+): Promise<Outcome<DurableStore, StoreError>>;
 ```
 
-**`generate` is the only entry point**, and every gate the design names runs inside it: arity, error
-coverage, closed request and response schemas, no response schema resolving to the envelope type, and
-no row carrying the determinism profile. A gate failure returns a `GenerationError` and emits no
-artifact — there is no partial output for a build step to pick up.
+**`persistenceForRequest` is the only per-request member.** The pool, the schema, the profile store,
+the probe and the serialization handle are all process-lived; what a request gets is a fresh adapter
+holding an empty `ReadVersionMap`.
 
-### Contract — workload
+**`openDurableStore` takes the resolved engine version because the store stamps it**, and it takes
+nothing else from composition. It asserts `read committed` on connect rather than inheriting it: at
+`repeatable read` or `serializable` the guarded `update` raises a serialization failure instead of
+reporting zero rows, every conflict would arrive as `storage_failure` and a `503`, and the one
+criterion the brief says no work on this side can otherwise deliver would fail by configuration.
 
-```ts
-export function loadContract(
-  source: Uint8Array,
-): Outcome<ContractPackage, ContractLoadError>;
+**`check` is what readiness calls, on every probe.** It evaluates the store rather than reporting a
+remembered outcome.
 
-export function findRow(
-  contract: ContractPackage,
-  operation: OperationId,
-): OperationRow | null;
+**`sweepOnce` is the statement; the timer is Composition's.** The sweep runs under a statement
+timeout, catches its own driver errors, and returns them — it never escapes a timer as an exception.
 
-export function statusFor(
-  contract: ContractPackage,
-  code: WireErrorCode,
-): Outcome<HttpStatus, ContractLoadError>;
-```
+**`close` releases the pool and returns nothing.** There is no failure a caller could act on at
+shutdown, and a close that reported one would only complicate the exit path.
 
-**`statusFor` returns an `Outcome` rather than a status with a fallback.** A code with no mapping is
-a defect the generation gate should already have caught, and the one thing it must not become is a
-`500` nobody attributes.
-
-**`findRow` returns `null` rather than failing.** An unmatched segment is `unknown_operation`, which
-the caller raises with the correlation it already holds; a result type here would be two ways to say
-one thing.
+**Store imports the engine's *type* declarations and never its runtime.** It maps columns to a
+`StoredSessionRecord`; it never deserialises, never validates game state, and never calls the engine.
 
 ### Composition — workload
 
 ```ts
 export interface ComposedWorkload {
-  readonly store: SessionStore;
+  readonly stores: StoreProvider;
+  readonly lifecycle: LifecycleProbe;
   readonly serialization: StoreSerializationHandle;
+  readiness(): Promise<ProbeResult>;
+  close(): Promise<void>;
 }
 
 export function compose(
   configuration: WorkloadConfiguration,
   contract: ContractPackage,
 ): Promise<Outcome<ComposedWorkload, CompositionError>>;
-
-export function writeDeterminismDump(
-  composed: ComposedWorkload,
-  profile: ReplayDeterminismProfile,
-): Promise<Outcome<void, CompositionError>>;
 ```
 
-**`compose` owns the engine-version assertion**, which is why it takes the contract at all — it uses
-nothing else from it. A mismatch returns `EngineVersionMismatch` and no store is built.
+**`compose`'s parameters are unchanged and its result is widened.** It still owns the engine-version
+assertion, which is why it takes the contract at all. G1's `ComposedWorkload.store: SessionStore`
+becomes `stores: StoreProvider`; every other member is new.
 
-**`ComposedWorkload` exposes the serialization handle and the surfaces do not receive it.** The two
-statements are the same statement: the value exists on this type and is passed to the shutdown writer
-and to the harness, and to nothing that builds a route.
+**`compose` returns successfully when the store is unreachable.** The process stays up, reports live,
+reports **not ready**, and retries with backoff — a host that refuses to start tells an operator that
+something is wrong, while a host that starts and names its failing readiness check tells them *what*.
+`StoreUnavailable` is therefore a readiness condition and not a `CompositionError`; the
+`CompositionError` variants are the ones no retry can fix.
 
-**`writeDeterminismDump` takes a `ReplayDeterminismProfile`, not a `DeterminismProfile`.** It cannot
-be called with the default profile, so "with the default profile, nothing is written" is enforced by
-the signature and asserted by a test rather than left to a branch.
+**Composition supplies a lifecycle probe for both configurations.** The in-memory one classifies
+every id as `absent`, so `unknown_session` and `unknown_save` pass through verbatim and Dispatch
+carries no branch on which store was built. A no-op implementation rather than a conditional is the
+point: the alternative puts configuration-dependent behaviour into the module whose job is to be
+transport-neutral.
+
+**Composition owns the sweep timer**, calls `sweepOnce`, and never starts a tick while its
+predecessor is still running. The in-memory configuration starts no timer.
+
+`writeDeterminismDump` is unchanged in signature; the durable configuration's
+`StoreSerializationHandle` reads
+`select session_id, blob from session where tenant_id = $1 order by session_id collate "C"`, and the
+same for saves.
+
+**The dump's ordering is pinned to `collate "C"` and that is load-bearing.** Ordering `text` under a
+locale-aware collation is locale-dependent, and the replay's ids are hyphen-and-digit dense; an
+unpinned collation makes the ordered blob set depend on the database image's locale, so two runs
+could differ in *order* while agreeing on every byte. That failure presents as a byte-identity
+failure, which is the one signal in the suite that must mean exactly one thing.
 
 ### Dispatch — workload
 
 ```ts
 export function createDispatcher(
   contract: ContractPackage,
-  store: SessionStore,
+  stores: StoreProvider,
+  lifecycle: LifecycleProbe,
 ): Dispatcher;
 ```
 
-**Dispatch takes the store, never the composition**, so it has no path to the serialization handle.
-It holds no game logic: it does not retry, does not reinterpret a code, does not decide which actions
-are available, and caches nothing.
+**Dispatch takes the provider and the probe, never the composition**, so it still has no path to the
+serialization handle. `Dispatcher` and `DispatchOutcome` are unchanged: the conflict arrives as an
+`EngineErrorCode` like every other engine reason code, and the two expiry codes are raised by
+Dispatch itself after consulting the probe.
 
-### HTTP surface — workload
+**Expiry classification happens only on the failure path.** When the engine raises `unknown_session`
+or `unknown_save`, Dispatch consults the probe; expired-and-retained becomes `session_expired` or
+`save_expired`, and genuinely absent — or swept past the horizon — passes the engine's own code
+through verbatim.
 
-```ts
-export interface HttpSurface {
-  handle(request: WireRequest): Promise<WireResponse>;
-}
+**Dispatch retries nothing.** Not on conflict, not on `storage_failure`, nowhere. A retried
+`submitAction` is a second action, and merging two is explicitly unavailable.
 
-export function buildHttpSurface(
-  contract: ContractPackage,
-  dispatcher: Dispatcher,
-): Outcome<HttpSurface, SurfaceBuildError>;
-
-export function canonicalEncode(value: JsonValue): Outcome<CanonicalJson, EncodingError>;
-
-export function validateRequest(
-  contract: ContractPackage,
-  row: OperationRow,
-  body: JsonValue,
-): Outcome<ValidatedArguments, ValidationFailure>;
-
-export function validateResponse(
-  contract: ContractPackage,
-  row: OperationRow,
-  value: JsonValue,
-): Outcome<void, ValidationFailure>;
-```
-
-**`buildHttpSurface` returns an `Outcome`, and it runs before the listener binds.** A table the
-service cannot satisfy fails startup rather than producing a route that fails on first use.
-
-**`validateResponse` runs on every response, including in the replay run.** Generation proves the
-schema describes the type; it does not prove the handler returned that type unaltered. The schema is
-closed, so an added field is a failure rather than a tolerated extra.
-
-**`canonicalEncode` is the wire's only encoder.** Its rule is the engine's canonical serialization
-rule: JSON, object members ascending by code unit, no insignificant whitespace, members whose value
-is `undefined` omitted, and non-finite numbers rejected rather than coerced.
-
-### MCP surface — workload
+### Probes — workload
 
 ```ts
-export interface McpToolDescriptor {
-  readonly name: McpToolName;
-  readonly inputSchema: JsonSchemaDocument;
+export interface ProbeGate {
+  readonly surface: ProbeSurface;
+  markSurfacesBuilt(): void;
+  markListening(): void;
 }
 
-export type McpToolOutcome =
-  | { readonly kind: "result"; readonly value: CanonicalJson; readonly correlation: CorrelationId }
-  | { readonly kind: "error"; readonly error: WireErrorBody };
-
-export interface McpSurface {
-  listTools(): readonly McpToolDescriptor[];
-  callTool(name: McpToolName, args: JsonValue, inboundTraceParent: string | null): Promise<McpToolOutcome>;
-}
-
-export function buildMcpSurface(
-  contract: ContractPackage,
-  dispatcher: Dispatcher,
-): Outcome<McpSurface, SurfaceBuildError>;
+export function createProbeSurface(readiness: () => Promise<ProbeResult>): ProbeGate;
 ```
 
-**`listTools()` has exactly as many entries as the table has rows**, which is the engine's own
-standard for this class of claim and is checkable by counting. There is no tool that is not a row and
-no row that is not a tool.
-
-**`callTool` validates against the same request schema and calls the same `Dispatcher`.** It takes no
-row-specific argument type, because an MCP-specific path is precisely what must not exist.
-
-**`callTool` takes the raw `inboundTraceParent`, derives one `correlation` from it, and both outcome
-arms carry that correlation** — the result arm on `correlation` directly, the error arm inside
-`WireErrorBody` as every error body already does. A successful tool call is a response like any
-other under invariant 29. `callTool` derives, rather than receives, the rest of the `RequestContext`:
-`operation` from the row `name` resolves to, `wireVersion` from the contract, `correlation` from
-`inboundTraceParent` — none of it is the transport's to supply, because none of it is knowable before
-the row lookup `callTool` alone performs.
-
-### Probes and process lifecycle — workload
-
-```ts
-export interface WorkloadProcess {
-  readonly listening: ListenEndpoint;
-  readonly probes: ProbeSurface;
-  shutdown(): Promise<Outcome<void, ShutdownError>>;
-}
-
-export function startWorkload(
-  configuration: WorkloadConfiguration,
-): Promise<Outcome<WorkloadProcess, StartupError>>;
-```
-
-**`startWorkload` performs the design's startup order and returns only after the listener is bound.**
-Configuration, contract load, version assertion, composition, both surfaces, then bind.
-
-**`shutdown` is where the dump is written**, under the replay profile only, before the listener stops
-accepting. A failed write is a `ShutdownError` and is reported; it does not become a silent absence
-the harness reads as an empty dump.
+**Readiness is now the conjunction of three things** — surfaces built, listener bound, and the store
+answering — and the third is supplied as a thunk so the probe surface never learns what a store is.
 
 ### Proof harness — test scope
 
 ```ts
-export interface HostedTarget {
-  readonly baseAddress: string;
-  shutdown(): Promise<Outcome<void, ShutdownError>>;
-  readDump(): Promise<Outcome<StoreSerializationSnapshot, DumpReadError>>;
-}
-
-export function runInProcess(
-  fixture: ReplayFixture,
-  contract: ContractPackage,
-): Promise<Outcome<RunResult, ReplayError>>;
-
-export function runHosted(
+export function runDurableReplay(
   fixture: ReplayFixture,
   target: HostedTarget,
+  schema: RunSchema,
 ): Promise<Outcome<RunResult, ReplayError>>;
 
-export function compareSerializations(
-  expected: StoreSerializationSnapshot,
-  actual: StoreSerializationSnapshot,
+export function assertNonEmpty(
+  snapshot: StoreSerializationSnapshot,
+  expectedSessions: number,
+  expectedSaves: number,
 ): ComparisonResult;
-
-export function compareTranscripts(
-  expected: Transcript,
-  actual: Transcript,
-): ComparisonResult;
-
-export function readDeterminismDump(
-  contents: Uint8Array,
-): Outcome<StoreSerializationSnapshot, DumpReadError>;
 ```
 
-**Both comparisons are byte comparisons and neither normalizes.** `compareSerializations` compares
-`blob` strings; `compareTranscripts` compares encoded strings. Neither takes an options parameter,
-and the absence of one is deliberate — an ignore-list is how a byte-identity suite stops comparing
-anything.
+**`assertNonEmpty` runs before comparison A, not instead of it.** Two empty ordered sets compare
+byte-identical, so a dump that read the wrong schema would pass comparison A while comparison B
+passed on its own merits — the responses were served correctly and only the dump was misdirected.
+The counts are asserted against the fixture's own expected numbers rather than against zero, since
+"not empty" is satisfied by one row as easily as by all of them.
 
-**`runInProcess` composes the engine and store directly and drives them through a `Dispatcher`.** It
-does not call the store's methods itself: the row's projection and canonical encoding are the same
-code both runs use, and only the transport differs. A run that called the store directly would
-diverge from the hosted run on `save-game` before any determinism defect could.
-
-**`HostedTarget` is what makes one harness serve both stages.** `baseAddress` is the workload in
-Stage 1 and the edge in Stage 2; `shutdown` and `readDump` address the workload in both, because the
-dump is a file the workload writes rather than a value read out of its memory. That separation is the
-whole reason the dump was paid for.
-
-**`runHosted` sends strictly sequentially**, each response fully read before the next request. It
-exposes no concurrency option — pipelining would let two actions reach one session in an order the
-fixture did not specify, and the failure would present as a byte-identity break in a harness that
-caused it.
+`runInProcess`, `runHosted`, `compareSerializations`, `compareTranscripts` and `readDeterminismDump`
+are G1's and are unchanged. **G1's in-memory replay stays in the suite and stays green** — two proofs
+passing is not evidence that the first still does.
 
 ### The edge — .NET
 
 ```csharp
-public interface IGameWorkloadForwarder
+public sealed record GameEdgeOptions
 {
-    Task<Result<ForwardedResponse, EdgeError>> ForwardAsync(
-        ForwardedRequest request,
-        CancellationToken cancellationToken);
+    public required Uri WorkloadBaseAddress { get; init; }
+    public required TimeSpan ForwardTimeout { get; init; }
+    public required TimeSpan ReadinessTimeout { get; init; }
 }
 
 public interface IGameWorkloadProbe
 {
-    Task<Result<EdgeError>> ProbeLivenessAsync(CancellationToken cancellationToken);
-}
-
-public sealed class GameWorkloadReadinessCheck : IHealthCheck
-{
-    public GameWorkloadReadinessCheck(IGameWorkloadProbe probe, GameEdgeOptions options);
-
-    public HealthCheckName Name { get; }
-    public HealthCheckKind Kind { get; }
-    public HealthCheckCriticality Criticality { get; }
-    public TimeSpan Timeout { get; }
-    public bool TouchesExternalDependency { get; }
-
-    public Task<HealthCheckResult> CheckAsync(CancellationToken cancellationToken);
-}
-
-public static class GameEdgeEndpointExtensions
-{
-    public static IEndpointRouteBuilder MapGameWorkloadForwarding(
-        this IEndpointRouteBuilder endpoints);
+    Task<Result<EdgeError>> ProbeReadinessAsync(CancellationToken cancellationToken);
 }
 ```
 
-**`Kind` is `Readiness`, `Criticality` is `Required`, and `TouchesExternalDependency` is `true`.**
-The last is what makes Platform reject this check as liveness at registration, which is the
-structural form of "liveness does not depend on the workload".
+**One change, in one place.** The edge's readiness check probes the workload's **readiness** endpoint
+rather than its liveness endpoint: with a durable store a workload can be alive and unable to serve,
+and an edge that reports ready while every forward will `503` tells an operator less than nothing.
 
-**`Required` is the decision the brief demands, made in a property.** An unhealthy required check
-produces an unhealthy aggregate and therefore not-ready. `Optional` would produce `Degraded`, which
-would be right if there were another backend; there is exactly one.
+`GameEdgeOptions.LivenessTimeout` is **renamed** to `ReadinessTimeout` — a property named for
+liveness that bounds a readiness probe is a name that will be read as the thing it is not. The
+rename and the corresponding `appsettings.json` key change land in one commit
+([Additions](#additions-requiring-a-decision-log-entry), item 4).
 
-**`ProbeLivenessAsync` probes the workload's liveness endpoint and no game operation.** A readiness
-check that played a game would create sessions nobody asked for.
-
-**There is no `AddGameEdge` and no second registration call.** The edge is composed by
-`AddPlatformWebHost()`; the forwarding route and the readiness check are ordinary application code
-registered the way any application registers a route and a service. A second mandatory Platform-shaped
-call would be the bespoke wiring D3's own done-criterion forbids at its first consumer.
-
-**Neither interface exposes a retry.** The forwarder does not retry a failed forward, and nothing in
-this contract gives it a place to record an attempt.
-
-### The result type — workload and generator
-
-```ts
-export type Outcome<T, E> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: E };
-```
-
-**Every error crossing a module boundary in TypeScript is an `Outcome` failure carrying a typed
-error value.** The single exception is the engine's own `SessionStoreError`, which is thrown because
-none of `SessionStore`'s signatures has an error channel — Dispatch catches it at the boundary and
-converts it to a `DispatchOutcome` error arm, and it never travels further as an exception.
+`GameWorkloadReadinessCheck` keeps `Unhealthy` + `Required` and `TouchesExternalDependency = true`,
+for G1's reason: one backend, one job. `IGameWorkloadForwarder`, `ForwardedRequest`,
+`ForwardedResponse` and `MapGameWorkloadForwarding` are unchanged. **Nothing else at the edge moves**
+— no load balancing across the two instances, no session affinity, no streaming, no package boundary.
+**The two-instance contention proof addresses the two workload instances directly, not through the
+edge.**
 
 ---
 
 ## Error semantics
 
-Every variant below is a value with a stable `code`. **No bare exceptions and no string errors cross
-a module boundary.** Each module's error type is a discriminated union on `code`.
+Every variant below is a value with a stable `code`, and each module's error type is a discriminated
+union on `code`. **No bare exceptions and no string errors cross a module boundary.** The single
+standing exception is the engine's own `SessionStoreError`, which is thrown because no `SessionStore`
+signature has an error channel — and, from G2, the branded `SessionPersistenceConflict` the store
+adapter throws for the engine to recognise. Both are caught at the boundary and never travel further
+as exceptions.
 
-### Contract — `ContractLoadError`
+### Store — `StoreError`
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `MalformedArtifact` | The contract package cannot be parsed, or a required member is absent | No | Fails startup, naming the member. A retry restores the same bytes |
-| `UnsupportedContractVersion` | The artifact's major version is not one this workload understands | No | Fails startup, naming both versions |
-| `UnmappedErrorCode` | `statusFor` is called with a code the mapping does not carry | No | Fails the request as an internal failure and fails the build's gate assertion. A generation gate should have made this unreachable |
+| `Unreachable` | The pool cannot connect, or a connection is lost mid-statement | **Yes** — the condition is transient by nature | Readiness reports unhealthy; a request in flight becomes `storage_failure` → `503` |
+| `PoolExhausted` | A connection acquisition exceeds its timeout | **Yes** | As above. The pool is sized by configuration with a stated default and **is not tuned** — performance is a binding non-goal |
+| `IsolationLevelUnsupported` | The connection does not report `read committed` after the store asserts it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
+| `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path |
+| `IdCollision` | A primary-key violation on a `createSession` or `loadGame` insert | **No** | `storage_failure` → **503**, *not* the conflict code. A collision is a storage anomaly, not a lost update, and conflating them would make the conflict code mean two things |
+| `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `internal_failure` → `500`. This is store corruption; a caller cannot fix it and the workload must not guess |
+
+**`StoreError` never carries a conflict.** A conflict is not a store failure — it is a successful
+statement that matched no row — and it leaves the adapter as the branded throw, not as an `Outcome`
+failure. That separation is what keeps `409` and `503` answers to different questions.
+
+**A `StoreError` on the read-version re-read is not raised at all.** Zero rows affected has already
+established the one fact the caller acts on, so the classifier answers `conflict` and swallows its
+own driver error. Letting it escape would convert a known non-outage into a `503` precisely when the
+store is degraded and races are most likely, defeating the criterion the mechanism was added to
+serve.
+
+### Migrations — `MigrationError`
+
+| Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|
+| `Unreachable` | The runner cannot connect | **Yes** | Startup retries with backoff, reporting not ready. No partial schema exists — each migration applies in its own transaction |
+| `LockTimeout` | The advisory lock is not acquired within the runner's bound | **Yes** | As above. The other instance is mid-migration; the next attempt finds the schema at head |
+| `MigrationFailed` | A migration's SQL fails | **No** | The process stays up and not-ready, naming the migration. A retry re-runs the same SQL against the same schema |
 
 ### Composition — `CompositionError`
 
-| Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| `EngineVersionMismatch` | The contract's recorded engine version differs from the resolved engine package's | No | Fails startup, stating both versions. The listener never binds |
-| `ContentRegistryInvalid` | The content registry does not build, or the fixture's campaign is not in it | No | Fails startup, naming the campaign |
-| `DumpWriteFailed` | The determinism dump cannot be written at shutdown | No | Reports the failure and exits non-zero. The harness must not read a stale or absent dump as an empty one |
-
-### Dispatch — `DispatchFailure`
-
-Dispatch returns no error type of its own. Its failure channel is `DispatchOutcome`'s error arm,
-carrying an `EngineErrorCode` unchanged.
-
-| Code class | Raised when | Retryable | Caller does |
-|---|---|---|---|
-| Engine reason code | The store threw a `SessionStoreError` | No, uniformly in G1 | The surface maps the code to a status through the contract's mapping and returns the code **verbatim**. A paraphrase would break the client's own message lookup |
-
-**`storage_failure` is declared and unreachable in G1.** The workload's `SessionPersistence` is
-map-backed and total. It has a mapping because the gate requires one, and the mapping is `503`.
-
-**A rejected action is not an error here.** An unknown action id or an unmet requirement is a
-successful `DispatchOutcome` carrying the store's unsuccessful result, and it becomes a `200`.
-
-### HTTP and MCP surfaces — `WireError`
-
-| Variant | `code` | Status | Raised when | Retryable | Caller does |
-|---|---|---|---|---|---|
-| `UnsupportedVersion` | `unsupported_version` | `404` | The path's version prefix is not the contract's `wireVersion` | No | Address the supported version. The body's code distinguishes this from the next |
-| `UnknownOperation` | `unknown_operation` | `404` | The operation segment matches no row | No | Read the tool list or the table. Same status, different code, by design |
-| `MalformedPayload` | `malformed_payload` | `400` | Request-schema validation fails | No | Fix the payload. **Nothing happened** — the engine was never reached, no session was created and no action was attempted, so nothing is idempotency-sensitive |
-| `EngineRejection` | The engine's code, verbatim | From the mapping | The store threw | No | Render the code through the engine's own string table |
-| `InternalFailure` | [Unresolved 2](#unresolved) | `500` | An unhandled rejection reaches the surface, or response validation fails | No | Read the log line the correlation identifies. The body carries **never** exception text and **never** payload content |
-
-**Response-validation failure is an internal failure, not a passed-through body.** An unvalidated
-response is not returned; the request fails.
-
-### Surface construction — `SurfaceBuildError`
+G1's three variants are unchanged. One is added.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `DuplicateRoute` | Two rows derive the same path segment | No | Fails startup before binding, naming both rows |
-| `DuplicateToolName` | Two rows carry the same `mcpTool` | No | Fails startup before binding, naming both rows |
-| `MissingSchema` | A row references a `SchemaRef` the artifact's schema set does not contain | No | Fails startup, naming the row and the reference |
+| `StorageConfigurationInvalid` | A `durable` profile carries an unusable connection string, a non-positive pool size, or a retention horizon not greater than the configured forward timeout | **No** | Fails startup, naming the setting. This is the one storage condition that aborts rather than degrading to not-ready, because no amount of waiting makes an invalid setting valid |
 
-**All three fail before the listener binds**, which is what makes the design's ordering claim
-assertable rather than incidental.
+**Store unreachability is deliberately not here.** It is a readiness condition, reported through
+`ProbeSurface.readiness` and retried with backoff, for the reason stated with `compose`.
 
-### Encoding and validation — `EncodingError`, `ValidationFailure`
+### Dispatch — the two new outcomes
 
-| Type | Variant | Raised when | Retryable | Caller does |
+`DispatchOutcome` is unchanged in shape. Two codes are new on its error arm.
+
+| Code | Origin | Status | Retryable | Caller does |
 |---|---|---|---|---|
-| `EncodingError` | `NonFiniteNumber` | A value contains `NaN` or an infinity | No | An internal failure. Coercion is not available — it would make two runs' bytes depend on a coercion rule |
-| `EncodingError` | `UnsupportedValue` | A value is not a `JsonValue` — a `bigint`, a function, a symbol | No | An internal failure |
-| `ValidationFailure` | `SchemaViolation` | A payload or a response does not satisfy its schema | No | On a request, `malformed_payload`; on a response, an internal failure. **The violation detail never crosses the wire** |
+| `concurrent_modification` | The engine, recognising the store's brand | **409** | **No, not automatically** | *Your read is stale.* Re-read with a query operation, then decide. Never resubmit blind: a retried `submitAction` is a second action |
+| `session_expired` | Dispatch, after consulting the lifecycle probe on `unknown_session` | **404** | No | The session existed and no longer does. Start a new one, or load a save |
+| `save_expired` | Dispatch, after consulting the lifecycle probe on `unknown_save` | **404** | No | As above |
 
-### Startup and shutdown — `StartupError`, `ShutdownError`
+**A lifecycle probe that fails is read as `absent`, so the engine's code passes through unchanged.**
+The caller sees `unknown_session` or `unknown_save`, which is true — the workload cannot establish
+that the row was ever there. Escalating to `503` would convert an honest `404` into an outage code on
+the one path that reaches the probe, and it would do so precisely when the store is degraded, which
+is the same mistake the re-read classifier's rule exists to prevent. **The cost, stated:** while the
+store is degraded a session that had merely expired is answered as one that never existed, and
+nothing on the wire says which — the readiness check is what surfaces the underlying condition.
 
-| Type | Variant | Raised when | Retryable | Caller does |
-|---|---|---|---|---|
-| `StartupError` | `ConfigurationInvalid` | A required setting is absent, or a value is outside its range | No | Exits non-zero, naming the setting |
-| `StartupError` | `ContractLoad` | Carries a `ContractLoadError` | No | Exits non-zero |
-| `StartupError` | `Composition` | Carries a `CompositionError` | No | Exits non-zero |
-| `StartupError` | `SurfaceBuild` | Carries a `SurfaceBuildError` | No | Exits non-zero |
-| `StartupError` | `ListenerBindFailed` | The configured endpoint cannot be bound | No | Exits non-zero, naming the endpoint |
-| `ShutdownError` | `DumpWriteFailed` | Carries a `CompositionError` | No | Exits non-zero |
+**Both expired codes map to 404, not 410**, and the *code* carries the distinction — G1 already
+established that `unsupported_version` and `unknown_operation` share a status and are told apart by
+their codes, and one convention with no exceptions is worth more than a semantically prettier second
+one.
 
-**Every startup variant aborts, and none warns.** A service that starts against a contract describing
-a different engine serves a wire its own schemas do not describe, and every downstream assertion in
-this design becomes conditional.
+**Past the retention horizon the answer honestly degrades to `unknown_session`.** The row is gone and
+nothing distinguishes it from an id that never existed. That is the price of not keeping tombstones
+forever, and it is documented rather than defended.
 
-### The generator — `GenerationError`
+**A rejected action is still a `200`, and a conflict is not a rejected action.** A rejection is the
+game's verdict on a legal request; a conflict is the transport failing to commit one.
 
-| Variant | Raised when | Retryable | Caller does |
+### Profiles — the three warnings
+
+The engine's `ProfileWarningCode` members are used unchanged and none is invented.
+
+| Code | Raised when | Response | State left behind |
 |---|---|---|---|
-| `ArityMismatch` | A `SessionStore` method has no row, or a row names no method | No | Fails the contract build, naming both sides. **This is what fires on an engine version bump** |
-| `ErrorCodeUncovered` | A declared `SessionStoreErrorCode` has no status mapping | No | Fails the contract build, naming the code |
-| `NarrowingUnknownField` | A `NarrowedField` names a member the engine's declaration does not have | No | Fails the contract build, naming the row and the member |
-| `ResponseSchemaOpen` | A response schema permits additional properties | No | Fails the contract build, naming the schema |
-| `RequestSchemaOpen` | A request schema permits additional properties | No | Fails the contract build, naming the schema. A tolerated extra member would make a request narrowing reversible from the wire |
-| `EnvelopeReachable` | A response schema resolves to the engine's envelope type | No | Fails the contract build. **This is the permanent non-goal's static gate** |
-| `DeterminismProfileInRow` | A row carries the determinism profile as a field | No | Fails the contract build |
-| `DuplicateOperationId` | Two rows share an `OperationId` or an `McpToolName` | No | Fails the contract build, naming both |
-| `EngineResolutionFailed` | The engine package cannot be resolved for projection | No | Fails the contract build, naming the package and the registry. **Nothing retries automatically** — a silent retry over an authentication failure records a credential problem as flakiness |
+| `profile_missing` | No `profile` row for the id | The game action's `200`, carrying the warning and an empty achievement set | None |
+| `profile_corrupt` | `format_version` is not `1`, or an achievement row fails shape validation | As above | The row, untouched |
+| `profile_write_failed` | The adapter caught its own driver error on a profile write — **it returns `ok: false` and does not throw** | The game action's `200`, carrying the warning | **The session write, which already committed and is not rolled back** |
 
-### The harness — `DumpReadError`, `ReplayError`
+**None of the three ever produces a broken game**, and all three are asserted by the port-conformance
+suite — the only proof that reaches these ports at all.
+
+**No retry on `profile_write_failed`.** Achievements are re-derivable on the next action because the
+store's merge is a set union, which is the second reason the merge is a union rather than a replace.
+
+### The harness — `HarnessError`, `ConformanceError`
 
 | Type | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|---|
-| `DumpReadError` | `DumpAbsent` | No dump exists at the configured path after shutdown | No | Fails the comparison. An absent dump is never read as an empty one |
-| `DumpReadError` | `DumpMalformed` | The dump cannot be parsed | No | Fails the comparison |
-| `ReplayError` | `CoverageIncomplete` | The fixture's operation set is not equal to the table's row set | No | Fails the suite, naming the operations on each side. This is what makes "every store operation is exercised through the hosted surface" checkable by counting |
-| `ReplayError` | `UnknownOperationInFixture` | A step names an operation with no row | No | Fails the suite, naming the step |
-| `ReplayError` | `StepFailed` | A step produced an error outcome the fixture did not declare | No | Fails the suite, naming the step and the code. A replay whose steps fail is not a replay |
-| `ReplayError` | `TransportFailure` | The hosted client could not complete a request | No | Fails the suite. **No retry** — a retried step is a second action |
-| `ReplayError` | `Shutdown` | Carries a `ShutdownError` | No | Fails the suite |
-| `ReplayError` | `DumpRead` | Carries a `DumpReadError` | No | Fails the suite |
+| `HarnessError` | `SchemaCreateFailed` | The per-run schema cannot be created or migrated | No | Fails the suite. A dirty schema would surface as a primary-key violation mid-replay |
+| `HarnessError` | `SchemaDropFailed` | The per-run schema cannot be dropped afterwards | No | Fails the suite, naming the schema, so a leaked schema is reported rather than accumulated |
+| `HarnessError` | `InstanceSpawnFailed` | An instance does not report ready within its bound | No | Fails the suite, naming which of the two |
+| `HarnessError` | `InstanceShutdownFailed` | An instance does not exit | No | Fails the suite |
+| `ConformanceError` | `MethodDiverged` | A port method behaves differently across the two targets, outside the one declared divergence | No | Fails the suite, naming the method and both targets |
+| `ConformanceError` | `SeamUnavailable` | A target cannot seed a corrupt profile or a write failure | No | Fails the suite. A degradation that cannot be provoked is not asserted, and a suite that skipped it would read as coverage |
+| `ConformanceError` | `CallerPropertyViolated` | An engine `save` was observed carrying less than the loaded set plus additions | No | Fails the suite. This is the property the durable `save`'s conditional conformance rests on, so it is asserted rather than cited |
 
-### The edge — `EdgeError`
+### Inherited unchanged
 
-```csharp
-public abstract record EdgeError(string Code) : PlatformError(Code);
-```
+`ContractLoadError`, `SurfaceBuildError`, `EncodingError`, `ValidationFailure`, `StartupError`,
+`ShutdownError`, `DumpReadError`, `ReplayError`, `WireError` and `EdgeError` are G1's and are
+unchanged in shape. `WireError` gains no variant: `session_expired` and `save_expired` arrive through
+`EngineRejection`'s path as codes resolved by the mapping, exactly as every engine code does.
 
-| Variant | Status | Raised when | Retryable | Caller does |
-|---|---|---|---|---|
-| `WorkloadUnreachable` | `503` | The forward cannot connect, or the readiness probe cannot reach the workload's liveness endpoint | **No** | The caller re-reads with a query operation. **The edge does not retry** — a retry against a `submitAction` whose outcome is unknown is a second action, and merging two is explicitly not available |
-| `WorkloadTimeout` | `504` | The forward exceeds `ForwardTimeout` | **No** | Same. The state is unknown to the edge and knowable only at the workload, which is exactly the partial-failure case; G1's honest answer is a re-read, not a resubmit |
-
-**`IsRetryable` is `false` on both**, and that is a statement about this system rather than about
-HTTP: there is no idempotency key, and inventing one is Platform's API-conventions work, not G1's.
-
-**The codes on both variants are unnamed by the design** and are [Unresolved 2](#unresolved).
-
-**The edge produces no other error.** Every other status a caller sees came from the workload and was
-forwarded unaltered.
+**`storage_failure` is now genuinely reachable**, where G1 recorded it as declared and unreachable. A
+test forces it and asserts the `503`, which is what stops the code being an untested branch.
 
 ---
 
 ## Invariants
 
-Each is written to be assertable, with the module responsible for maintaining it.
+Each is written to be assertable, with the module responsible for maintaining it. **G1's 1–47 stand**;
+these continue from 48.
 
 | # | Invariant | Owner |
 |---|---|---|
-| 1 | The row set exactly covers the exported `SessionStore` interface's methods — no method without a row, no row without a method | Generator |
-| 2 | Every `SessionStoreErrorCode` the engine declares and every member of `TransportErrorCode` appears exactly once in the status mapping, and the mapping has no other entry | Generator |
-| 3 | Every response schema is closed at every object level, and none resolves to the engine's envelope type | Generator |
-| 3a | Every request schema is closed at every object level, so a narrowed request field cannot be re-supplied and no undeclared member reaches the store | Generator |
-| 4 | `httpPath` equals its row's `operation`, for every row | Generator |
-| 5 | No row carries the determinism profile in any form | Generator |
-| 6 | `OperationId` and `McpToolName` are each unique across the row set | Generator |
-| 7 | Every `NarrowedField` names a top-level member the engine's declaration actually has | Generator |
-| 8 | Every `SchemaRef` a row references resolves to a document in the same artifact's schema set | Generator |
-| 9 | No `$ref` or `$id` is dereferenced over the network, at generation or at run time | Generator, Contract |
-| 10 | `ContractPackage.engineVersion` equals the version the schemas were projected from | Generator |
-| 11 | The workload's resolved engine package version equals `ContractPackage.engineVersion`, or the process does not start | Composition |
-| 12 | The workload computes no sequence and stamps no field on a session or save record; every value is the engine's. The one thing it supplies is `RecordIdSource`, which the engine calls — and only under the replay profile | Composition |
-| 12a | With the default determinism profile, no `RecordIdSource` is supplied and the engine's own minting applies unchanged | Composition |
-| 12b | Under the replay profile, session and save ids are the same strings in every run, which is what makes comparison A's id ordering reproducible and the fixture's literal ids writable | Composition |
-| 13 | No correlation, trace id, or other host metadata is written into a session record or into any canonical serialization | Composition |
-| 14 | With the default determinism profile, no dump is written and no dump path exists to write to | Composition |
-| 15 | The determinism profile is startup configuration only — never a request field, never a header, never a route segment | Composition, HTTP surface, MCP surface |
-| 16 | `StoreSerializationSnapshot` and `DeterminismDump` carry canonical serializations only, never a host-owned record field | Composition |
-| 17 | Neither surface's module graph reaches `StoreSerializationHandle` | HTTP surface, MCP surface |
-| 18 | No response body anywhere in either transcript contains a canonical serialization | HTTP surface, MCP surface, Proof harness |
-| 19 | Both surfaces are constructed from the in-memory row set before the listener binds; a construction failure aborts startup | HTTP surface, MCP surface |
-| 20 | The number of MCP tools equals the number of table rows, and the two name sets correspond one-to-one | MCP surface |
-| 21 | Both surfaces reach the store only through one `Dispatcher` instance over one `SessionStore` | HTTP surface, MCP surface |
-| 22 | A row's request and response shapes are the same for both surfaces; no narrowing is applied by a surface | Dispatch |
-| 23 | Dispatch applies the row's projection; a surface never narrows and never widens what Dispatch returned | Dispatch |
-| 24 | A request that fails request-schema validation never reaches the store | HTTP surface, MCP surface |
-| 25 | Every response is validated against its row's closed response schema before it is encoded | HTTP surface, MCP surface |
-| 26 | An engine reason code travels to the caller verbatim; no code is paraphrased, normalized, or translated | Dispatch, HTTP surface, MCP surface |
-| 27 | Status is a function of the code through the contract's mapping, with no default branch | HTTP surface |
-| 28 | A rejected action is a `200` carrying the store's unsuccessful result; no game verdict determines a status | HTTP surface, MCP surface |
-| 29 | Every response, success or failure, carries the correlation | HTTP surface, MCP surface, Edge |
-| 30 | No error body carries exception text or payload content | HTTP surface, MCP surface, Edge |
-| 31 | A malformed inbound `traceparent` yields a fresh root and never fails the request | HTTP surface |
-| 32 | With no OTLP endpoint configured, no exporter is constructed and no outbound connection is attempted | Composition, Edge |
-| 33 | `canonicalEncode` is the only encoder on the response path, and its output reaches the socket unaltered | HTTP surface |
-| 34 | The replay is strictly sequential — each response is fully read before the next request is sent | Proof harness |
-| 35 | The fixture's operation set equals the table's row set | Proof harness |
-| 36 | Both comparisons are byte comparisons with no ignore-list, no normalization and no options parameter | Proof harness |
-| 37 | The golden transcript is never written by a passing test | Proof harness |
-| 38 | Two perturbations are asserted red: one transposing two actions must fail comparison A, one substituting a response field must fail comparison B | Proof harness |
-| 39 | Stage 1's single-hop replay remains in the suite and green after the edge lands | Proof harness |
-| 40 | The edge forwards method, path and body and alters none of them; the response is returned byte-for-byte | Edge |
-| 41 | The edge holds no per-session state, no connection affinity and no cache, and never reorders, batches or coalesces | Edge |
-| 42 | The edge's readiness check is `Required` and declares `TouchesExternalDependency`; its liveness declares no external dependency | Edge |
-| 43 | The edge retries nothing and records no attempt | Edge |
-| 44 | The edge is composed by Platform's standard registration call and no second Platform-shaped call | Edge |
-| 45 | No project under `src/` or `samples/` references the workload | Build |
-| 46 | The listener binds loopback unless explicitly configured otherwise | Composition |
-| 47 | The edge's outbound `traceparent` carries the inbound trace-id and sampling flag unaltered, with the span-id naming this hop's own span (ASP.NET Core's own request instrumentation) rather than the caller's — so the workload's span parents on the edge's, not on whatever the edge's own caller sent | Edge |
+| 48 | Every column on `session`, `save`, `profile` and `profile_achievement` is on exactly one side of the engine/host ownership line, and no host column ever reaches a `StoredSessionRecord` or a `StoredSaveRecord` | Store |
+| 49 | The blob written for a session is exactly the engine's canonical serialization and carries nothing else — no timestamp, no owner id, no tenant id, no correlation | Store |
+| 50 | A blob read back is byte-identical to the blob written; `blob` is `text` and passes through no JSON normalisation at any layer, including the driver's | Store |
+| 51 | `tenant_id` is `not null` on every row every write produces, is a member of every table's primary key, and appears in every statement's `where` or column list | Store, Migrations |
+| 52 | `session.version` is `1` on insert and increments by exactly `1` in the same statement that performs the guarded write — so "the version advanced" and "a write landed" are one event | Store |
+| 53 | No `session` update is ever issued without a `version` predicate for an id the request has read, and no `where` clause is widened to make an update succeed | Store |
+| 54 | Every guarded `session` update also predicates on `expires_at > now()`, so a write cannot resurrect a session a concurrent read is already answering `session_expired` for | Store |
+| 55 | Zero rows affected is classified by a re-read into exactly one of `conflict` or `expired`, never assumed and never reported as a storage outcome; a re-read that itself fails is `conflict` | Store |
+| 56 | A conflict leaves the store as a value branded `SessionPersistenceConflict` and never as a `StoreError`; every other adapter failure is an ordinary throw the engine reads as `storage_failure` | Store |
+| 57 | Every connection the store uses reports `read committed`; the store asserts it at connect and refuses to serve otherwise | Store |
+| 58 | The store imports the engine's type declarations only. It never deserialises a blob, never validates game state, and never calls the engine | Store |
+| 59 | `expires_at` is computed from the **database** clock in SQL, never from the process clock, on both tables | Store |
+| 60 | A row whose `expires_at` has passed is returned as **not found** by `sessions.get` and `saves.get`, so the bound does not depend on when a sweep last ran | Store |
+| 61 | The sweep deletes only rows past the retention horizon and touches neither profile table; it is a plain `delete`, idempotent, and needs no coordination between instances | Store, Composition |
+| 62 | The retention horizon is required to exceed any request's duration by a wide margin, and a configuration that does not is rejected at startup | Composition |
+| 63 | A sweep tick never begins while its predecessor is still running, and a failed tick is caught, logged and retried on the next tick — never escaping as an unhandled rejection | Composition |
+| 64 | `save` has no `version` column and `saves.put` is an upsert; on a re-put every host column is recomputed from the writing process and the current clock | Store, Migrations |
+| 65 | `profiles.save` writes achievement rows with `insert … on conflict do nothing` and removes none; the durable merge is a set union | Store |
+| 66 | `profiles.save` returning `ok: false` never rolls back a committed session write, and never throws | Store |
+| 67 | A missing or corrupt profile yields an empty achievement set and a warning, never a failed request | Store |
+| 68 | For the durable configuration, the engine's session layer is composed per request and discarded with it; no session-layer cache outlives one operation | Composition |
+| 69 | The pool, the schema, the profile store, the lifecycle probe and the serialization handle are process-lived and are never rebuilt per request | Composition |
+| 70 | The read-version map is constructed empty for every request and is never shared between two requests | Store |
+| 71 | Every `sessions.get` in the durable configuration reaches the database; no read is served from a cache | Store, Composition |
+| 72 | The counting `RecordIdSource` and the counting `IdSource` are process-lived, so a per-request source cannot restart at zero and mint colliding ids | Composition |
+| 73 | The lifecycle probe has no route, no MCP tool and no row in the operation table, and returns a classification only — never a blob, a scene or a record | Store, Composition |
+| 74 | The lifecycle probe is composed behind the same seam `SessionPersistence` and `ProfileStore` are | Composition |
+| 75 | The in-memory configuration is supplied a probe that classifies every id as `absent`, so Dispatch carries no branch on which store was built | Composition |
+| 76 | The in-memory configuration keeps G1's single long-lived session layer and therefore G1's per-session queueing; it has no compare-and-swap | Composition |
+| 77 | Neither surface's module graph reaches Store, in addition to G1's `StoreSerializationHandle` prohibition | HTTP surface, MCP surface |
+| 78 | Readiness evaluates the store on every probe and reports no remembered outcome; liveness consults the store never | Composition, Probes |
+| 79 | The listener binds and the process reports live before the store is reachable; an unreachable store is reported as not-ready and retried, and never aborts startup | Composition |
+| 80 | Every row a write produces carries the writing process's resolved engine package version in `engine_version`; it is stamped, never read on the serving path, and never compared at runtime | Store |
+| 81 | The durable replay runs against a schema created for that run and dropped afterwards, never against a tenant id and never against a truncated shared schema | Proof harness |
+| 82 | The durable replay runs at the production lifecycle defaults, so no session can expire between two of its steps | Proof harness |
+| 83 | The determinism dump's ordering is pinned to `collate "C"`, and the compose file pins the server encoding and the initdb locale explicitly | Composition, Proof harness |
+| 84 | Comparison A asserts both dumps carry the fixture's expected row counts before it asserts they are equal | Proof harness |
+| 85 | Contention is asserted twice — concurrently against one instance, and across two instances sharing one store — and each asserts exactly one `200` and one `409` carrying `concurrent_modification` | Proof harness |
+| 86 | Four perturbations are asserted red: the guard removed produces two `200`s; an artificially stale version is rejected; an unreachable store produces `503` and not `409`; and a dump pointed at an empty schema fails comparison A | Proof harness |
+| 87 | `readWritePauseMs` is `0` in every configuration but a perturbed harness's, and a test asserts the seam is inert at `0` | Store, Proof harness |
+| 88 | After a conflict, the loser's action has left no trace in the winner's state; merging is never attempted | Proof harness |
+| 89 | The port-conformance suite runs the same assertions over both targets and covers all six port methods; `profiles.save` is the one declared divergence and its conditional conformance rests on an asserted property of the engine's caller | Proof harness |
+| 90 | The two instances are anonymous: nothing keys on which instance served a request, and no instance identity is modelled, stored or logged as an identifier | Composition, Proof harness |
+| 91 | Both instances bind loopback, and the two-instance harness introduces no public exposure | Proof harness |
+| 92 | The edge's readiness check probes the workload's readiness endpoint; it plays no game operation and creates no session | Edge |
+| 93 | The compose file provisions the store and starts no workload instance; the harness spawns the instances and provisions no store | Proof harness |
+| 94 | The command the README names for running two instances is the same entry point the contention proof invokes | Proof harness |
+| 95 | No project under `src/` or `samples/` references the workload, and Platform's `Persistence` package gains no consumer from G2 | Build |
+| 96 | A lifecycle probe that fails is read as `absent`; Dispatch never converts a probe failure into `storage_failure`, and no probe failure changes a response's status | Dispatch |
+
+### Amended invariants
+
+Seven of G1's change under durable state. **Each is amended in G1's own numbering and nowhere else**,
+so a citation still resolves to one statement.
+
+| # | What changes |
+|---|---|
+| 12 | "The workload computes no sequence and stamps no field on a session or save record" now reads **no *engine-owned* field**. The store stamps `version`, `engine_version`, `row_created_at`, `row_updated_at` and `expires_at` — all host columns, none of which reaches a `StoredSessionRecord` (invariant 48) |
+| 13 | Extends from the in-memory record to every durable row: no correlation, trace id or other host metadata is written into a session record, a save record, or any canonical serialization |
+| 16 | Extends to the durable serialization handle, which reads `blob` columns and no host column |
+| 17 | Grows a second forbidden target: neither surface's module graph reaches `StoreSerializationHandle` **or Store** (invariant 77) |
+| 21 | "Both surfaces reach the store only through one `Dispatcher` instance over one `SessionStore`" becomes **over one `StoreProvider`**; the `SessionStore` instance is per request in the durable configuration |
+| 39 | "Stage 1's single-hop replay remains in the suite and green" extends to the in-memory replay remaining green after the durable one lands |
+| 46 | Unchanged in words, extended in reach: **both** instances bind loopback (invariant 91) |
 
 ---
 
 ## Unresolved
 
-Values and signatures the design does not determine. **Each blocks something concrete**, and none is
-guessed at above. **1 is resolved and nothing above is now held back**; 2, 3 and 4 are open, and each
-names a value a first implementer would otherwise settle silently.
+Values and signatures the design does not determine, or that a document above this contract still
+contradicts. **Each blocks something concrete**, and none is guessed at above.
 
-**Resolved items keep their number and are struck through rather than removed**, because
-[`30-slices.md`](30-slices.md) and [`90-decisions.md`](90-decisions.md) will cite these by number and
-renumbering would silently break every reference.
+**Resolved items keep their number and are struck through rather than removed**, so nothing that
+later cites one by number breaks. **1 is resolved; 2, 3 and 4 are open, and 5 is answered here
+because this is the stage the design routed it to.**
 
-### ~~1. Session and save ids are not deterministic, and the design says they are~~
+### ~~1. What Dispatch answers when the lifecycle probe itself fails~~
 
-**Resolved 2026-08-08, by Ben: the engine gains the seam.** G1 delivers a host-suppliable
-`RecordIdSource` on the engine's session composition root, defaulting to today's
-`crypto.randomUUID()`, and the brief's engine-behaviour non-goal carries a carve-out naming it. See
-[*The engine seam G1 adds*](#the-engine-seam-g1-adds); the reasoning and the rejected alternatives
-are in [`90-decisions.md`](90-decisions.md) and are not restated here. The signatures this held back
-— `runInProcess`, `runHosted`, `HostedTarget` and literal ids in `ReplayStep.arguments` — are
-declared above. **The evidence that forced it is kept below**, because it is the reason a
-cross-repository change entered an effort whose virtue is being cheap.
+**Resolved 2026-08-12, by Ben: a failed probe is read as `absent` and the engine's own code passes
+through verbatim.** The design named three outcomes for three states and was silent on a fourth;
+`LifecycleProbe` returns `Outcome<LifecycleState, StoreError>` because every error crossing a
+TypeScript module boundary here is an `Outcome` failure, and what Dispatch does with the failure arm
+was the undetermined half. It is now stated with `LifecycleProbe` above, carried as a row in
+[*Dispatch — the two new outcomes*](#dispatch--the-two-new-outcomes), and asserted as invariant 96.
 
-**The design stated** (*Data model*, in-memory session and save records): *"Identity: session id and
-save id, both minted by the engine's `IdSource` port."*
+**Rejected: `storage_failure` → `503`.** The probe failed because the store failed, and `503` is what
+that means — but it converts an honest `404` into an outage code on the one path that reaches the
+probe, precisely when the store is degraded. That is the same mistake the design already forbids the
+re-read classifier from making, and making it here would be inconsistent with the one rule the design
+does state about a classifier's own failure. **Rejected: logging the failure and passing through.**
+Identical on the wire, plus a log line; declined because the brief admits only the observability a
+lost update needs, and the sweep's failure is already the one condition granted a log line of its own.
 
-**The engine does not do this.** In the engine's session store, `sessionId` and `saveId` come from a
-module-local `mintId()` that calls `crypto.randomUUID()`. Neither `SessionHost` nor
-`InMemorySessionStoreOptions` carries an `IdSource`; `IdSource` is an `EngineHost` port and governs
-`gameId` and `seed` only. The engine's own comment records the intent — *"this is the one place
-unpredictability is legitimate"* — so this is a deliberate engine decision, not an oversight a host
-can compose around.
+**The retained cost, recorded rather than dropped:** while the store is degraded, a session that had
+merely expired is answered as one that never existed, and nothing on the wire says which. Readiness is
+what surfaces the underlying condition.
 
-**What that blocks, precisely:**
+### 2. Two binding-document conflicts the design records and cannot discharge
 
-- **Comparison B cannot hold for three rows.** `createSession` and `loadGame` return
-  `SessionHandle { sessionId, scene }`; `saveGame`'s narrowed response is `{ saveId }`. Each carries
-  a fresh random UUID in every run, so those three encoded responses differ between run 1 and run 2
-  and differ again from any committed golden transcript. The remaining rows are unaffected —
-  `Scene.gameId` and `PlayerView.gameId` come from `IdSource` and are deterministic under
-  `createCountingIds`.
-- **Comparison A's ordering is not reproducible.** *"Ordered by id"* is a random order across runs
-  once more than one session or more than one save exists. The blobs themselves can still match —
-  ids are store metadata and never enter `GameState` — but the sequence they are compared in does
-  not.
-- **The fixture cannot name a session id.** A step after `create-session` needs the id that call
-  returned, and it is not knowable when the fixture is written.
+Design Open questions 9 and 10. **The substance of both is already signed off**; what is missing is
+the consequent edit to [`00-brief.md`](00-brief.md), which is not a document a model may author.
+They are recorded here so `/slices` sees the disagreement rather than resolving it by reading order.
 
-**Also false, and smaller:** the design's replay profile takes *"a counting `IdSource` from a stated
-start"*, and the fixture carries *"the counting `IdSource`'s starting value"*. The engine's exported
-`createCountingIds()` takes no argument and counts from zero. `ReplayDeterminismProfile` and
-`ReplayFixture` above therefore carry no start value, which is the only reading consistent with the
-engine as published.
+- **The tenant non-goal.** The brief says, in words, *"Nothing reads it, nothing filters on it, and no
+  request carries one."* Every statement this contract specifies filters on `tenant_id = <the
+  implicit constant>` (invariant 51), which is the shape design Open question 1 settled and
+  [`90-decisions.md`](90-decisions.md) records. **`AGENTS.md` makes non-goals binding until the brief
+  changes**, so the binding list currently forbids what invariant 51 requires. **What reverses on the
+  literal reading:** `tenant_id` leaves all four primary keys and every statement, which is a
+  correctness migration on every table at once once rows exist — which is the direction §7 exists to
+  prevent, and the reason the key shape won.
+- **Save lifecycle.** The brief's lifecycle criteria name *sessions* in every clause. This contract
+  gives saves a 365-day absolute TTL, an `expires_at` column, a sweep that hard-deletes them, and a
+  `save_expired` code that widens a closed union in a published package. **What reverses:**
+  `save.expires_at` and its index come out of the schema, the sweep narrows to `session`,
+  `save_expired` comes out of `TransportErrorCode` and out of the status mapping, and
+  `LifecycleProbe.save` loses its only caller.
 
-**What it cost to resolve it this way**, stated rather than hidden: a cross-repository engine change
-inside the effort whose virtue is being the cheapest informative failure, and an amendment to a
-binding non-goal. Both were accepted because the alternatives each removed something the brief calls
-load-bearing — excluding ids from the transcript comparison is a normalization the design refuses by
-name; restricting the fixture to one session leaves comparison B failing on `create-session` and
-stops the fixture exercising every row.
+### 3. The engine's ratification of `concurrent_modification` and the brand's spelling
 
-### 2. The three transport-only error codes the design describes but does not name
+Design Open question 11, unchanged. Every conflict assertion above depends on a `SessionStoreErrorCode`
+member that exists in no published engine version, and startup asserts the contract's recorded engine
+version against the resolved package's — so an instance cannot be pointed at a branch build without
+regenerating the contract first. **The design's position is that the engine pull request is the first
+deliverable and the proofs that assert the code are sequenced behind it**, which is a statement about
+ordering and costs nothing here. **What is genuinely open is a different name or a different brand
+shape**, and the exposure is rework in one slice: nothing above changes shape on the spelling, because
+the adapter throws a branded value and Dispatch maps a code.
 
-The workload's generic code on an unhandled failure, and the edge's codes for an unreachable and a
-timed-out workload. Each is a wire-visible string a client renders and never parses around, so it is
-a contract value rather than an implementation detail — and there are three of them, so a first
-implementer would settle three names silently. `WireError`'s `InternalFailure` row and both
-`EdgeError` variants point here.
+### 4. Design Open question 8 — what refreshes a session's idle clock
 
-Resolving this amends declarations that are otherwise closed, by design rather than by accident:
-the workload's code becomes `TransportErrorCode`'s fourth member — before that, `WireErrorCode`
-cannot represent the `InternalFailure` body's `code` at all — and invariant 2 then requires its
-`500` entry in the status mapping, since the invariant tracks the union's membership. The edge's
-two codes are `EdgeError`'s own: their statuses are fixed in its table, and they enter neither
-`WireErrorCode` nor the mapping.
+Open in the design and unchanged by this contract, which takes the design's reading: `expires_at`
+advances on accepted writes only, so a session read continuously for the whole TTL still expires. **It
+determines no signature above.** Refreshing on read would make every query operation a write, putting
+it inside the compare-and-swap's blast radius and undoing *every read reaches the database* being a
+read-only property; leaving it costs a name and a caller-visible surprise, both fixable by documenting
+the TTL as "30 days since the last accepted write" wherever it appears.
 
-### 3. The JSON Schema dialect the generated schema set declares
+### 5. Resolved here — design Open question 5, the contract package's release path
 
-`JsonSchemaDocument.$schema` has a type and no value. The dialect decides whether `additionalProperties: false` composes as the closed-schema gate assumes, and whether a
-version-pathed `$id` is an identifier the validator will decline to fetch. It also fixes which
-validator the workload can use, which is a dependency and therefore a decision-log entry of its own.
-
-### 4. The contract package's published name and registry
-
-[`10-design.md`](10-design.md)'s own open question 7. ADR-005 fixes the repository and the versioning
-discipline and not the artifact's identity. It blocks nothing above — no signature names it — and it
-blocks the first line of the workload's dependency declaration.
-
-### Design questions that shape this contract without blocking a signature
-
-[`10-design.md`](10-design.md)'s open questions 1, 5 and 6 change what this contract contains without
-leaving any signature above undetermined, and are recorded here so the coupling is visible when they
-are answered.
-
-- **~~Question 1 — which engine version G1 pins.~~ Resolved 2026-08-08: the release S1 cuts from the
-  engine's `main`, carrying ten operations.** It sets the row set's contents, which are data in the
-  published artifact rather than a type here, so `OperationRow` is unchanged either way. The table is
-  **ten** rows, and invariant 1 is asserted against a ten-method `SessionStore`.
-- **Question 5 — whether the shutdown dump is inside the permanent non-goal.** This contract takes
-  the design's reading. If it is reversed, `StoreSerializationHandle`, `DeterminismDump`,
-  `writeDeterminismDump`, `readDeterminismDump`, `DumpReadError` and invariants 14 and 16 are removed,
-  and comparison A narrows to the in-process run.
-- **Question 6 — whether the edge covers the MCP surface.** This contract routes the JSON wire only.
-  Covering MCP adds a second `Map…` extension and a second forwarder route; it adds no type.
+**Routed to this command by [`10-design.md`](10-design.md) and answered: G2 vendors the regenerated
+tarball, exactly as G1 did.** This is a reading of the constraint rather than a preference. The
+`@subzerodev` npm organisation is still unreserved — [Platform issue #81](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/81)
+is open as of 2026-08-12 — so there is no registry to resolve `@subzerodev/service-contract` from, and
+"switch to the registry" is not an available option rather than a rejected one. The regeneration is
+forced (the error-coverage gate fails against a widened `SessionStoreErrorCode`, and
+`TransportErrorCode` gains two members), it is a contract **minor** version, and
+`workloads/game-service/vendor/` gains the new tarball while `package.json`'s `file:` dependency moves
+to it. **The tarball is replaced wholesale, never edited in place.** When #81 closes, switching to the
+registry is a one-line dependency change and no signature above moves.
 
 ---
 
 ## Additions requiring a decision-log entry
 
 Six things above originated here rather than in the design, and none was derivable from it. Each is
-small, mechanical, and named here rather than left for a reader to discover in the code. One (2) has
-since been folded back into the design's own text.
+small and named here rather than left for a reader to discover in the code.
 
-1. **`Outcome<T, E>` as the TypeScript error channel.** The design specifies error *semantics* and no
-   carrier for them on the Node side; "no bare exceptions, no string errors" needs one, and D3's
-   `Result<T, TError>` is C# and in another package.
-2. **Run 1 drives `Dispatcher`, not the store directly.** Now stated by the design itself (*Control
-   flow* §3) — the design originally had run 1 play the fixture's action list *against the store*,
-   and this addition was folded back in when the design was corrected. The reasoning stands in the
-   decision log: both transcripts are asserted against one golden file, which is only true if run 1
-   applies the row's projection and canonical encoding — otherwise `save-game` alone diverges, since
-   the store returns `SaveHandle` and the wire returns `{ saveId }`. Only the transport differs
-   between the runs.
-3. **`canonicalEncode` is a second implementation of the engine's canonical serialization rule.** The
-   engine does not export `canonicalStringify`. The rule is restated in this contract under
-   `canonicalEncode` because the workload must implement it; **that is a second copy of a rule and
-   therefore a drift hazard**, and the alternative — the engine exporting its encoder — is a
-   cross-repository change this contract does not have the standing to make.
-4. **`DeterminismDump` ordering comes from the encoding.** The design says *"keyed by id, in id
-   order"*; writing the dump with `canonicalEncode`, whose members sort ascending by code unit, makes
-   the ordering a property of the encoder rather than a step. It is reproducible only because
-   Unresolved 1's resolution makes the ids themselves reproducible.
-5. **The listener binds loopback by default** (invariant 46). Implied by trusted-local reachability
-   and by the brief's non-goal on exposure, stated by neither.
-6. **`RecordIdSource`'s name and shape.** A second port beside `IdSource`, with two members rather
-   than one, and no counter start. The engine repository owns the final naming; this contract names
-   it so the G1 slices and the engine PR are describing one thing.
+1. **`SESSION_PERSISTENCE_CONFLICT` as the brand's spelling.** The design specifies a name-based
+   duck-typed brand and names no string. The engine repository owns the final naming; this contract
+   names it so the G2 slices and the engine pull request describe one thing — the same treatment G1
+   gave `RecordIdSource`.
+2. **The conformance suite's reference target is the workload's map-backed `SessionPersistence`, not
+   the engine's.** The design says "the engine's in-memory implementations"; the engine exports the
+   `SessionPersistence` type and no implementation of it (verified at `0.6.1`). `ProfileStore` is
+   literal — `createInMemoryProfileStore` is the engine's. The suite is unchanged in value: G1's
+   map-backed adapter is the implementation the byte-identity proof already trusts.
+3. **`ComposedWorkload.close()` and `DurableStore.close()`.** The design gives the sweep a timer and
+   the store a pool and says nothing about stopping either. A process that cannot stop its timer does
+   not exit, which makes this mechanically forced rather than a design choice — but it is a signature
+   the design does not contain.
+4. **`GameEdgeOptions.LivenessTimeout` renamed to `ReadinessTimeout`.** The design changes which
+   endpoint the check probes and says nothing about the option. A property named for liveness that
+   bounds a readiness probe is the naming failure `agent.md` records; the rename is cosmetic and the
+   `appsettings.json` key moves with it.
+5. **The failed sweep reports a removed count of zero rather than a count of rows not removed.** The
+   design asks for "the row count it did not remove", which a failed `delete` cannot supply without a
+   second query against a store that has just failed one. The honest report is the failing statement
+   and the fact that nothing was removed.
+6. **`ReadVersionMap` as a named type with three methods.** The design describes a
+   `Map<sessionId, version>` held by the per-request adapter. Naming it and giving `advance` a
+   separate method from `record` is what makes "the map is advanced only after a write lands"
+   (invariant 52's counterpart) checkable rather than a convention inside one function.

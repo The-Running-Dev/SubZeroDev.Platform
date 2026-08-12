@@ -355,7 +355,7 @@ after the first stage.
 
 **Where it runs, and what that costs.** G1 is built in this repository, under
 `workloads/game-service/`, rather than in a repository of its own — decided 2026-08-08, with the
-reasoning and the rejected alternatives in `design/90-decisions.md`. The named cost: §8.2 valued
+reasoning and the rejected alternatives in `design/g1/90-decisions.md`. The named cost: §8.2 valued
 the edge as *genuine external* validation, and an edge living in Platform's own repository is
 nearer to framework-authored proof. The byte-identity criterion and the real distributed trace
 keep their value; the independence claim weakens, and this section says so rather than quietly

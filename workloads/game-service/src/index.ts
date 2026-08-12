@@ -1,4 +1,4 @@
-/** The workload's module surface — every signature `design/20-contract.md` names for it. */
+/** The workload's module surface — every signature `design/g1/20-contract.md` names for it. */
 export { canonicalEncode } from "./canonical.js";
 export { loadContract, findRow, statusFor } from "./contract.js";
 export { validateRequest, validateResponse } from "./validate.js";

@@ -1,5 +1,5 @@
 /**
- * The workload's own declarations. Every signature here is `design/20-contract.md`'s, transcribed
+ * The workload's own declarations. Every signature here is `design/g1/20-contract.md`'s, transcribed
  * rather than invented — the contract package owns the artifact's types and re-exports them, so
  * this file declares only what the workload adds on its own side of the boundary.
  */

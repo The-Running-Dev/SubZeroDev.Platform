@@ -1,218 +1,248 @@
-# Brief — one session, over the wire, then the edge (G1)
+# Brief — durable sessions (G2)
 
 > Written by me, not by a model. A model may interrogate it (`/brief-check`) but not author it.
 >
 > **Provenance of this draft:** the decisions below were taken by me in answer to direct questions
-> on 2026-08-08 and transcribed. The *Problem* statement and the *Environment* section are drafted
-> from this repository's own documents and the engine's published surface, and need my words before
-> they are binding.
+> on 2026-08-12 and transcribed. The *Problem* statement and the *Environment* section are drafted
+> from this repository's own documents, the engine's source, and a reading of
+> [`SubZeroDev.Adventures`](https://github.com/The-Running-Dev/SubZeroDev.Adventures), and need my
+> words before they are binding.
 
 ## Problem
 
-The Game Engine is published and nothing consumes it over a wire. `@the-running-dev/game-engine`
-0.4.0 sits on GitHub Packages with a 26-entry public surface, a nine-operation client contract, and
-a byte-identity guarantee that has only ever been exercised in-process. Track B —
-[`implementation-plan.md`](../docs/docs/implementation-plan.md) §5 — is unblocked and unstarted:
-every hosted ambition above it (durable sessions, principals, catalogue, billing) rests on a hosted
-transport being able to reproduce a game byte-for-byte, and that is currently unknown.
+G1 proved the transport is a projection: the same arc, the same seed, the same choices, played
+through the hosted wire, serialize byte-identically to the in-process run, through one hop and
+through two. It proved it against **state that does not survive a restart**. Every session G1 ever
+held was in a `Map`, and the brief said so deliberately — sessions lost on restart, bounded by my
+own use of them.
 
-G1 exists to make it known in the smallest possible increment. It is the cheapest thing that can
-fail informatively.
+That makes the proof real and the product unusable. It also leaves the sharpest hosted problem
+untouched. [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 names it:
+two `submitAction` calls against one session, arriving at two instances, both read the same
+envelope, both apply an action, and one write silently overwrites the other. **It is a determinism
+break that presents as a lost update** — no error, no failed validation, and a surviving state the
+engine would never have produced. G1 recorded on 2026-08-08 that it built no compare-and-swap
+because the failure "arrives with a second instance, which G1 does not have."
+
+G2 gives it a second instance and then refuses to lose the update.
 
 ## Who it is for
 
-Me, as the operator of the first hosted engine deployment — and the engine itself, whose client
-contract gains its fourth client and whose coverage checklist gains its fifth column. (Four columns
-exist already — text client, MCP tool, simulation kind, browser demo — and the engine counts the
-simulation kind as its first two clients driven a second time, not a client of its own.)
+Me, as the operator of the first hosted engine deployment that survives a restart — and the engine
+itself, which records that its session-layer composition root has two real call sites and **zero
+real implementations** of the abstraction it specifies, to be revisited *"when a second
+`SessionStore` implementation is actually needed."* This is that implementation, and answering that
+question is a deliverable rather than a side effect.
 
-No player, creator, or third-party developer is served by G1 directly. That is deliberate: G1 is
-infrastructure proof, and pretending otherwise would smuggle G3's account surface and G4's
-catalogue into scope through the audience.
+No player, creator, or third-party developer is served by G2 directly. Durable state is what an
+account surface is eventually built on, but the account surface is G3's and nothing here anticipates
+it.
 
-## Scope — two stages, one effort
+## Scope
 
-Settled in [`implementation-plan.md`](../docs/docs/implementation-plan.md) §8.4 and transcribed
-here because the brief is where scope binds:
+1. **Real `SessionPersistence` and `ProfileStore` implementations**, against a durable store,
+   filling the ports the engine already specifies.
+2. **Compare-and-swap, so a lost update is not reachable** — and a caller who lost the race can tell
+   that is what happened.
+3. **One deliverable into the engine**: a conflict outcome distinguishable from a storage outage.
+4. **Session lifecycle** — bounds and expiry for state that no longer clears itself on restart.
+5. **A second instance**, because the failure mode §6.1 describes has no other shape.
 
-1. **The Node service.** A single Node service consuming the published engine package, composing
-   the in-memory stores, exposing the ten-operation game surface. It consumes the engine and not
-   Platform.
-2. **The .NET edge, as a fast follow.** Platform's packages in front of that workload: transport
-   termination, routing to the Node service, a distributed trace across the language boundary.
-   The edge is Platform's first consumer outside `samples/`.
+**The stores live in the Node workload, end to end.** They are engine ports and the engine is Node,
+so the implementations are Node: the workload's own database client, its own migrations, inside
+`workloads/game-service/`. G2 is Track B only, and Platform's `Persistence` package gains no
+consumer from it. **The named cost:** this repository ends up with two persistence stories that
+share no code, and [ADR-002](../docs/docs/adr/ADR-002-implementation-technology.md)'s EF Core
+baseline governs neither of them on this side.
 
-The stages are ordered — the byte-identity proof exists before the edge does — and the edge does
-not gate G2. Both stages are inside G1's definition of done: G2 may begin the moment Stage 1 is
-green, but G1 does not close until the edge criteria are met.
+**Noted for later, not decided now:** whether the migrations and the tenant column should follow
+Platform's conventions rather than the workload's own, keeping one schema story across the
+repository while conceding the write path is Node's. That is a live option and this brief does not
+take it.
 
-**The wire is JSON over HTTP with version-pathed schema URLs, and MCP is a projection of it.**
-Both surfaces are generated from one operation table held as data. The engine's tenth operation
-(`previewAction`) is a table entry in both surfaces and never a rewrite — it is in the release G1
-pins, so the table starts at ten rows, and the same rule governs the eleventh whenever it arrives.
-
-**The ServiceContract repository is populated as a G1 slice.** G1 is the first real boundary
-ADR-005 was waiting on: `mcp-tool-contract.md` moves from this repository's `docs/docs/` to
-`SubZeroDev.ServiceContract`, the engine's
-`09-clients.md` link is updated in the same change, and the wire schema is generated from the
-engine's types per ADR-005 Rule 2 — a hand-written schema "just for now" is how Rule 2 gets lost.
-The generator lives in `SubZeroDev.ServiceContract` and publishes the schema as a consumable
-artifact; the workload depends on that rather than generating a copy of its own. The named cost is
-a cross-repository release path that does not exist yet — accepted, because a contract home whose
-contents nothing consumes is a document, not a boundary.
+**`SubZeroDev.Adventures` is the reference implementation, and not a source this effort copies
+from.** The 2026-08-09 decision that established this was written before G2 started and holds:
+[`server/src/persistence.ts`](https://github.com/The-Running-Dev/SubZeroDev.Adventures/blob/main/server/src/persistence.ts)
+and
+[`server/src/profile-store.ts`](https://github.com/The-Running-Dev/SubZeroDev.Adventures/blob/main/server/src/profile-store.ts)
+fill both ports in about 460 lines of Node against plain `pg`, which is proof the shape works. Its
+schema is **not** reusable — it carries no tenant identifier, and
+[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §7 requires one from the
+first schema, defaulted to a single implicit tenant, precisely because adding isolation after data
+exists is a correctness migration on every table at once.
 
 ## Non-goals
 
 The binding list. Everything here is out of scope for every agent until this file changes.
 
-- **Durable persistence.** In-memory stores only. Real `SessionStore` and `ProfileStore`
-  implementations, and compare-and-swap on the sequence number, are G2 — the byte-identity proof
-  must exist before persistence can be checked against it.
 - **Principals.** No authentication, no ownership checks, no authorization decorator, no account
-  surface. All G3. G1's deployment surface is trusted-local only, and nothing may be designed on
-  the assumption that an untrusted caller reaches it.
-- **Tenancy, billing, metering, catalogue, publishing.** G4 and later.
-- **A raw-state endpoint, under any name.** Not staged — permanent. The projection boundary
-  survives the transport: responses carry a projected `Scene`, never the envelope, and no hosted
-  endpoint returns engine state. Not for caching, not for debugging. The byte-identity proof's
-  in-process serialization of the store is not an exception: it is not an endpoint, and building
-  one to serve it would be.
-- **An eleventh game operation invented here.** A hosting need the store does not meet is a new store
-  operation *in the engine* plus a coverage-checklist row, never transport-side logic. The account
-  operations a hosted service will eventually need (`list_saves`, `delete_account`) are the
-  account surface — G3's, and never merged with the game surface.
-- **Edge scope creep.** The edge terminates transport, routes, traces, and serves probes. No
-  authorization, no persistence, no rate-limiting sophistication. A widened edge is G3 pulled
-  into G1, losing G1's virtue as the cheapest informative failure.
-- **Authoring `previewAction`, or any change to engine behaviour.** The specified tenth operation is
-  the engine's to write, not this effort's. A behaviour change made to ease hosting is transport-side
-  logic wearing a different hat. **Consuming it is not the same thing**, and as of 2026-08-08 G1
-  does: `previewAction` is already merged on the engine's `main`, the release S1 cuts carries it, and
-  the operation table therefore has ten rows rather than nine. Not building it is the binding rule;
-  refusing to route an operation the pinned engine exports would fail the arity gate instead.
-  **One carve-out, decided 2026-08-08:** the engine gains a
-  host-suppliable source for session and save ids on its session composition root, defaulting to
-  what it does today. It changes no game and cannot — those ids never enter game state, which is
-  the engine's own stated reason for minting them where it does — and without it the byte-identity
-  criterion below is unachievable rather than merely hard, because three operations return a fresh
-  random id in every run. G1's deliverables into the engine are therefore two: that seam, and the
-  coverage-checklist column.
-- **A human-facing interface.** No front end, no playground, no operator console. G1's audience is
-  a test suite and a trace.
-- **Reachability beyond trusted-local.** No public exposure, no transport security, no
-  cross-origin access. Designing for a caller who cannot reach the deployment is G3 arriving early.
-- **Performance work.** No latency or throughput target, no load test, no benchmark. G1 answers
-  whether the bytes match, not how fast they arrive.
-- **Serving more than one wire version at once.** Version-pathed URLs are required so a second
-  version *can* exist later. A second version existing now is not.
-- **Deployment machinery.** No container images, no release publishing of the workload, no process
-  supervision. Two processes started by hand is the whole of G1's operations story.
-- **Session lifecycle management.** No eviction, no expiry, no quotas, no size limits. Sessions are
-  lost on restart and bounded by my own use of them; anything cleverer is G2 sizing a store it does
-  not have yet.
-- **Observability beyond the single trace.** No metrics, no dashboards, no log aggregation, no
-  alerting. One trace across the language boundary is Stage 2's evidence, not the first of a set.
+  surface. All G3. Durable state is what ownership eventually attaches to; attaching it now is G3
+  arriving early because persistence made it look convenient.
+- **Tenancy behaviour.** The tenant identifier is carried in the schema from the first migration,
+  defaulted to a single implicit tenant, because §7 requires it and retrofitting is the expensive
+  direction. **Nothing reads it, nothing filters on it, and no request carries one.** Shipping the
+  column is not shipping tenancy.
+- **Billing, metering, catalogue, publishing.** G4 and later.
+- **A raw-state endpoint, under any name.** Not staged — permanent, inherited unchanged from G1.
+  Responses carry a projected `Scene`, never the envelope. Durable storage makes this *more*
+  tempting, not less: a stored blob is right there, and a debugging endpoint that returns it would
+  put hidden variables, visit counts and the seed on the far side of a boundary the engine built
+  structurally. The store persists the canonical serialization to storage the player cannot read,
+  and never returns it through the API.
+- **An eleventh game operation invented here.** A hosting need the store does not meet is a new
+  store operation *in the engine* plus a coverage-checklist row, never transport-side logic. The
+  account operations a hosted service will eventually need (`list_saves`, `delete_account`) are the
+  account surface — G3's, and never merged with the game surface. The per-player resume query
+  Adventures fills with its own `listSavesForPlayer` is exactly this shape, and it stays out.
+- **The edge becoming a Platform package.** [ADR-007](../docs/docs/adr/ADR-007-second-hosted-workload.md)
+  admits SkyNet HR as a second hosted workload and justifies generalising the edge on that evidence.
+  Rule 5 of that ADR says it schedules nothing and the work is a new effort with its own brief.
+  **This is not that brief.** G2 touches `workloads/game-edge/` only where durable state forces it
+  to, and grows no streaming, no WebSocket path, and no package boundary.
+- **Any change to engine behaviour beyond the named deliverable.** The conflict outcome in *Scope*
+  is agreed. A second behaviour change made to ease persistence is transport-side logic wearing a
+  different hat.
+- **Copying Adventures' schema, routes, or replay endpoints.** Its routes are hand-written REST where
+  this workload derives uniform `POST /v1/<operation>` from the row table; its replay endpoints
+  return stored and replayed blobs in a failure body, which is the raw-state surface declared
+  permanently out of scope above.
+- **A human-facing interface.** No front end, no playground, no operator console. G2's audience is
+  a test suite, a trace, and a database.
+- **Reachability beyond trusted-local.** No public exposure, no transport security, no cross-origin
+  access. A second instance is not a step toward public reachability and must not be designed as
+  one.
+- **Performance work.** No latency or throughput target, no load test, no benchmark, no connection-pool
+  tuning presented as a result. G2 answers whether the write is correct under contention, not how
+  many of them fit in a second.
+- **Serving more than one wire version at once.** Unchanged from G1.
+- **Deployment machinery beyond what two instances require.** A way to run two instances against one
+  store is in scope because the criteria below cannot be met without it. Container images, release
+  publishing of the workload, process supervision, and orchestration are not.
+- **Observability beyond what a lost update needs.** No metrics, no dashboards, no log aggregation,
+  no alerting. G1's single cross-language trace stays green; nothing here builds a second one.
 
 ## Definition of done
 
-**Stage 1 — the Node service:**
+**The store:**
 
-- The engine's own invariant, with a fifth client: the same arc, the same seed, the same counting
-  `IdSource`, the same counting record-id source and the same choices, played through the **hosted
-  transport**, serialize
-  **byte-identically** to the in-process run. **Two comparisons, asserted separately:** the hosted
-  service's own serialization of its store at the end of the replay, against the in-process run —
-  the engine invariant surviving hosting; and the projected responses of the two runs against each
-  other — the wire being deterministic. Neither alone answers §5. The first reaches around the
-  wire; the second proves only that the projection is stable.
-- **The gate has failed at least once.** A deliberately perturbed run — one action reordered, or
-  one response substituted — goes red. A byte-identity suite that has never failed is not known to
-  compare anything.
-- Every store operation is exercised through the hosted surface, and the engine's API coverage
-  checklist gains its fifth column — **delivered as a PR against `SubZeroDev.GameEngine`**, opened
-  by the slice that produced the evidence.
-- Both surfaces — HTTP JSON and the MCP projection — are generated from the one operation table,
-  and a test proves the table is the only source: removing a row breaks both.
-- `mcp-tool-contract.md` lives in `SubZeroDev.ServiceContract`, the engine's `09-clients.md` links
-  to it there, and the wire schema is generated, not authored.
-- **Misuse has a defined answer.** A malformed payload, an unknown session, and an unsupported wire
-  version each produce a specified, tested response. A surface whose behaviour under misuse is
-  undefined is not a wire — and whatever is chosen here, G2's persistence and G3's principals
-  inherit.
-- **The projection boundary is gated, not merely promised.** A test asserts that no hosted endpoint
-  returns the envelope. It is the one non-goal declared permanent; it is the one most worth a gate.
-- **Real responses validate against the generated schema.** Both surfaces deriving from the one
-  table does not make the schema true of what the service actually sends.
-- **One operation is carried out through the MCP projection end-to-end.** Proving the projection is
-  generated is not proving it works.
-- **The workload reads the contract from `SubZeroDev.ServiceContract`, not a local copy.** A
-  contract that lives in the right repository but is consumed from the wrong one has moved nothing.
+- **The byte-identity proof passes against the durable store.** A committed replay fixture
+  round-trips through it byte-identically to the in-memory one. This is G1's invariant with the
+  stores swapped, and it is the reason G1 was ordered first.
+- **G1's in-memory replay is still green.** The durable store is an addition, not a replacement, and
+  two proofs passing is not evidence that the first still does.
+- **Every store operation is exercised against the durable implementation**, and the engine's API
+  coverage checklist reflects it — delivered as a PR against `SubZeroDev.GameEngine`, opened by the
+  slice that produced the evidence, the way G1 delivered its column.
+- **The schema carries a tenant identifier from the first migration**, defaulted to a single
+  implicit tenant, and a test asserts it is present and non-null on every row a write produces.
+- **Host metadata stays out of game state.** Timestamps, owner ids and tenant ids live on the
+  store's own record, never in the blob. A test asserts the blob the store writes is exactly the
+  engine's canonical serialization and carries nothing else — this is what keeps determinism intact
+  while still allowing resume elsewhere.
+- **A failed profile write does not roll back a completed game action**, and a missing or corrupt
+  profile degrades to "no achievements" rather than a broken game. Both asserted, not argued.
 
-**Stage 2 — the edge:**
+**Compare-and-swap:**
 
-- The same byte-identity replay passes through **two hops** — edge to Node service — unchanged.
-- One distributed trace spans the .NET edge and the Node workload, visible in Platform's
-  telemetry, correlation intact across the language boundary.
-- The edge is composed by **nothing but Platform's standard registration call** — health,
-  readiness, correlation and telemetry included. Bespoke wiring here would fail D3's own
-  done-criterion at its first consumer outside `samples/`.
-- **The probes are exercised by a test**, and readiness's meaning when the Node service is
-  unreachable is decided and asserted. A probe nobody has watched fail is the byte-identity suite's
-  problem in another costume.
-- **Stage 1's single-hop replay is still green after the edge lands.** Two hops passing is not
-  evidence that one still does.
+- **Two concurrent actions against one session produce one success and one explicit rejection —
+  never a silent overwrite.** This is the implementation plan's own criterion and it is met in full,
+  including the word *explicit*.
+- **Proven twice, asserted separately.** Concurrent requests to a **single instance**, and the same
+  contention across **two genuine instances** sharing one store. Neither alone answers §6.1: the
+  single-instance case may not even be reachable, because the engine's session store already queues
+  same-session commands behind their predecessor, and the multi-instance case is the shape the
+  contract actually describes. A gate that cannot go red proves nothing, and running only the first
+  risks exactly that.
+- **The rejection is distinguishable from a storage outage at the caller.** Today it is not. The
+  engine's `writeSession` catches every error from `persistence.sessions.put` and rethrows
+  `SessionStoreError("session", "storage_failure")`, discarding the cause — so a lost race and a
+  dead database arrive at the client as the same `503`. **G2's engine deliverable is a conflict
+  outcome that survives that boundary**, delivered as a PR against `SubZeroDev.GameEngine`. Without
+  it the criterion above cannot be met by any amount of work on this side.
+- **The gate has failed at least once.** A deliberately perturbed run — a stale version deliberately
+  written — goes red. Inherited from G1's rule, and it applies with more force here, because an
+  optimistic lock that never rejects is indistinguishable from no lock at all.
+- **Merging is never attempted.** Two actions applied to the same base state are two different
+  games. A test asserts the loser is rejected rather than reconciled.
 
-**Both stages:**
+**Session lifecycle:**
 
-- **The evidence runs in CI from a fresh clone**, not only on my machine. A proof that exists once,
-  on one working copy, is an anecdote.
-- **A gate fails the build if a Platform package references `workloads/game-service/`.** Decision 1
-  states the dependency rule; a rule with no gate is a comment.
-- **The repository tells a reader how to start both processes, replay the byte-identity proof, and
-  regenerate the contract.** G2 begins by rerunning G1's proof; it should not begin by
+- **Durable sessions are bounded, and the bound is asserted.** In-memory state was self-limiting
+  because a restart cleared it; durable state is not, and G1's deferral of eviction to "G2 sizing a
+  store it does not have yet" expires the moment the store exists.
+- **What expires, on what clock, and what a caller sees when it has** are decided and tested. A
+  session that has been evicted is not the same answer as a session that never existed, and the
+  wire says which.
+
+**Both:**
+
+- **The evidence runs in CI from a fresh clone**, including the two-instance case and the store it
+  shares. A concurrency proof that only runs on my machine is the anecdote G1 already refused once.
+- **The repository tells a reader how to provision the store, run two instances, replay the proof,
+  and roll the schema forward.** G3 begins by rerunning G2's proof; it should not begin by
   reconstructing it.
+- **`build/Test-WorkloadIsolation.ps1` still passes.** A durable store is exactly the kind of
+  capability that invites a Platform package to reach into `workloads/`, and the gate that fails
+  that build is unchanged.
 
 ## Environment
 
 The Node service consumes `@the-running-dev/game-engine` from GitHub Packages over authenticated
-restore, current LTS Node. It is a sibling process to Platform's web and worker hosts under the
-same self-host constraint set as D3: local developer execution, homelab, single-server. **Fully
-offline** — nothing at startup or in steady state requires outbound network.
+restore, current LTS Node, unchanged from G1. It gains a durable store alongside it.
 
-Code lives in this repository under `workloads/game-service/` — the decision, its rejected
-alternatives, and its named cost to §8.2's external-validation claim are in
-[`design/90-decisions.md`](90-decisions.md), 2026-08-08.
+**The store is shared by two processes**, which is a consequence of the compare-and-swap criterion
+rather than a separate decision: an embedded in-process store cannot exhibit the failure §6.1
+describes, so it cannot prove the fix. The same self-host constraint set as D3 and G1 still applies —
+local developer execution, homelab, single-server — so the store must be self-hostable and reachable
+without a vendor's SaaS tenant, per `AGENTS.md`'s *depend on the protocol, not the vendor*. **Steady
+state stays fully offline.**
 
-Scale is one: a single service instance, in-memory state, sessions lost on restart by design.
-Anything that survives a restart is G2 arriving early.
+Code lives in this repository under `workloads/game-service/`, unchanged from G1 and for the reasons
+recorded there.
+
+Scale is small and deliberately so: two instances, because one cannot demonstrate the problem and
+three demonstrate nothing further.
 
 ## Lifespan
 
-**Stage scaffolding, except the seams.** The in-memory composition is disposable — G2 replaces the
-stores, G3 wraps them. What must be built to last: the operation table as data, the projection
-boundary, and the generated contract in ServiceContract. Those three survive every later stage;
-everything else in Stage 1 is allowed to be replaced without ceremony.
+**Built to last, unlike most of G1.** G1's in-memory composition was declared disposable and this
+effort disposes of it. What G2 builds is not: the schema, the tenant column, the optimistic-locking
+discipline, and the engine's conflict outcome all survive G3 and G4. G3 wraps these stores with an
+authorization decorator that must produce byte-identical `serialize()` output; G4 meters what they
+hold. A schema shortcut taken here is paid for in a correctness migration later, which is the whole
+reason §7 asks for the tenant column before anything needs it.
 
-> **One tension this brief does not resolve, stated rather than hidden.** The edge is valued by
-> §8.2 as *genuine external* validation, and it now lives in the framework's own repository. The
-> byte-identity criterion and the real distributed trace keep their value; the independence claim
-> is weakened, accepted, and recorded — not denied.
+The exception is the two-instance harness, which exists to make a failure reachable and may be
+replaced without ceremony once it has done so.
 
 ---
 
 ## Decisions taken here that override a recommendation elsewhere
 
-1. **G1 is built in this repository.** `implementation-plan.md` §5 framed G1 as proceeding
-   "independently of Platform", and `AGENTS.md` holds that GEaaS is a hosted workload, not what
-   this repository is. Overridden: one repository, `workloads/game-service/`, product visibly
-   outside `src/`. The dependency rule is unchanged — a reference from a Platform package to the
-   workload remains a build failure.
+1. **The §6.1 contradiction is logged, not resolved in this brief.**
+   [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 resolves concurrency
+   with compare-and-swap on the sequence number, stating that *"the engine's save handle already
+   exposes `savedAtSeq` — so the version is present and needs no new concept."* The evidence
+   disagrees. The contended row is the **session**, whose version is `attemptCounter` — the engine
+   increments it by exactly 1 on every write to an existing session — and `savedAtSeq` lives on the
+   **save** record, which Adventures writes with an unconditional upsert and no lock at all. Taken
+   literally, §6.1 would version the wrong table and leave the contended one unguarded.
 
-2. **The first wire is settled at G1, not at the edge.** ADR-005 named JSON over HTTP as the first
-   wire but left open when it would exist; the GEaaS docs read MCP-first. Settled: the Node
-   service exposes the JSON wire from the start and MCP is a projection of the same table, so the
-   edge proxies an existing wire rather than defining one.
+   **The recommendation was to correct §6.1 in this effort**, on the grounds that a known-wrong
+   resolution sitting in a document G2, G3 and G4 all read is how it gets implemented wrongly later.
+   **Declined, and recorded here rather than dropped**, per this repository's rule on declined
+   findings: the contradiction is named in the brief and `/design` decides which side is wrong,
+   including whether saves need a lock of their own. The retained risk is that the document stays
+   wrong for the duration of the design stage.
 
-3. **ADR-005's "next concrete step" stops being deferred.** The ServiceContract repository is
-   populated by a G1 slice rather than "on its own schedule" — the first real boundary is here,
-   and shipping it without its contract home is the drift ADR-005 exists to prevent.
+2. **The store is Node's, end to end, and Platform's Persistence package gains nothing.** The
+   implementation plan pairs G2 with "provisioned persistence" without saying whose. Settled: the
+   ports are the engine's and the engine is Node, so the implementations are Node. The alternative —
+   the workload calling a .NET persistence service across a wire — would put a network hop inside
+   the write path the compare-and-swap has to survive, to reach a package a 460-line Node
+   implementation demonstrably does not need.
+
+3. **Session lifecycle is admitted rather than deferred again.** G1's non-goal deferred eviction,
+   expiry and quotas to "G2 sizing a store it does not have yet." That reasoning expires here.
+   Admitting it means G2 carries criteria the implementation plan's G2 entry does not currently
+   list, and this brief is where that scope binds.

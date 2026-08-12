@@ -27,6 +27,14 @@
     The slices document to check. Defaults to design/30-slices.md relative to
     this script's location.
 
+    On the default path only, a missing document passes with a stated skip
+    rather than failing. Between the commit that archives a finished effort's
+    set and the /slices run that writes the next one, the active effort has a
+    brief and no slices -- stage 0 of the pipeline, not a broken repository --
+    and a gate that cannot tell those apart trains everyone to ignore it. An
+    explicitly supplied Path that does not exist is still a caller error and
+    still throws. A document that exists but is malformed always fails.
+
 .EXAMPLE
     ./build/Test-SliceStatusMarkers.ps1
 #>
@@ -40,12 +48,18 @@ param(
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 
-if (-not $PSBoundParameters.ContainsKey('Path')) {
+$pathWasSupplied = $PSBoundParameters.ContainsKey('Path')
+if (-not $pathWasSupplied) {
     $Path = Join-Path $PSScriptRoot '..' 'design' '30-slices.md'
 }
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-    throw [System.IO.FileNotFoundException]::new("Slices document not found: '$Path'.")
+    if ($pathWasSupplied) {
+        throw [System.IO.FileNotFoundException]::new("Slices document not found: '$Path'.")
+    }
+
+    Write-Host "SKIP: no active slices document at '$Path' -- the active effort has no slices yet."
+    exit 0
 }
 
 $text = [IO.File]::ReadAllText($Path) -replace "`r`n?", "`n"
