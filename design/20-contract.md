@@ -1,0 +1,1084 @@
+# Contract — durable sessions (G2)
+
+**Document status:** Contract. Derived from [`10-design.md`](10-design.md). Authoritative for the
+artifacts and modules it describes; [`00-brief.md`](00-brief.md) stays authoritative for scope and
+non-goals, and [`platform-identity.md`](../docs/docs/platform-identity.md) for what this repository
+is.
+
+Two languages, unchanged from G1. **TypeScript** with `strict` for the contract package and the Node
+workload. **C#** with nullable reference types enabled for the .NET edge.
+
+**[`g1/20-contract.md`](g1/20-contract.md) stays authoritative for everything it declares.** This
+document declares only what durable state adds, and names every G1 declaration it amends — it never
+restates one. A type that appears below unchanged from G1 appears because a G2 member was added to
+it; a type that does not appear is unchanged and is still G1's.
+
+**Invariant numbering continues G1's**, from 48. G1's 1–47 keep their numbers and their home; the
+seven of them G2 amends are listed under [*Amended invariants*](#amended-invariants) rather than
+rewritten in place, so a citation to a number resolves to exactly one statement.
+
+> **This contract depends on one engine change**, which is G2's single engine deliverable and is
+> declared under [*The engine seam G2 adds*](#the-engine-seam-g2-adds). Every conflict assertion in
+> the design's proofs depends on it, and the design's Open question 11 records that the vocabulary is
+> the engine's to ratify.
+
+> **One count in [`10-design.md`](10-design.md) does not survive the source, and this contract takes
+> the source's side.** Open question 3 calls `SessionStoreErrorCode` *"a closed union of seven
+> members"* and `concurrent_modification` *"an eighth member"*; the decision log of 2026-08-12
+> repeats it. Read at `0.6.1` on the engine's `main` (`src/engine/src/core/session/types.ts`), the
+> union has **eight** members — `unknown_session`, `unknown_save`, `storage_failure`,
+> `unknown_campaign`, `invalid_state`, `unknown_kind`, `save_requires_migration`, `migration_failed`
+> — so `concurrent_modification` is the **ninth**. Nothing else in the design turns on the count: the
+> widening carries a `core.reason.*` message obligation whichever ordinal it takes, which is the part
+> the design was actually establishing. The correction belongs to `/design`, not here; this contract
+> declares nine members and says why.
+
+---
+
+## Types
+
+### The engine seam G2 adds
+
+```ts
+export type SessionStoreErrorCode =
+  | "unknown_session"
+  | "unknown_save"
+  | "storage_failure"
+  | "unknown_campaign"
+  | "invalid_state"
+  | "unknown_kind"
+  | "save_requires_migration"
+  | "migration_failed"
+  | "concurrent_modification";
+```
+
+**Declared in the engine, widened by one member**, and carrying the same obligation every other
+member carries: a registered `ReasonCode` with a shipped `core.reason.*` message. The engine's own
+doc comment on the union states that obligation, so the widening is a message and a union member and
+nothing more exotic.
+
+```ts
+export const SESSION_PERSISTENCE_CONFLICT = "SessionPersistenceConflict";
+
+export interface SessionPersistenceConflict extends Error {
+  readonly name: typeof SESSION_PERSISTENCE_CONFLICT;
+}
+```
+
+**The brand is the `name` property and nothing else.** `SessionStoreError` already discriminates
+itself by assigning `this.name`, so a name-carrying throw is the engine's existing idiom rather than
+a convention G2 invents — and duck-typing on `name` survives a duplicated package copy, where
+`instanceof` does not. **The spelling is the engine repository's to ratify**; this contract names it
+so the G2 slices and the engine pull request describe one thing
+([Additions](#additions-requiring-a-decision-log-entry), item 1).
+
+**What the engine change is, exactly.** `writeSession`'s `catch` today is parameterless and rethrows
+`SessionStoreError("session", "storage_failure")`, discarding the cause. It gains one branch: a
+caught value whose `name` is `SESSION_PERSISTENCE_CONFLICT` raises
+`SessionStoreError("session", "concurrent_modification")` instead. **Everything else thrown still
+becomes `storage_failure`**, so every existing implementation of `SessionPersistence` is unaffected.
+`writeSave`, `getSession` and `getSave` are untouched: saves have no second writer, and a read that
+fails is an outage on any reading.
+
+### Contract package — the widened transport codes
+
+```ts
+export type TransportErrorCode =
+  | "malformed_payload"
+  | "unsupported_version"
+  | "unknown_operation"
+  | "internal_failure"
+  | "session_expired"
+  | "save_expired";
+```
+
+**Six members**, two of them G2's. `TransportErrorCode` is closed and is the contract package's own
+because no engine concept corresponds to either new code: the engine has one answer for an evicted
+session and a session that never existed, correctly, and the distinction the brief requires is a host
+lifecycle fact about a host-owned column.
+
+`EngineErrorCode`, `WireErrorCode` and `HttpStatus` are **unchanged**. `concurrent_modification`
+enters through `EngineErrorCode`, which is branded rather than enumerated precisely so the engine's
+vocabulary has one home; `409` and `404` are already members of `HttpStatus`, so no status widens.
+
+**The status mapping gains three entries** — `concurrent_modification` → `409`, `session_expired` →
+`404`, `save_expired` → `404` — and the generator's error-coverage gate is what requires them rather
+than this sentence.
+
+### Workload — the store's own identifiers and constrained values
+
+```ts
+export type TenantId = string & { readonly __brand: "TenantId" };
+
+export type EngineInstant = string & { readonly __brand: "EngineInstant" };
+
+export type DatabaseInstant = Date & { readonly __brand: "DatabaseInstant" };
+
+export type SessionRowVersion = bigint & { readonly __brand: "SessionRowVersion" };
+
+export type SchemaName = string & { readonly __brand: "SchemaName" };
+```
+
+**`TenantId` is non-empty and, in G2, is one value.** The implicit tenant is a constant the store
+supplies to every statement. Nothing resolves it, no request carries one, and no behaviour varies by
+it — which is what keeps *tenancy behaviour* out while the key shape is right from the first
+migration.
+
+**`EngineInstant` and `DatabaseInstant` are two kinds of time and the types are what stop them being
+confused.** `EngineInstant` is whatever the engine's `Clock.now()` returned, stored and returned as
+the same string; under the replay profile it is the fixed instant, and a round trip that reformatted
+it would break the replay. `DatabaseInstant` is the database clock's, never the process clock's, and
+never enters a `StoredSessionRecord`.
+
+**`SessionRowVersion` is never computed in TypeScript.** The store reads it, holds it, and passes it
+back as a statement parameter; the guarded `update` increments it in SQL. It is `bigint` and not
+`number` because the column is `bigint`, and the driver's `int8` parser is configured to produce
+`bigint` — an unconfigured `pg` returns `int8` as a `string`, and a version silently typed `string`
+would still compare equal on a round trip while making any future arithmetic on it a concatenation.
+
+**`SchemaName` is the per-run PostgreSQL schema the proof harness creates and drops.** It exists so
+run isolation has a type of its own and is visibly not `TenantId`.
+
+### Workload — the durable rows
+
+Every row type below is the store's internal shape. **None of them crosses the port**: the adapter
+maps a row to a `StoredSessionRecord` or a `StoredSaveRecord`, which carry engine-owned members only.
+
+```ts
+export interface SessionRow {
+  readonly tenantId: TenantId;
+  readonly sessionId: string;
+  readonly blob: string;
+  readonly audience: ProjectionAudience;
+  readonly attemptCounter: number;
+  readonly replayCompatible: boolean;
+  readonly engineCreatedAt: EngineInstant;
+  readonly engineUpdatedAt: EngineInstant;
+  readonly profileId: string | null;
+  readonly version: SessionRowVersion;
+  readonly engineVersion: SemanticVersion;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
+  readonly expiresAt: DatabaseInstant;
+}
+
+export interface SaveRow {
+  readonly tenantId: TenantId;
+  readonly saveId: string;
+  readonly campaignId: string;
+  readonly blob: string;
+  readonly savedAtSeq: number;
+  readonly audience: ProjectionAudience;
+  readonly profileId: string | null;
+  readonly engineVersion: SemanticVersion;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly expiresAt: DatabaseInstant;
+}
+
+export interface ProfileRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly formatVersion: number;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
+}
+
+export interface ProfileAchievementRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly campaignId: string;
+  readonly achievementId: string;
+  readonly rowCreatedAt: DatabaseInstant;
+}
+```
+
+**`ProjectionAudience` is the engine's own type** — `"player" | "ai"` at `0.6.1` — imported, never
+re-declared. The column carries the constraint, so a value the engine does not name cannot be stored.
+
+**`profileId` is `string | null` on the row and an *absent key* on the record.** The engine's
+`StoredSessionRecord.profileId` is an optional member, and the design's rule is `null` ⇄ key absent,
+never a member whose value is `undefined`. A record carrying `profileId: undefined` serializes
+differently from one that omits the member, which is the whole reason the mapping is stated as a type
+rule rather than left to a spread.
+
+**`SessionRow.version` has no counterpart on `StoredSessionRecord` and never will.** The engine
+cannot read it, cannot supply it, and cannot be made to depend on it, which is the property that
+makes the lock the store's and the design's adjudication load-bearing rather than stylistic.
+
+**`SaveRow` carries no `version`.** `saveGame` mints a fresh `saveId` on every call and writes
+through `writeSave` only — verified at `0.6.1` — so a save row has exactly one writer for its whole
+life and an optimistic lock would guard nothing.
+
+### Workload — the guarded write and the lifecycle classification
+
+```ts
+export type GuardedWriteOutcome = "applied" | "conflict" | "expired";
+
+export type LifecycleState = "live" | "expired" | "absent";
+```
+
+**`GuardedWriteOutcome` has exactly three members and the third is why the re-read is a
+classification.** Zero rows affected is re-read: a different `version` is `conflict`, the same
+`version` past its `expires_at` is `expired`, and an absent row is `conflict` because the caller's
+read is no longer authoritative either way. **A re-read that itself fails is `conflict`**, never a
+storage outcome — zero rows has already established the one fact the caller acts on.
+
+**`LifecycleState` is a classification and never data.** It answers *does a row exist for this id,
+and has it expired* and returns no blob, no scene and no record.
+
+```ts
+export interface LifecycleProbe {
+  session(sessionId: string): Promise<Outcome<LifecycleState, StoreError>>;
+  save(saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
+}
+```
+
+**It is not a store port and it is not an operation.** It has no route, no MCP tool and no row in the
+operation table, and the generator's arity gate fails if anyone gives it one. It is reachable from
+Dispatch and from nowhere else.
+
+**It is composed behind the same seam `SessionPersistence` and `ProfileStore` are**, so that whatever
+decorates them decorates it. Nothing in G2 depends on that; it is stated so G3's authorization
+decorator inherits the constraint rather than rediscovering that an undecorated probe is an existence
+oracle.
+
+**What Dispatch does when the probe itself fails is [Unresolved 1](#unresolved).**
+
+### Workload — the store provider and the per-request seam
+
+```ts
+export interface StoreProvider {
+  forRequest(): SessionStore;
+}
+```
+
+**One method, and the two configurations differ only in what it returns.** The durable configuration
+constructs a fresh persistence adapter with an empty read-version map and composes a session layer
+over it with the process-lived engine, registry, record-id source and clock; the in-memory
+configuration returns G1's single long-lived layer on every call.
+
+**A cache that cannot outlive one request is what makes the compare-and-swap the only concurrency
+mechanism in the system.** The type is the seam that makes it so: Dispatch cannot hold a store across
+requests because it is never handed one that lasts.
+
+```ts
+export interface ReadVersionMap {
+  observed(sessionId: string): SessionRowVersion | undefined;
+  record(sessionId: string, version: SessionRowVersion): void;
+  advance(sessionId: string, version: SessionRowVersion): void;
+}
+```
+
+**One per request, and it dies with the request** — which is the entire reason it cannot go stale.
+`sessions.put` for an id the map holds is a guarded update asserting that version; for an id it does
+not hold, an insert. `advance` is called only after a write lands, so the map's value and the row's
+value are the same event.
+
+### Workload — configuration
+
+```ts
+export interface StoreConnection {
+  readonly connectionString: string;
+  readonly poolSize: number;
+  readonly connectTimeoutMs: number;
+  readonly schema: SchemaName | null;
+}
+
+export interface LifecycleBounds {
+  readonly sessionIdleTtlSeconds: number;
+  readonly saveTtlSeconds: number;
+  readonly retentionHorizonSeconds: number;
+  readonly sweepIntervalSeconds: number;
+  readonly sweepStatementTimeoutMs: number;
+}
+
+export interface DurableStoreConfiguration {
+  readonly connection: StoreConnection;
+  readonly bounds: LifecycleBounds;
+  readonly readWritePauseMs: number;
+}
+
+export type StorageProfile =
+  | { readonly kind: "in-memory" }
+  | { readonly kind: "durable"; readonly store: DurableStoreConfiguration };
+
+export interface WorkloadConfiguration {
+  readonly listen: ListenEndpoint;
+  readonly determinism: DeterminismProfile;
+  readonly otlpEndpoint: string | null;
+  readonly storage: StorageProfile;
+}
+```
+
+**The discriminated union is G1's determinism trick applied a second time.** No code path holds an
+in-memory profile with a connection string, so "the in-memory configuration reaches no database" is a
+type-level fact rather than a branch anyone has to keep correct.
+
+**All three lifecycle bounds are configuration, and the production defaults are 30 days, 365 days and
+30 days.** Sessions and saves deliberately do not share a number. The defaults are values, not the
+mechanism — the expiry proofs set them to seconds, and the replay takes the defaults precisely
+because a session that expired between two of its ten steps would report a serialization failure for
+a clock problem.
+
+**`retentionHorizonSeconds` is required to exceed any request's duration by a wide margin**, and that
+requirement is what makes it impossible for a sweep to fall between a live request's read and its
+write.
+
+**`readWritePauseMs` is the perturbation seam and its default is `0`.** It pauses the store adapter
+between a session read and the corresponding write, and it is what makes the contention race
+deterministic rather than hoped for. A test asserts it is inert at `0`, on the same terms G1 asserts
+that the default profile writes no dump: a diagnostic that is merely usually off is on.
+
+**`StoreConnection.schema` is `null` outside the proof harness.** It names the per-run PostgreSQL
+schema the durable replay is isolated by. **The tenant column is never used for run isolation** —
+that is tenancy behaviour, and it is the shortcut a durable store makes tempting.
+
+### Workload — readiness
+
+```ts
+export interface ProbeSurface {
+  liveness(): ProbeResult;
+  readiness(): Promise<ProbeResult>;
+}
+```
+
+**`readiness` becomes asynchronous and that is forced rather than chosen.** It evaluates the store on
+each probe, so it reports whether the store is usable *now* rather than whether it was usable once —
+a latch on startup would leave the workload reporting ready through exactly the outage the edge's new
+readiness probe was introduced to surface. **The stated cost is that readiness can flap.**
+`liveness` never consults the store and stays synchronous.
+
+### Workload — the sweep
+
+```ts
+export interface SweepResult {
+  readonly sessionsRemoved: number;
+  readonly savesRemoved: number;
+}
+```
+
+**The sweep is a plain `delete` and is idempotent**, so two instances sweeping concurrently need no
+coordination and none is added. It removes only rows whose `expires_at` is older than the retention
+horizon; a row that has merely expired is retained, because an expired-but-retained row is what lets
+the wire answer `session_expired` rather than `unknown_session`.
+
+**A failed sweep reports what it removed, which on failure is nothing.** The design asks for "the row
+count it did not remove"; that number is not knowable from a failed `delete` without a second query
+against a store that has just failed one, so the honest report is the failing statement and a removed
+count of zero ([Additions](#additions-requiring-a-decision-log-entry), item 5).
+
+### Proof harness — the durable replay, the two instances, the conformance suite
+
+```ts
+export interface RunSchema {
+  readonly name: SchemaName;
+  drop(): Promise<Outcome<void, HarnessError>>;
+}
+
+export function createRunSchema(
+  connectionString: string,
+): Promise<Outcome<RunSchema, HarnessError>>;
+```
+
+**A pristine schema per run, created and dropped by the harness.** The counting `RecordIdSource`
+mints `counting-session-id-0` on every run, so a second run against a dirty schema is a primary-key
+violation in the middle of the replay.
+
+```ts
+export interface WorkloadInstance {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, HarnessError>>;
+}
+
+export interface TwoInstanceOptions {
+  readonly connectionString: string;
+  readonly schema: SchemaName;
+  readonly readWritePauseMs: readonly [number, number];
+}
+
+export function spawnInstances(
+  options: TwoInstanceOptions,
+): Promise<Outcome<readonly [WorkloadInstance, WorkloadInstance], HarnessError>>;
+```
+
+**`spawnInstances` is both a test entry point and the README's documented command.** The brief
+requires the repository to tell a reader how to run two instances against one store, and the compose
+file is barred from that clause — it provisions the dependency and starts no instance. One artifact
+serves both, because a documented command nothing runs is the failure the fresh-clone job exists to
+prevent.
+
+**`readWritePauseMs` is a pair because the two instances are configured differently**: the instance
+under test carries the pause, the second is sent inside it. Nothing else distinguishes them — the
+instances are anonymous and interchangeable, which is what makes the two-instance proof mean
+anything.
+
+```ts
+export interface ConformanceTarget {
+  readonly label: string;
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  seedCorruptProfile(profileId: string): Promise<void>;
+  seedProfileWriteFailure(profileId: string): Promise<void>;
+}
+
+export function runPortConformance(
+  target: ConformanceTarget,
+): Promise<Outcome<void, ConformanceError>>;
+```
+
+**One assertion set, run over two targets**, which is what makes it a conformance suite rather than a
+second set of unit tests. It covers `sessions.get/put`, `saves.get/put` and `profiles.load/save`; the
+three profile outcomes; the set-union merge including the divergence the durable `save` deliberately
+carries; and the round trip that keeps host metadata out of game state.
+
+**The two seeding methods exist because the two targets reach the same outcome by different
+mechanisms** — a malformed raw entry against the engine's in-memory profile store, a row with an
+unrecognised `format_version` against the durable one. `seedProfileWriteFailure` must break the
+profile write and **only** the profile write, since the criterion it serves is that a committed
+session write survives it.
+
+**The reference target's `persistence` is the workload's own map-backed implementation, not the
+engine's.** The engine exports the `SessionPersistence` *type* and no implementation of it — its
+in-memory session store keeps private `Map`s and treats `persistence` as an optional host port
+(verified at `0.6.1`). `createInMemoryProfileStore` *is* an engine-supplied `ProfileStore`, so half
+of the design's *"the engine's in-memory implementations"* is literal and half resolves to G1's
+`inMemoryPersistence()` ([Additions](#additions-requiring-a-decision-log-entry), item 2).
+
+**The answer the suite returns is "yes for five methods, conditionally for the sixth."**
+`profiles.save` is the one method where the two implementations are asserted to *differ* — the
+durable store's merge is additive where the engine's replaces — so for that method the shared
+assertion cannot establish conformance. What stands in its place is a property of the engine's
+*caller*, asserted directly: every `save` the engine issues carries the loaded set plus additions,
+read off `upsertAchievements` at `0.6.1`.
+
+---
+
+## Persisted schemas
+
+**G2 is this repository's first schema.** There is no existing data on any table below, so each
+table's migration story begins at creation; what governs every migration *after* the first is the
+standing rule in the last subsection.
+
+All four tables live in one PostgreSQL database, in one schema, provisioned by the committed compose
+file and brought to head by `node-pg-migrate` under its own advisory lock.
+
+### `session`
+
+| Column | Type | Null | Owner | Notes |
+|---|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host | Primary-key member |
+| `session_id` | `text` | not null | Engine | Primary-key member; minted by `RecordIdSource` |
+| `blob` | `text` | not null | Engine | The canonical serialization, byte for byte |
+| `audience` | `text` | not null | Engine | `check (audience in ('player','ai'))` |
+| `attempt_counter` | `integer` | not null | Engine | Stored because the record carries it. **Not the lock** |
+| `replay_compatible` | `boolean` | not null | Engine | |
+| `engine_created_at` | `text` | not null | Engine | The engine's `Clock` output, verbatim |
+| `engine_updated_at` | `text` | not null | Engine | Likewise |
+| `profile_id` | `text` | null | Engine | `null` ⇄ key absent on the record |
+| `version` | `bigint` | not null | **Host** | **The optimistic lock.** `1` on insert, `+1` on every accepted update |
+| `engine_version` | `text` | not null | Host | The engine package version that produced `blob` |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host | Database clock |
+| `row_updated_at` | `timestamptz` | not null | Host | Database clock, on every accepted write |
+| `expires_at` | `timestamptz` | not null | Host | Derived in SQL as `now() + <session idle TTL>` on every accepted write |
+
+- **Primary key** `(tenant_id, session_id)`.
+- **Index** on `(expires_at)`, for the sweep. It is the only non-key access path any statement in G2
+  takes.
+- **`blob` is `text`, never `json` or `jsonb`.** `jsonb` reorders members, collapses duplicates and
+  renormalises numbers; a blob that round-trips through it is not the same bytes, and byte identity
+  is the effort's first criterion. `text` also makes the column opaque to the database, which is the
+  correct relationship — the store must not be able to reason about game state.
+- **The engine's two instants are `text` and the host's three are `timestamptz`.** Storing the
+  engine's strings as timestamps would reformat them on read, so under the replay profile the fixed
+  instant would come back in the database's rendering rather than the engine's.
+- **Migration story:** created by the first migration, empty. No backfill exists and none is
+  possible; `engine_version` in particular is the one host column that cannot be reconstructed for a
+  row written before it existed, which is why it is taken now.
+
+### `save`
+
+| Column | Type | Null | Owner |
+|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host |
+| `save_id` | `text` | not null | Engine |
+| `campaign_id` | `text` | not null | Engine |
+| `blob` | `text` | not null | Engine |
+| `saved_at_seq` | `integer` | not null | Engine |
+| `audience` | `text` | not null, `check (audience in ('player','ai'))` | Engine |
+| `profile_id` | `text` | null | Engine |
+| `engine_version` | `text` | not null | Host |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host |
+| `expires_at` | `timestamptz` | not null | Host — derived as `now() + <save TTL>` at write |
+
+- **Primary key** `(tenant_id, save_id)`. **Index** on `(expires_at)`.
+- **No `version` column**, and the absence is a decision — see `SaveRow` above.
+- **`saves.put` is an upsert, not a bare insert**, because the port's method is `put` and an
+  implementation that failed on a re-put would be narrower than the interface it claims to fill. **On
+  a re-put every host column is recomputed**: a re-put is a write, and a host column describing the
+  first one would then describe nothing.
+- **Migration story:** as `session`.
+
+### `profile`
+
+| Column | Type | Null | Owner |
+|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host |
+| `profile_id` | `text` | not null | Engine |
+| `format_version` | `integer` | not null | Engine — `1` at this release |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host |
+| `row_updated_at` | `timestamptz` | not null | Host |
+
+- **Primary key** `(tenant_id, profile_id)`. No `expires_at` and no index beyond the key.
+- **`format_version` exists so `profile_corrupt` stays a reachable, testable outcome** against a
+  normalised store — the same reason the engine's in-memory profile store keeps raw entries.
+- **Migration story:** created empty. **`format_version` may not be bumped in the release that first
+  writes the new format.** A rolling deploy would otherwise have a newer instance write `2`, an older
+  instance classify it `profile_corrupt`, and the same player hold achievements on one instance and
+  none on the other for the length of the deploy — silently, since `profile_corrupt` is a warning on
+  a `200`. Read support ships first; write support ships in a later release.
+
+### `profile_achievement`
+
+| Column | Type | Null | Owner |
+|---|---|---|---|
+| `tenant_id` | `text` | not null, default the implicit tenant | Host |
+| `profile_id` | `text` | not null | Engine |
+| `campaign_id` | `text` | not null | Engine |
+| `achievement_id` | `text` | not null | Engine |
+| `row_created_at` | `timestamptz` | not null, default `now()` | Host |
+
+- **Primary key** `(tenant_id, profile_id, campaign_id, achievement_id)`. **Append-only**, written by
+  `insert … on conflict do nothing`.
+- **Achievement ids are unique only within a campaign**, which is why `campaign_id` is in the key.
+- Set union is *conflict-free*: two instances awarding two different achievements to one profile at
+  the same moment both land, with no lock and no lost write.
+- **Migration story:** created empty. **Neither profile table has an `expires_at` and the sweep does
+  not touch them.** The accepted consequence is that both grow monotonically for the life of the
+  deployment — there is no principal to scope a bound to until G3, and a profile is the row an
+  account surface will own.
+
+### Schema bookkeeping and the rule for every migration after the first
+
+One migrations table, owned by `node-pg-migrate` and not by this contract. Each migration applies in
+its own transaction under the tool's advisory lock, so two instances starting together cannot both
+apply one migration and no partial schema survives a failure.
+
+**Every migration after the first must be backward compatible with the previously deployed code**,
+because two instances share one store and are not restarted atomically. Additive columns with
+defaults; never a rename or a narrowing in one step. **This is a rule about data formats as well as
+column shapes** — `profile.format_version` above is the same two-step.
+
+### Artifacts carried across a process boundary
+
+G1's five — the contract package, the authored row set, the replay fixture, the golden transcript and
+the determinism dump — are unchanged, and [`g1/20-contract.md`](g1/20-contract.md) stays their home.
+**The fixture and the golden transcript gain no rows**: the same ten operations are replayed against
+a different store, and adding a profile-carrying step would have given the byte-identity proof a
+second job.
+
+Two are added:
+
+| Artifact | Written by | Read by | Migration story |
+|---|---|---|---|
+| **The compose file** | A human, committed under `workloads/game-service/` | The `game-service` CI job and the README's reader, by the identical command | Reviewed as a diff. It provisions the store and **nothing else** — it starts no workload instance, supervises none, and describes no deployment. It pins the server encoding to `UTF8` and the initdb locale explicitly rather than inheriting the image's |
+| **The migration set** | A human, committed, ordered | `node-pg-migrate`, at every startup | Append-only. A migration that has been applied anywhere is never edited; a correction is a new migration. The backward-compatibility rule above governs each one |
+
+---
+
+## Public signatures
+
+Internal helpers are out of scope. Everything below crosses a module boundary named in the design.
+A signature G1 declared and G2 does not change is not repeated.
+
+### Migrations — workload
+
+```ts
+export function migrateToHead(
+  connection: StoreConnection,
+): Promise<Outcome<void, MigrationError>>;
+```
+
+**One call: bring this schema to head.** It runs under the migration tool's own advisory lock, which
+is the property that makes two instances starting together safe and is the reason the tool was taken
+rather than a runner hand-rolled for two tables.
+
+### Store — workload
+
+```ts
+export interface DurableStore {
+  persistenceForRequest(): SessionPersistence;
+  readonly profiles: ProfileStore;
+  readonly lifecycle: LifecycleProbe;
+  readonly serialization: StoreSerializationHandle;
+  check(): Promise<Outcome<void, StoreError>>;
+  sweepOnce(): Promise<Outcome<SweepResult, StoreError>>;
+  close(): Promise<void>;
+}
+
+export function openDurableStore(
+  configuration: DurableStoreConfiguration,
+  engineVersion: SemanticVersion,
+): Promise<Outcome<DurableStore, StoreError>>;
+```
+
+**`persistenceForRequest` is the only per-request member.** The pool, the schema, the profile store,
+the probe and the serialization handle are all process-lived; what a request gets is a fresh adapter
+holding an empty `ReadVersionMap`.
+
+**`openDurableStore` takes the resolved engine version because the store stamps it**, and it takes
+nothing else from composition. It asserts `read committed` on connect rather than inheriting it: at
+`repeatable read` or `serializable` the guarded `update` raises a serialization failure instead of
+reporting zero rows, every conflict would arrive as `storage_failure` and a `503`, and the one
+criterion the brief says no work on this side can otherwise deliver would fail by configuration.
+
+**`check` is what readiness calls, on every probe.** It evaluates the store rather than reporting a
+remembered outcome.
+
+**`sweepOnce` is the statement; the timer is Composition's.** The sweep runs under a statement
+timeout, catches its own driver errors, and returns them — it never escapes a timer as an exception.
+
+**`close` releases the pool and returns nothing.** There is no failure a caller could act on at
+shutdown, and a close that reported one would only complicate the exit path.
+
+**Store imports the engine's *type* declarations and never its runtime.** It maps columns to a
+`StoredSessionRecord`; it never deserialises, never validates game state, and never calls the engine.
+
+### Composition — workload
+
+```ts
+export interface ComposedWorkload {
+  readonly stores: StoreProvider;
+  readonly lifecycle: LifecycleProbe;
+  readonly serialization: StoreSerializationHandle;
+  readiness(): Promise<ProbeResult>;
+  close(): Promise<void>;
+}
+
+export function compose(
+  configuration: WorkloadConfiguration,
+  contract: ContractPackage,
+): Promise<Outcome<ComposedWorkload, CompositionError>>;
+```
+
+**`compose`'s parameters are unchanged and its result is widened.** It still owns the engine-version
+assertion, which is why it takes the contract at all. G1's `ComposedWorkload.store: SessionStore`
+becomes `stores: StoreProvider`; every other member is new.
+
+**`compose` returns successfully when the store is unreachable.** The process stays up, reports live,
+reports **not ready**, and retries with backoff — a host that refuses to start tells an operator that
+something is wrong, while a host that starts and names its failing readiness check tells them *what*.
+`StoreUnavailable` is therefore a readiness condition and not a `CompositionError`; the
+`CompositionError` variants are the ones no retry can fix.
+
+**Composition supplies a lifecycle probe for both configurations.** The in-memory one classifies
+every id as `absent`, so `unknown_session` and `unknown_save` pass through verbatim and Dispatch
+carries no branch on which store was built. A no-op implementation rather than a conditional is the
+point: the alternative puts configuration-dependent behaviour into the module whose job is to be
+transport-neutral.
+
+**Composition owns the sweep timer**, calls `sweepOnce`, and never starts a tick while its
+predecessor is still running. The in-memory configuration starts no timer.
+
+`writeDeterminismDump` is unchanged in signature; the durable configuration's
+`StoreSerializationHandle` reads
+`select session_id, blob from session where tenant_id = $1 order by session_id collate "C"`, and the
+same for saves.
+
+**The dump's ordering is pinned to `collate "C"` and that is load-bearing.** Ordering `text` under a
+locale-aware collation is locale-dependent, and the replay's ids are hyphen-and-digit dense; an
+unpinned collation makes the ordered blob set depend on the database image's locale, so two runs
+could differ in *order* while agreeing on every byte. That failure presents as a byte-identity
+failure, which is the one signal in the suite that must mean exactly one thing.
+
+### Dispatch — workload
+
+```ts
+export function createDispatcher(
+  contract: ContractPackage,
+  stores: StoreProvider,
+  lifecycle: LifecycleProbe,
+): Dispatcher;
+```
+
+**Dispatch takes the provider and the probe, never the composition**, so it still has no path to the
+serialization handle. `Dispatcher` and `DispatchOutcome` are unchanged: the conflict arrives as an
+`EngineErrorCode` like every other engine reason code, and the two expiry codes are raised by
+Dispatch itself after consulting the probe.
+
+**Expiry classification happens only on the failure path.** When the engine raises `unknown_session`
+or `unknown_save`, Dispatch consults the probe; expired-and-retained becomes `session_expired` or
+`save_expired`, and genuinely absent — or swept past the horizon — passes the engine's own code
+through verbatim.
+
+**Dispatch retries nothing.** Not on conflict, not on `storage_failure`, nowhere. A retried
+`submitAction` is a second action, and merging two is explicitly unavailable.
+
+### Probes — workload
+
+```ts
+export interface ProbeGate {
+  readonly surface: ProbeSurface;
+  markSurfacesBuilt(): void;
+  markListening(): void;
+}
+
+export function createProbeSurface(readiness: () => Promise<ProbeResult>): ProbeGate;
+```
+
+**Readiness is now the conjunction of three things** — surfaces built, listener bound, and the store
+answering — and the third is supplied as a thunk so the probe surface never learns what a store is.
+
+### Proof harness — test scope
+
+```ts
+export function runDurableReplay(
+  fixture: ReplayFixture,
+  target: HostedTarget,
+  schema: RunSchema,
+): Promise<Outcome<RunResult, ReplayError>>;
+
+export function assertNonEmpty(
+  snapshot: StoreSerializationSnapshot,
+  expectedSessions: number,
+  expectedSaves: number,
+): ComparisonResult;
+```
+
+**`assertNonEmpty` runs before comparison A, not instead of it.** Two empty ordered sets compare
+byte-identical, so a dump that read the wrong schema would pass comparison A while comparison B
+passed on its own merits — the responses were served correctly and only the dump was misdirected.
+The counts are asserted against the fixture's own expected numbers rather than against zero, since
+"not empty" is satisfied by one row as easily as by all of them.
+
+`runInProcess`, `runHosted`, `compareSerializations`, `compareTranscripts` and `readDeterminismDump`
+are G1's and are unchanged. **G1's in-memory replay stays in the suite and stays green** — two proofs
+passing is not evidence that the first still does.
+
+### The edge — .NET
+
+```csharp
+public sealed record GameEdgeOptions
+{
+    public required Uri WorkloadBaseAddress { get; init; }
+    public required TimeSpan ForwardTimeout { get; init; }
+    public required TimeSpan ReadinessTimeout { get; init; }
+}
+
+public interface IGameWorkloadProbe
+{
+    Task<Result<EdgeError>> ProbeReadinessAsync(CancellationToken cancellationToken);
+}
+```
+
+**One change, in one place.** The edge's readiness check probes the workload's **readiness** endpoint
+rather than its liveness endpoint: with a durable store a workload can be alive and unable to serve,
+and an edge that reports ready while every forward will `503` tells an operator less than nothing.
+
+`GameEdgeOptions.LivenessTimeout` is **renamed** to `ReadinessTimeout` — a property named for
+liveness that bounds a readiness probe is a name that will be read as the thing it is not. The
+rename and the corresponding `appsettings.json` key change land in one commit
+([Additions](#additions-requiring-a-decision-log-entry), item 4).
+
+`GameWorkloadReadinessCheck` keeps `Unhealthy` + `Required` and `TouchesExternalDependency = true`,
+for G1's reason: one backend, one job. `IGameWorkloadForwarder`, `ForwardedRequest`,
+`ForwardedResponse` and `MapGameWorkloadForwarding` are unchanged. **Nothing else at the edge moves**
+— no load balancing across the two instances, no session affinity, no streaming, no package boundary.
+**The two-instance contention proof addresses the two workload instances directly, not through the
+edge.**
+
+---
+
+## Error semantics
+
+Every variant below is a value with a stable `code`, and each module's error type is a discriminated
+union on `code`. **No bare exceptions and no string errors cross a module boundary.** The single
+standing exception is the engine's own `SessionStoreError`, which is thrown because no `SessionStore`
+signature has an error channel — and, from G2, the branded `SessionPersistenceConflict` the store
+adapter throws for the engine to recognise. Both are caught at the boundary and never travel further
+as exceptions.
+
+### Store — `StoreError`
+
+| Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|
+| `Unreachable` | The pool cannot connect, or a connection is lost mid-statement | **Yes** — the condition is transient by nature | Readiness reports unhealthy; a request in flight becomes `storage_failure` → `503` |
+| `PoolExhausted` | A connection acquisition exceeds its timeout | **Yes** | As above. The pool is sized by configuration with a stated default and **is not tuned** — performance is a binding non-goal |
+| `IsolationLevelUnsupported` | The connection does not report `read committed` after the store asserts it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
+| `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path |
+| `IdCollision` | A primary-key violation on a `createSession` or `loadGame` insert | **No** | `storage_failure` → **503**, *not* the conflict code. A collision is a storage anomaly, not a lost update, and conflating them would make the conflict code mean two things |
+| `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `internal_failure` → `500`. This is store corruption; a caller cannot fix it and the workload must not guess |
+
+**`StoreError` never carries a conflict.** A conflict is not a store failure — it is a successful
+statement that matched no row — and it leaves the adapter as the branded throw, not as an `Outcome`
+failure. That separation is what keeps `409` and `503` answers to different questions.
+
+**A `StoreError` on the read-version re-read is not raised at all.** Zero rows affected has already
+established the one fact the caller acts on, so the classifier answers `conflict` and swallows its
+own driver error. Letting it escape would convert a known non-outage into a `503` precisely when the
+store is degraded and races are most likely, defeating the criterion the mechanism was added to
+serve.
+
+### Migrations — `MigrationError`
+
+| Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|
+| `Unreachable` | The runner cannot connect | **Yes** | Startup retries with backoff, reporting not ready. No partial schema exists — each migration applies in its own transaction |
+| `LockTimeout` | The advisory lock is not acquired within the runner's bound | **Yes** | As above. The other instance is mid-migration; the next attempt finds the schema at head |
+| `MigrationFailed` | A migration's SQL fails | **No** | The process stays up and not-ready, naming the migration. A retry re-runs the same SQL against the same schema |
+
+### Composition — `CompositionError`
+
+G1's three variants are unchanged. One is added.
+
+| Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|
+| `StorageConfigurationInvalid` | A `durable` profile carries an unusable connection string, a non-positive pool size, or a retention horizon not greater than the configured forward timeout | **No** | Fails startup, naming the setting. This is the one storage condition that aborts rather than degrading to not-ready, because no amount of waiting makes an invalid setting valid |
+
+**Store unreachability is deliberately not here.** It is a readiness condition, reported through
+`ProbeSurface.readiness` and retried with backoff, for the reason stated with `compose`.
+
+### Dispatch — the two new outcomes
+
+`DispatchOutcome` is unchanged in shape. Two codes are new on its error arm.
+
+| Code | Origin | Status | Retryable | Caller does |
+|---|---|---|---|---|
+| `concurrent_modification` | The engine, recognising the store's brand | **409** | **No, not automatically** | *Your read is stale.* Re-read with a query operation, then decide. Never resubmit blind: a retried `submitAction` is a second action |
+| `session_expired` | Dispatch, after consulting the lifecycle probe on `unknown_session` | **404** | No | The session existed and no longer does. Start a new one, or load a save |
+| `save_expired` | Dispatch, after consulting the lifecycle probe on `unknown_save` | **404** | No | As above |
+
+**Both expired codes map to 404, not 410**, and the *code* carries the distinction — G1 already
+established that `unsupported_version` and `unknown_operation` share a status and are told apart by
+their codes, and one convention with no exceptions is worth more than a semantically prettier second
+one.
+
+**Past the retention horizon the answer honestly degrades to `unknown_session`.** The row is gone and
+nothing distinguishes it from an id that never existed. That is the price of not keeping tombstones
+forever, and it is documented rather than defended.
+
+**A rejected action is still a `200`, and a conflict is not a rejected action.** A rejection is the
+game's verdict on a legal request; a conflict is the transport failing to commit one.
+
+### Profiles — the three warnings
+
+The engine's `ProfileWarningCode` members are used unchanged and none is invented.
+
+| Code | Raised when | Response | State left behind |
+|---|---|---|---|
+| `profile_missing` | No `profile` row for the id | The game action's `200`, carrying the warning and an empty achievement set | None |
+| `profile_corrupt` | `format_version` is not `1`, or an achievement row fails shape validation | As above | The row, untouched |
+| `profile_write_failed` | The adapter caught its own driver error on a profile write — **it returns `ok: false` and does not throw** | The game action's `200`, carrying the warning | **The session write, which already committed and is not rolled back** |
+
+**None of the three ever produces a broken game**, and all three are asserted by the port-conformance
+suite — the only proof that reaches these ports at all.
+
+**No retry on `profile_write_failed`.** Achievements are re-derivable on the next action because the
+store's merge is a set union, which is the second reason the merge is a union rather than a replace.
+
+### The harness — `HarnessError`, `ConformanceError`
+
+| Type | Variant | Raised when | Retryable | Caller does |
+|---|---|---|---|---|
+| `HarnessError` | `SchemaCreateFailed` | The per-run schema cannot be created or migrated | No | Fails the suite. A dirty schema would surface as a primary-key violation mid-replay |
+| `HarnessError` | `SchemaDropFailed` | The per-run schema cannot be dropped afterwards | No | Fails the suite, naming the schema, so a leaked schema is reported rather than accumulated |
+| `HarnessError` | `InstanceSpawnFailed` | An instance does not report ready within its bound | No | Fails the suite, naming which of the two |
+| `HarnessError` | `InstanceShutdownFailed` | An instance does not exit | No | Fails the suite |
+| `ConformanceError` | `MethodDiverged` | A port method behaves differently across the two targets, outside the one declared divergence | No | Fails the suite, naming the method and both targets |
+| `ConformanceError` | `SeamUnavailable` | A target cannot seed a corrupt profile or a write failure | No | Fails the suite. A degradation that cannot be provoked is not asserted, and a suite that skipped it would read as coverage |
+| `ConformanceError` | `CallerPropertyViolated` | An engine `save` was observed carrying less than the loaded set plus additions | No | Fails the suite. This is the property the durable `save`'s conditional conformance rests on, so it is asserted rather than cited |
+
+### Inherited unchanged
+
+`ContractLoadError`, `SurfaceBuildError`, `EncodingError`, `ValidationFailure`, `StartupError`,
+`ShutdownError`, `DumpReadError`, `ReplayError`, `WireError` and `EdgeError` are G1's and are
+unchanged in shape. `WireError` gains no variant: `session_expired` and `save_expired` arrive through
+`EngineRejection`'s path as codes resolved by the mapping, exactly as every engine code does.
+
+**`storage_failure` is now genuinely reachable**, where G1 recorded it as declared and unreachable. A
+test forces it and asserts the `503`, which is what stops the code being an untested branch.
+
+---
+
+## Invariants
+
+Each is written to be assertable, with the module responsible for maintaining it. **G1's 1–47 stand**;
+these continue from 48.
+
+| # | Invariant | Owner |
+|---|---|---|
+| 48 | Every column on `session`, `save`, `profile` and `profile_achievement` is on exactly one side of the engine/host ownership line, and no host column ever reaches a `StoredSessionRecord` or a `StoredSaveRecord` | Store |
+| 49 | The blob written for a session is exactly the engine's canonical serialization and carries nothing else — no timestamp, no owner id, no tenant id, no correlation | Store |
+| 50 | A blob read back is byte-identical to the blob written; `blob` is `text` and passes through no JSON normalisation at any layer, including the driver's | Store |
+| 51 | `tenant_id` is `not null` on every row every write produces, is a member of every table's primary key, and appears in every statement's `where` or column list | Store, Migrations |
+| 52 | `session.version` is `1` on insert and increments by exactly `1` in the same statement that performs the guarded write — so "the version advanced" and "a write landed" are one event | Store |
+| 53 | No `session` update is ever issued without a `version` predicate for an id the request has read, and no `where` clause is widened to make an update succeed | Store |
+| 54 | Every guarded `session` update also predicates on `expires_at > now()`, so a write cannot resurrect a session a concurrent read is already answering `session_expired` for | Store |
+| 55 | Zero rows affected is classified by a re-read into exactly one of `conflict` or `expired`, never assumed and never reported as a storage outcome; a re-read that itself fails is `conflict` | Store |
+| 56 | A conflict leaves the store as a value branded `SessionPersistenceConflict` and never as a `StoreError`; every other adapter failure is an ordinary throw the engine reads as `storage_failure` | Store |
+| 57 | Every connection the store uses reports `read committed`; the store asserts it at connect and refuses to serve otherwise | Store |
+| 58 | The store imports the engine's type declarations only. It never deserialises a blob, never validates game state, and never calls the engine | Store |
+| 59 | `expires_at` is computed from the **database** clock in SQL, never from the process clock, on both tables | Store |
+| 60 | A row whose `expires_at` has passed is returned as **not found** by `sessions.get` and `saves.get`, so the bound does not depend on when a sweep last ran | Store |
+| 61 | The sweep deletes only rows past the retention horizon and touches neither profile table; it is a plain `delete`, idempotent, and needs no coordination between instances | Store, Composition |
+| 62 | The retention horizon is required to exceed any request's duration by a wide margin, and a configuration that does not is rejected at startup | Composition |
+| 63 | A sweep tick never begins while its predecessor is still running, and a failed tick is caught, logged and retried on the next tick — never escaping as an unhandled rejection | Composition |
+| 64 | `save` has no `version` column and `saves.put` is an upsert; on a re-put every host column is recomputed from the writing process and the current clock | Store, Migrations |
+| 65 | `profiles.save` writes achievement rows with `insert … on conflict do nothing` and removes none; the durable merge is a set union | Store |
+| 66 | `profiles.save` returning `ok: false` never rolls back a committed session write, and never throws | Store |
+| 67 | A missing or corrupt profile yields an empty achievement set and a warning, never a failed request | Store |
+| 68 | For the durable configuration, the engine's session layer is composed per request and discarded with it; no session-layer cache outlives one operation | Composition |
+| 69 | The pool, the schema, the profile store, the lifecycle probe and the serialization handle are process-lived and are never rebuilt per request | Composition |
+| 70 | The read-version map is constructed empty for every request and is never shared between two requests | Store |
+| 71 | Every `sessions.get` in the durable configuration reaches the database; no read is served from a cache | Store, Composition |
+| 72 | The counting `RecordIdSource` and the counting `IdSource` are process-lived, so a per-request source cannot restart at zero and mint colliding ids | Composition |
+| 73 | The lifecycle probe has no route, no MCP tool and no row in the operation table, and returns a classification only — never a blob, a scene or a record | Store, Composition |
+| 74 | The lifecycle probe is composed behind the same seam `SessionPersistence` and `ProfileStore` are | Composition |
+| 75 | The in-memory configuration is supplied a probe that classifies every id as `absent`, so Dispatch carries no branch on which store was built | Composition |
+| 76 | The in-memory configuration keeps G1's single long-lived session layer and therefore G1's per-session queueing; it has no compare-and-swap | Composition |
+| 77 | Neither surface's module graph reaches Store, in addition to G1's `StoreSerializationHandle` prohibition | HTTP surface, MCP surface |
+| 78 | Readiness evaluates the store on every probe and reports no remembered outcome; liveness consults the store never | Composition, Probes |
+| 79 | The listener binds and the process reports live before the store is reachable; an unreachable store is reported as not-ready and retried, and never aborts startup | Composition |
+| 80 | Every row a write produces carries the writing process's resolved engine package version in `engine_version`; it is stamped, never read on the serving path, and never compared at runtime | Store |
+| 81 | The durable replay runs against a schema created for that run and dropped afterwards, never against a tenant id and never against a truncated shared schema | Proof harness |
+| 82 | The durable replay runs at the production lifecycle defaults, so no session can expire between two of its steps | Proof harness |
+| 83 | The determinism dump's ordering is pinned to `collate "C"`, and the compose file pins the server encoding and the initdb locale explicitly | Composition, Proof harness |
+| 84 | Comparison A asserts both dumps carry the fixture's expected row counts before it asserts they are equal | Proof harness |
+| 85 | Contention is asserted twice — concurrently against one instance, and across two instances sharing one store — and each asserts exactly one `200` and one `409` carrying `concurrent_modification` | Proof harness |
+| 86 | Four perturbations are asserted red: the guard removed produces two `200`s; an artificially stale version is rejected; an unreachable store produces `503` and not `409`; and a dump pointed at an empty schema fails comparison A | Proof harness |
+| 87 | `readWritePauseMs` is `0` in every configuration but a perturbed harness's, and a test asserts the seam is inert at `0` | Store, Proof harness |
+| 88 | After a conflict, the loser's action has left no trace in the winner's state; merging is never attempted | Proof harness |
+| 89 | The port-conformance suite runs the same assertions over both targets and covers all six port methods; `profiles.save` is the one declared divergence and its conditional conformance rests on an asserted property of the engine's caller | Proof harness |
+| 90 | The two instances are anonymous: nothing keys on which instance served a request, and no instance identity is modelled, stored or logged as an identifier | Composition, Proof harness |
+| 91 | Both instances bind loopback, and the two-instance harness introduces no public exposure | Proof harness |
+| 92 | The edge's readiness check probes the workload's readiness endpoint; it plays no game operation and creates no session | Edge |
+| 93 | The compose file provisions the store and starts no workload instance; the harness spawns the instances and provisions no store | Proof harness |
+| 94 | The command the README names for running two instances is the same entry point the contention proof invokes | Proof harness |
+| 95 | No project under `src/` or `samples/` references the workload, and Platform's `Persistence` package gains no consumer from G2 | Build |
+
+### Amended invariants
+
+Seven of G1's change under durable state. **Each is amended in G1's own numbering and nowhere else**,
+so a citation still resolves to one statement.
+
+| # | What changes |
+|---|---|
+| 12 | "The workload computes no sequence and stamps no field on a session or save record" now reads **no *engine-owned* field**. The store stamps `version`, `engine_version`, `row_created_at`, `row_updated_at` and `expires_at` — all host columns, none of which reaches a `StoredSessionRecord` (invariant 48) |
+| 13 | Extends from the in-memory record to every durable row: no correlation, trace id or other host metadata is written into a session record, a save record, or any canonical serialization |
+| 16 | Extends to the durable serialization handle, which reads `blob` columns and no host column |
+| 17 | Grows a second forbidden target: neither surface's module graph reaches `StoreSerializationHandle` **or Store** (invariant 77) |
+| 21 | "Both surfaces reach the store only through one `Dispatcher` instance over one `SessionStore`" becomes **over one `StoreProvider`**; the `SessionStore` instance is per request in the durable configuration |
+| 39 | "Stage 1's single-hop replay remains in the suite and green" extends to the in-memory replay remaining green after the durable one lands |
+| 46 | Unchanged in words, extended in reach: **both** instances bind loopback (invariant 91) |
+
+---
+
+## Unresolved
+
+Values and signatures the design does not determine, or that a document above this contract still
+contradicts. **Each blocks something concrete**, and none is guessed at above.
+
+### 1. What Dispatch answers when the lifecycle probe itself fails
+
+`LifecycleProbe` returns `Outcome<LifecycleState, StoreError>` because every error crossing a
+TypeScript module boundary in this workload is an `Outcome` failure — that much is G1's standing rule
+and is not in question. **What Dispatch does with the failure arm is undetermined.**
+
+The design names three outcomes for three states and is silent on a fourth. Two readings are
+defensible and they differ on the wire:
+
+- **Pass the engine's code through verbatim**, treating a failed probe as `absent`. Consistent with
+  the re-read classifier, which the design explicitly forbids from escalating its own failure into a
+  `503`. The caller sees `unknown_session`, which is true but less informative than it could be.
+- **Answer `storage_failure` → `503`.** The probe failed because the store failed, and the store
+  failing is what `503` means. It converts an honest `404` into an outage code on the one path that
+  reaches the probe.
+
+**What it blocks:** one branch in Dispatch and one row in the error-semantics table above. Nothing
+else changes on either answer, which is why the rest of this contract is declared.
+
+### 2. Two binding-document conflicts the design records and cannot discharge
+
+Design Open questions 9 and 10. **The substance of both is already signed off**; what is missing is
+the consequent edit to [`00-brief.md`](00-brief.md), which is not a document a model may author.
+They are recorded here so `/slices` sees the disagreement rather than resolving it by reading order.
+
+- **The tenant non-goal.** The brief says, in words, *"Nothing reads it, nothing filters on it, and no
+  request carries one."* Every statement this contract specifies filters on `tenant_id = <the
+  implicit constant>` (invariant 51), which is the shape design Open question 1 settled and
+  [`90-decisions.md`](90-decisions.md) records. **`AGENTS.md` makes non-goals binding until the brief
+  changes**, so the binding list currently forbids what invariant 51 requires. **What reverses on the
+  literal reading:** `tenant_id` leaves all four primary keys and every statement, which is a
+  correctness migration on every table at once once rows exist — which is the direction §7 exists to
+  prevent, and the reason the key shape won.
+- **Save lifecycle.** The brief's lifecycle criteria name *sessions* in every clause. This contract
+  gives saves a 365-day absolute TTL, an `expires_at` column, a sweep that hard-deletes them, and a
+  `save_expired` code that widens a closed union in a published package. **What reverses:**
+  `save.expires_at` and its index come out of the schema, the sweep narrows to `session`,
+  `save_expired` comes out of `TransportErrorCode` and out of the status mapping, and
+  `LifecycleProbe.save` loses its only caller.
+
+### 3. The engine's ratification of `concurrent_modification` and the brand's spelling
+
+Design Open question 11, unchanged. Every conflict assertion above depends on a `SessionStoreErrorCode`
+member that exists in no published engine version, and startup asserts the contract's recorded engine
+version against the resolved package's — so an instance cannot be pointed at a branch build without
+regenerating the contract first. **The design's position is that the engine pull request is the first
+deliverable and the proofs that assert the code are sequenced behind it**, which is a statement about
+ordering and costs nothing here. **What is genuinely open is a different name or a different brand
+shape**, and the exposure is rework in one slice: nothing above changes shape on the spelling, because
+the adapter throws a branded value and Dispatch maps a code.
+
+### 4. Design Open question 8 — what refreshes a session's idle clock
+
+Open in the design and unchanged by this contract, which takes the design's reading: `expires_at`
+advances on accepted writes only, so a session read continuously for the whole TTL still expires. **It
+determines no signature above.** Refreshing on read would make every query operation a write, putting
+it inside the compare-and-swap's blast radius and undoing *every read reaches the database* being a
+read-only property; leaving it costs a name and a caller-visible surprise, both fixable by documenting
+the TTL as "30 days since the last accepted write" wherever it appears.
+
+### 5. Resolved here — design Open question 5, the contract package's release path
+
+**Routed to this command by [`10-design.md`](10-design.md) and answered: G2 vendors the regenerated
+tarball, exactly as G1 did.** This is a reading of the constraint rather than a preference. The
+`@subzerodev` npm organisation is still unreserved — [Platform issue #81](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/81)
+is open as of 2026-08-12 — so there is no registry to resolve `@subzerodev/service-contract` from, and
+"switch to the registry" is not an available option rather than a rejected one. The regeneration is
+forced (the error-coverage gate fails against a widened `SessionStoreErrorCode`, and
+`TransportErrorCode` gains two members), it is a contract **minor** version, and
+`workloads/game-service/vendor/` gains the new tarball while `package.json`'s `file:` dependency moves
+to it. **The tarball is replaced wholesale, never edited in place.** When #81 closes, switching to the
+registry is a one-line dependency change and no signature above moves.
+
+---
+
+## Additions requiring a decision-log entry
+
+Six things above originated here rather than in the design, and none was derivable from it. Each is
+small and named here rather than left for a reader to discover in the code.
+
+1. **`SESSION_PERSISTENCE_CONFLICT` as the brand's spelling.** The design specifies a name-based
+   duck-typed brand and names no string. The engine repository owns the final naming; this contract
+   names it so the G2 slices and the engine pull request describe one thing — the same treatment G1
+   gave `RecordIdSource`.
+2. **The conformance suite's reference target is the workload's map-backed `SessionPersistence`, not
+   the engine's.** The design says "the engine's in-memory implementations"; the engine exports the
+   `SessionPersistence` type and no implementation of it (verified at `0.6.1`). `ProfileStore` is
+   literal — `createInMemoryProfileStore` is the engine's. The suite is unchanged in value: G1's
+   map-backed adapter is the implementation the byte-identity proof already trusts.
+3. **`ComposedWorkload.close()` and `DurableStore.close()`.** The design gives the sweep a timer and
+   the store a pool and says nothing about stopping either. A process that cannot stop its timer does
+   not exit, which makes this mechanically forced rather than a design choice — but it is a signature
+   the design does not contain.
+4. **`GameEdgeOptions.LivenessTimeout` renamed to `ReadinessTimeout`.** The design changes which
+   endpoint the check probes and says nothing about the option. A property named for liveness that
+   bounds a readiness probe is the naming failure `agent.md` records; the rename is cosmetic and the
+   `appsettings.json` key moves with it.
+5. **The failed sweep reports a removed count of zero rather than a count of rows not removed.** The
+   design asks for "the row count it did not remove", which a failed `delete` cannot supply without a
+   second query against a store that has just failed one. The honest report is the failing statement
+   and the fact that nothing was removed.
+6. **`ReadVersionMap` as a named type with three methods.** The design describes a
+   `Map<sessionId, version>` held by the per-request adapter. Naming it and giving `advance` a
+   separate method from `record` is what makes "the map is advanced only after a write lands"
+   (invariant 52's counterpart) checkable rather than a convention inside one function.
