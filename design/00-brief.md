@@ -80,8 +80,9 @@ The binding list. Everything here is out of scope for every agent until this fil
   arriving early because persistence made it look convenient.
 - **Tenancy behaviour.** The tenant identifier is carried in the schema from the first migration,
   defaulted to a single implicit tenant, because §7 requires it and retrofitting is the expensive
-  direction. **Nothing reads it, nothing filters on it, and no request carries one.** Shipping the
-  column is not shipping tenancy.
+  direction. **No request resolves or carries a tenant, and no behaviour varies by tenant.** The
+  store supplies the single implicit tenant as a constant in every key and statement. Shipping this
+  fixed schema shape is not shipping tenancy.
 - **Billing, metering, catalogue, publishing.** G4 and later.
 - **A raw-state endpoint, under any name.** Not staged — permanent, inherited unchanged from G1.
   Responses carry a projected `Scene`, never the envelope. Durable storage makes this *more*
