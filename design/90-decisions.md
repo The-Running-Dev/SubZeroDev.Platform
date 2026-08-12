@@ -9,6 +9,54 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-12 — The contract is derived; a failed lifecycle probe answers `absent`, the tarball stays vendored, and the engine's error union has one more member than the design says
+
+Context: `/contract` against `10-design.md`. Three things came out of the derivation that the design
+does not contain, and one of them is a correction to it.
+
+Chosen:
+
+**A lifecycle probe whose own query fails is read as `absent`, so the engine's `unknown_session` or
+`unknown_save` passes through verbatim.** The design named three lifecycle states and was silent on
+the probe failing; `Outcome<LifecycleState, StoreError>` was forced by the standing rule that every
+error crossing a TypeScript module boundary here is an `Outcome` failure, and only the failure arm's
+handling was open. Answering `absent` is consistent with the one rule the design does state about a
+classifier's own failure — the zero-rows re-read is classified `conflict` and never `storage_failure`
+— and it keeps a degraded store from turning honest `404`s into outage codes. **The retained cost:**
+while the store is degraded, an expired session is answered as one that never existed, and nothing on
+the wire says which. Readiness is what surfaces the condition.
+
+**Design open question 5 is answered where it was routed: G2 vendors the regenerated tarball, as G1
+did.** This is a reading of a constraint rather than a preference. The `@subzerodev` npm organisation
+is still unreserved and [issue #81](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/81)
+is open, so there is no registry to resolve `@subzerodev/service-contract` from — "switch to the
+registry" is unavailable rather than rejected. The regeneration itself is forced: the error-coverage
+gate fails against a widened `SessionStoreErrorCode`, and `TransportErrorCode` gains
+`session_expired` and `save_expired`. It is a contract **minor** version. When #81 closes, the switch
+is a one-line dependency change and no signature moves.
+
+**The contract declares `SessionStoreErrorCode` with nine members, against the design's eight.**
+`10-design.md` open question 3 calls the union *"a closed union of seven members"* and
+`concurrent_modification` *"an eighth member"*, and the 2026-08-12 entry below repeats it. Read at
+`0.6.1` on the engine's `main`, the union has **eight** members, so the new one is the ninth. Nothing
+in the design turns on the count — the widening carries a `core.reason.*` message obligation whichever
+ordinal it takes, which is what that question was actually establishing — but a contract that
+transcribed the wrong count would ship a union with a member missing. The correction to `10-design.md`
+belongs to `/design` and is not made here.
+
+Rejected: **`storage_failure` → `503` on a failed probe** — the store failed and `503` says so;
+rejected because it converts an honest `404` into an outage code on the one path that reaches the
+probe, exactly when the store is degraded. **Logging the probe failure and passing through** —
+identical on the wire and not silent; rejected because the brief admits only the observability a lost
+update needs, and the sweep's failure is already the sole condition granted a log line of its own.
+**Editing `10-design.md`'s count in this pass** — rejected because the contract stage does not author
+the design, and a silent reconciliation is what `AGENTS.md` forbids when two documents disagree.
+
+Reversibility: cheap for the probe rule (one branch and one invariant) and for the tarball (a
+dependency line); the count is a correction, not a choice
+
+---
+
 ### 2026-08-12 — A red-team pass hardens the design against fifteen findings; two are brief conflicts and two do not survive the engine source
 
 Context: `/redteam` against `10-design.md`, followed by an instruction to fix everything it found.

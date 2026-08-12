@@ -242,7 +242,11 @@ decorates them decorates it. Nothing in G2 depends on that; it is stated so G3's
 decorator inherits the constraint rather than rediscovering that an undecorated probe is an existence
 oracle.
 
-**What Dispatch does when the probe itself fails is [Unresolved 1](#unresolved).**
+**A probe that fails is read as `absent`, so the engine's own code passes through verbatim**
+([Unresolved 1](#1-resolved--what-dispatch-answers-when-the-lifecycle-probe-itself-fails), settled
+2026-08-12). The failure arm exists because the probe crosses a module boundary and every error that
+does is an `Outcome` failure; what Dispatch does with it is to answer the less specific of the two
+true things rather than the more alarming of them.
 
 ### Workload — the store provider and the per-request seam
 
@@ -847,6 +851,14 @@ G1's three variants are unchanged. One is added.
 | `session_expired` | Dispatch, after consulting the lifecycle probe on `unknown_session` | **404** | No | The session existed and no longer does. Start a new one, or load a save |
 | `save_expired` | Dispatch, after consulting the lifecycle probe on `unknown_save` | **404** | No | As above |
 
+**A lifecycle probe that fails is read as `absent`, so the engine's code passes through unchanged.**
+The caller sees `unknown_session` or `unknown_save`, which is true — the workload cannot establish
+that the row was ever there. Escalating to `503` would convert an honest `404` into an outage code on
+the one path that reaches the probe, and it would do so precisely when the store is degraded, which
+is the same mistake the re-read classifier's rule exists to prevent. **The cost, stated:** while the
+store is degraded a session that had merely expired is answered as one that never existed, and
+nothing on the wire says which — the readiness check is what surfaces the underlying condition.
+
 **Both expired codes map to 404, not 410**, and the *code* carries the distinction — G1 already
 established that `unsupported_version` and `unknown_operation` share a status and are told apart by
 their codes, and one convention with no exceptions is worth more than a semantically prettier second
@@ -954,6 +966,7 @@ these continue from 48.
 | 93 | The compose file provisions the store and starts no workload instance; the harness spawns the instances and provisions no store | Proof harness |
 | 94 | The command the README names for running two instances is the same entry point the contention proof invokes | Proof harness |
 | 95 | No project under `src/` or `samples/` references the workload, and Platform's `Persistence` package gains no consumer from G2 | Build |
+| 96 | A lifecycle probe that fails is read as `absent`; Dispatch never converts a probe failure into `storage_failure`, and no probe failure changes a response's status | Dispatch |
 
 ### Amended invariants
 
@@ -977,24 +990,30 @@ so a citation still resolves to one statement.
 Values and signatures the design does not determine, or that a document above this contract still
 contradicts. **Each blocks something concrete**, and none is guessed at above.
 
-### 1. What Dispatch answers when the lifecycle probe itself fails
+**Resolved items keep their number and are struck through rather than removed**, so nothing that
+later cites one by number breaks. **1 is resolved; 2, 3 and 4 are open, and 5 is answered here
+because this is the stage the design routed it to.**
 
+### ~~1. What Dispatch answers when the lifecycle probe itself fails~~
+
+**Resolved 2026-08-12, by Ben: a failed probe is read as `absent` and the engine's own code passes
+through verbatim.** The design named three outcomes for three states and was silent on a fourth;
 `LifecycleProbe` returns `Outcome<LifecycleState, StoreError>` because every error crossing a
-TypeScript module boundary in this workload is an `Outcome` failure — that much is G1's standing rule
-and is not in question. **What Dispatch does with the failure arm is undetermined.**
+TypeScript module boundary here is an `Outcome` failure, and what Dispatch does with the failure arm
+was the undetermined half. It is now stated with `LifecycleProbe` above, carried as a row in
+[*Dispatch — the two new outcomes*](#dispatch--the-two-new-outcomes), and asserted as invariant 96.
 
-The design names three outcomes for three states and is silent on a fourth. Two readings are
-defensible and they differ on the wire:
+**Rejected: `storage_failure` → `503`.** The probe failed because the store failed, and `503` is what
+that means — but it converts an honest `404` into an outage code on the one path that reaches the
+probe, precisely when the store is degraded. That is the same mistake the design already forbids the
+re-read classifier from making, and making it here would be inconsistent with the one rule the design
+does state about a classifier's own failure. **Rejected: logging the failure and passing through.**
+Identical on the wire, plus a log line; declined because the brief admits only the observability a
+lost update needs, and the sweep's failure is already the one condition granted a log line of its own.
 
-- **Pass the engine's code through verbatim**, treating a failed probe as `absent`. Consistent with
-  the re-read classifier, which the design explicitly forbids from escalating its own failure into a
-  `503`. The caller sees `unknown_session`, which is true but less informative than it could be.
-- **Answer `storage_failure` → `503`.** The probe failed because the store failed, and the store
-  failing is what `503` means. It converts an honest `404` into an outage code on the one path that
-  reaches the probe.
-
-**What it blocks:** one branch in Dispatch and one row in the error-semantics table above. Nothing
-else changes on either answer, which is why the rest of this contract is declared.
+**The retained cost, recorded rather than dropped:** while the store is degraded, a session that had
+merely expired is answered as one that never existed, and nothing on the wire says which. Readiness is
+what surfaces the underlying condition.
 
 ### 2. Two binding-document conflicts the design records and cannot discharge
 
