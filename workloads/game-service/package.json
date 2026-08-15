@@ -19,8 +19,8 @@
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
-    "@subzerodev/service-contract": "file:./vendor/subzerodev-service-contract-0.2.0.tgz",
-    "@the-running-dev/game-engine": "file:./vendor/the-running-dev-game-engine-0.5.0.tgz",
+    "@subzerodev/service-contract": "file:./vendor/subzerodev-service-contract-0.5.0.tgz",
+    "@the-running-dev/game-engine": "file:./vendor/the-running-dev-game-engine-0.8.0.tgz",
     "ajv": "^8.17.1"
   },
   "devDependencies": {
