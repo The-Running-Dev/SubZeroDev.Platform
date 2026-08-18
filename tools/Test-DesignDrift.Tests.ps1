@@ -55,6 +55,22 @@ Acceptance:
   - S1.1 The first criterion holds.
   - S1.2 The second criterion holds.
 '@
+
+    # design/30-slices.md's real convention - the id is bold. A doc-side regex tested only
+    # against the plain form above would never notice it can't read the actual document.
+    $script:TwoCriterionDocBoldIds = @'
+# Slices
+
+## Outstanding
+
+## S1 — A slice
+
+Delivers: something a reader can follow.
+
+Acceptance:
+- **S1.1** The first criterion holds.
+- **S1.2** The second criterion holds.
+'@
 }
 
 AfterAll {
@@ -78,6 +94,19 @@ Describe 'Test-DesignDrift' {
             $r.Findings.Count | Should -Be 0
             $r.SlicesCompared | Should -Be 1
             Get-DriftExitCode -State $r.State | Should -Be 0
+        }
+
+        It 'matching ids on both sides is Clean when the doc bolds the id, design/30-slices.md''s actual convention' {
+            $path = New-SlicesDoc -Content $script:TwoCriterionDocBoldIds
+            Mock Get-TrackerIssue { New-Tracker -Issues @(
+                New-Issue -Number 9 -Title 'S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [x] **S1.2** second"
+            ) }
+
+            $r = Invoke-DriftCheck -SlicesPath $path
+
+            $r.State | Should -Be 'Clean'
+            $r.Findings.Count | Should -Be 0
+            $r.SlicesCompared | Should -Be 1
         }
 
         It 'reworded criteria with the same ids are not drift' {
