@@ -25,11 +25,17 @@ function replayConfiguration(dumpPath: string): WorkloadConfiguration {
     listen: { host: "127.0.0.1", port: 0 },
     determinism: { kind: "replay", fixedInstant: "2026-01-01T00:00:00.000Z", dumpPath },
     otlpEndpoint: null,
+    storage: { kind: "in-memory" },
   };
 }
 
 function defaultConfiguration(): WorkloadConfiguration {
-  return { listen: { host: "127.0.0.1", port: 0 }, determinism: { kind: "default" }, otlpEndpoint: null };
+  return {
+    listen: { host: "127.0.0.1", port: 0 },
+    determinism: { kind: "default" },
+    otlpEndpoint: null,
+    storage: { kind: "in-memory" },
+  };
 }
 
 async function postJson(base: string, path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {

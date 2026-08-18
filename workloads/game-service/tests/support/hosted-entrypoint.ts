@@ -24,6 +24,7 @@ function configuration(): WorkloadConfiguration {
       dumpPath: process.env["GAME_SERVICE_DUMP_PATH"] ?? "",
     },
     otlpEndpoint: process.env["GAME_SERVICE_OTLP_ENDPOINT"] ?? null,
+    storage: { kind: "in-memory" },
   };
 }
 

@@ -64,6 +64,7 @@ export async function runInProcess(
     // never calls it — but the type requires one, so a placeholder that is never opened is honest.
     determinism: { kind: "replay", fixedInstant: REPLAY_FIXED_INSTANT, dumpPath: "(runInProcess: unused)" },
     otlpEndpoint: null,
+    storage: { kind: "in-memory" },
   };
 
   const composed = await compose(configuration, contract);
@@ -71,7 +72,7 @@ export async function runInProcess(
     return err({ code: "Composition", cause: composed.error });
   }
 
-  const dispatcher = createDispatcher(contract, composed.value.store);
+  const dispatcher = createDispatcher(contract, composed.value.stores.forRequest());
   const transcript: CanonicalJson[] = [];
 
   for (const [index, step] of fixture.steps.entries()) {

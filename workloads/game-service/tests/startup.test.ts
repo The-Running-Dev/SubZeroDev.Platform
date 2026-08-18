@@ -25,7 +25,14 @@ const DEFAULT_CONFIGURATION = {
   listen: { host: "127.0.0.1", port: 0 },
   determinism: { kind: "default" as const },
   otlpEndpoint: null,
+  storage: { kind: "in-memory" as const },
 };
+
+/** A store thunk that always reports healthy — for probe-surface tests that assert on
+ *  `surfacesBuilt`/`listening` gating and never on what the store itself reports. */
+async function healthyStore() {
+  return { status: "healthy" as const };
+}
 
 function withOperations(rows: readonly OperationRow[]): ContractPackage {
   return { ...contract, operations: rows };
@@ -290,35 +297,35 @@ describe("S3.11 — probes", () => {
 
     try {
       expect(started.value.probes.liveness().status).toBe("healthy");
-      expect(started.value.probes.readiness().status).toBe("healthy");
+      expect((await started.value.probes.readiness()).status).toBe("healthy");
       expect(started.value.listening.port).toBeGreaterThan(0);
     } finally {
       await started.value.shutdown();
     }
   });
 
-  it("reports readiness healthy only after both surface construction and the bind", () => {
-    const probes = createProbeSurface();
+  it("reports readiness healthy only after both surface construction and the bind", async () => {
+    const probes = createProbeSurface(healthyStore);
 
     expect(probes.surface.liveness().status).toBe("healthy");
-    expect(probes.surface.readiness().status).toBe("unhealthy");
+    expect((await probes.surface.readiness()).status).toBe("unhealthy");
 
     probes.markSurfacesBuilt();
-    expect(probes.surface.readiness().status).toBe("unhealthy");
+    expect((await probes.surface.readiness()).status).toBe("unhealthy");
 
     probes.markListening();
-    expect(probes.surface.readiness().status).toBe("healthy");
+    expect((await probes.surface.readiness()).status).toBe("healthy");
   });
 
   it("answers liveness without reaching the store", async () => {
     const { store, calls } = recordingStore();
-    const probes = createProbeSurface();
+    const probes = createProbeSurface(healthyStore);
     void store;
 
     probes.markSurfacesBuilt();
     probes.markListening();
     probes.surface.liveness();
-    probes.surface.readiness();
+    await probes.surface.readiness();
 
     expect(calls).toEqual([]);
   });

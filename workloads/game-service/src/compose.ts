@@ -1,9 +1,17 @@
 /**
- * Composition — the engine, the content registry, the map-backed persistence and profile store,
- * and the engine-version assertion that decides whether any of it is built at all.
+ * Composition — the engine, the content registry, the store provider (in-memory or durable), and
+ * the engine-version assertion that decides whether any of it is built at all.
  *
  * `compose` owns that assertion, which is why it takes the contract: it uses nothing else from it.
  * A mismatch returns `EngineVersionMismatch` and no store is built, so the listener never binds.
+ *
+ * `compose` returns successfully even when a durable store is unreachable at startup (`20-contract.md`,
+ * "Composition — workload"): the process comes up reporting not ready rather than refusing to start,
+ * and this module retries the connection in the background from then on. The very first attempt is
+ * still awaited here, bounded by `connectTimeoutMs`, so the listener does not bind until it settles
+ * one way or the other — only the *retries* after that first attempt are pure background work.
+ * `StoreUnavailable` is a readiness condition, never a `CompositionError` — the `CompositionError`
+ * variants are the ones no retry can fix.
  */
 import {
   buildContentRegistry,
@@ -21,21 +29,30 @@ import type {
   Clock,
   ContentRegistry,
   KindRegistry,
+  ProfileStore,
   RecordIdSource,
   SessionPersistence,
+  SessionStore,
   StoredSaveRecord,
   StoredSessionRecord,
 } from "@the-running-dev/game-engine";
 import type { ContractPackage } from "@subzerodev/service-contract";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { canonicalEncode } from "./canonical.js";
+import { corruptProfileResult, openDurableStore, profileWriteFailedResult } from "./store.js";
 import { err, ok } from "./types.js";
 import type {
   ComposedWorkload,
   CompositionError,
   DeterminismDump,
+  DurableStore,
+  LifecycleProbe,
   Outcome,
+  ProbeResult,
   ReplayDeterminismProfile,
+  SemanticVersion,
+  StorageProfile,
+  StoreProvider,
   StoreSerializationHandle,
   StoreSerializationSnapshot,
   WorkloadConfiguration,
@@ -56,9 +73,9 @@ function kinds(): KindRegistry {
   } as KindRegistry;
 }
 
-/** Map-backed and total — G1 has no database, and `storage_failure` is consequently declared and
- *  unreachable. The maps are also what the serialization handle reads, which is why persistence is
- *  supplied explicitly rather than left to the engine's own default. */
+/** Map-backed and total — the in-memory configuration has no database, and `storage_failure` is
+ *  consequently declared and unreachable. The maps are also what the serialization handle reads,
+ *  which is why persistence is supplied explicitly rather than left to the engine's own default. */
 function inMemoryPersistence(): {
   persistence: SessionPersistence;
   sessions: Map<string, StoredSessionRecord>;
@@ -86,6 +103,32 @@ function inMemoryPersistence(): {
         },
       },
     },
+  };
+}
+
+/** Every method throws a plain `Error` — the same shape S1's engine catch converts to
+ *  `storage_failure` for a session write, and the shape every other `SessionPersistence` failure
+ *  in this workload already takes. Handed to `createSessionLayer` only while a durable store has
+ *  never yet connected, so a request that lands in that window gets an honest failure rather than
+ *  a silent, unannounced fall-back to an in-memory store nobody asked for. */
+function unavailablePersistence(): SessionPersistence {
+  const fail = (): never => {
+    throw new Error("durable store not yet connected");
+  };
+  return {
+    sessions: { get: async () => fail(), put: async () => fail() },
+    saves: { get: async () => fail(), put: async () => fail(), delete: async () => fail() },
+  };
+}
+
+/** Same footing as `unavailablePersistence` above, but `ProfileStore` has its own warning
+ *  vocabulary rather than an exception channel — every read reports `profile_corrupt` and every
+ *  write reports `profile_write_failed`, exactly as a durable store already does for its own
+ *  failures. */
+function unavailableProfiles(): ProfileStore {
+  return {
+    load: async (profileId: string) => corruptProfileResult(profileId),
+    save: async (profile) => profileWriteFailedResult(profile.profileId),
   };
 }
 
@@ -119,6 +162,48 @@ function contentRegistry(): Outcome<ContentRegistry, CompositionError> {
   return ok(registry.value);
 }
 
+/** No contract field names a bound for "any request's duration" — `GameEdgeOptions.ForwardTimeout`
+ *  (`design/20-contract.md` line 767) is the edge's own configured value, and it lives in a
+ *  different repository and process; threading it through `WorkloadConfiguration` would need a
+ *  signature the contract does not carry. This is a workload-owned constant, on the same footing
+ *  as `migrations.ts`'s `LOCK_WAIT_TIMEOUT_MS` — chosen to exceed the edge's own configured value
+ *  (10s in this repository's own hosted-edge test support) by a wide margin, so the production
+ *  default (`retentionHorizonSeconds` of 30 days) validates and a deliberately short horizon is
+ *  still caught before any connection is attempted (S4.6). Exported so a test can assert this still
+ *  exceeds the real edge timeout used by `tests/support/hosted-edge.ts` — the one guard against this
+ *  guess drifting out of sync with the edge's own configured value. */
+export const ASSUMED_FORWARD_TIMEOUT_SECONDS = 60;
+
+/** The interval between background reconnection attempts while a durable store has not yet
+ *  connected. Not named by the contract — "retries with backoff" (`20-contract.md`, "Composition
+ *  — workload") describes the requirement, not a value; this is the workload's own choice. */
+const DURABLE_RECONNECT_INTERVAL_MS = 5_000;
+
+function validateStorageConfiguration(storage: StorageProfile): Outcome<void, CompositionError> {
+  if (storage.kind === "in-memory") return ok(undefined);
+  const { connection, bounds } = storage.store;
+
+  // A leading `/` is `pg`'s own Unix-domain-socket form (`pg-connection-string`'s `parse()`
+  // special-cases it before ever reaching a `URL`) and is never itself a valid absolute URL, so
+  // `new URL(...)` would reject a connection string the driver accepts. Every other form is
+  // URL-shaped, and that syntactic check is what `new URL(...)` below still validates.
+  if (!connection.connectionString.startsWith("/")) {
+    try {
+      // eslint-disable-next-line no-new -- syntactic validity only; nothing here connects.
+      new URL(connection.connectionString);
+    } catch {
+      return err({ code: "StorageConfigurationInvalid", setting: "storage.store.connection.connectionString" });
+    }
+  }
+  if (!Number.isInteger(connection.poolSize) || connection.poolSize <= 0) {
+    return err({ code: "StorageConfigurationInvalid", setting: "storage.store.connection.poolSize" });
+  }
+  if (bounds.retentionHorizonSeconds <= ASSUMED_FORWARD_TIMEOUT_SECONDS) {
+    return err({ code: "StorageConfigurationInvalid", setting: "storage.store.bounds.retentionHorizonSeconds" });
+  }
+  return ok(undefined);
+}
+
 export async function compose(
   configuration: WorkloadConfiguration,
   contract: ContractPackage,
@@ -133,10 +218,11 @@ export async function compose(
     });
   }
 
+  const validated = validateStorageConfiguration(configuration.storage);
+  if (!validated.ok) return validated;
+
   const registry = contentRegistry();
   if (!registry.ok) return registry;
-
-  const { persistence, sessions, saves } = inMemoryPersistence();
 
   // The default profile supplies neither `ids` nor `recordIds` nor `clock`, so the engine's own
   // minting and the real wall clock apply unchanged (invariant 12a). The replay profile supplies
@@ -149,26 +235,176 @@ export async function compose(
     ...(replay ? { ids: createCountingIds() } : {}),
   });
 
-  const store = createSessionLayer({
-    engine,
-    registry: registry.value,
-    persistence,
-    profiles: createInMemoryProfileStore(),
-    ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
-  });
+  if (configuration.storage.kind === "in-memory") {
+    const { persistence, sessions, saves } = inMemoryPersistence();
 
-  /** The blobs only, never the host-owned record fields around them (invariant 16). Exposed on
-   *  `ComposedWorkload` and passed to the shutdown writer and the harness — never to a surface. */
-  const serialization: StoreSerializationHandle = {
-    async snapshot(): Promise<StoreSerializationSnapshot> {
-      return {
-        sessions: [...sessions.values()].map((record) => ({ id: record.sessionId, blob: record.blob })).sort(byId),
-        saves: [...saves.values()].map((record) => ({ id: record.saveId, blob: record.blob })).sort(byId),
-      };
+    const store: SessionStore = createSessionLayer({
+      engine,
+      registry: registry.value,
+      persistence,
+      profiles: createInMemoryProfileStore(),
+      ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
+    });
+
+    const stores: StoreProvider = { forRequest: () => store };
+
+    // The no-op probe: every id classifies `absent`, so `unknown_session`/`unknown_save` pass
+    // through Dispatch verbatim and Dispatch carries no branch on which store was composed
+    // (`20-contract.md`, "Composition — workload").
+    const lifecycle: LifecycleProbe = {
+      session: async () => ok("absent"),
+      save: async () => ok("absent"),
+    };
+
+    const serialization: StoreSerializationHandle = {
+      async snapshot(): Promise<StoreSerializationSnapshot> {
+        return {
+          sessions: [...sessions.values()].map((record) => ({ id: record.sessionId, blob: record.blob })).sort(byId),
+          saves: [...saves.values()].map((record) => ({ id: record.saveId, blob: record.blob })).sort(byId),
+        };
+      },
+    };
+
+    return ok({
+      stores,
+      lifecycle,
+      serialization,
+      async readiness(): Promise<ProbeResult> {
+        return { status: "healthy" };
+      },
+      async close(): Promise<void> {
+        // Nothing owns a connection or a timer under this profile.
+      },
+    });
+  }
+
+  const storeConfig = configuration.storage.store;
+
+  let durableStore: DurableStore | null = null;
+  let closed = false;
+  let reconnectHandle: ReturnType<typeof setTimeout> | null = null;
+  let sweepHandle: ReturnType<typeof setTimeout> | null = null;
+  // Set only while a reconnect retry (never the first, awaited attempt) is in flight, so `close()`
+  // can wait for it instead of returning while a stray connect is still running underneath it.
+  let connecting: Promise<void> | null = null;
+
+  async function attemptConnect(): Promise<void> {
+    const opened = await openDurableStore(storeConfig, ENGINE_VERSION as SemanticVersion);
+    if (closed) {
+      // `close()` ran while this attempt was in flight — a store that connected after the fact
+      // must not be left dangling. Guarded the same way the sweep tick's own failure is: a rejection
+      // here must not become an unhandled rejection this attempt was never awaited into.
+      if (opened.ok) {
+        try {
+          await opened.value.close();
+        } catch (closeError) {
+          console.error("[game-service] closing a store that connected after shutdown failed", closeError);
+        }
+      }
+      return;
+    }
+    if (opened.ok) {
+      durableStore = opened.value;
+      return;
+    }
+    console.error("[game-service] durable store connection attempt failed", opened.error);
+    reconnectHandle = setTimeout(() => {
+      connecting = attemptConnect().finally(() => {
+        connecting = null;
+      });
+    }, DURABLE_RECONNECT_INTERVAL_MS);
+  }
+
+  // The one "is a durable store connected right now" branch `lifecycle.session`/`.save` and
+  // `serialization.snapshot` each otherwise repeated on their own.
+  function withDurableStore<T>(onUnavailable: () => T, fn: (store: DurableStore) => Promise<T>): Promise<T> {
+    return durableStore ? fn(durableStore) : Promise.resolve(onUnavailable());
+  }
+
+  function scheduleSweep(): void {
+    sweepHandle = setTimeout(() => {
+      void (async () => {
+        if (closed) return;
+        // A sweep tick that fails is caught and logged; the next tick still runs on schedule
+        // (S4.9) — never escaping this timer as an unhandled rejection.
+        if (durableStore) {
+          const result = await durableStore.sweepOnce();
+          if (!result.ok) {
+            console.error("[game-service] sweep tick failed", result.error);
+          }
+        }
+        if (!closed) scheduleSweep();
+      })();
+    }, storeConfig.bounds.sweepIntervalSeconds * 1000);
+  }
+
+  await attemptConnect();
+  scheduleSweep();
+
+  const stores: StoreProvider = {
+    forRequest(): SessionStore {
+      const active = durableStore;
+      return createSessionLayer({
+        engine,
+        registry: registry.value,
+        persistence: active ? active.persistenceForRequest() : unavailablePersistence(),
+        profiles: active ? active.profiles : unavailableProfiles(),
+        ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
+      });
     },
   };
 
-  return ok({ store, serialization });
+  const lifecycle: LifecycleProbe = {
+    session: (sessionId: string) =>
+      withDurableStore(
+        () => err({ code: "Unreachable" }),
+        (store) => store.lifecycle.session(sessionId),
+      ),
+    save: (saveId: string) =>
+      withDurableStore(
+        () => err({ code: "Unreachable" }),
+        (store) => store.lifecycle.save(saveId),
+      ),
+  };
+
+  const serialization: StoreSerializationHandle = {
+    snapshot: () =>
+      withDurableStore(
+        () => {
+          // Unlike `lifecycle`'s `Unreachable` and `unavailableProfiles`'s warnings, this port has
+          // no error channel to report unavailability through (`snapshot()` always resolves) —
+          // logged so an empty dump taken during an outage is not silently indistinguishable from a
+          // genuinely empty store.
+          console.error("[game-service] snapshot taken while the durable store is unavailable — returning empty");
+          return { sessions: [], saves: [] };
+        },
+        (store) => store.serialization.snapshot(),
+      ),
+  };
+
+  return ok({
+    stores,
+    lifecycle,
+    serialization,
+    async readiness(): Promise<ProbeResult> {
+      // Evaluates the store on every call rather than replaying a memoized startup outcome — a
+      // latch here would leave the workload reporting ready through the exact outage the readiness
+      // probe exists to surface (S4.4).
+      if (!durableStore) return { status: "unhealthy" };
+      const checked = await durableStore.check();
+      return { status: checked.ok ? "healthy" : "unhealthy" };
+    },
+    async close(): Promise<void> {
+      closed = true;
+      if (reconnectHandle !== null) clearTimeout(reconnectHandle);
+      if (sweepHandle !== null) clearTimeout(sweepHandle);
+      // `clearTimeout` cannot abort a retry whose callback has already started running — wait for
+      // it, so shutdown never returns while a stray `attemptConnect()` (and its own cleanup) is
+      // still in flight underneath it.
+      if (connecting) await connecting;
+      if (durableStore) await durableStore.close();
+    },
+  });
 }
 
 /** Written under the replay profile only, at shutdown, before the listener stops accepting. The

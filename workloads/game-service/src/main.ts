@@ -31,6 +31,10 @@ function configuration(): WorkloadConfiguration {
     listen: { host: process.env["GAME_SERVICE_HOST"] ?? "", port },
     determinism: determinismProfile(),
     otlpEndpoint,
+    // Env-driven durable configuration is not part of this slice (`design/30-slices.md`, S4) — the
+    // two-instance proof drives `startWorkload` with a durable profile directly, through the proof
+    // harness's own `WorkloadConfiguration`, not through this process entry point.
+    storage: { kind: "in-memory" },
   };
 }
 
@@ -42,7 +46,7 @@ if (!started.ok) {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ listening: started.value.listening, readiness: started.value.probes.readiness().status })}\n`,
+  `${JSON.stringify({ listening: started.value.listening, readiness: (await started.value.probes.readiness()).status })}\n`,
 );
 
 let shuttingDown = false;
