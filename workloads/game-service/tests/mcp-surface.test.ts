@@ -6,8 +6,16 @@
 import { describe, expect, it } from "vitest";
 import type { McpToolName } from "@subzerodev/service-contract";
 import { buildMcpSurface } from "../src/mcp-surface.js";
-import { createDispatcher } from "../src/dispatch.js";
-import { contract, bodyText, mcpSurfaceOver, post, recordingStore, surfaceOver, throwingStore } from "./support/harness.js";
+import {
+  contract,
+  bodyText,
+  dispatcherOver,
+  mcpSurfaceOver,
+  post,
+  recordingStore,
+  surfaceOver,
+  throwingStore,
+} from "./support/harness.js";
 import { CAMPAIGN_ID, realStore } from "./support/real-workload.js";
 
 describe("S6.1 — listTools() has exactly as many entries as the table has rows", () => {
@@ -176,7 +184,7 @@ describe("S6.7 — two rows sharing an mcpTool fail startup before binding", () 
     const second = { ...contract.operations[1]!, mcpTool: first.mcpTool };
     const built = buildMcpSurface(
       { ...contract, operations: [first, second] },
-      createDispatcher(contract, recordingStore().store),
+      dispatcherOver(recordingStore().store),
     );
 
     expect(built.ok).toBe(false);

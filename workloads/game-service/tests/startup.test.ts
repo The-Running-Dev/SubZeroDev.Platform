@@ -15,10 +15,9 @@ import { join } from "node:path";
 import type { ContractPackage, OperationRow, SchemaRef } from "@subzerodev/service-contract";
 
 import { buildHttpSurface } from "../src/http-surface.js";
-import { createDispatcher } from "../src/dispatch.js";
 import { compose } from "../src/compose.js";
 import { startWorkload, createProbeSurface, CONTRACT_PATH_VARIABLE } from "../src/lifecycle.js";
-import { contract, recordingStore } from "./support/harness.js";
+import { contract, dispatcherOver, recordingStore } from "./support/harness.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 
 const DEFAULT_CONFIGURATION = {
@@ -92,7 +91,7 @@ describe("S3.10 — a table the service cannot satisfy fails surface constructio
   it("fails with DuplicateRoute naming both rows when two derive the same path segment", () => {
     const first = contract.operations[0]!;
     const second = { ...contract.operations[1]!, httpPath: first.httpPath };
-    const built = buildHttpSurface(withOperations([first, second]), createDispatcher(contract, recordingStore().store));
+    const built = buildHttpSurface(withOperations([first, second]), dispatcherOver(recordingStore().store));
 
     expect(built.ok).toBe(false);
     if (built.ok) return;
@@ -105,7 +104,7 @@ describe("S3.10 — a table the service cannot satisfy fails surface constructio
   it("fails with MissingSchema naming the row and the reference", () => {
     const absent = "https://contracts.subzerodev.dev/service-contract/v1/absent/request.json" as SchemaRef;
     const row = { ...contract.operations[0]!, requestShape: absent };
-    const built = buildHttpSurface(withOperations([row]), createDispatcher(contract, recordingStore().store));
+    const built = buildHttpSurface(withOperations([row]), dispatcherOver(recordingStore().store));
 
     expect(built.ok).toBe(false);
     if (built.ok) return;

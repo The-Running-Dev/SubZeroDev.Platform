@@ -11,7 +11,16 @@ import type { SessionStoreErrorCode } from "@the-running-dev/game-engine";
 import { buildHttpSurface } from "../../src/http-surface.js";
 import { buildMcpSurface } from "../../src/mcp-surface.js";
 import { createDispatcher } from "../../src/dispatch.js";
-import type { HttpSurface, McpSurface, WireRequest, WireResponse } from "../../src/types.js";
+import { ok } from "../../src/types.js";
+import type {
+  Dispatcher,
+  HttpSurface,
+  LifecycleProbe,
+  McpSurface,
+  StoreProvider,
+  WireRequest,
+  WireResponse,
+} from "../../src/types.js";
 
 export const contract: ContractPackage = loadPublishedContract();
 
@@ -57,8 +66,36 @@ export function throwingStore(method: string, code: SessionStoreErrorCode): {
   } as Partial<SessionStore>);
 }
 
-export function surfaceOver(store: SessionStore, source: ContractPackage = contract): HttpSurface {
-  const built = buildHttpSurface(source, createDispatcher(source, store));
+/** The in-memory profile's classification — every id `absent`, so an engine code passes through
+ *  verbatim. It is the default here because every test written before S5 predates the probe and
+ *  asserts the engine's own code (`compose.ts`, the in-memory branch). */
+export const absentProbe: LifecycleProbe = {
+  session: async () => ok("absent"),
+  save: async () => ok("absent"),
+};
+
+/** One `SessionStore` behind the provider seam: these tests control the store directly, and a
+ *  provider that returns it every call is what `compose()`'s in-memory branch builds too. */
+function providerOf(store: SessionStore): StoreProvider {
+  return { forRequest: () => store };
+}
+
+/** The `Dispatcher` `surfaceOver` builds, for the tests that construct a surface over a deliberately
+ *  broken operation table and never dispatch through it. */
+export function dispatcherOver(
+  store: SessionStore,
+  source: ContractPackage = contract,
+  lifecycle: LifecycleProbe = absentProbe,
+): Dispatcher {
+  return createDispatcher(source, providerOf(store), lifecycle);
+}
+
+export function surfaceOver(
+  store: SessionStore,
+  source: ContractPackage = contract,
+  lifecycle: LifecycleProbe = absentProbe,
+): HttpSurface {
+  const built = buildHttpSurface(source, dispatcherOver(store, source, lifecycle));
   if (!built.ok) {
     throw new Error(`buildHttpSurface failed: ${JSON.stringify(built.error)}`);
   }
@@ -67,8 +104,12 @@ export function surfaceOver(store: SessionStore, source: ContractPackage = contr
 
 /** The same `Dispatcher` construction `surfaceOver` uses, so a test that builds both surfaces over
  *  the same store is asserting "one store" rather than assuming it (S6.2). */
-export function mcpSurfaceOver(store: SessionStore, source: ContractPackage = contract): McpSurface {
-  const built = buildMcpSurface(source, createDispatcher(source, store));
+export function mcpSurfaceOver(
+  store: SessionStore,
+  source: ContractPackage = contract,
+  lifecycle: LifecycleProbe = absentProbe,
+): McpSurface {
+  const built = buildMcpSurface(source, dispatcherOver(store, source, lifecycle));
   if (!built.ok) {
     throw new Error(`buildMcpSurface failed: ${JSON.stringify(built.error)}`);
   }
