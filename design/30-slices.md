@@ -113,7 +113,7 @@ table.
 ---
 
 ## S3 — Migrations and the guarded store
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator can point the workload at a real PostgreSQL database and get a session back
 byte for byte after it is stored — and when two writers race to update the same session, exactly one
