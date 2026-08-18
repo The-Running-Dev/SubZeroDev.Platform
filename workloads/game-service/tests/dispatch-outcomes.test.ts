@@ -235,10 +235,12 @@ describe("S5.7 — nothing is retried", () => {
       const before = controlled.sessionPutCalls();
 
       // Fails the next `put` and no more: a retry inside Dispatch would succeed and answer `200`,
-      // so the assertion below fails on the status as well as on the count.
+      // so the assertion below fails on the status as well as on the count. The counter is
+      // decremented *before* the comparison — a post-decrement disarms one call too late, which
+      // leaves the second `put` failing too and quietly retires the very perturbation this makes.
       let remaining = 1;
       controlled.failSessionPut(() => {
-        if (remaining-- <= 0) controlled.failSessionPut(null);
+        if (--remaining <= 0) controlled.failSessionPut(null);
         return failure.make();
       });
 

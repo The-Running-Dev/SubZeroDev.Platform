@@ -341,6 +341,15 @@ export async function compose(
   await attemptConnect();
   scheduleSweep();
 
+  // Built once, not per `forRequest()`. The counters are the whole point of a counting
+  // `RecordIdSource`: minting one per request would restart them at zero every time, so every
+  // created session under the replay profile would be handed `counting-session-id-0` and the second
+  // one would overwrite the first. The in-memory branch above gets this for free — it composes one
+  // long-lived layer — and the durable branch has to say it.
+  const replaySources = replay
+    ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() }
+    : null;
+
   const stores: StoreProvider = {
     forRequest(): SessionStore {
       const active = durableStore;
@@ -349,7 +358,7 @@ export async function compose(
         registry: registry.value,
         persistence: active ? active.persistenceForRequest() : unavailablePersistence(),
         profiles: active ? active.profiles : unavailableProfiles(),
-        ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
+        ...(replaySources ?? {}),
       });
     },
   };
