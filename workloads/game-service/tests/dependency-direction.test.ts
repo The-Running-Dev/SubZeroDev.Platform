@@ -107,6 +107,65 @@ function reachesTarget(entryFile: string, target: string): boolean {
   return false;
 }
 
+const ENGINE_MODULE = "@the-running-dev/game-engine";
+
+/** True if this file has a *runtime* (value-carrying) import from the engine package — a whole
+ *  `import type {...}` declaration never reaches the runtime, and neither does an individual
+ *  specifier marked `type` inside an otherwise-ordinary import (`import { type X, y } from`,
+ *  where only `y` would be a violation). Store may depend on the engine's types; S3.14 (invariant
+ *  58) is that its module graph never depends on the engine's runtime entry point. */
+function hasRuntimeEngineImport(source: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isImportDeclaration(node) &&
+      node.importClause &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === ENGINE_MODULE
+    ) {
+      if (!node.importClause.isTypeOnly) {
+        const bindings = node.importClause.namedBindings;
+        if (bindings && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) {
+            if (!element.isTypeOnly) found = true;
+          }
+        } else {
+          // A default import or a namespace import, neither marked type-only.
+          found = true;
+        }
+        if (node.importClause.name) found = true; // `import Foo, { ... } from "..."`
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return found;
+}
+
+function reachesRuntimeEngineImport(entryFile: string): boolean {
+  const visited = new Set<string>();
+  const stack = [resolve(entryFile)];
+
+  while (stack.length > 0) {
+    const file = stack.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    const source = parse(file);
+    if (hasRuntimeEngineImport(source)) return true;
+    for (const specifier of localSpecifiers(source)) {
+      stack.push(resolveRelative(file, specifier));
+    }
+  }
+  return false;
+}
+
+describe("S3.14 — Store's module graph imports only the engine's type declarations", () => {
+  it("names no runtime (value) import of @the-running-dev/game-engine anywhere in its transitive module graph", () => {
+    expect(reachesRuntimeEngineImport(resolve(SRC_ROOT, "store.ts"))).toBe(false);
+  });
+});
+
 describe("S4.9 — the HTTP surface's module graph does not reach StoreSerializationHandle", () => {
   it("names no import of StoreSerializationHandle anywhere in its transitive module graph", () => {
     expect(reachesTarget(resolve(SRC_ROOT, "http-surface.ts"), TARGET_NAME)).toBe(false);
