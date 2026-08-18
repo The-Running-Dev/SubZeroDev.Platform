@@ -173,6 +173,13 @@ jobs:
           done
           docker compose exec -T postgres pg_isready -U game_service -d game_service
 
+      # S7.5/S7.6: the README's own documented command, run here rather than a private
+      # equivalent — if it stops existing or stops reproducing the contention proof, this step
+      # is what fails.
+      - name: Run the two-instance contention proof
+        working-directory: workloads/game-service
+        run: npx vitest run tests/contention-two-instances.test.ts
+
       - name: Test
         working-directory: workloads/game-service
         env:

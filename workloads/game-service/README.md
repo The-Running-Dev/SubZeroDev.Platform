@@ -67,6 +67,22 @@ run's snapshot, blob for blob. Neither test's replay commands take a target addr
 external input — the harness starts what it needs and reports the same pass/fail a hand-run
 session against the two manually-started processes above would.
 
+## Run the two-instance contention proof
+
+Two copies of the workload against one shared PostgreSQL database — the way a real deployment
+scales out — proving the same guarantee holds across processes as within one (S6): two players'
+simultaneous actions against one session never both win.
+
+From `workloads/game-service`, with dependencies installed:
+
+```bash
+docker compose up -d
+npx vitest run tests/contention-two-instances.test.ts
+```
+
+The test spawns both instances itself, against a fresh schema it creates and drops — no server
+needs to be started by hand, and the command takes no target address as an external input.
+
 ## Regenerate and publish the contract package
 
 Nothing in this repository authors, edits or regenerates the contract (S3.15) — the row set, the

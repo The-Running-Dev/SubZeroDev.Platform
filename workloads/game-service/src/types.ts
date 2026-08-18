@@ -467,3 +467,22 @@ export type ReplayError =
   | { readonly code: "Composition"; readonly cause: CompositionError }
   | { readonly code: "Shutdown"; readonly cause: ShutdownError }
   | { readonly code: "DumpRead"; readonly cause: DumpReadError };
+
+// ---------------------------------------------------------------------------- proof harness
+
+export interface WorkloadInstance {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, HarnessError>>;
+}
+
+export interface TwoInstanceOptions {
+  readonly connectionString: string;
+  readonly schema: SchemaName;
+  readonly readWritePauseMs: readonly [number, number];
+}
+
+export type HarnessError =
+  | { readonly code: "SchemaCreateFailed"; readonly detail: string }
+  | { readonly code: "SchemaDropFailed"; readonly schema: SchemaName; readonly detail: string }
+  | { readonly code: "InstanceSpawnFailed"; readonly instance: 0 | 1; readonly detail: string }
+  | { readonly code: "InstanceShutdownFailed"; readonly instance: 0 | 1; readonly detail: string };
