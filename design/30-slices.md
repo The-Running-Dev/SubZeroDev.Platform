@@ -36,7 +36,7 @@ Neither the design nor the contract settles these, and none is a slice's to sett
 ---
 
 ## S1 — Engine: the conflict brand and the widened reason code
-**Status:** in progress
+**Status:** shipped
 
 Delivers: for anyone embedding the game engine, two writes racing for the same session no longer look
 identical to a database falling over — the engine can now say which one lost, distinctly from saying
@@ -77,7 +77,7 @@ compare-and-swap itself, which is entirely a host-side mechanism the engine neve
 ---
 
 ## S2 — Contract: the regenerated package
-**Status:** queued
+**Status:** shipped · [#129](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/129)
 
 Delivers: for anyone building against the hosted contract, the codes a durable deployment can return —
 a stale write, a session that quietly expired, a save that quietly expired — become part of the
@@ -113,7 +113,7 @@ table.
 ---
 
 ## S3 — Migrations and the guarded store
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator can point the workload at a real PostgreSQL database and get a session back
 byte for byte after it is stored — and when two writers race to update the same session, exactly one
