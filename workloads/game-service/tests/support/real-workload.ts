@@ -17,6 +17,7 @@ const CONFIGURATION: WorkloadConfiguration = {
   listen: { host: "127.0.0.1", port: 0 },
   determinism: { kind: "default" },
   otlpEndpoint: null,
+  storage: { kind: "in-memory" },
 };
 
 export async function realStore(): Promise<SessionStore> {
@@ -24,5 +25,5 @@ export async function realStore(): Promise<SessionStore> {
   if (!composed.ok) {
     throw new Error(`compose() failed: ${JSON.stringify(composed.error)}`);
   }
-  return composed.value.store;
+  return composed.value.stores.forRequest();
 }

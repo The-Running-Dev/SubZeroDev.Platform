@@ -58,9 +58,10 @@ export interface ProbeGate {
   markListening(): void;
 }
 
-/** Liveness never consults the store; readiness reports healthy once both surface construction and
- *  the bind have completed, and not before either (S3.11). */
-export function createProbeSurface(): ProbeGate {
+/** Liveness never consults the store; readiness is the conjunction of three things — surface
+ *  construction, the bind, and the store answering — the third supplied as a thunk so this module
+ *  never learns what a store is (`20-contract.md`, "Probes — workload"). */
+export function createProbeSurface(readiness: () => Promise<ProbeResult>): ProbeGate {
   let surfacesBuilt = false;
   let listening = false;
   const healthy: ProbeResult = { status: "healthy" };
@@ -69,7 +70,7 @@ export function createProbeSurface(): ProbeGate {
   return {
     surface: {
       liveness: () => healthy,
-      readiness: () => (surfacesBuilt && listening ? healthy : unhealthy),
+      readiness: async () => (surfacesBuilt && listening ? readiness() : unhealthy),
     },
     markSurfacesBuilt: () => {
       surfacesBuilt = true;
@@ -221,7 +222,7 @@ function serve(
       const path = rawPath ?? "/";
 
       if (path === "/livez" || path === "/readyz") {
-        const result = path === "/livez" ? probes.liveness() : probes.readiness();
+        const result = path === "/livez" ? probes.liveness() : await probes.readiness();
         const body = JSON.stringify({ status: result.status });
         response.writeHead(result.status === "healthy" ? 200 : 503, { "content-type": "application/json" });
         response.end(body);
@@ -313,8 +314,13 @@ export async function startWorkload(
     return err({ code: "Composition", cause: composed.error });
   }
 
-  const probes = createProbeSurface();
-  const dispatcher = createDispatcher(contract.value, composed.value.store);
+  const probes = createProbeSurface(() => composed.value.readiness());
+  // `forRequest()` here, once at wiring time, is correct for the in-memory configuration — it
+  // returns the same long-lived layer on every call (S4.2), so this is that same instance. For the
+  // durable configuration this is an interim call: making every request's store genuinely
+  // per-request is Dispatch's own change, deferred to the slice that rewires `createDispatcher`
+  // (`design/30-slices.md`, S5) — this slice's own scope is Composition, not Dispatch.
+  const dispatcher = createDispatcher(contract.value, composed.value.stores.forRequest());
   const built = buildHttpSurface(contract.value, dispatcher);
   if (!built.ok) {
     return err({ code: "SurfaceBuild", cause: built.error });
@@ -368,6 +374,11 @@ export async function startWorkload(
       }
 
       await new Promise<void>((resolve) => server.close(() => resolve()));
+
+      // Stops the sweep timer (and any in-flight reconnect retry) and closes the pool — after the
+      // dump above has already read whatever the store held, and after the listener has stopped
+      // accepting, so no request in flight is cut off by the store disappearing under it.
+      await composed.value.close();
 
       // Flushed after the listener stops accepting, so a request handled just before shutdown is
       // not silently dropped from the collector's view.

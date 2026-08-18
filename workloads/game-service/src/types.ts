@@ -19,6 +19,7 @@ import type {
 } from "@subzerodev/service-contract";
 import type { EngineErrorCode, SemanticVersion } from "@subzerodev/service-contract";
 import type { ProfileStore, SessionPersistence, SessionStore, StoredSessionRecord } from "@the-running-dev/game-engine";
+export type { SessionStore };
 
 export type {
   CanonicalJson,
@@ -77,6 +78,7 @@ export interface WorkloadConfiguration {
   readonly listen: ListenEndpoint;
   readonly determinism: DeterminismProfile;
   readonly otlpEndpoint: string | null;
+  readonly storage: StorageProfile;
 }
 
 // ---------------------------------------------------------------------------- request context
@@ -215,6 +217,18 @@ export interface ReadVersionMap {
   advance(sessionId: string, version: SessionRowVersion): void;
 }
 
+/**
+ * `20-contract.md`, "Workload — the store provider and the per-request seam". One method, and the
+ * two configurations differ only in what it returns: the durable configuration constructs a fresh
+ * persistence adapter with an empty `ReadVersionMap` and composes a session layer over it on every
+ * call; the in-memory configuration returns G1's single long-lived layer every time. A cache that
+ * cannot outlive one request is what makes the compare-and-swap the only concurrency mechanism in
+ * the system — a caller is never handed a store that lasts.
+ */
+export interface StoreProvider {
+  forRequest(): SessionStore;
+}
+
 // ---------------------------------------------------------------------------- store: configuration
 
 export interface StoreConnection {
@@ -237,6 +251,13 @@ export interface DurableStoreConfiguration {
   readonly bounds: LifecycleBounds;
   readonly readWritePauseMs: number;
 }
+
+/** `20-contract.md`, "Workload — configuration". The discriminated union that makes "the in-memory
+ *  configuration reaches no database" a type-level fact — no code path holds an in-memory profile
+ *  with a connection string. */
+export type StorageProfile =
+  | { readonly kind: "in-memory" }
+  | { readonly kind: "durable"; readonly store: DurableStoreConfiguration };
 
 // ---------------------------------------------------------------------------- store: the sweep
 
@@ -294,7 +315,10 @@ export interface ProbeResult {
 
 export interface ProbeSurface {
   liveness(): ProbeResult;
-  readiness(): ProbeResult;
+  /** Asynchronous from G2 on, and that is forced rather than chosen — it evaluates the store on
+   *  each probe, so it reports whether the store is usable *now*, not whether it was usable once
+   *  (`20-contract.md`, "Workload — readiness"). */
+  readiness(): Promise<ProbeResult>;
 }
 
 export interface WireErrorBody {
@@ -342,8 +366,11 @@ export interface McpSurface {
 // ---------------------------------------------------------------------------- composition
 
 export interface ComposedWorkload {
-  readonly store: SessionStore;
+  readonly stores: StoreProvider;
+  readonly lifecycle: LifecycleProbe;
   readonly serialization: StoreSerializationHandle;
+  readiness(): Promise<ProbeResult>;
+  close(): Promise<void>;
 }
 
 export interface WorkloadProcess {
@@ -362,7 +389,8 @@ export type ContractLoadError =
 export type CompositionError =
   | { readonly code: "EngineVersionMismatch"; readonly contractEngineVersion: string; readonly resolvedEngineVersion: string }
   | { readonly code: "ContentRegistryInvalid"; readonly campaignId: string }
-  | { readonly code: "DumpWriteFailed"; readonly path: string };
+  | { readonly code: "DumpWriteFailed"; readonly path: string }
+  | { readonly code: "StorageConfigurationInvalid"; readonly setting: string };
 
 export type SurfaceBuildError =
   | { readonly code: "DuplicateRoute"; readonly first: string; readonly second: string }

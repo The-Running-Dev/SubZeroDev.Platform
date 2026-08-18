@@ -46,6 +46,7 @@ describe("S8 — the workload's span shares the response's correlation, and adop
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: sink.url,
+      storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
@@ -73,6 +74,7 @@ describe("S8 — the workload's span shares the response's correlation, and adop
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: sink.url,
+      storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
@@ -99,6 +101,7 @@ describe("S8 — the workload's span shares the response's correlation, and adop
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: sink.url,
+      storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
