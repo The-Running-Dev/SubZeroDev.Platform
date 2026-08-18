@@ -9,7 +9,7 @@
  * duplicated copy (`20-contract.md`, "The brand is the `name` property and nothing else").
  */
 import { Pool, types as pgTypes } from "pg";
-import type { PoolClient, PoolConfig } from "pg";
+import type { CustomTypesConfig, PoolClient, PoolConfig } from "pg";
 import type {
   ProfileStore,
   SessionPersistence,
@@ -17,7 +17,7 @@ import type {
   StoredSaveRecord,
   StoredSessionRecord,
 } from "@the-running-dev/game-engine";
-import { quoteIdentifier } from "./migrations.js";
+import { pgErrorCode, quoteIdentifier } from "./migrations.js";
 import { err, ok } from "./types.js";
 import type {
   DatabaseInstant,
@@ -44,8 +44,14 @@ import type {
 // precision loss for values a JS `number` cannot represent exactly. `session.version` is exactly
 // such a column, and the contract requires the actual runtime type to be `bigint` (S3.17) — a
 // `string` that merely looks numeric would still compare equal on a round trip while making
-// arithmetic on it a concatenation. Set once, process-wide: `pg`'s type-parser registry is global.
-pgTypes.setTypeParser(20, (value: string) => BigInt(value));
+// arithmetic on it a concatenation. Scoped to this store's own `Pool` via `pg`'s per-instance
+// `types` option, rather than `pgTypes.setTypeParser` — that call mutates the process-wide
+// `pg-types` registry, which would silently reparse OID 20 for every other `pg.Pool`/`Client` in
+// the process too. Exported so test support applies the identical override to its own raw pools
+// instead of depending on `store.ts` having already run a global side effect first.
+export const BIGINT_VERSION_TYPES: CustomTypesConfig = {
+  getTypeParser: (oid, format) => (oid === 20 ? (value: string) => BigInt(value) : pgTypes.getTypeParser(oid, format)),
+};
 
 /** `TenantId` is non-empty and, in G2, is one value — the store supplies this constant to every
  *  statement (invariant 51); nothing resolves it and no request carries one. */
@@ -59,11 +65,6 @@ function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-function pgErrorCode(error: unknown): string | undefined {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" ? code : undefined;
-}
-
 /** `"insert"` context is what lets a primary-key collision (`23505`) classify as `IdCollision`
  *  rather than an ordinary `StatementFailed` — the distinction the S3.12 caller depends on. */
 function classifyStoreError(error: unknown, context: "insert" | "other"): StoreError {
@@ -74,6 +75,12 @@ function classifyStoreError(error: unknown, context: "insert" | "other"): StoreE
   }
   if (error instanceof Error && /connection.*(terminated|closed)/i.test(error.message)) {
     return { code: "Unreachable" };
+  }
+  // `pg-pool` throws a plain `Error` with no `.code` when a connection acquisition exceeds
+  // `connectionTimeoutMillis` (`pg-pool/index.js`, `'timeout exceeded when trying to connect'`) —
+  // the contract classifies this as `PoolExhausted`, retryable, distinct from `StatementFailed`.
+  if (error instanceof Error && /timeout exceeded when trying to connect/i.test(error.message)) {
+    return { code: "PoolExhausted" };
   }
   return { code: "StatementFailed" };
 }
@@ -447,6 +454,7 @@ export async function openDurableStore(
     connectionString: configuration.connection.connectionString,
     max: configuration.connection.poolSize,
     connectionTimeoutMillis: configuration.connection.connectTimeoutMs,
+    types: BIGINT_VERSION_TYPES,
     ...(schema !== null
       ? { options: `-c search_path=${quoteIdentifier(schema as unknown as string)},public` }
       : {}),
@@ -577,34 +585,35 @@ export async function openDurableStore(
 
   const profiles: ProfileStore = {
     async load(profileId: string) {
-      let formatVersionRows;
+      // A single left join, not two round trips: `format_version` and each achievement row travel
+      // together, and a profile with zero achievements comes back as one row with null achievement
+      // columns rather than a second query. Every error on this read — including a connectivity
+      // failure, which the port gives no channel to distinguish from a shape problem — folds into
+      // `profile_corrupt`, per `20-contract.md`'s three-warning vocabulary for `load`.
+      let rows;
       try {
-        formatVersionRows = await pool.query<{ format_version: number }>(
-          "select format_version from profile where tenant_id = $1 and profile_id = $2",
+        rows = await pool.query<{ format_version: number; campaign_id: string | null; achievement_id: string | null }>(
+          "select p.format_version, pa.campaign_id, pa.achievement_id from profile p " +
+            "left join profile_achievement pa on pa.tenant_id = p.tenant_id and pa.profile_id = p.profile_id " +
+            "where p.tenant_id = $1 and p.profile_id = $2",
           [tenantId, profileId],
         );
       } catch {
         return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
       }
-      if (formatVersionRows.rows.length === 0) {
+      if (rows.rows.length === 0) {
         return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_missing", profileId }] };
       }
-      if (formatVersionRows.rows[0]?.format_version !== 1) {
+      if (rows.rows[0]?.format_version !== 1) {
         return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
       }
-      const achievementRows = await pool.query<{ campaign_id: string; achievement_id: string }>(
-        "select campaign_id, achievement_id from profile_achievement where tenant_id = $1 and profile_id = $2",
-        [tenantId, profileId],
-      );
+      const achievements = rows.rows
+        .filter((row): row is { format_version: number; campaign_id: string; achievement_id: string } =>
+          row.campaign_id !== null && row.achievement_id !== null,
+        )
+        .map((row) => ({ campaignId: row.campaign_id, achievementId: row.achievement_id }));
       return {
-        profile: {
-          formatVersion: 1,
-          profileId,
-          achievements: achievementRows.rows.map((row) => ({
-            campaignId: row.campaign_id,
-            achievementId: row.achievement_id,
-          })),
-        },
+        profile: { formatVersion: 1, profileId, achievements },
         warnings: [],
       };
     },
@@ -615,11 +624,19 @@ export async function openDurableStore(
             "on conflict (tenant_id, profile_id) do update set format_version = 1, row_updated_at = now()",
           [tenantId, profile.profileId],
         );
-        for (const achievement of profile.achievements) {
+        // One batched insert via `unnest`, not one round trip per achievement.
+        if (profile.achievements.length > 0) {
           await pool.query(
             "insert into profile_achievement (tenant_id, profile_id, campaign_id, achievement_id) " +
-              "values ($1, $2, $3, $4) on conflict do nothing",
-            [tenantId, profile.profileId, achievement.campaignId, achievement.achievementId],
+              "select $1, $2, campaign_id, achievement_id " +
+              "from unnest($3::text[], $4::text[]) as achievement(campaign_id, achievement_id) " +
+              "on conflict do nothing",
+            [
+              tenantId,
+              profile.profileId,
+              profile.achievements.map((achievement) => achievement.campaignId),
+              profile.achievements.map((achievement) => achievement.achievementId),
+            ],
           );
         }
         return { ok: true, warnings: [] };
@@ -657,14 +674,16 @@ export async function openDurableStore(
       // `collate "C"` (invariant 83): ordering by a locale-aware collation would make the ordered
       // blob set depend on the database image's locale, which is exactly the failure mode that
       // would present as a byte-identity failure for the wrong reason.
-      const sessions = await pool.query<{ session_id: string; blob: string }>(
-        'select session_id, blob from session where tenant_id = $1 order by session_id collate "C"',
-        [tenantId],
-      );
-      const saves = await pool.query<{ save_id: string; blob: string }>(
-        'select save_id, blob from save where tenant_id = $1 order by save_id collate "C"',
-        [tenantId],
-      );
+      const [sessions, saves] = await Promise.all([
+        pool.query<{ session_id: string; blob: string }>(
+          'select session_id, blob from session where tenant_id = $1 order by session_id collate "C"',
+          [tenantId],
+        ),
+        pool.query<{ save_id: string; blob: string }>(
+          'select save_id, blob from save where tenant_id = $1 order by save_id collate "C"',
+          [tenantId],
+        ),
+      ]);
       return {
         sessions: sessions.rows.map((row) => ({ id: row.session_id, blob: row.blob })),
         saves: saves.rows.map((row) => ({ id: row.save_id, blob: row.blob })),
@@ -688,8 +707,10 @@ export async function openDurableStore(
     async sweepOnce(): Promise<Outcome<SweepResult, StoreError>> {
       const statements = sweepStatements(tenantId, bounds.retentionHorizonSeconds);
       try {
-        const sessions = await pool.query(statements.sessions.text, statements.sessions.values as unknown[]);
-        const saves = await pool.query(statements.saves.text, statements.saves.values as unknown[]);
+        const [sessions, saves] = await Promise.all([
+          pool.query(statements.sessions.text, statements.sessions.values as unknown[]),
+          pool.query(statements.saves.text, statements.saves.values as unknown[]),
+        ]);
         return ok({ sessionsRemoved: sessions.rowCount ?? 0, savesRemoved: saves.rowCount ?? 0 });
       } catch (error) {
         return err(classifyStoreError(error, "other"));

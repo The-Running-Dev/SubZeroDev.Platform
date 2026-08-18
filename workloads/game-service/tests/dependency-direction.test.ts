@@ -109,21 +109,26 @@ function reachesTarget(entryFile: string, target: string): boolean {
 
 const ENGINE_MODULE = "@the-running-dev/game-engine";
 
-/** True if this file has a *runtime* (value-carrying) import from the engine package — a whole
+/** True if this file has a *runtime* (value-carrying) dependency on the engine package — a whole
  *  `import type {...}` declaration never reaches the runtime, and neither does an individual
  *  specifier marked `type` inside an otherwise-ordinary import (`import { type X, y } from`,
  *  where only `y` would be a violation). Store may depend on the engine's types; S3.14 (invariant
- *  58) is that its module graph never depends on the engine's runtime entry point. */
+ *  58) is that its module graph never depends on the engine's runtime entry point.
+ *
+ *  Three forms besides an ordinary runtime import reach the runtime and are checked here too: a
+ *  named/wildcard *re-export* (`export {...} from`/`export * from`, mirroring `namesTarget` above),
+ *  a dynamic `import()` (mirroring `localSpecifiers`' own handling of it), and a bare side-effect
+ *  import (`import "..."`, whose `importClause` is `undefined` and which runs the target's
+ *  top-level code by itself). */
 function hasRuntimeEngineImport(source: ts.SourceFile): boolean {
   let found = false;
+  const isEngineSpecifier = (specifier: ts.Expression): boolean =>
+    ts.isStringLiteral(specifier) && specifier.text === ENGINE_MODULE;
   const visit = (node: ts.Node): void => {
-    if (
-      ts.isImportDeclaration(node) &&
-      node.importClause &&
-      ts.isStringLiteral(node.moduleSpecifier) &&
-      node.moduleSpecifier.text === ENGINE_MODULE
-    ) {
-      if (!node.importClause.isTypeOnly) {
+    if (ts.isImportDeclaration(node) && isEngineSpecifier(node.moduleSpecifier)) {
+      if (!node.importClause) {
+        found = true; // bare `import "..."` — a side effect, not type-only by definition
+      } else if (!node.importClause.isTypeOnly) {
         const bindings = node.importClause.namedBindings;
         if (bindings && ts.isNamedImports(bindings)) {
           for (const element of bindings.elements) {
@@ -135,6 +140,25 @@ function hasRuntimeEngineImport(source: ts.SourceFile): boolean {
         }
         if (node.importClause.name) found = true; // `import Foo, { ... } from "..."`
       }
+    }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && isEngineSpecifier(node.moduleSpecifier)) {
+      if (!node.isTypeOnly) {
+        if (!node.exportClause) {
+          found = true; // `export * from "..."` re-exports every runtime binding
+        } else if (ts.isNamedExports(node.exportClause)) {
+          for (const element of node.exportClause.elements) {
+            if (!element.isTypeOnly) found = true;
+          }
+        }
+      }
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] &&
+      isEngineSpecifier(node.arguments[0])
+    ) {
+      found = true; // dynamic `import("...")` always evaluates the target's runtime
     }
     ts.forEachChild(node, visit);
   };

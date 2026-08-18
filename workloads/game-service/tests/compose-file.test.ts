@@ -20,7 +20,10 @@ const COMPOSE_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../docker
  *  entries share `services:` entries' 2-space indent. */
 function servicesBlock(text: string): string {
   const withoutComments = text.replace(/^\s*#.*$/gm, "");
-  const match = /^services:\n([\s\S]*?)(?=^\S|\Z)/m.exec(withoutComments);
+  // `(?![\s\S])` is the true end-of-string assertion — JS `\Z` is a literal "Z" character, not an
+  // anchor (unlike Python/PCRE), so it can never fire and this fallback would silently depend on
+  // `services:` never being the last top-level block in the file.
+  const match = /^services:\n([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(withoutComments);
   if (!match?.[1]) throw new Error("docker-compose.yml has no top-level services: block");
   return match[1];
 }

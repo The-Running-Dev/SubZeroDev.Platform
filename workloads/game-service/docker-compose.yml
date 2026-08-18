@@ -1,10 +1,10 @@
-# S3.15 / invariant 83. Provisions the durable store and nothing else: no workload instance, no
+# S3.15 / invariant 93. Provisions the durable store and nothing else: no workload instance, no
 # supervision, no deployment description. The `game-service` CI job and this file's reader bring
 # it up with the identical command (`design/10-design.md`, "Provisioning the store").
 #
 # Encoding and locale are pinned explicitly rather than inherited from the image's own default, so
-# the ordered blob comparisons the proofs run (`collate "C"`) do not depend on which locale a given
-# image build happened to ship with.
+# the ordered blob comparisons the proofs run (`collate "C"`, invariant 83) do not depend on which
+# locale a given image build happened to ship with.
 services:
   postgres:
     image: postgres:17

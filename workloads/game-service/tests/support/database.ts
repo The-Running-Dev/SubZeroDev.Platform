@@ -11,6 +11,7 @@
 import { Client, Pool } from "pg";
 import { randomBytes } from "node:crypto";
 import { migrateToHead, quoteIdentifier } from "../../src/migrations.js";
+import { BIGINT_VERSION_TYPES } from "../../src/store.js";
 import type { DurableStoreConfiguration, LifecycleBounds, SchemaName, StoreConnection } from "../../src/types.js";
 
 export const TEST_CONNECTION_STRING =
@@ -57,6 +58,7 @@ export function openTestPool(schema: SchemaName): Pool {
   return new Pool({
     connectionString: TEST_CONNECTION_STRING,
     options: `-c search_path=${quoteIdentifier(schema as unknown as string)},public`,
+    types: BIGINT_VERSION_TYPES,
   });
 }
 
@@ -117,6 +119,7 @@ export class RawSchemaClient {
     const client = new Client({
       connectionString: TEST_CONNECTION_STRING,
       options: `-c search_path=${quoteIdentifier(schema as unknown as string)},public`,
+      types: BIGINT_VERSION_TYPES,
     });
     await client.connect();
     return new RawSchemaClient(client);

@@ -28,7 +28,9 @@ export function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
 
-function pgErrorCode(error: unknown): string | undefined {
+/** Exported so `store.ts` reuses this instead of re-typing it — the two files already share
+ *  `quoteIdentifier` the same way. */
+export function pgErrorCode(error: unknown): string | undefined {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "string" ? code : undefined;
 }
