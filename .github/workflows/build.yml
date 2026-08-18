@@ -158,6 +158,21 @@ jobs:
           GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
         run: npx vitest run tests/replay-edge.test.ts
 
+      # S3: the store's own suite (`tests/store.test.ts` and friends) needs a real PostgreSQL
+      # database, not a mock — the same compose file the README will point a reader at
+      # (`docker-compose.yml` under this workload), brought up by the identical command. "Test",
+      # below, runs the whole suite unconditionally and would otherwise fail here for want of a
+      # database rather than for a real defect.
+      - name: Start the durable store
+        working-directory: workloads/game-service
+        run: |
+          docker compose up -d
+          for i in $(seq 1 30); do
+            docker compose exec -T postgres pg_isready -U game_service -d game_service && break
+            sleep 1
+          done
+          docker compose exec -T postgres pg_isready -U game_service -d game_service
+
       - name: Test
         working-directory: workloads/game-service
         env:

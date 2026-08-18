@@ -107,6 +107,89 @@ function reachesTarget(entryFile: string, target: string): boolean {
   return false;
 }
 
+const ENGINE_MODULE = "@the-running-dev/game-engine";
+
+/** True if this file has a *runtime* (value-carrying) dependency on the engine package — a whole
+ *  `import type {...}` declaration never reaches the runtime, and neither does an individual
+ *  specifier marked `type` inside an otherwise-ordinary import (`import { type X, y } from`,
+ *  where only `y` would be a violation). Store may depend on the engine's types; S3.14 (invariant
+ *  58) is that its module graph never depends on the engine's runtime entry point.
+ *
+ *  Three forms besides an ordinary runtime import reach the runtime and are checked here too: a
+ *  named/wildcard *re-export* (`export {...} from`/`export * from`, mirroring `namesTarget` above),
+ *  a dynamic `import()` (mirroring `localSpecifiers`' own handling of it), and a bare side-effect
+ *  import (`import "..."`, whose `importClause` is `undefined` and which runs the target's
+ *  top-level code by itself). */
+function hasRuntimeEngineImport(source: ts.SourceFile): boolean {
+  let found = false;
+  const isEngineSpecifier = (specifier: ts.Expression): boolean =>
+    ts.isStringLiteral(specifier) && specifier.text === ENGINE_MODULE;
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && isEngineSpecifier(node.moduleSpecifier)) {
+      if (!node.importClause) {
+        found = true; // bare `import "..."` — a side effect, not type-only by definition
+      } else if (!node.importClause.isTypeOnly) {
+        const bindings = node.importClause.namedBindings;
+        if (bindings && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) {
+            if (!element.isTypeOnly) found = true;
+          }
+        } else {
+          // A default import or a namespace import, neither marked type-only.
+          found = true;
+        }
+        if (node.importClause.name) found = true; // `import Foo, { ... } from "..."`
+      }
+    }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && isEngineSpecifier(node.moduleSpecifier)) {
+      if (!node.isTypeOnly) {
+        if (!node.exportClause) {
+          found = true; // `export * from "..."` re-exports every runtime binding
+        } else if (ts.isNamedExports(node.exportClause)) {
+          for (const element of node.exportClause.elements) {
+            if (!element.isTypeOnly) found = true;
+          }
+        }
+      }
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] &&
+      isEngineSpecifier(node.arguments[0])
+    ) {
+      found = true; // dynamic `import("...")` always evaluates the target's runtime
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return found;
+}
+
+function reachesRuntimeEngineImport(entryFile: string): boolean {
+  const visited = new Set<string>();
+  const stack = [resolve(entryFile)];
+
+  while (stack.length > 0) {
+    const file = stack.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    const source = parse(file);
+    if (hasRuntimeEngineImport(source)) return true;
+    for (const specifier of localSpecifiers(source)) {
+      stack.push(resolveRelative(file, specifier));
+    }
+  }
+  return false;
+}
+
+describe("S3.14 — Store's module graph imports only the engine's type declarations", () => {
+  it("names no runtime (value) import of @the-running-dev/game-engine anywhere in its transitive module graph", () => {
+    expect(reachesRuntimeEngineImport(resolve(SRC_ROOT, "store.ts"))).toBe(false);
+  });
+});
+
 describe("S4.9 — the HTTP surface's module graph does not reach StoreSerializationHandle", () => {
   it("names no import of StoreSerializationHandle anywhere in its transitive module graph", () => {
     expect(reachesTarget(resolve(SRC_ROOT, "http-surface.ts"), TARGET_NAME)).toBe(false);

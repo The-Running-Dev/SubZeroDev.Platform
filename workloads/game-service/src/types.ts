@@ -17,8 +17,8 @@ import type {
   WireErrorCode,
   WireVersion,
 } from "@subzerodev/service-contract";
-import type { EngineErrorCode } from "@subzerodev/service-contract";
-import type { SessionStore } from "@the-running-dev/game-engine";
+import type { EngineErrorCode, SemanticVersion } from "@subzerodev/service-contract";
+import type { ProfileStore, SessionPersistence, SessionStore, StoredSessionRecord } from "@the-running-dev/game-engine";
 
 export type {
   CanonicalJson,
@@ -31,6 +31,7 @@ export type {
   OperationId,
   Outcome,
   SchemaRef,
+  SemanticVersion,
   WireErrorCode,
   WireVersion,
 };
@@ -119,6 +120,169 @@ export type DeterminismDump = {
   readonly sessions: Readonly<Record<string, string>>;
   readonly saves: Readonly<Record<string, string>>;
 };
+
+// ---------------------------------------------------------------------------- store: identifiers and constrained values
+
+/**
+ * `20-contract.md`, "Workload — the store's own identifiers and constrained values". Not exported
+ * by the contract package (same footing as `ValidatedArguments` above) — declared here beside
+ * their only owner, Store.
+ */
+export type TenantId = string & { readonly __brand: "TenantId" };
+export type EngineInstant = string & { readonly __brand: "EngineInstant" };
+export type DatabaseInstant = Date & { readonly __brand: "DatabaseInstant" };
+export type SessionRowVersion = bigint & { readonly __brand: "SessionRowVersion" };
+export type SchemaName = string & { readonly __brand: "SchemaName" };
+
+/**
+ * The engine's own `"player" | "ai"` union (`core/projection/types.ts`), not re-exported from the
+ * package's public entry point at `0.8.0` — derived by indexed access from `StoredSessionRecord`,
+ * which is exported, so this stays a binding to the engine's type rather than a re-declared copy.
+ */
+export type ProjectionAudience = StoredSessionRecord["audience"];
+
+// ---------------------------------------------------------------------------- store: durable rows
+
+/**
+ * `20-contract.md`, "Workload — the durable rows". Every row type here is Store's own internal
+ * shape; none crosses the port — the adapter maps a row to a `StoredSessionRecord` or
+ * `StoredSaveRecord`, which carry engine-owned members only (invariant 48).
+ */
+export interface SessionRow {
+  readonly tenantId: TenantId;
+  readonly sessionId: string;
+  readonly blob: string;
+  readonly audience: ProjectionAudience;
+  readonly attemptCounter: number;
+  readonly replayCompatible: boolean;
+  readonly engineCreatedAt: EngineInstant;
+  readonly engineUpdatedAt: EngineInstant;
+  readonly profileId: string | null;
+  readonly version: SessionRowVersion;
+  readonly engineVersion: SemanticVersion;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
+  readonly expiresAt: DatabaseInstant;
+}
+
+export interface SaveRow {
+  readonly tenantId: TenantId;
+  readonly saveId: string;
+  readonly campaignId: string;
+  readonly blob: string;
+  readonly savedAtSeq: number;
+  readonly audience: ProjectionAudience;
+  readonly profileId: string | null;
+  readonly engineVersion: SemanticVersion;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly expiresAt: DatabaseInstant;
+}
+
+export interface ProfileRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly formatVersion: number;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
+}
+
+export interface ProfileAchievementRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly campaignId: string;
+  readonly achievementId: string;
+  readonly rowCreatedAt: DatabaseInstant;
+}
+
+// ---------------------------------------------------------------------------- store: the guarded write and lifecycle
+
+export type GuardedWriteOutcome = "applied" | "conflict" | "expired";
+
+export type LifecycleState = "live" | "expired" | "absent";
+
+export interface LifecycleProbe {
+  session(sessionId: string): Promise<Outcome<LifecycleState, StoreError>>;
+  save(saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
+}
+
+// ---------------------------------------------------------------------------- store: the per-request read-version seam
+
+/** One per request, and it dies with the request (`20-contract.md`, "the store provider and the
+ *  per-request seam"). `StoreProvider` itself is S4's — Composition's, not Store's. */
+export interface ReadVersionMap {
+  observed(sessionId: string): SessionRowVersion | undefined;
+  record(sessionId: string, version: SessionRowVersion): void;
+  advance(sessionId: string, version: SessionRowVersion): void;
+}
+
+// ---------------------------------------------------------------------------- store: configuration
+
+export interface StoreConnection {
+  readonly connectionString: string;
+  readonly poolSize: number;
+  readonly connectTimeoutMs: number;
+  readonly schema: SchemaName | null;
+}
+
+export interface LifecycleBounds {
+  readonly sessionIdleTtlSeconds: number;
+  readonly saveTtlSeconds: number;
+  readonly retentionHorizonSeconds: number;
+  readonly sweepIntervalSeconds: number;
+  readonly sweepStatementTimeoutMs: number;
+}
+
+export interface DurableStoreConfiguration {
+  readonly connection: StoreConnection;
+  readonly bounds: LifecycleBounds;
+  readonly readWritePauseMs: number;
+}
+
+// ---------------------------------------------------------------------------- store: the sweep
+
+export interface SweepResult {
+  readonly sessionsRemoved: number;
+  readonly savesRemoved: number;
+}
+
+// ---------------------------------------------------------------------------- store & migrations: error types
+
+/**
+ * `20-contract.md`, "Store — `StoreError`". The contract states this as a table of variants, not a
+ * type declaration — the shape here follows this file's existing discriminated-union idiom (see
+ * `CompositionError`, `StartupError`, below), naming each variant's extra field the same way those
+ * do ("naming the setting", "naming the migration" become a field carrying that name).
+ */
+export type StoreError =
+  | { readonly code: "Unreachable" }
+  | { readonly code: "PoolExhausted" }
+  | { readonly code: "IsolationLevelUnsupported"; readonly isolationLevel: string }
+  | { readonly code: "StatementFailed" }
+  | { readonly code: "IdCollision" }
+  | { readonly code: "RowUndeserializable" };
+
+/** `20-contract.md`, "Migrations — `MigrationError`". Same footing as `StoreError` above. */
+export type MigrationError =
+  | { readonly code: "Unreachable" }
+  | { readonly code: "LockTimeout" }
+  | { readonly code: "MigrationFailed"; readonly migration: string };
+
+// ---------------------------------------------------------------------------- store: the public surface
+
+/**
+ * `20-contract.md`, "Store — workload". `persistenceForRequest` is the only per-request member —
+ * the pool, the schema, the profile store, the probe and the serialization handle are all
+ * process-lived. Store imports the engine's *type* declarations and never its runtime (invariant 58).
+ */
+export interface DurableStore {
+  persistenceForRequest(): SessionPersistence;
+  readonly profiles: ProfileStore;
+  readonly lifecycle: LifecycleProbe;
+  readonly serialization: StoreSerializationHandle;
+  check(): Promise<Outcome<void, StoreError>>;
+  sweepOnce(): Promise<Outcome<SweepResult, StoreError>>;
+  close(): Promise<void>;
+}
 
 // ---------------------------------------------------------------------------- probes and envelope
 
