@@ -36,7 +36,7 @@ Neither the design nor the contract settles these, and none is a slice's to sett
 ---
 
 ## S1 — Engine: the conflict brand and the widened reason code
-**Status:** in progress
+**Status:** shipped
 
 Delivers: for anyone embedding the game engine, two writes racing for the same session no longer look
 identical to a database falling over — the engine can now say which one lost, distinctly from saying
@@ -77,7 +77,7 @@ compare-and-swap itself, which is entirely a host-side mechanism the engine neve
 ---
 
 ## S2 — Contract: the regenerated package
-**Status:** queued
+**Status:** shipped · [#129](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/129)
 
 Delivers: for anyone building against the hosted contract, the codes a durable deployment can return —
 a stale write, a session that quietly expired, a save that quietly expired — become part of the
