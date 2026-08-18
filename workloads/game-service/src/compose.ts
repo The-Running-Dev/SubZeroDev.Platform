@@ -6,9 +6,12 @@
  * A mismatch returns `EngineVersionMismatch` and no store is built, so the listener never binds.
  *
  * `compose` returns successfully even when a durable store is unreachable at startup (`20-contract.md`,
- * "Composition — workload"): the process stays up, reports live, reports not ready, and this module
- * retries the connection in the background. `StoreUnavailable` is a readiness condition, never a
- * `CompositionError` — the `CompositionError` variants are the ones no retry can fix.
+ * "Composition — workload"): the process comes up reporting not ready rather than refusing to start,
+ * and this module retries the connection in the background from then on. The very first attempt is
+ * still awaited here, bounded by `connectTimeoutMs`, so the listener does not bind until it settles
+ * one way or the other — only the *retries* after that first attempt are pure background work.
+ * `StoreUnavailable` is a readiness condition, never a `CompositionError` — the `CompositionError`
+ * variants are the ones no retry can fix.
  */
 import {
   buildContentRegistry,
@@ -36,7 +39,7 @@ import type {
 import type { ContractPackage } from "@subzerodev/service-contract";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { canonicalEncode } from "./canonical.js";
-import { openDurableStore } from "./store.js";
+import { corruptProfileResult, openDurableStore, profileWriteFailedResult } from "./store.js";
 import { err, ok } from "./types.js";
 import type {
   ComposedWorkload,
@@ -124,12 +127,8 @@ function unavailablePersistence(): SessionPersistence {
  *  failures. */
 function unavailableProfiles(): ProfileStore {
   return {
-    async load(profileId: string) {
-      return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt" as const, profileId }] };
-    },
-    async save(profile) {
-      return { ok: false, warnings: [{ code: "profile_write_failed" as const, profileId: profile.profileId }] };
-    },
+    load: async (profileId: string) => corruptProfileResult(profileId),
+    save: async (profile) => profileWriteFailedResult(profile.profileId),
   };
 }
 
@@ -170,8 +169,10 @@ function contentRegistry(): Outcome<ContentRegistry, CompositionError> {
  *  as `migrations.ts`'s `LOCK_WAIT_TIMEOUT_MS` — chosen to exceed the edge's own configured value
  *  (10s in this repository's own hosted-edge test support) by a wide margin, so the production
  *  default (`retentionHorizonSeconds` of 30 days) validates and a deliberately short horizon is
- *  still caught before any connection is attempted (S4.6). */
-const ASSUMED_FORWARD_TIMEOUT_SECONDS = 60;
+ *  still caught before any connection is attempted (S4.6). Exported so a test can assert this still
+ *  exceeds the real edge timeout used by `tests/support/hosted-edge.ts` — the one guard against this
+ *  guess drifting out of sync with the edge's own configured value. */
+export const ASSUMED_FORWARD_TIMEOUT_SECONDS = 60;
 
 /** The interval between background reconnection attempts while a durable store has not yet
  *  connected. Not named by the contract — "retries with backoff" (`20-contract.md`, "Composition
@@ -182,11 +183,17 @@ function validateStorageConfiguration(storage: StorageProfile): Outcome<void, Co
   if (storage.kind === "in-memory") return ok(undefined);
   const { connection, bounds } = storage.store;
 
-  try {
-    // eslint-disable-next-line no-new -- syntactic validity only; nothing here connects.
-    new URL(connection.connectionString);
-  } catch {
-    return err({ code: "StorageConfigurationInvalid", setting: "storage.store.connection.connectionString" });
+  // A leading `/` is `pg`'s own Unix-domain-socket form (`pg-connection-string`'s `parse()`
+  // special-cases it before ever reaching a `URL`) and is never itself a valid absolute URL, so
+  // `new URL(...)` would reject a connection string the driver accepts. Every other form is
+  // URL-shaped, and that syntactic check is what `new URL(...)` below still validates.
+  if (!connection.connectionString.startsWith("/")) {
+    try {
+      // eslint-disable-next-line no-new -- syntactic validity only; nothing here connects.
+      new URL(connection.connectionString);
+    } catch {
+      return err({ code: "StorageConfigurationInvalid", setting: "storage.store.connection.connectionString" });
+    }
   }
   if (!Number.isInteger(connection.poolSize) || connection.poolSize <= 0) {
     return err({ code: "StorageConfigurationInvalid", setting: "storage.store.connection.poolSize" });
@@ -277,22 +284,41 @@ export async function compose(
   let closed = false;
   let reconnectHandle: ReturnType<typeof setTimeout> | null = null;
   let sweepHandle: ReturnType<typeof setTimeout> | null = null;
+  // Set only while a reconnect retry (never the first, awaited attempt) is in flight, so `close()`
+  // can wait for it instead of returning while a stray connect is still running underneath it.
+  let connecting: Promise<void> | null = null;
 
   async function attemptConnect(): Promise<void> {
     const opened = await openDurableStore(storeConfig, ENGINE_VERSION as SemanticVersion);
     if (closed) {
       // `close()` ran while this attempt was in flight — a store that connected after the fact
-      // must not be left dangling.
-      if (opened.ok) await opened.value.close();
+      // must not be left dangling. Guarded the same way the sweep tick's own failure is: a rejection
+      // here must not become an unhandled rejection this attempt was never awaited into.
+      if (opened.ok) {
+        try {
+          await opened.value.close();
+        } catch (closeError) {
+          console.error("[game-service] closing a store that connected after shutdown failed", closeError);
+        }
+      }
       return;
     }
     if (opened.ok) {
       durableStore = opened.value;
       return;
     }
+    console.error("[game-service] durable store connection attempt failed", opened.error);
     reconnectHandle = setTimeout(() => {
-      void attemptConnect();
+      connecting = attemptConnect().finally(() => {
+        connecting = null;
+      });
     }, DURABLE_RECONNECT_INTERVAL_MS);
+  }
+
+  // The one "is a durable store connected right now" branch `lifecycle.session`/`.save` and
+  // `serialization.snapshot` each otherwise repeated on their own.
+  function withDurableStore<T>(onUnavailable: () => T, fn: (store: DurableStore) => Promise<T>): Promise<T> {
+    return durableStore ? fn(durableStore) : Promise.resolve(onUnavailable());
   }
 
   function scheduleSweep(): void {
@@ -329,21 +355,31 @@ export async function compose(
   };
 
   const lifecycle: LifecycleProbe = {
-    async session(sessionId: string) {
-      if (!durableStore) return err({ code: "Unreachable" });
-      return durableStore.lifecycle.session(sessionId);
-    },
-    async save(saveId: string) {
-      if (!durableStore) return err({ code: "Unreachable" });
-      return durableStore.lifecycle.save(saveId);
-    },
+    session: (sessionId: string) =>
+      withDurableStore(
+        () => err({ code: "Unreachable" }),
+        (store) => store.lifecycle.session(sessionId),
+      ),
+    save: (saveId: string) =>
+      withDurableStore(
+        () => err({ code: "Unreachable" }),
+        (store) => store.lifecycle.save(saveId),
+      ),
   };
 
   const serialization: StoreSerializationHandle = {
-    async snapshot(): Promise<StoreSerializationSnapshot> {
-      if (!durableStore) return { sessions: [], saves: [] };
-      return durableStore.serialization.snapshot();
-    },
+    snapshot: () =>
+      withDurableStore(
+        () => {
+          // Unlike `lifecycle`'s `Unreachable` and `unavailableProfiles`'s warnings, this port has
+          // no error channel to report unavailability through (`snapshot()` always resolves) —
+          // logged so an empty dump taken during an outage is not silently indistinguishable from a
+          // genuinely empty store.
+          console.error("[game-service] snapshot taken while the durable store is unavailable — returning empty");
+          return { sessions: [], saves: [] };
+        },
+        (store) => store.serialization.snapshot(),
+      ),
   };
 
   return ok({
@@ -362,6 +398,10 @@ export async function compose(
       closed = true;
       if (reconnectHandle !== null) clearTimeout(reconnectHandle);
       if (sweepHandle !== null) clearTimeout(sweepHandle);
+      // `clearTimeout` cannot abort a retry whose callback has already started running — wait for
+      // it, so shutdown never returns while a stray `attemptConnect()` (and its own cleanup) is
+      // still in flight underneath it.
+      if (connecting) await connecting;
       if (durableStore) await durableStore.close();
     },
   });

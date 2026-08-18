@@ -8,10 +8,11 @@ import { describe, expect, it } from "vitest";
 import { createServer, connect as netConnect } from "node:net";
 import type { AddressInfo, Socket } from "node:net";
 
-import { compose } from "../src/compose.js";
+import { ASSUMED_FORWARD_TIMEOUT_SECONDS, compose } from "../src/compose.js";
 import { createProbeSurface } from "../src/lifecycle.js";
 import { contract } from "./support/harness.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
+import { GAME_EDGE_FORWARD_TIMEOUT_SECONDS } from "./support/hosted-edge.js";
 import {
   TEST_CONNECTION_STRING,
   configurationFor,
@@ -20,6 +21,16 @@ import {
   RawSchemaClient,
 } from "./support/database.js";
 import type { DurableStoreConfiguration, StorageProfile, WorkloadConfiguration } from "../src/types.js";
+
+describe("S4.6 — the assumed forward-timeout bound still exceeds the real edge's configured timeout", () => {
+  it("stays a wide margin above tests/support/hosted-edge.ts's GameEdge__ForwardTimeout", () => {
+    // `ASSUMED_FORWARD_TIMEOUT_SECONDS` is a guess standing in for a value the contract does not
+    // carry (`compose.ts`'s own comment) — this is the one place that guess is checked against a
+    // real edge configuration, so a future change to either value that closes the margin fails here
+    // instead of silently under- or over-validating `retentionHorizonSeconds`.
+    expect(ASSUMED_FORWARD_TIMEOUT_SECONDS).toBeGreaterThan(GAME_EDGE_FORWARD_TIMEOUT_SECONDS);
+  });
+});
 
 function baseConfiguration(storage: StorageProfile): WorkloadConfiguration {
   return {

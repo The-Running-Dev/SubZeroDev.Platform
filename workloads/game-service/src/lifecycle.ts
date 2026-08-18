@@ -38,6 +38,7 @@ import type {
   Outcome,
   ProbeResult,
   ProbeSurface,
+  SessionStore,
   ShutdownError,
   StartupError,
   WireErrorCode,
@@ -315,12 +316,22 @@ export async function startWorkload(
   }
 
   const probes = createProbeSurface(() => composed.value.readiness());
-  // `forRequest()` here, once at wiring time, is correct for the in-memory configuration — it
-  // returns the same long-lived layer on every call (S4.2), so this is that same instance. For the
-  // durable configuration this is an interim call: making every request's store genuinely
-  // per-request is Dispatch's own change, deferred to the slice that rewires `createDispatcher`
-  // (`design/30-slices.md`, S5) — this slice's own scope is Composition, not Dispatch.
-  const dispatcher = createDispatcher(contract.value, composed.value.stores.forRequest());
+  // `createDispatcher` still takes one `SessionStore`, so this proxy is what makes every dispatch
+  // resolve `forRequest()` fresh instead of the dispatcher holding whichever instance existed at
+  // wiring time. For the in-memory configuration `forRequest()` always returns the same long-lived
+  // layer (S4.2), so this is that same instance every time. For the durable configuration it means a
+  // store composed while unreachable at startup stops being permanent: once the background reconnect
+  // in `compose.ts` succeeds, the very next dispatch call reaches the connected store rather than the
+  // `unavailablePersistence()`/`unavailableProfiles()` stubs baked in at boot. `Dispatcher.invoke`
+  // (`dispatch.ts`) calls exactly one store method per request, so one fresh lookup per property
+  // access is exactly one per request, not sub-request tearing.
+  const store = new Proxy({} as SessionStore, {
+    get(_target, property) {
+      const current = composed.value.stores.forRequest();
+      return Reflect.get(current, property, current);
+    },
+  });
+  const dispatcher = createDispatcher(contract.value, store);
   const built = buildHttpSurface(contract.value, dispatcher);
   if (!built.ok) {
     return err({ code: "SurfaceBuild", cause: built.error });

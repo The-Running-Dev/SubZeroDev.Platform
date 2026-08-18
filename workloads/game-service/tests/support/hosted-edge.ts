@@ -12,6 +12,10 @@ import { freePort } from "./free-port.js";
 import { spawnHostedWorkload } from "./hosted-target.js";
 import type { HostedTarget, Outcome, ShutdownError } from "../../src/types.js";
 
+/** Exported so `compose.test.ts` can assert `compose.ts`'s `ASSUMED_FORWARD_TIMEOUT_SECONDS` still
+ *  exceeds it — the one place that guessed value is checked against a real edge configuration. */
+export const GAME_EDGE_FORWARD_TIMEOUT_SECONDS = 10;
+
 const DEFAULT_CONFIGURATION = process.env["GAME_EDGE_CONFIGURATION"] ?? "Debug";
 const DEFAULT_DLL = fileURLToPath(
   new URL(
@@ -77,7 +81,7 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
     ASPNETCORE_URLS: `http://127.0.0.1:${port}`,
     ASPNETCORE_ENVIRONMENT: "Production",
     GameEdge__WorkloadBaseAddress: workload.target.baseAddress,
-    GameEdge__ForwardTimeout: "00:00:10",
+    GameEdge__ForwardTimeout: `00:00:${String(GAME_EDGE_FORWARD_TIMEOUT_SECONDS).padStart(2, "0")}`,
     GameEdge__LivenessTimeout: "00:00:05",
     // Read by `AddPlatformObservability` (`PlatformObservabilityExtensions.ResolveIdentity`) when
     // there is no `PlatformOptions` singleton already registered ahead of it — the same section

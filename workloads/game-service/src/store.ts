@@ -11,6 +11,8 @@
 import { Pool, types as pgTypes } from "pg";
 import type { CustomTypesConfig, PoolClient, PoolConfig } from "pg";
 import type {
+  ProfileLoadResult,
+  ProfileSaveResult,
   ProfileStore,
   SessionPersistence,
   SessionPersistenceConflict,
@@ -60,6 +62,18 @@ export const IMPLICIT_TENANT_ID = "implicit-tenant" as TenantId;
 /** The engine's own brand spelling (`SESSION_PERSISTENCE_CONFLICT` in the engine package),
  *  duplicated here rather than imported as a value — see the module comment. */
 const CONFLICT_BRAND = "SessionPersistenceConflict" as const;
+
+/** The degraded-read result `openDurableStore`'s own `profiles.load` returns for a connectivity or
+ *  shape failure, and the one `compose.ts`'s `unavailableProfiles()` returns while no durable store
+ *  has connected yet — exported so both sites construct it from one definition. */
+export function corruptProfileResult(profileId: string): ProfileLoadResult {
+  return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
+}
+
+/** Same reasoning as `corruptProfileResult` above, for a write failure. */
+export function profileWriteFailedResult(profileId: string): ProfileSaveResult {
+  return { ok: false, warnings: [{ code: "profile_write_failed", profileId }] };
+}
 
 function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -599,13 +613,13 @@ export async function openDurableStore(
           [tenantId, profileId],
         );
       } catch {
-        return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
+        return corruptProfileResult(profileId);
       }
       if (rows.rows.length === 0) {
         return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_missing", profileId }] };
       }
       if (rows.rows[0]?.format_version !== 1) {
-        return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
+        return corruptProfileResult(profileId);
       }
       const achievements = rows.rows
         .filter((row): row is { format_version: number; campaign_id: string; achievement_id: string } =>
@@ -641,7 +655,7 @@ export async function openDurableStore(
         }
         return { ok: true, warnings: [] };
       } catch {
-        return { ok: false, warnings: [{ code: "profile_write_failed", profileId: profile.profileId }] };
+        return profileWriteFailedResult(profile.profileId);
       }
     },
   };
