@@ -696,13 +696,7 @@ failure, which is the one signal in the suite that must mean exactly one thing.
 
 ### Dispatch — workload
 
-```ts
-export function createDispatcher(
-  contract: ContractPackage,
-  stores: StoreProvider,
-  lifecycle: LifecycleProbe,
-): Dispatcher;
-```
+`createDispatcher` is declared in `workloads/game-service/src/dispatch.ts`.
 
 **Dispatch takes the provider and the probe, never the composition**, so it still has no path to the
 serialization handle. `Dispatcher` and `DispatchOutcome` are unchanged: the conflict arrives as an

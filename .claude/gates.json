@@ -1,6 +1,6 @@
 {
-  "manifestHash": "ec4e10a2dc2cd107a4009e9b2dcd44eb2d60a37625929b5e3687cbd492b1eb5a",
-  "generated": "2026-08-12",
+  "manifestHash": "1401b60d68778c680311039df09302f50ecad3e95aea73be506b6ccdb3038bfa",
+  "generated": "2026-08-19",
   "gates": [
     {
       "name": ".NET build and tests",

@@ -38,7 +38,6 @@ import type {
   Outcome,
   ProbeResult,
   ProbeSurface,
-  SessionStore,
   ShutdownError,
   StartupError,
   WireErrorCode,
@@ -316,22 +315,14 @@ export async function startWorkload(
   }
 
   const probes = createProbeSurface(() => composed.value.readiness());
-  // `createDispatcher` still takes one `SessionStore`, so this proxy is what makes every dispatch
-  // resolve `forRequest()` fresh instead of the dispatcher holding whichever instance existed at
-  // wiring time. For the in-memory configuration `forRequest()` always returns the same long-lived
-  // layer (S4.2), so this is that same instance every time. For the durable configuration it means a
-  // store composed while unreachable at startup stops being permanent: once the background reconnect
-  // in `compose.ts` succeeds, the very next dispatch call reaches the connected store rather than the
-  // `unavailablePersistence()`/`unavailableProfiles()` stubs baked in at boot. `Dispatcher.invoke`
-  // (`dispatch.ts`) calls exactly one store method per request, so one fresh lookup per property
-  // access is exactly one per request, not sub-request tearing.
-  const store = new Proxy({} as SessionStore, {
-    get(_target, property) {
-      const current = composed.value.stores.forRequest();
-      return Reflect.get(current, property, current);
-    },
-  });
-  const dispatcher = createDispatcher(contract.value, store);
+  // The provider itself, never a store resolved here: `Dispatcher.invoke` calls `forRequest()` once
+  // per request, so the store a request writes through is the one composed for it. For the
+  // in-memory configuration `forRequest()` always returns the same long-lived layer (S4.2). For the
+  // durable configuration it means a store composed while unreachable at startup stops being
+  // permanent: once the background reconnect in `compose.ts` succeeds, the very next dispatch
+  // reaches the connected store rather than the `unavailablePersistence()`/`unavailableProfiles()`
+  // stubs baked in at boot.
+  const dispatcher = createDispatcher(contract.value, composed.value.stores, composed.value.lifecycle);
   const built = buildHttpSurface(contract.value, dispatcher);
   if (!built.ok) {
     return err({ code: "SurfaceBuild", cause: built.error });

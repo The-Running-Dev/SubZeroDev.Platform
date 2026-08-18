@@ -72,7 +72,7 @@ export async function runInProcess(
     return err({ code: "Composition", cause: composed.error });
   }
 
-  const dispatcher = createDispatcher(contract, composed.value.stores.forRequest());
+  const dispatcher = createDispatcher(contract, composed.value.stores, composed.value.lifecycle);
   const transcript: CanonicalJson[] = [];
 
   for (const [index, step] of fixture.steps.entries()) {
