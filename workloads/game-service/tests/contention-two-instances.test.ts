@@ -9,17 +9,10 @@ import { spawnInstances } from "../src/harness.js";
 import type { SchemaName, TwoInstanceOptions } from "../src/types.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { TEST_CONNECTION_STRING, createTestSchema } from "./support/database.js";
+import { postJson } from "./support/harness.js";
 
 function optionsFor(schema: SchemaName, readWritePauseMs: readonly [number, number]): TwoInstanceOptions {
   return { connectionString: TEST_CONNECTION_STRING, schema, readWritePauseMs };
-}
-
-async function postJson(baseAddress: string, path: string, body: unknown): Promise<Response> {
-  return fetch(`${baseAddress}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
 }
 
 describe("S7.1 — spawnInstances returns two independently addressed, loopback-bound instances", () => {
@@ -50,7 +43,7 @@ describe("S7.2 — a session created through one instance is readable through th
     try {
       const created = await postJson(first.baseAddress, "/v1/create-session", { campaignId: CAMPAIGN_ID });
       expect(created.status).toBe(200);
-      const { sessionId } = (await created.json()) as { sessionId: string };
+      const { sessionId } = created.json as unknown as { sessionId: string };
 
       const queried = await postJson(second.baseAddress, "/v1/get-scene", { sessionId });
       expect(queried.status).toBe(200);
@@ -73,7 +66,7 @@ describe("S7.3, S7.4 — two concurrent submissions, one to each instance, resol
     try {
       const created = await postJson(first.baseAddress, "/v1/create-session", { campaignId: CAMPAIGN_ID });
       expect(created.status).toBe(200);
-      const { sessionId } = (await created.json()) as { sessionId: string };
+      const { sessionId } = created.json as unknown as { sessionId: string };
 
       const [responseA, responseB] = await Promise.all([
         postJson(first.baseAddress, "/v1/submit-action", { sessionId, actionId: "advance_ticks", params: { ticks: 1 } }),
@@ -84,15 +77,13 @@ describe("S7.3, S7.4 — two concurrent submissions, one to each instance, resol
       expect(statuses).toEqual([200, 409]);
 
       const loser = responseA.status === 409 ? responseA : responseB;
-      const loserBody = (await loser.json()) as Record<string, unknown>;
-      expect(loserBody["code"]).toBe("concurrent_modification");
+      expect(loser.json["code"]).toBe("concurrent_modification");
 
       // Neither response body nor the request that produced it names which instance served it —
       // there is no instance identifier field anywhere in the wire shape to inspect.
       const winner = responseA.status === 200 ? responseA : responseB;
-      const winnerBody = (await winner.json()) as Record<string, unknown>;
-      expect(Object.keys(winnerBody)).not.toContain("instance");
-      expect(Object.keys(loserBody)).not.toContain("instance");
+      expect(Object.keys(winner.json)).not.toContain("instance");
+      expect(Object.keys(loser.json)).not.toContain("instance");
     } finally {
       await first.shutdown();
       await second.shutdown();

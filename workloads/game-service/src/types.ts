@@ -246,6 +246,18 @@ export interface LifecycleBounds {
   readonly sweepStatementTimeoutMs: number;
 }
 
+/** Generous enough that a proof or test run is never bound by its own TTLs, and comfortably clear
+ *  of `ASSUMED_FORWARD_TIMEOUT_SECONDS` for the `retentionHorizonSeconds` check `compose()`
+ *  performs (`compose.ts`). The one set of "out of the way" bounds every non-production
+ *  `DurableStoreConfiguration` in this codebase is built from. */
+export const DEFAULT_LIFECYCLE_BOUNDS: LifecycleBounds = {
+  sessionIdleTtlSeconds: 2_592_000,
+  saveTtlSeconds: 31_536_000,
+  retentionHorizonSeconds: 31_536_000,
+  sweepIntervalSeconds: 3600,
+  sweepStatementTimeoutMs: 5000,
+};
+
 export interface DurableStoreConfiguration {
   readonly connection: StoreConnection;
   readonly bounds: LifecycleBounds;

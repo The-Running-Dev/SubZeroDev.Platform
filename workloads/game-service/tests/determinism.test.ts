@@ -13,7 +13,7 @@ import { startWorkload } from "../src/lifecycle.js";
 import { createFixedClock } from "../src/compose.js";
 import { canonicalEncode } from "../src/canonical.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
-import { bodyJson, post, recordingStore, surfaceOver } from "./support/harness.js";
+import { bodyJson, post, postJson, recordingStore, surfaceOver } from "./support/harness.js";
 import type { JsonValue, WorkloadConfiguration } from "../src/types.js";
 
 function freshDumpPath(): string {
@@ -36,16 +36,6 @@ function defaultConfiguration(): WorkloadConfiguration {
     otlpEndpoint: null,
     storage: { kind: "in-memory" },
   };
-}
-
-async function postJson(base: string, path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
-  const response = await fetch(`${base}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  return { status: response.status, json: text.length > 0 ? (JSON.parse(text) as Record<string, unknown>) : {} };
 }
 
 /** Two sessions and one save — S4.1's own fixture. The second session carries a `profileId` and
