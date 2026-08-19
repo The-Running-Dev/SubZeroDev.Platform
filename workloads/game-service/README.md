@@ -68,6 +68,39 @@ run's snapshot, blob for blob. Neither test's replay commands take a target addr
 external input — the harness starts what it needs and reports the same pass/fail a hand-run
 session against the two manually-started processes above would.
 
+## Provision the durable store and bring the schema to head
+
+Everything below this point needs a real PostgreSQL database — the committed compose file
+provisions one, pinned to `UTF8` encoding and an explicit initdb locale, and starts nothing else
+(S3.15). `npm run migrate` is the fresh-clone entry point for `migrateToHead` (`20-contract.md`,
+"Migrations — workload") — the same call every proof below makes for its own schema, run here
+against the default (`public`) one for an operator's own use:
+
+```bash
+cd workloads/game-service
+docker compose up -d
+npm run migrate
+```
+
+Run twice in a row, the second run is a no-op (S3.16). `GAME_SERVICE_DB_SCHEMA` targets a schema
+other than `public`; `GAME_SERVICE_DB_CONNECTION_STRING` overrides the connection string the
+compose file's own defaults resolve to.
+
+## Run the one-instance contention proof
+
+One process against the durable store, composed the same way `compose()`'s durable branch is
+(S6): two players' simultaneous actions against one session stop silently overwriting each
+other — exactly one succeeds, and the other is told plainly to re-read and decide.
+
+From `workloads/game-service`, with dependencies installed and the store provisioned:
+
+```bash
+npx vitest run tests/contention-one-instance.test.ts
+```
+
+The test composes its own durable-backed instance against a fresh schema it creates and drops —
+no server needs to be started by hand.
+
 ## Run the two-instance contention proof
 
 Two copies of the workload against one shared PostgreSQL database — the way a real deployment
@@ -83,6 +116,39 @@ npx vitest run tests/contention-two-instances.test.ts
 
 The test spawns both instances itself, against a fresh schema it creates and drops — no server
 needs to be started by hand, and the command takes no target address as an external input.
+
+## Run the durable replay
+
+The byte-identity proof G1 established, held to hold when the game is stored in a real database
+instead of memory (S8): the same ten-step fixture, run once in-process and once against a freshly
+created durable schema, produces byte-identical ordered blob sets and matches the committed
+golden transcript.
+
+From `workloads/game-service`, with dependencies installed and the store provisioned:
+
+```bash
+npx vitest run tests/durable-replay.test.ts
+```
+
+The test creates and drops its own schema and runs at the production lifecycle defaults, so no
+step observes a session or save as expired mid-run.
+
+## Run the port-conformance suite
+
+The identical assertion set, run once against the workload's own map-backed in-memory
+implementation and once against the durable store, so the durable store's conformance to
+`SessionPersistence` and `ProfileStore` is checked rather than assumed (S9).
+
+From `workloads/game-service`, with dependencies installed and the store provisioned:
+
+```bash
+npx vitest run tests/conformance.test.ts
+```
+
+Both targets pass the shared assertion set except `profiles.save`, the one method the suite
+declares conformant conditionally rather than identically — the durable store's merge is
+additive where the engine's in-memory one replaces, and what stands in for identical behaviour
+there is a property asserted directly against the engine's own caller.
 
 ## Regenerate and publish the contract package
 
@@ -126,3 +192,26 @@ port supplied to it. G1's `SessionPersistence` is map-backed and total, so it ne
 ordering — but a persistence implementation that can fail (G2's) will leave the in-memory record
 ahead of the store on a write failure, and that is the question G2's persistence design has to
 answer.
+
+## Handover notes (G2)
+
+Open items for whoever next edits [`design/00-brief.md`](../../design/00-brief.md) (S11.4), and
+two facts every proof in this effort depends on:
+
+- **Two brief conflicts remain unresolved.** The tenant column (`tenant_id`) is present in every
+  primary key and every statement (invariant 51) despite the brief's tenant non-goal wording; and
+  the `save` table carries a 365-day absolute lifecycle, an `expires_at` column and a sweep that
+  hard-deletes past it, despite the brief naming only sessions in its lifecycle criteria
+  (`20-contract.md`, Unresolved 2). Neither is this effort's to resolve — both are
+  `00-brief.md`'s author's decision.
+- **Every proof here depends on the engine having ratified `concurrent_modification` under the
+  name and brand this contract assumes** (`SESSION_PERSISTENCE_CONFLICT`,
+  `SessionPersistenceConflict`; `20-contract.md`, Unresolved 3). The exposure if the engine
+  ratifies a different name or brand shape is rework in S1 (the engine seam) and in this
+  contract — nothing downstream of the brand changes shape, because the adapter throws a branded
+  value and Dispatch only ever maps a code.
+- **A session's idle TTL advances only on an accepted write, never on a read.** `expires_at` is
+  recomputed from the database clock on every accepted write and left untouched by every read, so
+  a session read continuously for its whole TTL still expires (`20-contract.md`, Open question 8;
+  invariant 59). Refreshing on read was rejected because it would put every query operation inside
+  the compare-and-swap's blast radius.
