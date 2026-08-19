@@ -16,33 +16,21 @@
  * for it.
  */
 import { startWorkload } from "../../src/lifecycle.js";
-import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE } from "../../src/types.js";
-import type { SchemaName, StorageProfile, WorkloadConfiguration } from "../../src/types.js";
+import { durableStorageProfileFromEnv } from "../../src/types.js";
+import type { StorageProfile, WorkloadConfiguration } from "../../src/types.js";
 
 function storageProfile(): StorageProfile {
-  if (process.env["GAME_SERVICE_STORAGE"] !== "durable") return { kind: "in-memory" };
-  const connectionString = process.env["GAME_SERVICE_DB_CONNECTION_STRING"];
-  const schema = process.env["GAME_SERVICE_DB_SCHEMA"];
   // A caller that sets `GAME_SERVICE_STORAGE=durable` without both companion variables gets a
   // loud startup failure, not a silent in-memory run — the entire point of the durable replay
   // (S8) is proving persistence happened, so degrading to in-memory here would let it pass
-  // without ever having exercised Postgres.
-  if (!connectionString || !schema) {
-    throw new Error("GAME_SERVICE_STORAGE=durable requires GAME_SERVICE_DB_CONNECTION_STRING and GAME_SERVICE_DB_SCHEMA");
+  // without ever having exercised Postgres. Unlike `main.ts`'s own process, this harness never
+  // defaults a missing schema either — the isolation a per-run schema gives every proof depends on
+  // one always being named (`requireSchema: true`).
+  const profile = durableStorageProfileFromEnv(process.env, { requireSchema: true });
+  if (!profile.ok) {
+    throw new Error(`GAME_SERVICE_STORAGE=durable is missing ${profile.error.setting}`);
   }
-  return {
-    kind: "durable",
-    store: {
-      connection: {
-        connectionString,
-        poolSize: DEFAULT_STORE_POOL_SIZE,
-        connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
-        schema: schema as SchemaName,
-      },
-      bounds: DEFAULT_LIFECYCLE_BOUNDS,
-      readWritePauseMs: 0,
-    },
-  };
+  return profile.value;
 }
 
 function configuration(): WorkloadConfiguration {

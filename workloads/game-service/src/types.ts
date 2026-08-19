@@ -252,7 +252,8 @@ export interface LifecycleBounds {
  *  a run is never bound by its own TTLs without also being the values `main.ts`'s durable profile
  *  ships. Comfortably clear of `ASSUMED_FORWARD_TIMEOUT_SECONDS` for the `retentionHorizonSeconds`
  *  check `compose()` performs (`compose.ts`). The retention horizon deliberately does not equal
- *  the save TTL (`design/90-decisions.md`, S12) — retention is how long a swept-past row's id
+ *  the save TTL (`design/90-decisions.md`, "The retention horizon default no longer equals the
+ *  save TTL") — retention is how long a swept-past row's id
  *  stops being distinguishable from one that never existed, not how long a save is kept. */
 export const DEFAULT_LIFECYCLE_BOUNDS: LifecycleBounds = {
   sessionIdleTtlSeconds: 2_592_000,
@@ -266,9 +267,10 @@ export const DEFAULT_LIFECYCLE_BOUNDS: LifecycleBounds = {
  *  builds uses — the proof harness's own run-scoped schemas (`harness.ts`'s `createRunSchema`),
  *  the fresh-clone migration entry point (`scripts/migrate.ts`), and the durable process entry
  *  point (`main.ts`) alike. One number moved here, once, rather than duplicated at each of those
- *  three module boundaries — `design/90-decisions.md`, S12: `scripts/migrate.ts` reaching into
- *  the proof harness for these was the dependency direction that contradicted "nothing depends on
- *  a harness". */
+ *  three module boundaries — `design/90-decisions.md`, "`DEFAULT_STORE_POOL_SIZE`/
+ *  `DEFAULT_STORE_CONNECT_TIMEOUT_MS` move from `harness.ts` to `types.ts`": `scripts/migrate.ts`
+ *  reaching into the proof harness for these was the dependency direction that contradicted
+ *  "nothing depends on a harness". */
 export const DEFAULT_STORE_POOL_SIZE = 5;
 export const DEFAULT_STORE_CONNECT_TIMEOUT_MS = 5000;
 
@@ -284,6 +286,44 @@ export interface DurableStoreConfiguration {
 export type StorageProfile =
   | { readonly kind: "in-memory" }
   | { readonly kind: "durable"; readonly store: DurableStoreConfiguration };
+
+/** `GAME_SERVICE_STORAGE=durable` plus its two companion variables, read the same way by every
+ *  process entry point this workload has — `main.ts`'s own process and the proof harness's hosted
+ *  entry point (`tests/support/hosted-entrypoint.ts`) alike — so the three env var names and the
+ *  `StorageProfile` they build live in one place rather than two independently-maintained copies.
+ *  `requireSchema` is the one difference between those two callers: a real operator's durable
+ *  process defaults a missing schema to `public`, while the proof harness's own discipline (S8) is
+ *  that a schema is never implicit, because the isolation a per-run schema gives every proof
+ *  depends on one always being named. */
+export function durableStorageProfileFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  options: { readonly requireSchema: boolean },
+): Outcome<StorageProfile, { readonly setting: string }> {
+  if (env["GAME_SERVICE_STORAGE"] !== "durable") {
+    return ok({ kind: "in-memory" });
+  }
+  const connectionString = env["GAME_SERVICE_DB_CONNECTION_STRING"];
+  if (!connectionString) {
+    return err({ setting: "GAME_SERVICE_DB_CONNECTION_STRING" });
+  }
+  const schema = env["GAME_SERVICE_DB_SCHEMA"];
+  if (options.requireSchema && !schema) {
+    return err({ setting: "GAME_SERVICE_DB_SCHEMA" });
+  }
+  return ok({
+    kind: "durable",
+    store: {
+      connection: {
+        connectionString,
+        poolSize: DEFAULT_STORE_POOL_SIZE,
+        connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
+        schema: schema ? (schema as unknown as SchemaName) : null,
+      },
+      bounds: DEFAULT_LIFECYCLE_BOUNDS,
+      readWritePauseMs: 0,
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------- store: the sweep
 
@@ -337,6 +377,10 @@ export type ProbeStatus = "healthy" | "unhealthy";
 
 export interface ProbeResult {
   readonly status: ProbeStatus;
+  // Present only while `status` is `"unhealthy"` on the durable branch's readiness probe, naming
+  // which startup condition — a still-running migration, a lock held past its bound, a failed
+  // migration, or an unreachable store — is holding it back (`design/30-slices.md`, S12.6/S12.7).
+  readonly detail?: string;
 }
 
 export interface ProbeSurface {

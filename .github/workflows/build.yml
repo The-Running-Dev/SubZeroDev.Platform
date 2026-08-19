@@ -212,15 +212,17 @@ jobs:
           set -e
           npm start > /tmp/durable-workload.log 2>&1 &
           DURABLE_WORKLOAD_PID=$!
+          # Runs on every exit path, including a readiness timeout below aborting the script under
+          # `set -e` — a backgrounded workload left running past this step would otherwise hold its
+          # DB connections and the CI job's process table for the rest of the job.
+          trap 'kill "$DURABLE_WORKLOAD_PID" 2>/dev/null || true' EXIT
 
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8081/readyz >/dev/null 2>&1 && break
             sleep 1
           done
-          curl -sf http://127.0.0.1:8081/readyz
+          curl -sf http://127.0.0.1:8081/readyz || { echo "workload never became ready:"; cat /tmp/durable-workload.log; exit 1; }
           echo
-
-          kill "$DURABLE_WORKLOAD_PID" || true
 
       # S11.1/S11.2: the README's own documented commands, run here rather than a private
       # equivalent — if either stops existing or stops reproducing its proof, this step is what

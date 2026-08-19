@@ -1,8 +1,8 @@
 /**
  * S12.9/S12.10 — `DEFAULT_LIFECYCLE_BOUNDS` is asserted to hold the production values, by name,
  * naming each one, and the retention horizon is asserted to no longer equal the save TTL
- * (`design/90-decisions.md`, S12: it was 365 days, the same as `saveTtlSeconds`, where the
- * contract's production default is 30).
+ * (`design/90-decisions.md`, "The retention horizon default no longer equals the save TTL": it was
+ * 365 days, the same as `saveTtlSeconds`, where the contract's production default is 30).
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";

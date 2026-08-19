@@ -4,8 +4,8 @@
  * not describe, and every downstream assertion becomes conditional.
  */
 import { startWorkload } from "./lifecycle.js";
-import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE, err, ok } from "./types.js";
-import type { DeterminismProfile, Outcome, SchemaName, StartupError, StorageProfile, WorkloadConfiguration } from "./types.js";
+import { durableStorageProfileFromEnv, err, ok } from "./types.js";
+import type { DeterminismProfile, Outcome, StartupError, StorageProfile, WorkloadConfiguration } from "./types.js";
 
 /** `GAME_SERVICE_DETERMINISM=replay` plus both companion variables selects the replay profile;
  *  anything else — unset, any other value, or either companion variable missing — is the default
@@ -24,36 +24,15 @@ function determinismProfile(): DeterminismProfile {
 }
 
 /** `GAME_SERVICE_STORAGE=durable` selects the durable profile; anything else — unset or any other
- *  value — composes the in-memory profile exactly as before, reaching no database (S12.1). The
- *  one companion variable the durable profile requires is the connection string: a missing one
- *  fails startup loudly, naming it, rather than degrading silently back to in-memory (S12.2) —
- *  the same discipline `tests/support/hosted-entrypoint.ts`'s own `storageProfile()` already holds
- *  the harness's durable target to, and the reason `main.ts` was named there as not yet reaching
- *  it (`design/90-decisions.md`, S12). Pool size and connect timeout are the one stated, un-tuned
- *  default (`DEFAULT_STORE_POOL_SIZE`, `DEFAULT_STORE_CONNECT_TIMEOUT_MS`) — the brief's
- *  performance non-goal forbids exposing either as its own setting. */
+ *  value — composes the in-memory profile exactly as before, reaching no database (S12.1). The one
+ *  companion variable a real operator's process requires is the connection string: a missing one
+ *  fails startup loudly, naming it, rather than degrading silently back to in-memory (S12.2) — a
+ *  missing schema instead defaults to `public`, since an operator's process is not the proof
+ *  harness's own per-run isolation (`durableStorageProfileFromEnv`'s own doc, `types.ts`). */
 function storageProfile(): Outcome<StorageProfile, StartupError> {
-  if (process.env["GAME_SERVICE_STORAGE"] !== "durable") {
-    return ok({ kind: "in-memory" });
-  }
-  const connectionString = process.env["GAME_SERVICE_DB_CONNECTION_STRING"];
-  if (!connectionString) {
-    return err({ code: "ConfigurationInvalid", setting: "GAME_SERVICE_DB_CONNECTION_STRING" });
-  }
-  const schema = process.env["GAME_SERVICE_DB_SCHEMA"];
-  return ok({
-    kind: "durable",
-    store: {
-      connection: {
-        connectionString,
-        poolSize: DEFAULT_STORE_POOL_SIZE,
-        connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
-        schema: schema ? (schema as unknown as SchemaName) : null,
-      },
-      bounds: DEFAULT_LIFECYCLE_BOUNDS,
-      readWritePauseMs: 0,
-    },
-  });
+  const profile = durableStorageProfileFromEnv(process.env, { requireSchema: false });
+  if (!profile.ok) return err({ code: "ConfigurationInvalid", setting: profile.error.setting });
+  return profile;
 }
 
 function configuration(): Outcome<WorkloadConfiguration, StartupError> {

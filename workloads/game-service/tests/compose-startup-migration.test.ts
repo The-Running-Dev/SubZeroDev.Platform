@@ -1,9 +1,9 @@
 /**
  * S12.3–S12.7 — `compose()`'s durable branch brings a schema to head itself, before the first
- * connect, under the startup backoff — the gap `design/90-decisions.md`'s S12 entry named:
- * "nothing runs migrations at startup". Every test here runs against a real, freshly provisioned
- * (but deliberately *un*migrated) PostgreSQL schema, the same discipline `compose.test.ts` holds
- * to for the already-migrated case.
+ * connect, under the startup backoff — the gap `design/90-decisions.md`'s "Startup migrations"
+ * entry named: "nothing runs migrations at startup". Every test here runs against a real, freshly
+ * provisioned (but deliberately *un*migrated) PostgreSQL schema, the same discipline
+ * `compose.test.ts` holds to for the already-migrated case.
  */
 import { describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
@@ -270,7 +270,8 @@ describe("S12.7 — the readiness detail names a lock timeout, distinctly from a
     expect(migrationNotReadyDetail({ code: "Unreachable" })).not.toContain("migration failed");
 
     // Reproducing the real 30-second advisory-lock bound end to end was tried and dropped
-    // (`design/90-decisions.md`, S12): `node-pg-migrate`'s lock is one fixed id for the whole
+    // (`design/90-decisions.md`, "Reproducing the real 30-second advisory-lock bound end to end
+    // was tried and dropped"): `node-pg-migrate`'s lock is one fixed id for the whole
     // database, not scoped per schema, so holding it that long blocked every other file's own
     // `migrateToHead` calls running concurrently under vitest's default file parallelism and
     // produced exactly the collateral `LockTimeout`s and readiness timeouts this note warns

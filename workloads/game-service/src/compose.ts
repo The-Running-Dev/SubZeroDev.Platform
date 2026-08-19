@@ -299,31 +299,52 @@ export async function compose(
   // Set only while a reconnect retry (never the first, awaited attempt) is in flight, so `close()`
   // can wait for it instead of returning while a stray connect is still running underneath it.
   let connecting: Promise<void> | null = null;
-  // What `readiness()` reports while `durableStore` is still null — distinct from the boolean
-  // `ProbeResult.status` the contract declares, so a caller inspecting the object this module
-  // actually returns (rather than the narrower type it is typed as) can still see which of
-  // "still migrating", "the lock is held past its bound" or "a migration's SQL failed" is
+  // What `readiness()` reports as `ProbeResult.detail` while `durableStore` is still null — which
+  // of "still migrating", "the lock is held past its bound" or "a migration's SQL failed" is
   // current, and — for the last two — which migration (`design/30-slices.md`, S12.6/S12.7).
-  // Nothing elsewhere in this workload reads it; it exists only to be inspected structurally.
   let notReadyDetail: string | null = null;
+  // Once `migrateToHead` has succeeded once for this `compose()` call, the schema is at head and
+  // every later retry (a store-connect failure, never a migration one) skips straight to
+  // `openDurableStore` instead of paying a second full migration-runner invocation — including its
+  // own connect and `node-pg-migrate`'s advisory-lock acquisition — for a schema already migrated.
+  let migratedOnce = false;
+  // Consecutive migration failures back this call's retry off — `node-pg-migrate`'s advisory lock
+  // is one id for the whole database, not scoped per schema, so a schema whose migration keeps
+  // failing must not keep re-requesting that lock every `DURABLE_RECONNECT_INTERVAL_MS` forever; a
+  // healthy, unrelated schema's own migration attempt can otherwise queue behind it and time out.
+  let migrationFailureStreak = 0;
+  const MAX_RECONNECT_INTERVAL_MS = 60_000;
 
-  /** `migrateToHead` runs before the first connection attempt, every attempt — the durable
-   *  branch's own startup order (`design/30-slices.md`, S12): "no separate migration command is
-   *  run first". A migration failure and a connection failure share one backoff loop, the same
-   *  way `compose()` already retried a bare connection failure before this — the two are just two
-   *  reasons the same retry exists for. */
+  function scheduleReconnect(delayMs: number): void {
+    reconnectHandle = setTimeout(() => {
+      connecting = attemptConnect().finally(() => {
+        connecting = null;
+      });
+    }, delayMs);
+  }
+
+  /** `migrateToHead` runs before the first connection attempt, every attempt until it succeeds —
+   *  the durable branch's own startup order (`design/30-slices.md`, S12): "no separate migration
+   *  command is run first". A migration failure and a connection failure share one backoff loop,
+   *  the same way `compose()` already retried a bare connection failure before this — the two are
+   *  just two reasons the same retry exists for. */
   async function attemptConnect(): Promise<void> {
-    const migrated = await migrateToHead(storeConfig.connection);
-    if (closed) return;
-    if (!migrated.ok) {
-      notReadyDetail = migrationNotReadyDetail(migrated.error);
-      console.error("[game-service] startup migration attempt failed", migrated.error);
-      reconnectHandle = setTimeout(() => {
-        connecting = attemptConnect().finally(() => {
-          connecting = null;
-        });
-      }, DURABLE_RECONNECT_INTERVAL_MS);
-      return;
+    if (!migratedOnce) {
+      const migrated = await migrateToHead(storeConfig.connection);
+      if (closed) return;
+      if (!migrated.ok) {
+        migrationFailureStreak += 1;
+        notReadyDetail = migrationNotReadyDetail(migrated.error);
+        console.error("[game-service] startup migration attempt failed", migrated.error);
+        const delayMs = Math.min(
+          DURABLE_RECONNECT_INTERVAL_MS * 2 ** (migrationFailureStreak - 1),
+          MAX_RECONNECT_INTERVAL_MS,
+        );
+        scheduleReconnect(delayMs);
+        return;
+      }
+      migratedOnce = true;
+      migrationFailureStreak = 0;
     }
 
     const opened = await openDurableStore(storeConfig, ENGINE_VERSION as SemanticVersion);
@@ -347,11 +368,7 @@ export async function compose(
     }
     notReadyDetail = "store unreachable";
     console.error("[game-service] durable store connection attempt failed", opened.error);
-    reconnectHandle = setTimeout(() => {
-      connecting = attemptConnect().finally(() => {
-        connecting = null;
-      });
-    }, DURABLE_RECONNECT_INTERVAL_MS);
+    scheduleReconnect(DURABLE_RECONNECT_INTERVAL_MS);
   }
 
   // The one "is a durable store connected right now" branch `lifecycle.session`/`.save` and
@@ -439,13 +456,10 @@ export async function compose(
       // latch here would leave the workload reporting ready through the exact outage the readiness
       // probe exists to surface (S4.4).
       if (!durableStore) {
-        // `detail` is not part of `ProbeResult`'s declared shape — it rides along structurally so
-        // a caller that inspects the object itself (rather than only the typed `status` field)
-        // can still see which migration or lock condition is holding startup back (S12.6/S12.7).
-        const result = notReadyDetail
-          ? { status: "unhealthy" as const, detail: notReadyDetail }
-          : { status: "unhealthy" as const };
-        return result as ProbeResult;
+        // `detail`, part of `ProbeResult`'s declared shape (`design/20-contract.md`, "Workload —
+        // readiness"), names which migration or lock condition is holding startup back
+        // (S12.6/S12.7); omitted rather than `null` when there is none yet to report.
+        return notReadyDetail ? { status: "unhealthy", detail: notReadyDetail } : { status: "unhealthy" };
       }
       const checked = await durableStore.check();
       return { status: checked.ok ? "healthy" : "unhealthy" };

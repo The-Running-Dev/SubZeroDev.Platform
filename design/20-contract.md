@@ -340,6 +340,11 @@ that is tenancy behaviour, and it is the shortcut a durable store makes tempting
 ### Workload — readiness
 
 ```ts
+export interface ProbeResult {
+  readonly status: ProbeStatus;
+  readonly detail?: string;
+}
+
 export interface ProbeSurface {
   liveness(): ProbeResult;
   readiness(): Promise<ProbeResult>;
@@ -351,6 +356,12 @@ each probe, so it reports whether the store is usable *now* rather than whether 
 a latch on startup would leave the workload reporting ready through exactly the outage the edge's new
 readiness probe was introduced to surface. **The stated cost is that readiness can flap.**
 `liveness` never consults the store and stays synchronous.
+
+**`ProbeResult.detail` amends G1's declaration (`g1/20-contract.md`), which had no such field.**
+While the durable branch is not yet ready, it names which startup condition is holding it back — a
+migration still running, its advisory lock held past its bound, a failed migration naming which one,
+or the store simply unreachable (`design/90-decisions.md`, "Startup migrations"). Present only on an
+unhealthy result; absent everywhere else, including every G1-era caller that never populated it.
 
 ### Workload — the sweep
 
