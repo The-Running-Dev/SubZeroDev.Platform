@@ -32,7 +32,7 @@ Four facts shape almost everything below.
 > **The §6.1 contradiction the brief logged is adjudicated here, and §6.1 is the side that is wrong.**
 > It resolves concurrency with "compare-and-swap on the sequence number… the engine's save handle
 > already exposes `savedAtSeq` — so the version is present and needs no new concept." Verified against
-> the engine at `0.6.1`, that is wrong twice over:
+> the engine at `0.8.0`, that is wrong twice over:
 >
 > - **`savedAtSeq` is on the wrong record.** It is `state.actionLog.length` stamped onto a
 >   `StoredSaveRecord` whose `saveId` is freshly minted by every `saveGame`. Saves are insert-only.
@@ -58,13 +58,14 @@ Four facts shape almost everything below.
 > caller supplies a version and no response carries one. The narrowing stands, and the contract needs
 > no widening for concurrency.
 >
-> **Re-verified at `0.6.1`.** The adjudication was first made against `0.5.0`, and the engine has moved
-> since. Between the two, the only change on the serialization path is `sha256Hex` being extracted into
-> `canonical.ts` with `computeChecksum` delegating to it; `canonicalStringify` and its writer are
-> untouched, so **the byte-identity criterion is unaffected by the version change**. Every claim above
-> reads off the current source: the cache-then-persistence `getSession`, the increment before dispatch
-> against a write that happens only on the accepted branch, the freshly minted `saveId`, and the
-> parameterless `catch` in `writeSession` that discards the cause.
+> **Re-verified at `0.8.0`, the version the workload vendors.** The adjudication was first made against
+> `0.5.0` and re-read at `0.8.0`, and the engine has moved twice since. Every claim above reads off the
+> current source: the cache-then-persistence `getSession`, the increment before dispatch against a write
+> that happens only on the accepted branch, the freshly minted `saveId`, and `writeSession`'s `catch` —
+> which at `0.8.0` no longer discards the cause but recognises the conflict brand, because G2's own
+> engine deliverable has landed. `canonicalStringify` and `sha256Hex` still live where the `0.8.0`
+> reading found them, so **the byte-identity criterion is unaffected by the version change**; what
+> proves that rather than argues it is the two replays, which are gates.
 
 ---
 
@@ -151,7 +152,7 @@ interface it claims to fill. **On a re-put every host column is recomputed** —
 current clock, `engine_version` from the writing process — because a re-put is a write and a host
 column that described the first one would then describe nothing.
 
-**The absence of the lock rests on read engine source, not on an assumption.** Verified at `0.6.1`:
+**The absence of the lock rests on read engine source, not on an assumption.** Verified at `0.8.0`:
 `saveGame` calls `newSaveId(recordIds)` on every invocation and writes through `writeSave` only, and
 **it never calls `writeSession` at all** — the save path touches no session row. That is the same
 standard the adjudication above applies when it rejects `attemptCounter`; the difference is that this
@@ -178,7 +179,7 @@ against a normalised store, the same reason the engine's in-memory profile store
 replaces. A `save` omitting a previously-stored achievement removes nothing. The engine never issues
 such a save, and a test asserts the divergence deliberately rather than leaving it to be discovered.
 
-**"The engine never issues such a save" is verified, not assumed.** At `0.6.1`, `upsertAchievements`
+**"The engine never issues such a save" is verified, not assumed.** At `0.8.0`, `upsertAchievements`
 loads the profile, computes the ids not already present, and saves
 `{ ...profile, achievements: [...profile.achievements, ...newRecords] }` — strictly the loaded set
 plus additions, on every path. **The divergence also runs in the durable store's favour**, which is
@@ -418,10 +419,13 @@ second decision and is checkable by the same build-time assertion that already e
 ### 1. Startup, and the background sweep — triggered by process start
 
 Read configuration, including the store's connection settings, the two TTLs and the determinism
-profile. **Bind the listener and report live immediately**; report **not ready** until the store is
-usable. Then, with backoff: connect, and run migrations to head under the migration tool's own advisory
-lock — two instances starting together must not both apply the same migration, and a lock the tool
-already owns is not machinery this design should reimplement. On success, compose the process-lived
+profile. **Bind the listener and report live as soon as the first connect attempt settles**, which is
+bounded by `connectTimeoutMs` and is the one wait the bind takes — a listener bound against a store
+whose reachability is still unknown would answer `503` for the length of that window without ever
+being able to say why. Report **not ready** until the store is usable. The first attempt, and then
+with backoff: connect, and run migrations to head under the migration tool's own advisory lock — two
+instances starting together must not both apply the same migration, and a lock the tool already owns
+is not machinery this design should reimplement. On success, compose the process-lived
 parts, assert the contract's recorded engine version against the resolved package's (G1's invariant,
 unchanged), and report ready.
 
@@ -510,7 +514,7 @@ and a server default or a pooler that overrides it is a misconfiguration the sto
 rather than discovers under contention.
 
 **Within one operation the unguarded writes are ordered by the engine, and that ordering is what
-makes "the loser leaves no trace" true.** Read at `0.6.1` rather than assumed: `submitAction` calls
+makes "the loser leaves no trace" true.** Read at `0.8.0` rather than assumed: `submitAction` calls
 `writeSession` on the accepted branch and only then `upsertAchievements`, so a `sessions.put` that
 loses the race throws before any achievement row is written — the loser cannot leave a durable
 achievement behind. `saveGame` calls `writeSave` and **never calls `writeSession`**, so a save cannot
@@ -576,8 +580,9 @@ brief requires the repository to tell a reader how to *"provision the store, run
 the proof, and roll the schema forward"*, and compose is barred from the second clause by the
 paragraph above — so without this the one clause of four with no artifact behind it would be the one
 the brief added G2's whole deployment allowance for. The harness exposes its instance-spawning entry
-point as a script the README names, and the contention proof invokes that same entry point rather
-than a private copy of it. This is the compose file's own argument applied a second time: the
+point as an entry point the README names, and the contention proof invokes that same entry point
+rather than a private copy of it. **Whether the README names it as a script or as the proof that
+runs it is not the constraint** — one artifact serving both is. This is the compose file's own argument applied a second time: the
 documented path and the proven path are one artifact, because a documented command nothing runs is
 the failure the fresh-clone job exists to prevent. It remains the harness the brief's *Lifespan*
 allows to be replaced without ceremony — what may not be replaced without ceremony is the README
@@ -625,17 +630,20 @@ under test is started with a pause; the second request is sent inside it. **A te
 inert when unconfigured**, on the same terms G1 asserts that the default profile writes no dump — a
 diagnostic that is merely usually off is on.
 
-**Proof three: port conformance, against both implementations.** The replay reaches four of the six
+**Proof three: port conformance, against both implementations.** The replay reaches four of the seven
 port methods and no more. Its ten steps carry no `profileId`, so `profiles.load` and `profiles.save`
-are never called — the profile store is composed and never exercised, which is how G1 left it and
-which the brief's *"every store operation is exercised against the durable implementation"* does not
-allow to stand. The proof is a conformance suite written **against the ports, not the wire**, and run
+are never called, and no operation in the contract's table calls `saves.delete` at all — the profile
+store is composed and never exercised, which is how G1 left it and which the brief's *"every store
+operation is exercised against the durable implementation"* does not allow to stand. The proof is a conformance suite written **against the ports, not the wire**, and run
 twice: once over the engine's in-memory implementations and once over the durable ones, asserting the
 same behaviour from both.
 
-It covers `sessions.get/put`, `saves.get/put` and `profiles.load/save`; the three profile outcomes
-*Failure modes* commits to — `profile_missing`, `profile_corrupt` from a bad `format_version`, and
-`profile_write_failed` leaving a committed session write in place; the set-union merge, including the
+It covers `sessions.get/put`, `saves.get/put`, `saves.delete` and `profiles.load/save` — **seven
+methods; the engine's `SaveRecordStore` declares `delete` beside `get` and `put`, and nothing on the
+wire reaches it, which is why the suite is the only thing that can**. It covers the three profile
+outcomes *Failure modes* commits to — `profile_missing`, `profile_corrupt` from a bad
+`format_version`, and `profile_write_failed` leaving a committed session write in place; the
+set-union merge, including the
 divergence the durable `save` deliberately carries; and the round trip that keeps host metadata out
 of game state — the blob read back is exactly the bytes written, and no host column reaches the
 `StoredSessionRecord`. **It is the only proof that addresses the store directly**, which is why
@@ -647,12 +655,12 @@ passing over the engine's own is what says the durable one *fills the port* — 
 the engine's composition root recorded as unanswerable until a second implementation existed, and
 which the brief makes a deliverable.
 
-**The answer it returns is "yes for five methods, and conditionally for the sixth", and saying so is
+**The answer it returns is "yes for six methods, and conditionally for the seventh", and saying so is
 the deliverable.** `profiles.save` is the one method where the two implementations are asserted to
 *differ* rather than to agree, so for that method the shared assertion cannot be the thing that
 establishes conformance. What stands in its place is narrower and is stated as such: the durable
 `save` conforms **given that every `save` the engine issues carries the loaded set plus additions**,
-which is read off `upsertAchievements` at `0.6.1` rather than assumed, and which the suite asserts
+which is read off `upsertAchievements` at `0.8.0` rather than assumed, and which the suite asserts
 directly as a property of the engine's caller rather than of either store. A conformance suite that
 reported an unqualified yes here would be reporting agreement it did not test — and the question the
 engine deferred deserves the qualified answer rather than the flattering one.
@@ -682,8 +690,8 @@ no trace in the winner's state.
 **Detection:** connection failure, or the migration runner's. **What the system does:** the process
 stays up, reports live, reports **not ready**, and retries with backoff. It never serves an operation.
 **What the operator sees:** the readiness body naming the store check, and a log line naming the host
-and the failure. **State left behind:** none — no partial migration, because the runner applies each
-migration in its own transaction under its advisory lock. **Retry:** automatic, at startup only. Once
+and the failure. **State left behind:** none — no partial migration, because the runner applies the
+whole run in a single transaction under its advisory lock. **Retry:** automatic, at startup only. Once
 ready, a later outage is handled below rather than by returning to this state.
 
 ### The store is unreachable, or fails, during a request
@@ -710,7 +718,7 @@ store did not answer*. **Retry:** the caller's, and only after re-reading. Never
 loser's is fully absent. There is no state in which half of an action landed, because the guarded update
 is a single statement — **and because the engine's own ordering puts every unguarded write after the
 guarded one.** `writeSession` precedes `upsertAchievements` on the accepted branch and `saveGame`
-writes no session row at all, both read at `0.6.1` (*Control flow* 2), so a losing `sessions.put`
+writes no session row at all, both read at `0.8.0` (*Control flow* 2), so a losing `sessions.put`
 throws before an achievement row or a save row can be written. The claim is a consequence of that
 ordering rather than of the single statement alone; if the ordering changes, this paragraph is the
 one that stops being true.
@@ -727,6 +735,12 @@ A missing profile yields `profile_missing` and an empty achievement set. A row w
 is not 1, or an achievement row that fails shape validation, yields `profile_corrupt` and an empty
 achievement set. **Neither ever produces a broken game**, and both are asserted — by the
 port-conformance suite (*Control flow* 3), which is the only proof that reaches these ports at all.
+
+**A profile *read* that fails also yields `profile_corrupt`**, because `ProfileStore.load` has no
+error channel and a connectivity failure reaches the same return statement a malformed row does. So
+while the store is degraded a player's achievements read as absent on a `200`, and nothing on the
+wire says which of the two it was. It self-corrects — the merge is a set union, so the next
+successful action re-derives what was earned — and readiness is what surfaces the condition itself.
 
 **`format_version` may not be bumped in the same release that first writes the new format.** The
 degradation above is designed for a corrupt row, and a rolling deploy would otherwise reuse it as the
@@ -855,7 +869,7 @@ set union is what makes that safe, which is the second reason it is a merge rath
 **Save rows are never contended; a save's *contents* are.** A fresh `saveId` per `saveGame` means one
 writer per row, for the row's whole life — that is a statement about the row, and it is the reason
 there is no `version` column on `save`. It is not a statement about what the row holds.
-`saveGame` reads the session and writes only the save (`0.6.1`, *Data model*), so nothing guards the
+`saveGame` reads the session and writes only the save (`0.8.0`, *Data model*), so nothing guards the
 interval between them: instance **A** reads session *S*, instance **B** submits an action and wins
 the compare-and-swap, and **A** then writes a save of the state *before* B's action. Both requests
 succeed, correctly — no update was lost, and the save is a faithful snapshot of a state the session
@@ -1075,7 +1089,7 @@ the exact signal the suite exists to make meaningful.
 ### The profile port — a conformance suite over both implementations, not a wider fixture
 
 **Chosen:** a third proof, written against the ports and run twice — over the engine's in-memory
-implementations and over the durable ones — covering all six port methods and the three profile
+implementations and over the durable ones — covering all seven port methods and the three profile
 outcomes.
 
 **Rejected — a profile-carrying step added to the replay fixture.** It reaches the same methods
@@ -1134,9 +1148,9 @@ by whichever document a later session happens to read first.
    only has to exceed any request's duration; 30 days is generous for a tombstone a few columns wide.
 
 3. **What is the engine's conflict code called, and how is the brand shaped?**
-   **Settled: `concurrent_modification`, as an eighth member of `SessionStoreErrorCode`, with a
+   **Settled: `concurrent_modification`, as a ninth member of `SessionStoreErrorCode`, with a
    name-based duck-typed brand.** This was not a decision so much as a reading of the engine, which
-   answers both halves. `SessionStoreErrorCode` is a closed union of seven members whose doc comment
+   answers both halves. `SessionStoreErrorCode` was a closed union of eight members whose doc comment
    states that every member is a registered `ReasonCode` with a shipped `core.reason.*` message, so
    widening it carries a message obligation and nothing more exotic. And the brand needs no new
    convention: `SessionStoreError` already discriminates itself by assigning `this.name`, so a
@@ -1189,7 +1203,7 @@ by whichever document a later session happens to read first.
 8. **What refreshes a session's idle clock — every use, or only an accepted write?**
    As designed, `expires_at` advances on accepted writes only, because that is the one statement
    the store issues. `getScene`, `getView`, `getStrings`, `resumeSession`, `previewAction` and
-   `saveGame` all read the session and write no session row (`0.6.1`), so **a session read
+   `saveGame` all read the session and write no session row (`0.8.0`), so **a session read
    continuously for the whole idle TTL still expires**, and the caller is told `session_expired` —
    "the session existed and no longer does" — about a session it was using. Calling the mechanism an
    *idle* TTL when it measures write recency is the part that does not survive contact with a
@@ -1224,9 +1238,10 @@ by whichever document a later session happens to read first.
 
 11. **What happens between now and the engine ratifying `concurrent_modification`?**
     Every conflict assertion in *Control flow* 3 — both contention proofs, the perturbation red-gate,
-    the 409 mapping — depends on an eighth member of `SessionStoreErrorCode` that exists in no
-    published engine version, and Open question 3 records that *"the vocabulary is still the engine's
-    to ratify."* Startup asserts the contract's recorded engine version against the resolved package's,
+    the 409 mapping — depends on a ninth member of `SessionStoreErrorCode` that existed in no
+    published engine version when this was written, and Open question 3 records that *"the vocabulary
+    is still the engine's to ratify."* **It has since been ratified**: the engine ships the member,
+    and `writeSession`'s `catch`, under that name at `0.8.0`. Startup asserts the contract's recorded engine version against the resolved package's,
     so an instance cannot be pointed at a branch build without regenerating the contract first.
     **The design's own position is that the engine PR is the first deliverable and the proofs that
     assert the code are sequenced behind it**, which is a statement about ordering and costs nothing;

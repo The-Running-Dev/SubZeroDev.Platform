@@ -9,6 +9,76 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-19 — A migration run applies in one transaction, not one per migration
+
+Context: `20-contract.md` and `10-design.md` both said each migration applies in its own transaction,
+and the implementation passes `singleTransaction: true` to `node-pg-migrate`, which wraps the whole
+run. `/reconcile` found the disagreement and had to decide which side was wrong.
+Chosen: the run-wide transaction, and the two documents corrected to describe it. The property both
+documents actually assert — no partial schema survives a failure — holds more strongly under it: a
+run that fails on its third migration leaves nothing applied.
+Rejected: per-migration transactions, to match the documents literally. Strictly weaker — the earlier
+migrations of a failed run stay applied, which is the partial schema both documents say cannot exist.
+Worth revisiting only if a future migration needs a statement PostgreSQL cannot run inside a
+transaction (`create index concurrently` is the usual one); that migration ships alone, and the
+decision is per-run rather than global.
+Reversibility: cheap — one option on one `runner()` call.
+
+### 2026-08-19 — `profile_corrupt` absorbs a profile read that fails, because the port has no other channel
+
+Context: the durable `profiles.load` catches every error from its read — a connectivity failure as
+well as a bad `format_version` — and returns `profile_corrupt`. `20-contract.md`'s three-warning
+table named only the shape failures, so the outage case was unwritten.
+Chosen: the code's behaviour, with the contract widened to admit it and to state its cost. The engine
+declares `ProfileStore.load` returning a `ProfileLoadResult` with no error arm, so a connectivity
+failure and a malformed row arrive at the same return statement with nothing to tell them apart.
+Rejected: escalating a read failure to `storage_failure` and a `503`. It contradicts the engine's own
+stated port behaviour — "a missing or corrupt profile degrades to no achievements with a warning,
+never a broken game" — turns a store blip into a failed game action, and needs a channel `load` does
+not have, so it means throwing from a method whose contract is not to.
+Rejected: asking the engine for a fourth `ProfileWarningCode` so an outage is distinguishable on the
+wire. A second cross-repository engine change on top of `concurrent_modification`, doubling the
+ratification exposure `20-contract.md` Unresolved 3 records, for a distinction no caller acts on
+differently — both answers are "no achievements this time".
+Retained cost: while the store is degraded a player's achievements read as absent on a `200`, and
+nothing on the wire says which failure it was. It self-corrects on the next successful action,
+because the merge is a set union.
+Reversibility: cheap for the classification; expensive for the fourth code, which is another repository's.
+
+### 2026-08-19 — A request that arrives before the durable store has ever connected gets an honest failure
+
+Context: `compose()` returns successfully when the store is unreachable and reconnects in the
+background, so there is a window in which the process is up, not ready, and can still be addressed.
+`20-contract.md` says what readiness reports in that window and nothing about what a request gets.
+Chosen: `unavailablePersistence()` and `unavailableProfiles()` — every persistence method throws a
+plain `Error`, which the engine's own catch converts to `storage_failure` and the wire answers `503`;
+every profile read reports `profile_corrupt` and every profile write `profile_write_failed`, the same
+answers a connected-but-failing store gives.
+Rejected: falling back to an in-memory store for the window. A caller would be served a session that
+silently ceases to exist the moment the durable store connects, and nothing on the wire would say so
+— the one failure worse than the outage it hides.
+Rejected: refusing to build the dispatcher until a store connects. That is a startup abort by another
+name, which `compose()`'s whole shape exists to avoid.
+Reversibility: cheap.
+
+### 2026-08-19 — The retention-horizon check is enforced against an assumed forward timeout, not the edge's own
+
+Context: invariant 62 requires the retention horizon to exceed any request's duration, and
+`CompositionError.StorageConfigurationInvalid` rejects a configuration that does not. The bound it
+must exceed is the edge's `GameEdgeOptions.ForwardTimeout` — which lives in a different repository
+and a different process, and which no signature in `20-contract.md` threads into the workload.
+Chosen: `ASSUMED_FORWARD_TIMEOUT_SECONDS`, a workload-owned constant of 60 seconds, exported so a
+test can assert it still exceeds the real timeout `tests/support/hosted-edge.ts` configures.
+Rejected: threading the edge's timeout through `WorkloadConfiguration`. It needs a contract amendment
+to carry a value the workload cannot verify anyway — the edge fronting a given instance is not
+something the instance can observe.
+Rejected: dropping the check. Invariant 62 is what makes "a sweep cannot fall between a live
+request's read and its write" a checked property rather than an assumption.
+Retained cost: the guard is enforced against a guess, and the only thing keeping the guess honest is
+one test against this repository's own test-support value. An edge deployed with a forward timeout
+above 60 seconds would pass a configuration the invariant means to reject.
+Reversibility: cheap.
+
 ### 2026-08-12 — The implicit tenant participates in storage keys without becoming request tenancy
 
 Context: `/contract` stopped because the brief's tenancy non-goal said nothing filters on the tenant
@@ -533,7 +603,46 @@ Reversibility: cheap
 
 ## Open
 
-_(nothing staged)_
+**S12 — the durable process, and five guards the slices never carried.** Staged by `/reconcile` on
+2026-08-19, decided by Ben in that pass, and owned by `/slices` to write and `/slice` to implement.
+Every item below is the code side of a divergence this reconciliation resolved in the code's
+direction; the design and contract already read the way the finished slice must make the tree read.
+
+- **The durable configuration is unreachable from the process entry point.** `src/main.ts` hard-codes
+  `storage: { kind: "in-memory" }`. It needs env-driven durable configuration, a README section, and
+  a CI step that starts a durable instance the documented way — S11.1's *"starting one instance
+  against it"* has no command behind it today.
+- **Nothing runs migrations at startup.** `migrateToHead` is called only by `scripts/migrate.ts`, the
+  harness and tests, so `MigrationError`'s three variants have no startup caller and *Concurrent
+  startup migrations* has no code path. It belongs in `compose()`'s durable branch, before the first
+  connect, with the backoff `10-design.md` *Control flow* 1 describes.
+- **The sweep runs under no statement timeout.** `LifecycleBounds.sweepStatementTimeoutMs` is
+  declared, defaulted, and read by nothing; an unbounded `delete` can pin a pool connection
+  indefinitely, which is the `PoolExhausted` condition the same contract names.
+- **`saves.delete` is unasserted.** Both conformance targets implement it and `runPortConformance`
+  never calls it. Invariant 89 now says seven methods.
+- **`StoreError.RowUndeserializable` is declared and constructed nowhere.** The row mappers cast
+  driver output without validation, so store corruption answers `500` by accident rather than by
+  classification — the shape the design deliberately closed for `storage_failure`.
+- **The dependency-direction test never gained Store as a second forbidden target.** Invariant 77 and
+  amended invariant 17 both specify the gate; `tests/dependency-direction.test.ts` checks only
+  `StoreSerializationHandle`. The property holds today by inspection and nothing guards it.
+- **`scripts/migrate.ts` depends on the proof harness** for two constants, against the design's
+  *nothing depends on a harness*. They belong beside `DEFAULT_LIFECYCLE_BOUNDS`.
+- **`DEFAULT_LIFECYCLE_BOUNDS.retentionHorizonSeconds` is 365 days**, where the contract's production
+  default is 30. `src/types.ts` calls the constant non-production and
+  `tests/durable-replay.test.ts:116` calls it "production bounds" — two comments in one tree
+  disagreeing about one constant, which invariant 82 turns on.
+- **Invariant 74 is neither structural nor asserted.** Persistence and profiles reach
+  `createSessionLayer` while the lifecycle probe reaches `createDispatcher`, so a decorator at the
+  port seam — the shape G3's brief names — would not sit in the probe's path. The contract wrote this
+  down because *"G3 cannot discover it"*.
+
+**`30-slices.md`'s status markers are stale, and this is `/slices`' to fix.** S1–S2 read `shipped`,
+S3 `in progress`, S4–S11 `queued`, while all eleven merged (#136–#144). `build/Test-SliceStatusMarkers.ps1`
+checks only internal consistency — at most one *in progress*, no *shipped* after a *queued* — so the
+ledger passes its own gate while being false. A gate that cannot tell a true ledger from a
+self-consistent wrong one is worth naming alongside the fix.
 
 ---
 

@@ -23,6 +23,14 @@ as anything but an outage. S7 repeats the proof across two processes, which is t
 actually asks for. Everything after S7 is the second and third proof, the edge, and the evidence a
 fresh clone can re-run.
 
+**S12 and S13 are the reconciliation's code side, and settle nothing.** Every criterion in them is a
+divergence `/reconcile` found between the tree and these documents after S11, decided in the code's
+direction on 2026-08-19 and staged in [`90-decisions.md`](90-decisions.md)'s `## Open` — the design
+and the contract already read the way the finished slices must make the tree read. They split along
+the seam that staging note itself draws, because the two halves are sized for one session each and
+their union is not: **S12 is the durable process an operator starts, S13 is the guards the durable
+slices declared and never enforced.**
+
 ## Decisions that must be taken before the slice that needs them starts
 
 Neither the design nor the contract settles these, and none is a slice's to settle silently.
@@ -113,7 +121,7 @@ table.
 ---
 
 ## S3 — Migrations and the guarded store
-**Status:** in progress
+**Status:** shipped · [#133](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/133)
 
 Delivers: an operator can point the workload at a real PostgreSQL database and get a session back
 byte for byte after it is stored — and when two writers race to update the same session, exactly one
@@ -186,7 +194,7 @@ that.
 ---
 
 ## S4 — Composition: per-request, and the sweep
-**Status:** queued
+**Status:** shipped · [#134](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/134)
 
 Delivers: whether the workload is running as a quick in-memory demo or pointed at the durable store,
 restarting or scaling out no longer means one instance's write is invisible to another — every request
@@ -241,7 +249,7 @@ proof (S7); the guarded SQL itself (S3, already built).
 ---
 
 ## S5 — Dispatch: translating the durable outcomes
-**Status:** queued
+**Status:** shipped · [#136](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/136) (its commit landed in S6's pull request)
 
 Delivers: a caller who submits an action against a session someone else just changed gets told plainly
 that their information is stale, distinctly from being told the database is unreachable — and a caller
@@ -283,7 +291,7 @@ wire plumbing for these codes, which G1 already built and this slice reuses unch
 ---
 
 ## S6 — Contention, one instance
-**Status:** queued
+**Status:** shipped · [#136](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/136)
 
 Delivers: an operator running one instance of the service against the durable store can watch, for
 themselves, two players' simultaneous actions against one session stop silently overwriting each
@@ -319,7 +327,7 @@ Out of scope: the two-instance variant (S7); anything about how the pause is sur
 ---
 
 ## S7 — Contention, two instances, and the harness the README runs
-**Status:** queued
+**Status:** shipped · [#137](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/137), [#141](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/141)
 
 Delivers: an operator can run two copies of the service against one shared database — the way a real
 deployment scales out — and see the same guarantee hold across processes as within one, and the
@@ -356,7 +364,7 @@ addresses the two workload instances directly (the edge's own change is S10).
 ---
 
 ## S8 — The byte-identity proof, durably
-**Status:** queued
+**Status:** shipped · [#140](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/140)
 
 Delivers: the proof G1 established — that a game played over the wire is the identical game, byte for
 byte, as the same game played in-process — now holds when the game is stored in a real database
@@ -401,7 +409,7 @@ Out of scope: the two-instance harness (S7, unrelated to byte identity); the por
 ---
 
 ## S9 — Port conformance, both implementations
-**Status:** queued
+**Status:** shipped · [#142](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/142)
 
 Delivers: whoever built the durable store — this effort — gets a definitive answer to whether it
 actually behaves the way the engine expects any `SessionPersistence` or `ProfileStore` to behave,
@@ -449,7 +457,7 @@ stays untouched; `sessions.put`'s conflict/expiry classification, which S3 and S
 ---
 
 ## S10 — The edge asks the right question
-**Status:** queued
+**Status:** shipped · [#143](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/143)
 
 Delivers: an operator running the .NET edge in front of a durable-backed service gets an honest "not
 ready" the moment the database becomes unreachable, instead of the edge reporting itself healthy while
@@ -486,7 +494,7 @@ and never through the edge.
 ---
 
 ## S11 — A fresh clone can prove all of it
-**Status:** queued
+**Status:** shipped · [#144](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/144)
 
 Delivers: someone arriving at the repository with nothing but a clone can bring up the database, run
 one instance or two, replay every proof this effort makes, and roll the schema forward — by following
@@ -527,3 +535,136 @@ Acceptance:
 Out of scope: a human-facing guide (`/make-human-docs`'s output); resolving either brief conflict,
 which is `00-brief.md`'s author's decision and not a slice's; deployment machinery beyond the
 hand-started and compose-started processes this effort already proves.
+
+---
+
+## S12 — The durable service an operator can actually start
+**Status:** in progress
+
+Delivers: an operator can start the service against their own PostgreSQL database by following the
+README, instead of only ever getting the in-memory demo — the process is told where the database is,
+brings the schema up to date itself before it serves a single request, keeps stored data for the
+period the service documents rather than one chosen to keep a test comfortable, and CI proves that
+documented start still works.
+
+Repository: **this one**, under `workloads/game-service/`.
+
+Touches:
+- **The process entry point** — the durable storage profile, selected and read from the environment
+  the same way the replay profile already is
+- **`compose`'s durable branch** — `migrateToHead` before the first connect, under the startup
+  backoff, so `MigrationError`'s three variants gain the startup caller they have never had
+- **`DEFAULT_LIFECYCLE_BOUNDS`**, and the two migration constants `scripts/migrate.ts` currently
+  reaches into the proof harness for
+- **The README's start section and the `game-service` CI job** — the documented single-instance
+  durable start
+
+Depends on: S11.
+
+Acceptance:
+- **S12.1** Started with the documented durable environment set to a reachable database, the process
+  serves a game operation and the session it created is present in that database afterwards. Started
+  with none of that environment set, it composes the in-memory profile exactly as today, reaching no
+  database.
+- **S12.2** Started with the durable flag set but a companion variable missing, the process fails
+  loudly at startup naming what is missing, and never degrades silently to in-memory.
+- **S12.3** Started against a schema that has never been migrated, the process brings it to head
+  itself before reporting ready, then serves — no separate migration command is run first.
+- **S12.4** Two processes started concurrently against one never-migrated schema both reach ready:
+  one applies the migrations, the other waits on the advisory lock and finds the schema at head, and
+  neither leaves a partial table. This is *Concurrent startup migrations*' first code path.
+- **S12.5** Started against an unreachable database, the process binds its listener, reports live,
+  reports not ready, and reports ready without a restart once the database becomes reachable — the
+  migration run and the first connect both retried under the startup backoff, and `compose()` never
+  throws.
+- **S12.6** A migration whose SQL fails leaves the process up and not ready, naming the migration in
+  its readiness body, and serving no operation — `MigrationError.MigrationFailed`, observed at
+  startup rather than as a thrown exception or a non-zero exit.
+- **S12.7** With the migration runner's advisory lock held by another connection past the runner's
+  bound, startup reports not ready naming a lock timeout and retries; released, the next attempt
+  reaches head and the process reports ready — `MigrationError.LockTimeout`, at startup.
+- **S12.8** `scripts/migrate.ts`'s transitive module graph names nothing under `tests/` or the proof
+  harness, asserted by the same import-graph check the other dependency-direction assertions use.
+  The design's dependency graph ends *nothing depends on a harness*, and this is the one edge that
+  contradicted it.
+- **S12.9** The three default lifecycle bounds are the production values — 30 days, 365 days, 30
+  days — asserted by a test naming each. The retention horizon no longer equals the save TTL.
+- **S12.10** Nothing in the tree describes those defaults as non-production: the constant is called
+  the production defaults wherever it is described, and invariant 82's assertion — the durable
+  replay runs at the production defaults — names that same constant.
+- **S12.11** Following the README's durable start section from a fresh clone reaches a serving
+  instance whose readiness reports healthy; CI runs that same documented command as a step and fails
+  if it does not exist or does not produce a serving instance, on S11.2's standing terms.
+- **S12.12** S7's two-instance proof, S8's durable replay and S11's fresh-clone job all still pass
+  unmodified in the same CI run — the retention-horizon change moves no proof's outcome.
+
+Out of scope: collapsing the harness's own process entry point into the operator's — it exists for
+its stdin shutdown and its fixed harness bounds (S8.4), and merging them is a separate question; any
+tuning of pool size, connect timeout or backoff interval, which the brief's performance non-goal
+forbids; the guards S13 carries.
+
+---
+
+## S13 — The guards the durable slices declared and never enforced
+**Status:** queued
+
+Delivers: whoever runs this service, and whoever picks up the authorization work that comes next,
+gets five promises the design made turned into enforced behaviour — a database row that is not the
+shape the store expects is reported as corruption instead of passed on unchecked, the background
+cleanup can no longer hold a connection open without bound, the one store method nothing ever called
+is finally exercised, and the two boundaries the design draws are asserted rather than merely true
+by luck.
+
+Repository: **this one**, under `workloads/game-service/`.
+
+Touches:
+- **Store's row mappers** — column validation and `StoreError.RowUndeserializable`, which is declared
+  and constructed nowhere
+- **The sweep's statement** — run under `LifecycleBounds.sweepStatementTimeoutMs`, which is declared,
+  defaulted and read by nothing
+- **`runPortConformance`** — `saves.delete`, the seventh method of invariant 89
+- **The dependency-direction test** — Store as a second forbidden target, for both surfaces
+- **The lifecycle probe's composition point** — moved behind the seam `SessionPersistence` and
+  `ProfileStore` are composed at
+
+Depends on: S11. Nothing in S12 is a prerequisite; the numbering is the order they should land in,
+because both edit composition.
+
+Acceptance:
+- **S13.1** With a `session` row seeded so a column's value cannot satisfy the type its mapper
+  declares — the column's SQL type widened and a value written that the declared type cannot hold —
+  `sessions.get` fails with `StoreError.RowUndeserializable` naming the column, and a request
+  reaching it answers `internal_failure` at `500`, distinguished in the same suite from
+  `storage_failure` at `503`.
+- **S13.2** The same seeding against a `save` row is classified the same way, and the guarded write
+  path is unaffected: a `RowUndeserializable` read is never reclassified as `conflict`.
+- **S13.3** The same seeding against a `profile` or `profile_achievement` row yields `profile_corrupt`
+  and an empty achievement set on a `200` — not `RowUndeserializable` — because `ProfileStore.load`
+  has no error channel. Both answers are asserted in one suite, so the two are told apart rather
+  than assumed distinct.
+- **S13.4** The sweep's `delete` runs under the configured statement timeout: with the timeout low
+  and the target rows locked by another connection, the tick fails with `StatementFailed`, is logged,
+  releases its connection, and the next tick runs on schedule — asserted with the pool sized to one,
+  so a serving request afterwards could not succeed if the timed-out sweep still held it.
+- **S13.5** The same sweep over the same seeded rows succeeds when the timeout is configured
+  generously and fails when it is not — the setting is read on the sweep path, proven by two
+  configured values rather than by inspection.
+- **S13.6** `runPortConformance` calls `saves.delete` on both targets: a save put and then deleted is
+  absent from `saves.get` on both, and deleting an absent save id is a no-op that fails neither. A
+  target whose `saves.delete` diverges fails the suite with `MethodDiverged` naming the method.
+- **S13.7** The dependency-direction check names Store as a second forbidden target for both
+  surfaces' module graphs. Adding an import of Store to either surface's graph fails the test, and
+  removing it passes — the perturbation is asserted, not the passing state alone.
+- **S13.8** A decorator applied once at the seam `SessionPersistence` and `ProfileStore` are composed
+  at is observed on the lifecycle probe's calls too, asserted with a counting decorator that records
+  every call it intercepts. Invariant 74 becomes structural rather than described.
+- **S13.9** The same holds for the in-memory configuration's no-op probe, so invariant 74 is not a
+  durable-only property; S5.6 still passes unmodified and Dispatch still carries no branch on which
+  store was composed.
+- **S13.10** S6's and S7's contention proofs, S8's byte-identity proof and S9's port-conformance
+  criteria all still pass unmodified in the same CI run.
+
+Out of scope: the durable process entry point and startup migrations (S12); any store failure
+classification beyond the `RowUndeserializable` the contract already declares — a mapper that finds a
+row unreadable classifies it, it does not gain a repair path; G3's authorization decorator itself,
+which this slice only makes the seam able to carry.
