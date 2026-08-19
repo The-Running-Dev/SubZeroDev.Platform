@@ -12,7 +12,7 @@ public abstract record EdgeError(string Code) : PlatformError(Code)
     public override bool IsRetryable => false;
 
     /// <summary>The forward could not connect, or the readiness probe could not reach the
-    /// workload's liveness endpoint. <c>503</c>.</summary>
+    /// workload's readiness endpoint. <c>503</c>.</summary>
     public static EdgeError WorkloadUnreachable() => new WorkloadUnreachableEdgeError();
 
     /// <summary>The forward exceeded <see cref="GameEdgeOptions.ForwardTimeout"/>. <c>504</c>.</summary>

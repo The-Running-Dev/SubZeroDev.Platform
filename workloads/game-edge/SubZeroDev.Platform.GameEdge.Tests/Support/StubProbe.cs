@@ -7,6 +7,6 @@ namespace SubZeroDev.Platform.GameEdge.Tests.Support;
 /// outbound call.</summary>
 internal sealed class StubProbe(Result<EdgeError> result) : IGameWorkloadProbe
 {
-    public Task<Result<EdgeError>> ProbeLivenessAsync(CancellationToken cancellationToken) =>
+    public Task<Result<EdgeError>> ProbeReadinessAsync(CancellationToken cancellationToken) =>
         Task.FromResult(result);
 }

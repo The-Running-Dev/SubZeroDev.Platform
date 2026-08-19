@@ -13,7 +13,7 @@ public sealed record GameEdgeOptions
     /// workload's behalf.</summary>
     public required TimeSpan ForwardTimeout { get; init; }
 
-    /// <summary>How long the readiness check's own probe of the workload's liveness endpoint may
+    /// <summary>How long the readiness check's own probe of the workload's readiness endpoint may
     /// run before it is treated as unreachable.</summary>
-    public required TimeSpan LivenessTimeout { get; init; }
+    public required TimeSpan ReadinessTimeout { get; init; }
 }

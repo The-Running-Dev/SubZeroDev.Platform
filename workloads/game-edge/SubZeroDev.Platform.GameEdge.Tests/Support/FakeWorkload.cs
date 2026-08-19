@@ -9,8 +9,8 @@ using Microsoft.Extensions.Logging;
 namespace SubZeroDev.Platform.GameEdge.Tests.Support;
 
 /// <summary>A stand-in for the Node workload: a real Kestrel process on loopback, so the forwarder's
-/// outbound HTTP is exercised for real rather than mocked. Records every non-<c>/livez</c> request
-/// it receives, which is what S7.7 checks against.</summary>
+/// outbound HTTP is exercised for real rather than mocked. Records every non-<c>/livez</c>,
+/// non-<c>/readyz</c> request it receives, which is what S7.7 and S10.5 check against.</summary>
 internal sealed class FakeWorkload : IAsyncDisposable
 {
     private readonly WebApplication _app;
@@ -20,6 +20,8 @@ internal sealed class FakeWorkload : IAsyncDisposable
     public string BaseAddress { get; }
 
     public int LivenessStatus { get; set; } = 200;
+
+    public int ReadinessStatus { get; set; } = 200;
 
     public int ResponseStatus { get; set; } = 200;
 
@@ -47,6 +49,7 @@ internal sealed class FakeWorkload : IAsyncDisposable
         FakeWorkload? fake = null;
 
         app.MapGet("/livez", () => Results.StatusCode(fake!.LivenessStatus));
+        app.MapGet("/readyz", () => Results.StatusCode(fake!.ReadinessStatus));
         app.Map("/{**catchAll}", async (HttpContext context) =>
         {
             using var bodyStream = new MemoryStream();

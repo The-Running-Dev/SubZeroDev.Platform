@@ -17,11 +17,11 @@ var options = builder.Configuration.GetSection("GameEdge").Get<GameEdgeOptions>(
 if (options is null
     || options.WorkloadBaseAddress is not { IsAbsoluteUri: true }
     || options.ForwardTimeout <= TimeSpan.Zero
-    || options.LivenessTimeout <= TimeSpan.Zero)
+    || options.ReadinessTimeout <= TimeSpan.Zero)
 {
     throw new InvalidOperationException(
         "Configuration section 'GameEdge' is required: WorkloadBaseAddress must be an absolute URI, "
-        + "and ForwardTimeout and LivenessTimeout must both be positive.");
+        + "and ForwardTimeout and ReadinessTimeout must both be positive.");
 }
 
 builder.Services.AddSingleton(options);

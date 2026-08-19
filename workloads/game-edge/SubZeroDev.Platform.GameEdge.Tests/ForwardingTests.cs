@@ -31,7 +31,7 @@ public sealed class ForwardingTests
             {
                 WorkloadBaseAddress = new Uri(workload.BaseAddress),
                 ForwardTimeout = TimeSpan.FromSeconds(5),
-                LivenessTimeout = TimeSpan.FromSeconds(5),
+                ReadinessTimeout = TimeSpan.FromSeconds(5),
             });
 
         var requestBody = "{\"choice\":\"north\"}"u8.ToArray();
@@ -65,7 +65,7 @@ public sealed class ForwardingTests
             {
                 WorkloadBaseAddress = new Uri("http://127.0.0.1:1"),
                 ForwardTimeout = TimeSpan.FromSeconds(5),
-                LivenessTimeout = TimeSpan.FromSeconds(5),
+                ReadinessTimeout = TimeSpan.FromSeconds(5),
             });
 
         var result = await forwarder.ForwardAsync(
@@ -93,7 +93,7 @@ public sealed class ForwardingTests
             {
                 WorkloadBaseAddress = new Uri("http://127.0.0.1:1"),
                 ForwardTimeout = TimeSpan.FromMilliseconds(200),
-                LivenessTimeout = TimeSpan.FromSeconds(5),
+                ReadinessTimeout = TimeSpan.FromSeconds(5),
             });
 
         var result = await forwarder.ForwardAsync(
@@ -124,7 +124,7 @@ public sealed class ForwardingTests
             {
                 WorkloadBaseAddress = new Uri("http://127.0.0.1:1"),
                 ForwardTimeout = TimeSpan.FromSeconds(5),
-                LivenessTimeout = TimeSpan.FromSeconds(5),
+                ReadinessTimeout = TimeSpan.FromSeconds(5),
             });
 
         var result = await forwarder.ForwardAsync(
