@@ -525,7 +525,7 @@ export interface RunSchema {
  * depends on that).
  */
 export interface ConformanceTarget {
-  readonly label: string;
+  readonly label: "in-memory" | "durable";
   readonly persistence: SessionPersistence;
   readonly profiles: ProfileStore;
   seedCorruptProfile(profileId: string): Promise<void>;
@@ -538,6 +538,6 @@ export interface ConformanceTarget {
  * declaration, so field names follow this file's existing discriminated-union idiom.
  */
 export type ConformanceError =
-  | { readonly code: "MethodDiverged"; readonly method: string; readonly detail: string }
+  | { readonly code: "MethodDiverged"; readonly method: string; readonly target: string; readonly detail: string }
   | { readonly code: "SeamUnavailable"; readonly method: string }
   | { readonly code: "CallerPropertyViolated"; readonly method: string; readonly observed: string };

@@ -31,7 +31,8 @@ import type {
 } from "@the-running-dev/game-engine";
 import type { Campaign, StoryGraphCampaignSource } from "@the-running-dev/game-engine/authoring";
 import { Pool } from "pg";
-import { IMPLICIT_TENANT_ID, openDurableStore } from "./store.js";
+import { quoteIdentifier } from "./migrations.js";
+import { corruptProfileResult, IMPLICIT_TENANT_ID, openDurableStore, profileWriteFailedResult } from "./store.js";
 import { err, ok } from "./types.js";
 import type { ConformanceError, ConformanceTarget, DurableStoreConfiguration, Outcome, SemanticVersion } from "./types.js";
 
@@ -79,16 +80,17 @@ async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome
   await target.persistence.sessions.put(sessionRecord);
   const gotSession = await target.persistence.sessions.get(sessionId);
   if (gotSession === undefined) {
-    return err({ code: "MethodDiverged", method: "sessions.get", detail: "a session just put through sessions.put was not found by sessions.get" });
+    return err({ code: "MethodDiverged", method: "sessions.get", target: target.label, detail: "a session just put through sessions.put was not found by sessions.get" });
   }
   if (gotSession.blob !== blob) {
-    return err({ code: "MethodDiverged", method: "sessions.put/get", detail: "the round-tripped session blob was not byte-identical to what was written" });
+    return err({ code: "MethodDiverged", method: "sessions.put/get", target: target.label, detail: "the round-tripped session blob was not byte-identical to what was written" });
   }
   const extraSessionKeys = Object.keys(gotSession).filter((key) => !STORED_SESSION_RECORD_KEYS.has(key));
   if (extraSessionKeys.length > 0) {
     return err({
       code: "MethodDiverged",
       method: "sessions.get",
+      target: target.label,
       detail: `host column(s) leaked onto the returned StoredSessionRecord's own key set: ${extraSessionKeys.join(", ")}`,
     });
   }
@@ -105,7 +107,7 @@ async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome
   await target.persistence.saves.put(saveRecord);
   const gotSave = await target.persistence.saves.get(saveId);
   if (gotSave === undefined || gotSave.blob !== saveBlob) {
-    return err({ code: "MethodDiverged", method: "saves.put/get", detail: "a save just put through saves.put did not round-trip byte-identically through saves.get" });
+    return err({ code: "MethodDiverged", method: "saves.put/get", target: target.label, detail: "a save just put through saves.put did not round-trip byte-identically through saves.get" });
   }
 
   return ok(undefined);
@@ -139,6 +141,7 @@ async function checkProfileCorrupt(target: ConformanceTarget): Promise<Outcome<v
     return err({
       code: "MethodDiverged",
       method: "profiles.load",
+      target: target.label,
       detail: `a profile seeded via seedCorruptProfile did not load as profile_corrupt with an empty achievement set (warnings: ${JSON.stringify(loaded.warnings)}, achievements: ${JSON.stringify(loaded.profile.achievements)})`,
     });
   }
@@ -153,6 +156,7 @@ async function checkProfileMissing(target: ConformanceTarget): Promise<Outcome<v
     return err({
       code: "MethodDiverged",
       method: "profiles.load",
+      target: target.label,
       detail: `an unseeded profileId did not load as profile_missing with an empty achievement set (warnings: ${JSON.stringify(loaded.warnings)}, achievements: ${JSON.stringify(loaded.profile.achievements)})`,
     });
   }
@@ -192,6 +196,7 @@ async function checkProfileWriteFailure(target: ConformanceTarget): Promise<Outc
     return err({
       code: "MethodDiverged",
       method: "profiles.save",
+      target: target.label,
       detail: `a profile seeded via seedProfileWriteFailure did not fail with ok:false/profile_write_failed (result: ${JSON.stringify(saveResult)})`,
     });
   }
@@ -201,6 +206,7 @@ async function checkProfileWriteFailure(target: ConformanceTarget): Promise<Outc
     return err({
       code: "MethodDiverged",
       method: "sessions.get",
+      target: target.label,
       detail: "a session write issued before a failed profile write did not remain committed afterward",
     });
   }
@@ -230,7 +236,7 @@ async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome
   // this keeps the two targets on the same footing before the racing/sequential calls below.
   const baseline = await target.profiles.save({ formatVersion: 1, profileId, achievements: [] });
   if (!baseline.ok) {
-    return err({ code: "MethodDiverged", method: "profiles.save", detail: "seeding the achievement-union baseline failed" });
+    return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "seeding the achievement-union baseline failed" });
   }
 
   // S9.5: concurrent on the durable target (its merge is additive per-statement, so two
@@ -250,7 +256,7 @@ async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome
     bothSucceeded = okA && okB;
   }
   if (!bothSucceeded) {
-    return err({ code: "MethodDiverged", method: "profiles.save", detail: "one of the two achievement-adding saves reported ok:false" });
+    return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "one of the two achievement-adding saves reported ok:false" });
   }
 
   const loaded = await target.profiles.load(profileId);
@@ -261,6 +267,7 @@ async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome
     return err({
       code: "MethodDiverged",
       method: "profiles.save",
+      target: target.label,
       detail: `two achievement-adding saves against one profile did not both land (achievements: ${JSON.stringify(loaded.profile.achievements)})`,
     });
   }
@@ -279,7 +286,7 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
     achievements: [{ campaignId: FIXTURE_CAMPAIGN_ID, achievementId: retainedId }],
   });
   if (!seeded.ok) {
-    return err({ code: "MethodDiverged", method: "profiles.save", detail: "seeding the merge-divergence baseline achievement failed" });
+    return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "seeding the merge-divergence baseline achievement failed" });
   }
 
   // The raw `profiles.save` call, deliberately omitting the achievement just seeded — this is
@@ -287,7 +294,7 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
   // `upsertOneAchievement` is the latter).
   const omitting = await target.profiles.save({ formatVersion: 1, profileId, achievements: [] });
   if (!omitting.ok) {
-    return err({ code: "MethodDiverged", method: "profiles.save", detail: "the achievement-omitting save itself failed" });
+    return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "the achievement-omitting save itself failed" });
   }
 
   const loaded = await target.profiles.load(profileId);
@@ -297,6 +304,7 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
     return err({
       code: "MethodDiverged",
       method: "profiles.save",
+      target: target.label,
       detail: durableRetains
         ? "the durable target's save did not retain a previously stored achievement omitted from a later save (the declared additive-merge divergence)"
         : "the in-memory target's save unexpectedly retained an achievement omitted from a later save (the declared additive-merge divergence did not hold)",
@@ -458,7 +466,16 @@ async function checkEngineCallerProperty(target: ConformanceTarget): Promise<Out
   const created = await sessionStore.createSession({ campaignId: FIXTURE_CAMPAIGN_ID, profileId });
   await sessionStore.submitAction(created.sessionId, "advance-one");
   await sessionStore.submitAction(created.sessionId, "advance-two");
-  return verifyCallerProfileWrites(watched.calls());
+  const observed = watched.calls();
+  if (observed.length === 0) {
+    return err({
+      code: "MethodDiverged",
+      method: "profiles.save",
+      target: target.label,
+      detail: "driving the two-achievement fixture campaign through a real session layer produced no observed profiles.save calls, so the caller property could not be checked",
+    });
+  }
+  return verifyCallerProfileWrites(observed);
 }
 
 // ---------------------------------------------------------------------------- runPortConformance
@@ -530,13 +547,13 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
   const profiles: ProfileStore = {
     async load(profileId) {
       if (corruptIds.has(profileId)) {
-        return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
+        return corruptProfileResult(profileId);
       }
       return real.load(profileId);
     },
     async save(profile) {
       if (failIds.has(profile.profileId)) {
-        return { ok: false, warnings: [{ code: "profile_write_failed", profileId: profile.profileId }] };
+        return profileWriteFailedResult(profile.profileId);
       }
       return real.save(profile);
     },
@@ -617,7 +634,7 @@ export async function openDurableConformanceTarget(
     connectionString: configuration.connection.connectionString,
     max: 2,
     connectionTimeoutMillis: configuration.connection.connectTimeoutMs,
-    ...(schema !== null ? { options: `-c search_path="${String(schema).replace(/"/g, '""')}",public` } : {}),
+    ...(schema !== null ? { options: `-c search_path=${quoteIdentifier(schema as unknown as string)},public` } : {}),
   });
 
   try {
