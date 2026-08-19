@@ -2,12 +2,12 @@
 description: Derive the interface contract from the design doc
 ---
 
-<!-- companion:start -->
+<!-- companion:declared:start -->
 **Per-repo companion:** `.claude/commands/contract-local.md`. Read it now, if it exists — an absent,
 empty, or frontmatter-only file is no companion, and this file then stands alone.
 It may override: `vocabulary`, `document-map`, `extra-steps`. It may never override anything in
 [`.claude/COMPANIONS.md`](../COMPANIONS.md) § *Never*, which is also where these categories are defined.
-<!-- companion:end -->
+<!-- companion:declared:end -->
 
 ## Stop if `design/` is frozen
 
@@ -46,7 +46,7 @@ Rules:
 - If the design doc does not determine a signature, do not invent it. List it under `## Unresolved` and stop.
 - **Do not restate a declaration the tree already carries.** Point at it and state what it cannot say.
 - No implementation. No comments explaining intent — the design doc carries intent. File paths are permitted **only** as the pointers this section requires.
-- Anything you add here that was not implied by the design doc gets a decision-log entry.
+- Anything you add here that was not implied by the design doc gets a decision-log entry. Where this repository's own `design/state/` exists, writing it also follows the record-writing sequence in `design/10-design.md` § *Record* — not restated here.
 
 ## Re-run
 
