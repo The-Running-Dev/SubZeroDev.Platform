@@ -1,22 +1,81 @@
 /**
- * Proof harness — S7. Two workload instances, spawned by direct `startWorkload` calls against one
- * shared durable store — the path `src/main.ts`'s own note anticipates: "the two-instance proof
- * drives `startWorkload` with a durable profile directly, through the proof harness's own
- * `WorkloadConfiguration`, not through this process entry point." There is no env var for a schema
- * or a read/write pause, so this cannot go through the process entry point the way `hosted-target.ts`
- * does for the replay proof.
+ * Proof harness — S7 and S8. Two workload instances, spawned by direct `startWorkload` calls
+ * against one shared durable store — the path `src/main.ts`'s own note anticipates: "the
+ * two-instance proof drives `startWorkload` with a durable profile directly, through the proof
+ * harness's own `WorkloadConfiguration`, not through this process entry point." There is no env
+ * var for a schema or a read/write pause, so this cannot go through the process entry point the
+ * way `hosted-target.ts` does for the replay proof.
  *
  * The two instances are anonymous and interchangeable (`20-contract.md`, "Proof harness"): nothing
  * distinguishes them beyond which end of `readWritePauseMs` each is configured with.
+ *
+ * `createRunSchema` (S8) is the durable replay's own prerequisite, on the same footing: a per-run
+ * schema, created and migrated to head here, dropped by the caller once its run is done.
  */
+import { Client } from "pg";
+import { randomBytes } from "node:crypto";
 import { startWorkload } from "./lifecycle.js";
+import { migrateToHead, quoteIdentifier } from "./migrations.js";
 import { DEFAULT_LIFECYCLE_BOUNDS, err, ok } from "./types.js";
 import type {
   HarnessError,
   Outcome,
+  RunSchema,
+  SchemaName,
+  StoreConnection,
   TwoInstanceOptions,
   WorkloadInstance,
 } from "./types.js";
+
+// Same defaults `tests/support/database.ts` builds every non-production `StoreConnection` from —
+// a run schema is provisioning, not a load test, so nothing here is tuned.
+const RUN_SCHEMA_POOL_SIZE = 5;
+const RUN_SCHEMA_CONNECT_TIMEOUT_MS = 5000;
+
+let runSchemaCounter = 0;
+
+/** Unique to this process and this call, the same way `spawnInstances`' two instances need no
+ *  coordination — collision-safe under concurrent runs without a lock of its own. */
+function freshRunSchemaName(): SchemaName {
+  runSchemaCounter += 1;
+  const suffix = randomBytes(4).toString("hex");
+  return `run_${process.pid}_${runSchemaCounter}_${suffix}` as unknown as SchemaName;
+}
+
+export async function createRunSchema(connectionString: string): Promise<Outcome<RunSchema, HarnessError>> {
+  const name = freshRunSchemaName();
+  const connection: StoreConnection = {
+    connectionString,
+    poolSize: RUN_SCHEMA_POOL_SIZE,
+    connectTimeoutMs: RUN_SCHEMA_CONNECT_TIMEOUT_MS,
+    schema: name,
+  };
+
+  const migrated = await migrateToHead(connection);
+  if (!migrated.ok) {
+    return err({ code: "SchemaCreateFailed", detail: JSON.stringify(migrated.error) });
+  }
+
+  return ok({
+    name,
+    async drop(): Promise<Outcome<void, HarnessError>> {
+      const client = new Client({ connectionString });
+      try {
+        await client.connect();
+        await client.query(`drop schema if exists ${quoteIdentifier(name as unknown as string)} cascade`);
+        return ok(undefined);
+      } catch (error) {
+        return err({
+          code: "SchemaDropFailed",
+          schema: name,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        await client.end().catch(() => {});
+      }
+    },
+  });
+}
 
 const SPAWN_BOUND_MS = 15_000;
 const SHUTDOWN_BOUND_MS = 10_000;

@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { REPLAY_FIXED_INSTANT } from "../../src/replay.js";
 import { readDeterminismDumpFile } from "../../src/dump.js";
 import { err, ok } from "../../src/types.js";
-import type { HostedTarget, Outcome, ShutdownError } from "../../src/types.js";
+import type { HostedTarget, Outcome, SchemaName, ShutdownError } from "../../src/types.js";
 
 const ENTRYPOINT = fileURLToPath(new URL("./hosted-entrypoint.ts", import.meta.url));
 const TSX_CLI = fileURLToPath(new URL("../../node_modules/tsx/dist/cli.mjs", import.meta.url));
@@ -37,11 +37,23 @@ function freshDumpPath(): string {
   return join(mkdtempSync(join(tmpdir(), "s5-hosted-dump-")), "dump.json");
 }
 
+/** S8's durable target: which schema, in which database, the spawned process should compose its
+ *  storage profile from — the harness-owned counterpart to `TwoInstanceOptions`. */
+export interface DurableHostedTarget {
+  readonly connectionString: string;
+  readonly schema: SchemaName;
+}
+
 /** Spawns the workload as a genuine child process — `process.execPath` running `tsx`'s own CLI
  *  entry point, so this exercises the compiled-equivalent startup path rather than an in-process
  *  stand-in, over a real bound socket. `otlpEndpoint`, when given, is S8's own hook: every other
- *  caller omits it and gets today's `otlpEndpoint: null` behaviour unchanged. */
-export async function spawnHostedWorkload(otlpEndpoint?: string): Promise<SpawnedHostedTarget> {
+ *  caller omits it and gets today's `otlpEndpoint: null` behaviour unchanged. `durable`, when
+ *  given, is S8's other hook — the durable replay's own target, composed against the named schema
+ *  instead of the in-memory default. */
+export async function spawnHostedWorkload(
+  otlpEndpoint?: string,
+  durable?: DurableHostedTarget,
+): Promise<SpawnedHostedTarget> {
   const dumpPath = freshDumpPath();
 
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -59,6 +71,15 @@ export async function spawnHostedWorkload(otlpEndpoint?: string): Promise<Spawne
     env["GAME_SERVICE_OTLP_ENDPOINT"] = otlpEndpoint;
   } else {
     delete env["GAME_SERVICE_OTLP_ENDPOINT"];
+  }
+  if (durable) {
+    env["GAME_SERVICE_STORAGE"] = "durable";
+    env["GAME_SERVICE_DB_CONNECTION_STRING"] = durable.connectionString;
+    env["GAME_SERVICE_DB_SCHEMA"] = String(durable.schema);
+  } else {
+    delete env["GAME_SERVICE_STORAGE"];
+    delete env["GAME_SERVICE_DB_CONNECTION_STRING"];
+    delete env["GAME_SERVICE_DB_SCHEMA"];
   }
 
   const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [TSX_CLI, ENTRYPOINT], {
