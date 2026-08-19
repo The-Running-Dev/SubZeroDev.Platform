@@ -86,6 +86,30 @@ Run twice in a row, the second run is a no-op (S3.16). `GAME_SERVICE_DB_SCHEMA` 
 other than `public`; `GAME_SERVICE_DB_CONNECTION_STRING` overrides the connection string the
 compose file's own defaults resolve to.
 
+## Start the workload against the durable store
+
+`npm run migrate` above is an operator's own explicit control over when a schema moves to head;
+the workload does not need it run first. `GAME_SERVICE_STORAGE=durable` plus
+`GAME_SERVICE_DB_CONNECTION_STRING` are enough — unlike `npm run migrate`'s own connection string,
+this one has no default, so a durable start never connects to a database it was not explicitly
+told about. The process brings its own schema to head before it reports ready, the same call the
+command above makes, retried under a startup backoff if the database is not reachable yet (S12):
+
+```bash
+cd workloads/game-service
+docker compose up -d
+GAME_SERVICE_PORT=8080 \
+GAME_SERVICE_STORAGE=durable \
+GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service \
+  npm start
+```
+
+Missing `GAME_SERVICE_DB_CONNECTION_STRING` while `GAME_SERVICE_STORAGE=durable` is set fails
+startup immediately, naming it — the process never degrades silently to the in-memory profile.
+`GAME_SERVICE_DB_SCHEMA` targets a schema other than `public`. Readiness (`GET /readyz`) turns
+healthy once the schema is at head and the store answers; started against an unreachable database
+it stays live and not-ready, and becomes ready without a restart once the database is reachable.
+
 ## Run the one-instance contention proof
 
 One process against the durable store, composed the same way `compose()`'s durable branch is

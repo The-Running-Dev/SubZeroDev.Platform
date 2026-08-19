@@ -9,6 +9,106 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-19 — Startup migrations: the durable branch brings its own schema to head, and a repeated migration failure backs its retry off
+
+Context: nothing ran migrations at startup — an operator had to run `npm run migrate` (or the
+equivalent) before the durable process would find a usable schema, and nothing said so loudly if
+they forgot. `compose()`'s durable branch now calls `migrateToHead` before its first connection
+attempt, and again on every reconnect retry, so a never-migrated or behind-head schema still reaches
+ready without a separate command. `readiness()` gained a `detail` string (see the next entry) naming
+which of "still migrating", "the lock is held past its bound", or "a migration's SQL failed" is
+current.
+Chosen: migration and connection retries share one backoff loop under `DURABLE_RECONNECT_INTERVAL_MS`
+(5s), the same interval a bare connection failure already retried under, with one addition —
+consecutive migration failures back that loop off exponentially (5s, 10s, 20s, ... capped at 60s),
+reset the moment a migration succeeds. `node-pg-migrate`'s advisory lock is one id for the whole
+database, not scoped per schema (`migrations.ts`); a schema whose migration keeps failing must not
+keep re-requesting that lock every 5s forever, because a healthy, unrelated schema's own migration on
+the same database can queue behind it and time out. Once a schema has migrated successfully for a
+given `compose()` call, later retries (a store-connect failure, never a migration one) skip the
+migration runner entirely and reconnect directly — a schema already at head does not pay a second
+full migration invocation, including its own connection and lock acquisition, on every retry for the
+life of the process.
+Rejected: a flat, unbacked-off retry for migration failures too (the initial S12 shape). Simplest, but
+leaves a permanently broken migration in one schema free to contend forever for a lock every other
+schema on the same database instance also needs, exactly the collateral `LockTimeout`s this repository's
+own test suite hit running the two concurrently (see "unit-level lock-timeout classification" below).
+Rejected: capping retries at a fixed count and giving up. `compose()`'s whole shape is "come up not
+ready and keep trying," not "abort" — a database that recovers after the cap would need a process
+restart to notice.
+Reversibility: cheap — the backoff schedule and the skip-once-migrated guard are both local to
+`attemptConnect`.
+
+### 2026-08-19 — `ProbeResult` gains an optional `detail`, amending G1's declaration
+
+Context: `readiness()`'s `unhealthy` result had no way to say *why* — G1's `ProbeResult` declared
+only `status`. S12.6/S12.7 need the durable branch's readiness to distinguish a still-running
+migration from a lock held past its bound from a failed migration (naming which one) from a plainly
+unreachable store, for both a caller and a test to tell apart.
+Chosen: `ProbeResult.detail?: string`, present only on an unhealthy result, absent everywhere else —
+including every G1-era caller, which never populated it and is unaffected. `design/20-contract.md`
+now declares this explicitly rather than leaving `compose()` to construct an object outside the
+declared shape.
+Rejected: leaving `detail` undeclared and reaching it by casting the object `readiness()` returns.
+That was the S12 shape before this entry — a type-safe caller can't discover the field exists, and a
+future rename or typo compiles without error. Declaring it costs one optional field.
+Rejected: a structured, discriminated-union `detail` (mirroring `MigrationError`'s own variants)
+instead of a string. Considered for the type-safety parity with the rest of this codebase's
+`Outcome<T,E>` conventions; deferred because `readiness()` is a diagnostic surface a human or a
+dashboard reads, not a machine-branched one, and no caller in this workload branches on it.
+Reversibility: cheap to widen further later; the string form does not block a future structured
+version, since nothing yet parses it.
+
+### 2026-08-19 — The retention horizon default no longer equals the save TTL
+
+Context: `DEFAULT_LIFECYCLE_BOUNDS.retentionHorizonSeconds` was 365 days, the same value as
+`saveTtlSeconds` — the one set of bounds every `DurableStoreConfiguration` in this codebase is built
+from, proof and test runs included. Retention is how long a swept-past row's id stops being
+distinguishable from one that never existed, not how long a save is kept; the two numbers agreeing
+was never a stated requirement, just an artifact of both starting from the same "generous and out of
+the way" value.
+Chosen: 30 days — the production default the contract intends — comfortably clear of
+`ASSUMED_FORWARD_TIMEOUT_SECONDS` (60s) for the `retentionHorizonSeconds` check `compose()` performs,
+and no longer equal to `saveTtlSeconds`.
+Rejected: leaving it at 365 days. Nothing in `design/20-contract.md` requires retention to match the
+save TTL, and the old value understated how quickly this workload actually needs to stop
+distinguishing a swept row's id from one that never existed.
+Reversibility: cheap — one constant, asserted by name in `tests/lifecycle-bounds.test.ts`.
+
+### 2026-08-19 — `DEFAULT_STORE_POOL_SIZE`/`DEFAULT_STORE_CONNECT_TIMEOUT_MS` move from `harness.ts` to `types.ts`
+
+Context: `scripts/migrate.ts` — the fresh-clone migration entry point an operator's own shell reaches
+— imported `RUN_SCHEMA_POOL_SIZE`/`RUN_SCHEMA_CONNECT_TIMEOUT_MS` from `harness.ts`, the proof
+harness. The design's dependency graph ends "nothing depends on a harness" (`design/10-design.md`);
+an operator-run script transitively importing test/proof support contradicted that, even though
+nothing observed it at runtime.
+Chosen: the same two values, renamed `DEFAULT_STORE_POOL_SIZE`/`DEFAULT_STORE_CONNECT_TIMEOUT_MS` and
+moved to `types.ts`, which `harness.ts`, `scripts/migrate.ts`, `main.ts`, and the test support files
+all import from alike — one un-tuned default, once, rather than duplicated or reached for across a
+boundary the design says nothing should cross.
+Rejected: leaving the values in `harness.ts` and having `scripts/migrate.ts` re-declare its own copy.
+Duplicates the one number this move was meant to keep singular.
+Reversibility: cheap — a rename and an import-path change, covered by
+`tests/dependency-direction.test.ts`'s S12.8 case.
+
+### 2026-08-19 — Reproducing the real 30-second advisory-lock bound end to end was tried and dropped
+
+Context: S12.7 needed to prove `migrationNotReadyDetail` maps a real `LockTimeout` distinctly from a
+real `MigrationFailed`. A first version held `node-pg-migrate`'s advisory lock open in one connection
+for the full `LOCK_WAIT_TIMEOUT_MS` (30s) while a second `migrateToHead` call attempted the same lock,
+to observe the real classification end to end.
+Chosen: a unit-level test that calls `migrationNotReadyDetail` directly against constructed
+`MigrationError` values, plus S12.5's and S12.6's existing compose-level tests, which already exercise
+the surrounding retry and detail-surfacing machinery this mapping feeds against a live database.
+Rejected: the end-to-end version. `node-pg-migrate`'s advisory lock is one fixed id for the whole
+database, not scoped per schema — holding it for 30 seconds blocked every other test file's own
+`migrateToHead` calls running concurrently under vitest's default file parallelism, producing exactly
+the collateral `LockTimeout`s and readiness timeouts this entry warns against. What remains untested
+end to end is `migrations.ts`'s own `isLockTimeout` classification of Postgres's `55P03`/`57014`,
+which is unit-level, driver-facing logic outside this slice's `Touches`.
+Reversibility: cheap to revisit if a future slice needs the real bound proven end to end — it would
+need its own dedicated database or serialized test run to do so safely.
+
 ### 2026-08-19 — A migration run applies in one transaction, not one per migration
 
 Context: `20-contract.md` and `10-design.md` both said each migration applies in its own transaction,
@@ -603,46 +703,7 @@ Reversibility: cheap
 
 ## Open
 
-**S12 — the durable process, and five guards the slices never carried.** Staged by `/reconcile` on
-2026-08-19, decided by Ben in that pass, and owned by `/slices` to write and `/slice` to implement.
-Every item below is the code side of a divergence this reconciliation resolved in the code's
-direction; the design and contract already read the way the finished slice must make the tree read.
-
-- **The durable configuration is unreachable from the process entry point.** `src/main.ts` hard-codes
-  `storage: { kind: "in-memory" }`. It needs env-driven durable configuration, a README section, and
-  a CI step that starts a durable instance the documented way — S11.1's *"starting one instance
-  against it"* has no command behind it today.
-- **Nothing runs migrations at startup.** `migrateToHead` is called only by `scripts/migrate.ts`, the
-  harness and tests, so `MigrationError`'s three variants have no startup caller and *Concurrent
-  startup migrations* has no code path. It belongs in `compose()`'s durable branch, before the first
-  connect, with the backoff `10-design.md` *Control flow* 1 describes.
-- **The sweep runs under no statement timeout.** `LifecycleBounds.sweepStatementTimeoutMs` is
-  declared, defaulted, and read by nothing; an unbounded `delete` can pin a pool connection
-  indefinitely, which is the `PoolExhausted` condition the same contract names.
-- **`saves.delete` is unasserted.** Both conformance targets implement it and `runPortConformance`
-  never calls it. Invariant 89 now says seven methods.
-- **`StoreError.RowUndeserializable` is declared and constructed nowhere.** The row mappers cast
-  driver output without validation, so store corruption answers `500` by accident rather than by
-  classification — the shape the design deliberately closed for `storage_failure`.
-- **The dependency-direction test never gained Store as a second forbidden target.** Invariant 77 and
-  amended invariant 17 both specify the gate; `tests/dependency-direction.test.ts` checks only
-  `StoreSerializationHandle`. The property holds today by inspection and nothing guards it.
-- **`scripts/migrate.ts` depends on the proof harness** for two constants, against the design's
-  *nothing depends on a harness*. They belong beside `DEFAULT_LIFECYCLE_BOUNDS`.
-- **`DEFAULT_LIFECYCLE_BOUNDS.retentionHorizonSeconds` is 365 days**, where the contract's production
-  default is 30. `src/types.ts` calls the constant non-production and
-  `tests/durable-replay.test.ts:116` calls it "production bounds" — two comments in one tree
-  disagreeing about one constant, which invariant 82 turns on.
-- **Invariant 74 is neither structural nor asserted.** Persistence and profiles reach
-  `createSessionLayer` while the lifecycle probe reaches `createDispatcher`, so a decorator at the
-  port seam — the shape G3's brief names — would not sit in the probe's path. The contract wrote this
-  down because *"G3 cannot discover it"*.
-
-**`30-slices.md`'s status markers are stale, and this is `/slices`' to fix.** S1–S2 read `shipped`,
-S3 `in progress`, S4–S11 `queued`, while all eleven merged (#136–#144). `build/Test-SliceStatusMarkers.ps1`
-checks only internal consistency — at most one *in progress*, no *shipped* after a *queued* — so the
-ledger passes its own gate while being false. A gate that cannot tell a true ledger from a
-self-consistent wrong one is worth naming alongside the fix.
+_(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147))_
 
 ---
 

@@ -39,6 +39,7 @@ import type {
 import type { ContractPackage } from "@subzerodev/service-contract";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { canonicalEncode } from "./canonical.js";
+import { migrateToHead } from "./migrations.js";
 import { corruptProfileResult, openDurableStore, profileWriteFailedResult } from "./store.js";
 import { err, ok } from "./types.js";
 import type {
@@ -47,6 +48,7 @@ import type {
   DeterminismDump,
   DurableStore,
   LifecycleProbe,
+  MigrationError,
   Outcome,
   ProbeResult,
   ReplayDeterminismProfile,
@@ -179,6 +181,16 @@ export const ASSUMED_FORWARD_TIMEOUT_SECONDS = 60;
  *  — workload") describes the requirement, not a value; this is the workload's own choice. */
 const DURABLE_RECONNECT_INTERVAL_MS = 5_000;
 
+/** What `readiness()`'s structural `detail` (see `notReadyDetail` below) names for each
+ *  `MigrationError` variant — pulled out as its own pure function so the mapping S12.6/S12.7 need
+ *  ("naming the migration", "naming a lock timeout") is checkable without reproducing the real
+ *  30-second lock bound or a real failing migration against a live database. */
+export function migrationNotReadyDetail(error: MigrationError): string {
+  if (error.code === "LockTimeout") return "migration lock timeout";
+  if (error.code === "MigrationFailed") return `migration failed: ${error.migration}`;
+  return "migration runner unreachable";
+}
+
 function validateStorageConfiguration(storage: StorageProfile): Outcome<void, CompositionError> {
   if (storage.kind === "in-memory") return ok(undefined);
   const { connection, bounds } = storage.store;
@@ -287,8 +299,54 @@ export async function compose(
   // Set only while a reconnect retry (never the first, awaited attempt) is in flight, so `close()`
   // can wait for it instead of returning while a stray connect is still running underneath it.
   let connecting: Promise<void> | null = null;
+  // What `readiness()` reports as `ProbeResult.detail` while `durableStore` is still null — which
+  // of "still migrating", "the lock is held past its bound" or "a migration's SQL failed" is
+  // current, and — for the last two — which migration (`design/30-slices.md`, S12.6/S12.7).
+  let notReadyDetail: string | null = null;
+  // Once `migrateToHead` has succeeded once for this `compose()` call, the schema is at head and
+  // every later retry (a store-connect failure, never a migration one) skips straight to
+  // `openDurableStore` instead of paying a second full migration-runner invocation — including its
+  // own connect and `node-pg-migrate`'s advisory-lock acquisition — for a schema already migrated.
+  let migratedOnce = false;
+  // Consecutive migration failures back this call's retry off — `node-pg-migrate`'s advisory lock
+  // is one id for the whole database, not scoped per schema, so a schema whose migration keeps
+  // failing must not keep re-requesting that lock every `DURABLE_RECONNECT_INTERVAL_MS` forever; a
+  // healthy, unrelated schema's own migration attempt can otherwise queue behind it and time out.
+  let migrationFailureStreak = 0;
+  const MAX_RECONNECT_INTERVAL_MS = 60_000;
 
+  function scheduleReconnect(delayMs: number): void {
+    reconnectHandle = setTimeout(() => {
+      connecting = attemptConnect().finally(() => {
+        connecting = null;
+      });
+    }, delayMs);
+  }
+
+  /** `migrateToHead` runs before the first connection attempt, every attempt until it succeeds —
+   *  the durable branch's own startup order (`design/30-slices.md`, S12): "no separate migration
+   *  command is run first". A migration failure and a connection failure share one backoff loop,
+   *  the same way `compose()` already retried a bare connection failure before this — the two are
+   *  just two reasons the same retry exists for. */
   async function attemptConnect(): Promise<void> {
+    if (!migratedOnce) {
+      const migrated = await migrateToHead(storeConfig.connection);
+      if (closed) return;
+      if (!migrated.ok) {
+        migrationFailureStreak += 1;
+        notReadyDetail = migrationNotReadyDetail(migrated.error);
+        console.error("[game-service] startup migration attempt failed", migrated.error);
+        const delayMs = Math.min(
+          DURABLE_RECONNECT_INTERVAL_MS * 2 ** (migrationFailureStreak - 1),
+          MAX_RECONNECT_INTERVAL_MS,
+        );
+        scheduleReconnect(delayMs);
+        return;
+      }
+      migratedOnce = true;
+      migrationFailureStreak = 0;
+    }
+
     const opened = await openDurableStore(storeConfig, ENGINE_VERSION as SemanticVersion);
     if (closed) {
       // `close()` ran while this attempt was in flight — a store that connected after the fact
@@ -305,14 +363,12 @@ export async function compose(
     }
     if (opened.ok) {
       durableStore = opened.value;
+      notReadyDetail = null;
       return;
     }
+    notReadyDetail = "store unreachable";
     console.error("[game-service] durable store connection attempt failed", opened.error);
-    reconnectHandle = setTimeout(() => {
-      connecting = attemptConnect().finally(() => {
-        connecting = null;
-      });
-    }, DURABLE_RECONNECT_INTERVAL_MS);
+    scheduleReconnect(DURABLE_RECONNECT_INTERVAL_MS);
   }
 
   // The one "is a durable store connected right now" branch `lifecycle.session`/`.save` and
@@ -399,7 +455,12 @@ export async function compose(
       // Evaluates the store on every call rather than replaying a memoized startup outcome — a
       // latch here would leave the workload reporting ready through the exact outage the readiness
       // probe exists to surface (S4.4).
-      if (!durableStore) return { status: "unhealthy" };
+      if (!durableStore) {
+        // `detail`, part of `ProbeResult`'s declared shape (`design/20-contract.md`, "Workload —
+        // readiness"), names which migration or lock condition is holding startup back
+        // (S12.6/S12.7); omitted rather than `null` when there is none yet to report.
+        return notReadyDetail ? { status: "unhealthy", detail: notReadyDetail } : { status: "unhealthy" };
+      }
       const checked = await durableStore.check();
       return { status: checked.ok ? "healthy" : "unhealthy" };
     },
