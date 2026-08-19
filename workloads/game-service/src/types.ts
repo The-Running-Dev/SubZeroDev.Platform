@@ -19,6 +19,7 @@ import type {
 } from "@subzerodev/service-contract";
 import type { EngineErrorCode, SemanticVersion } from "@subzerodev/service-contract";
 import type { ProfileStore, SessionPersistence, SessionStore, StoredSessionRecord } from "@the-running-dev/game-engine";
+export type { ProfileStore, SessionPersistence };
 export type { SessionStore };
 
 export type {
@@ -507,3 +508,36 @@ export interface RunSchema {
   readonly name: SchemaName;
   drop(): Promise<Outcome<void, HarnessError>>;
 }
+
+// ---------------------------------------------------------------------------- proof harness: port conformance
+
+/**
+ * `20-contract.md`, "Proof harness — `ConformanceTarget`, `runPortConformance`" (S9). One
+ * assertion set (`runPortConformance`, `src/conformance.ts`) run against two of these — the
+ * workload's own map-backed `persistence` paired with the engine's `createInMemoryProfileStore`,
+ * and the durable store's own `persistence`/`profiles` — is what makes this a conformance suite
+ * rather than a second copy of Store's own unit tests.
+ *
+ * The two seed methods exist because the two targets reach the same two degraded outcomes by
+ * different mechanisms (a malformed raw entry against the in-memory profile store, a row with an
+ * unrecognised `format_version` against the durable one) — `seedProfileWriteFailure` must break
+ * the profile write and only the profile write (S9.4's committed-session-survives assertion
+ * depends on that).
+ */
+export interface ConformanceTarget {
+  readonly label: "in-memory" | "durable";
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  seedCorruptProfile(profileId: string): Promise<void>;
+  seedProfileWriteFailure(profileId: string): Promise<void>;
+}
+
+/**
+ * `20-contract.md`, "The harness — `HarnessError`, `ConformanceError`". Same footing as
+ * `HarnessError` above — the contract states this as a table of variants, not a type
+ * declaration, so field names follow this file's existing discriminated-union idiom.
+ */
+export type ConformanceError =
+  | { readonly code: "MethodDiverged"; readonly method: string; readonly target: string; readonly detail: string }
+  | { readonly code: "SeamUnavailable"; readonly method: string }
+  | { readonly code: "CallerPropertyViolated"; readonly method: string; readonly observed: string };
