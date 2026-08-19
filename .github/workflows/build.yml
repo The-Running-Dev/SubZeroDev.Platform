@@ -187,12 +187,40 @@ jobs:
             exit 1
           fi
 
+      # S11.1/S11.2/S11.3: the README's own documented migration command, run here rather than a
+      # private equivalent — if it stops existing or stops bringing a fresh schema to head, this
+      # step is what fails. Targets its own schema rather than `public`, so it neither depends on
+      # nor is depended on by any other step in this job.
+      - name: Migrate the schema to head, the documented way
+        working-directory: workloads/game-service
+        env:
+          GAME_SERVICE_DB_SCHEMA: ci_documented_migrate
+        run: npm run migrate
+
+      # S11.1/S11.2: the README's own documented commands, run here rather than a private
+      # equivalent — if either stops existing or stops reproducing its proof, this step is what
+      # fails.
+      - name: Run the one-instance contention proof
+        working-directory: workloads/game-service
+        run: npx vitest run tests/contention-one-instance.test.ts
+
       # S7.5/S7.6: the README's own documented command, run here rather than a private
       # equivalent — if it stops existing or stops reproducing the contention proof, this step
       # is what fails.
       - name: Run the two-instance contention proof
         working-directory: workloads/game-service
         run: npx vitest run tests/contention-two-instances.test.ts
+
+      # S11.1/S11.2: the README's own documented commands, run here rather than a private
+      # equivalent — if either stops existing or stops reproducing its proof, this step is what
+      # fails.
+      - name: Run the durable replay
+        working-directory: workloads/game-service
+        run: npx vitest run tests/durable-replay.test.ts
+
+      - name: Run the port-conformance suite
+        working-directory: workloads/game-service
+        run: npx vitest run tests/conformance.test.ts
 
       - name: Test
         working-directory: workloads/game-service

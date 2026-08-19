@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "tsx src/main.ts",
+    "migrate": "tsx scripts/migrate.ts",
     "regenerate-golden": "tsx scripts/regenerate-golden-transcript.ts"
   },
   "dependencies": {
