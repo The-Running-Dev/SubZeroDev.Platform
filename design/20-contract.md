@@ -888,7 +888,7 @@ store's merge is a set union, which is the second reason the merge is a union ra
 | `HarnessError` | `SchemaCreateFailed` | The per-run schema cannot be created or migrated | No | Fails the suite. A dirty schema would surface as a primary-key violation mid-replay |
 | `HarnessError` | `SchemaDropFailed` | The per-run schema cannot be dropped afterwards | No | Fails the suite, naming the schema, so a leaked schema is reported rather than accumulated |
 | `HarnessError` | `InstanceSpawnFailed` | An instance does not report ready within its bound | No | Fails the suite, naming which of the two |
-| `HarnessError` | `InstanceShutdownFailed` | An instance does not exit | No | Fails the suite |
+| `HarnessError` | `InstanceShutdownFailed` | An instance does not exit within its bound | No | Fails the suite, naming which of the two |
 | `ConformanceError` | `MethodDiverged` | A port method behaves differently across the two targets, outside the one declared divergence | No | Fails the suite, naming the method and both targets |
 | `ConformanceError` | `SeamUnavailable` | A target cannot seed a corrupt profile or a write failure | No | Fails the suite. A degradation that cannot be provoked is not asserted, and a suite that skipped it would read as coverage |
 | `ConformanceError` | `CallerPropertyViolated` | An engine `save` was observed carrying less than the loaded set plus additions | No | Fails the suite. This is the property the durable `save`'s conditional conformance rests on, so it is asserted rather than cited |
