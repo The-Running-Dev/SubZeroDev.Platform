@@ -29,11 +29,12 @@ import { RawSchemaClient, TEST_CONNECTION_STRING, configurationFor } from "./sup
 const GOLDEN_PATH = fileURLToPath(new URL("./fixtures/golden-transcript.json", import.meta.url));
 const contract = loadPublishedContract();
 
-// REPLAY_FIXTURE mints one session (`create-session`) and one save (`save-game`); every other
-// step, including `resume-session`, addresses that same session id rather than minting another —
-// `resumeSession` only reads the record, it never writes one — and `load-game` reads the save back
-// rather than minting a second one.
-const EXPECTED_SESSIONS = 1;
+// REPLAY_FIXTURE mints two sessions and one save. `create-session` mints the first; every step
+// through `resume-session` addresses that same id rather than minting another (`resumeSession`
+// only reads the record, it never writes one). `load-game`, the final step, mints the second: the
+// engine's `loadGame` (game-engine's session store) always opens a fresh session id and persists it
+// to hold the loaded state, even though the fixture never addresses that second id afterward.
+const EXPECTED_SESSIONS = 2;
 const EXPECTED_SAVES = 1;
 
 function goldenTranscript(): Transcript {
