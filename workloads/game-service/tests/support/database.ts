@@ -12,6 +12,7 @@ import { Client, Pool } from "pg";
 import { randomBytes } from "node:crypto";
 import { migrateToHead, quoteIdentifier } from "../../src/migrations.js";
 import { BIGINT_VERSION_TYPES } from "../../src/store.js";
+import { DEFAULT_LIFECYCLE_BOUNDS } from "../../src/types.js";
 import type { DurableStoreConfiguration, LifecycleBounds, SchemaName, StoreConnection } from "../../src/types.js";
 
 export const TEST_CONNECTION_STRING =
@@ -19,11 +20,7 @@ export const TEST_CONNECTION_STRING =
 
 export function defaultBounds(overrides: Partial<LifecycleBounds> = {}): LifecycleBounds {
   return {
-    sessionIdleTtlSeconds: 2_592_000,
-    saveTtlSeconds: 31_536_000,
-    retentionHorizonSeconds: 31_536_000,
-    sweepIntervalSeconds: 3600,
-    sweepStatementTimeoutMs: 5000,
+    ...DEFAULT_LIFECYCLE_BOUNDS,
     ...overrides,
   };
 }

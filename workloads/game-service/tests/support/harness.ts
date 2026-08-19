@@ -145,3 +145,19 @@ export async function post(
 ): Promise<WireResponse> {
   return surface.handle(wireRequest(path, body, headers));
 }
+
+/** `post`'s counterpart for tests that need a real HTTP round trip — a spawned server on its own
+ *  socket, rather than a surface dispatched in-process. */
+export async function postJson(
+  base: string,
+  path: string,
+  body: unknown,
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const response = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return { status: response.status, json: text.length > 0 ? (JSON.parse(text) as Record<string, unknown>) : {} };
+}

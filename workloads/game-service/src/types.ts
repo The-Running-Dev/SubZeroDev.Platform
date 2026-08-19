@@ -246,6 +246,18 @@ export interface LifecycleBounds {
   readonly sweepStatementTimeoutMs: number;
 }
 
+/** Generous enough that a proof or test run is never bound by its own TTLs, and comfortably clear
+ *  of `ASSUMED_FORWARD_TIMEOUT_SECONDS` for the `retentionHorizonSeconds` check `compose()`
+ *  performs (`compose.ts`). The one set of "out of the way" bounds every non-production
+ *  `DurableStoreConfiguration` in this codebase is built from. */
+export const DEFAULT_LIFECYCLE_BOUNDS: LifecycleBounds = {
+  sessionIdleTtlSeconds: 2_592_000,
+  saveTtlSeconds: 31_536_000,
+  retentionHorizonSeconds: 31_536_000,
+  sweepIntervalSeconds: 3600,
+  sweepStatementTimeoutMs: 5000,
+};
+
 export interface DurableStoreConfiguration {
   readonly connection: StoreConnection;
   readonly bounds: LifecycleBounds;
@@ -467,3 +479,22 @@ export type ReplayError =
   | { readonly code: "Composition"; readonly cause: CompositionError }
   | { readonly code: "Shutdown"; readonly cause: ShutdownError }
   | { readonly code: "DumpRead"; readonly cause: DumpReadError };
+
+// ---------------------------------------------------------------------------- proof harness
+
+export interface WorkloadInstance {
+  readonly baseAddress: string;
+  shutdown(): Promise<Outcome<void, HarnessError>>;
+}
+
+export interface TwoInstanceOptions {
+  readonly connectionString: string;
+  readonly schema: SchemaName;
+  readonly readWritePauseMs: readonly [number, number];
+}
+
+export type HarnessError =
+  | { readonly code: "SchemaCreateFailed"; readonly detail: string }
+  | { readonly code: "SchemaDropFailed"; readonly schema: SchemaName; readonly detail: string }
+  | { readonly code: "InstanceSpawnFailed"; readonly instance: 0 | 1; readonly detail: string }
+  | { readonly code: "InstanceShutdownFailed"; readonly instance: 0 | 1; readonly detail: string };
