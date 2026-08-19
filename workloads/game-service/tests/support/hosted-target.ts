@@ -29,8 +29,10 @@ export interface SpawnedHostedTarget {
   readonly target: HostedTarget;
   readonly dumpPath: string;
   /** Only for a test that needs to abandon the process without a clean shutdown — every S5 test
-   *  goes through `target.shutdown()` instead, which is what writes the dump. */
-  forceKill(): void;
+   *  goes through `target.shutdown()` instead, which is what writes the dump. Resolves once the
+   *  process has actually exited, so a caller can safely act on shared state (a schema drop) right
+   *  after awaiting this. */
+  forceKill(): Promise<void>;
 }
 
 function freshDumpPath(): string {
@@ -179,8 +181,12 @@ export async function spawnHostedWorkload(
   return {
     target,
     dumpPath,
-    forceKill(): void {
+    async forceKill(): Promise<void> {
       if (!hasExited) child.kill("SIGKILL");
+      // Waits for the killed process's own DB connections to actually close before returning, so a
+      // caller that drops the schema right after (as `durable-replay.test.ts`'s `afterEach` does)
+      // never races a `DROP SCHEMA ... CASCADE` against a connection the kill hasn't yet released.
+      await exited;
     },
   };
 }

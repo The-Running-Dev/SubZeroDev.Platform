@@ -29,9 +29,11 @@ import { RawSchemaClient, TEST_CONNECTION_STRING, configurationFor } from "./sup
 const GOLDEN_PATH = fileURLToPath(new URL("./fixtures/golden-transcript.json", import.meta.url));
 const contract = loadPublishedContract();
 
-// REPLAY_FIXTURE mints two sessions — `create-session`, and `resume-session` minting a second —
-// and one save (`save-game`); `load-game` reads it back rather than minting a second one.
-const EXPECTED_SESSIONS = 2;
+// REPLAY_FIXTURE mints one session (`create-session`) and one save (`save-game`); every other
+// step, including `resume-session`, addresses that same session id rather than minting another —
+// `resumeSession` only reads the record, it never writes one — and `load-game` reads the save back
+// rather than minting a second one.
+const EXPECTED_SESSIONS = 1;
 const EXPECTED_SAVES = 1;
 
 function goldenTranscript(): Transcript {
@@ -42,7 +44,7 @@ const spawnedTargets: SpawnedHostedTarget[] = [];
 const schemasToDrop: RunSchema[] = [];
 
 afterEach(async () => {
-  for (const target of spawnedTargets.splice(0)) target.forceKill();
+  for (const target of spawnedTargets.splice(0)) await target.forceKill();
   for (const schema of schemasToDrop.splice(0)) await schema.drop();
 });
 
@@ -115,12 +117,15 @@ describe("S8.2, S8.4 — comparison A: the durable dump equals the in-process sn
       expect(durable.ok).toBe(true);
       if (!durable.ok) return;
 
+      // Runs before comparison A, not instead of it (`replay.ts`'s own note on `assertNonEmpty`):
+      // two empty ordered sets would compare byte-identical, so this is what stops a dump that
+      // read the wrong schema from passing comparison A vacuously.
+      const nonEmpty = assertNonEmpty(durable.value.serialization, EXPECTED_SESSIONS, EXPECTED_SAVES);
+      expect(nonEmpty.matched).toBe(true);
+
       const comparisonA = compareSerializations(inProcess.value.serialization, durable.value.serialization);
       expect(comparisonA.firstDivergence).toBeNull();
       expect(comparisonA.matched).toBe(true);
-
-      const nonEmpty = assertNonEmpty(durable.value.serialization, EXPECTED_SESSIONS, EXPECTED_SAVES);
-      expect(nonEmpty.matched).toBe(true);
     },
   );
 });

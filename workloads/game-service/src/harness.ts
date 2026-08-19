@@ -12,10 +12,9 @@
  * `createRunSchema` (S8) is the durable replay's own prerequisite, on the same footing: a per-run
  * schema, created and migrated to head here, dropped by the caller once its run is done.
  */
-import { Client } from "pg";
 import { randomBytes } from "node:crypto";
 import { startWorkload } from "./lifecycle.js";
-import { migrateToHead, quoteIdentifier } from "./migrations.js";
+import { dropSchemaByName, migrateToHead } from "./migrations.js";
 import { DEFAULT_LIFECYCLE_BOUNDS, err, ok } from "./types.js";
 import type {
   HarnessError,
@@ -27,10 +26,11 @@ import type {
   WorkloadInstance,
 } from "./types.js";
 
-// Same defaults `tests/support/database.ts` builds every non-production `StoreConnection` from —
-// a run schema is provisioning, not a load test, so nothing here is tuned.
-const RUN_SCHEMA_POOL_SIZE = 5;
-const RUN_SCHEMA_CONNECT_TIMEOUT_MS = 5000;
+// Same defaults `tests/support/database.ts` and `tests/support/hosted-entrypoint.ts` build every
+// non-production `StoreConnection` from — a run schema is provisioning, not a load test, so
+// nothing here is tuned. Exported so those two files import this pair instead of re-typing it.
+export const RUN_SCHEMA_POOL_SIZE = 5;
+export const RUN_SCHEMA_CONNECT_TIMEOUT_MS = 5000;
 
 let runSchemaCounter = 0;
 
@@ -53,16 +53,18 @@ export async function createRunSchema(connectionString: string): Promise<Outcome
 
   const migrated = await migrateToHead(connection);
   if (!migrated.ok) {
+    // `createSchema: true` (`migrations.ts`) issues its `CREATE SCHEMA IF NOT EXISTS` before the
+    // migration transaction, so a failure here can still leave a pristine, empty schema behind —
+    // best-effort cleanup, since there is no `RunSchema` handle to hand the caller for this path.
+    await dropSchemaByName(connectionString, name as unknown as string, RUN_SCHEMA_CONNECT_TIMEOUT_MS).catch(() => {});
     return err({ code: "SchemaCreateFailed", detail: JSON.stringify(migrated.error) });
   }
 
   return ok({
     name,
     async drop(): Promise<Outcome<void, HarnessError>> {
-      const client = new Client({ connectionString });
       try {
-        await client.connect();
-        await client.query(`drop schema if exists ${quoteIdentifier(name as unknown as string)} cascade`);
+        await dropSchemaByName(connectionString, name as unknown as string, RUN_SCHEMA_CONNECT_TIMEOUT_MS);
         return ok(undefined);
       } catch (error) {
         return err({
@@ -70,8 +72,6 @@ export async function createRunSchema(connectionString: string): Promise<Outcome
           schema: name,
           detail: error instanceof Error ? error.message : String(error),
         });
-      } finally {
-        await client.end().catch(() => {});
       }
     },
   });
