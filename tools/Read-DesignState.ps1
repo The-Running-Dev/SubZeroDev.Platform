@@ -322,7 +322,14 @@ function Read-DesignRecordFile {
             continue
         }
 
-        if ($currentProseField) { $proseBody.Add($line) }
+        if ($currentProseField) {
+            $proseBody.Add($line)
+        } elseif (-not [string]::IsNullOrWhiteSpace($line)) {
+            # An unrecognised or duplicate `## Field` header (above) leaves no field open to
+            # receive its body - those lines must still be reported, never silently absorbed,
+            # the same "never dropped" guarantee (I24) every other unmatched line gets.
+            $failures.Add((New-DesignStateFailure -Reason 'Unparseable' -Path $RelativePath -Line $lineNumber -Text $line))
+        }
     }
     Close-ProseSection
 

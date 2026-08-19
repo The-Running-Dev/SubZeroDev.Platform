@@ -62,6 +62,15 @@ function Format-IdList {
     ($Ids | Sort-Object -Unique | ForEach-Object { "``$_``" }) -join ', '
 }
 
+function Get-InvariantSortKey {
+    <# An id outside the I<digits> shape is a checker finding elsewhere (IdCollision's path
+       check, or simply a malformed record), not something -DryRun should crash over - it
+       sorts after every well-formed invariant instead of aborting the whole render. #>
+    param([string] $Id)
+    if ($Id -match '^I(\d+)$') { return [int]$Matches[1] }
+    [int]::MaxValue
+}
+
 function Get-UnitsProjectionContent {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
     $units = @($Records | Where-Object { $_.Kind -eq 'Unit' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object Id)
@@ -79,7 +88,7 @@ function Get-UnitsProjectionContent {
 
 function Get-BoundByProjectionContent {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
-    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { [int]($_.Id -replace '^I', '') })
+    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { Get-InvariantSortKey -Id $_.Id })
     $units = @($Records | Where-Object { $_.Kind -eq 'Unit' })
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('| Invariant | Bound by |')
@@ -147,7 +156,7 @@ function Get-QuestionAffectsProjectionContent {
 
 function Get-InvariantsProjectionContent {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
-    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { [int]($_.Id -replace '^I', '') })
+    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { Get-InvariantSortKey -Id $_.Id })
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('| | Statement | Owner | Enforcement | Evidence |')
     $lines.Add('|---|---|---|---|---|')
@@ -322,7 +331,10 @@ if ($MyInvocation.InvocationName -ne '.') {
         $result.Regions | ConvertTo-Json -Depth 6
     }
     foreach ($r in $result.Refusals) {
-        Write-Warning "Update-DesignProjection: refused '$($r.Id)' in $($r.Document): $($r.Reason) - $($r.Detail)"
+        # Write-Warning renders to the console host's stdout in pwsh's default host, which
+        # would land inside -DryRun's captured JSON stream. A refusal is diagnostic output,
+        # never part of the region payload, so it goes to the real OS stderr explicitly.
+        [Console]::Error.WriteLine("Update-DesignProjection: refused '$($r.Id)' in $($r.Document): $($r.Reason) - $($r.Detail)")
     }
 
     if ($result.Refusals.Count -gt 0) { exit 1 }

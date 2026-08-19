@@ -148,8 +148,13 @@ if (-not (Test-Path -LiteralPath $cachePath)) {
 }
 
 $existing = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json
-if ($existing.manifestHash -ceq $currentHash) {
-    [pscustomobject]@{ Status = 'Fresh'; ManifestHash = $currentHash; Generated = $existing.generated; Gates = @($existing.gates) }
+# @() wraps a bare $null into a one-element array holding null, not zero elements - a
+# corrupted or hand-edited "gates": null cache must not be handed back as a trustworthy
+# Fresh result. Filtering nulls out here means an empty or corrupted cache always falls
+# through to Stale, forcing rediscovery, the same as no cache at all.
+$cachedGates = @($existing.gates | Where-Object { $null -ne $_ })
+if ($existing.manifestHash -ceq $currentHash -and $cachedGates.Count -gt 0) {
+    [pscustomobject]@{ Status = 'Fresh'; ManifestHash = $currentHash; Generated = $existing.generated; Gates = $cachedGates }
 } else {
     [pscustomobject]@{ Status = 'Stale'; ManifestHash = $currentHash; Gates = @() }
 }

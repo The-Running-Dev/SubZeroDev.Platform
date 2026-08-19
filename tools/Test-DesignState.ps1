@@ -597,7 +597,10 @@ function Test-RecordIdCollision {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
 
     $findings = [System.Collections.Generic.List[object]]::new()
-    $byId = @{}
+    # Ids are taken literally (S4.7) - a default @{} is case-insensitive for string keys and
+    # would bucket 'unit/tools/Foo' with 'unit/tools/foo' as the same id. Ordinal comparison
+    # keeps case-distinct ids distinct here.
+    $byId = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
     foreach ($record in $Records) {
         if (-not $byId.ContainsKey($record.Id)) { $byId[$record.Id] = [System.Collections.Generic.List[object]]::new() }
         $byId[$record.Id].Add($record)
@@ -612,7 +615,7 @@ function Test-RecordIdCollision {
     foreach ($record in $Records) {
         $info = Get-DesignPathInfo -RelativeToState ($record.Path -replace '^design/state/', '')
         if (-not $info) { continue }
-        if ($info.PathId -ne $record.Id) {
+        if ($info.PathId -cne $record.Id) {
             $findings.Add((New-DesignFinding -Class 'IdCollision' -Subject $record.Id -Detail "record's own id disagrees with the id implied by its file path '$($record.Path)' (path implies '$($info.PathId)')" -Blocking $true))
         }
     }
@@ -767,22 +770,28 @@ function Invoke-Projector {
     if (-not (Test-Path -LiteralPath $projectorPath)) {
         return [pscustomobject]@{ Ran = $false; Detail = 'tools/Update-DesignProjection.ps1 does not exist'; Regions = @() }
     }
+    $exitCode = 0
     try {
         $raw = & pwsh -NoProfile -File $projectorPath -Path $RepoPath -DryRun 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            return [pscustomobject]@{ Ran = $false; Detail = "exited $LASTEXITCODE"; Regions = @() }
-        }
+        $exitCode = $LASTEXITCODE
     } catch {
         return [pscustomobject]@{ Ran = $false; Detail = $_.Exception.Message; Regions = @() }
     }
 
     $regions = @()
-    try {
-        if ($raw) {
+    if ($raw) {
+        try {
             $regions = @(($raw -join "`n") | ConvertFrom-Json)
+        } catch {
+            return [pscustomobject]@{ Ran = $false; Detail = "unparseable projector output: $($_.Exception.Message)"; Regions = @() }
         }
-    } catch {
-        return [pscustomobject]@{ Ran = $false; Detail = "unparseable projector output: $($_.Exception.Message)"; Regions = @() }
+    }
+
+    # Exit 1 with regions already recovered means "some regions were refused" (-DryRun still
+    # renders and prints every region that isn't) - those rendered regions remain usable for
+    # ProjectionStale. Only a nonzero exit with nothing recovered is a real failure.
+    if ($exitCode -ne 0 -and $regions.Count -eq 0) {
+        return [pscustomobject]@{ Ran = $false; Detail = "exited $exitCode with no usable output"; Regions = @() }
     }
 
     [pscustomobject]@{ Ran = $true; Detail = $null; Regions = $regions }
@@ -906,7 +915,9 @@ function Test-TrackerClasses {
         foreach ($ref in $workRefs) {
             $number = $ref.Scalars['Issue']
             if ([string]::IsNullOrWhiteSpace($number)) { continue }
-            $json = & gh issue view $number --json title, state 2>$null
+            $viewArgs = @('issue', 'view', $number, '--json', 'title,state')
+            if ($Repository) { $viewArgs += @('-R', $Repository) }
+            $json = & gh @viewArgs 2>$null
             if ($LASTEXITCODE -ne 0 -or -not $json) {
                 $couldNotEvaluate.Add((New-CouldNotEvaluate -Reason 'TrackerUnavailable' -Detail "could not read issue #$number for $($ref.Id)"))
                 continue
@@ -997,7 +1008,12 @@ function Invoke-DesignStateCheck {
     }
 
     $records = @($graph.Records)
-    $byId = @{}
+    # Ids are taken literally (S4.7); a default @{} is case-insensitive for string keys, which
+    # would resolve a mis-cased reference against a differently-cased record instead of
+    # flagging it. Ordinal comparison keeps case-distinct ids distinct. Still a [hashtable] -
+    # Test-UnresolvedId/Get-DesignClosure/Test-ClosureBudget all type their $ById parameter
+    # that way.
+    $byId = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
     foreach ($r in $records) {
         if (-not $byId.ContainsKey($r.Id)) { $byId[$r.Id] = $r }
     }
@@ -1042,8 +1058,16 @@ function Invoke-DesignStateCheck {
 
     if ($freeze) {
         foreach ($f in $blockingFindings) {
-            $finalReported.Add($f)
-            $downgraded++
+            # ClassListDisagreement is the checker's own vocabulary disagreeing with the
+            # contract document - not design/state/ content the freeze exists to let ride. A
+            # freeze that silenced this too could hide the tool's own correctness failing for
+            # the entire frozen window, exactly when nobody is reading design/ closely.
+            if ($f.Class -eq 'ClassListDisagreement') {
+                $finalFindings.Add($f)
+            } else {
+                $finalReported.Add($f)
+                $downgraded++
+            }
         }
     } else {
         foreach ($f in $blockingFindings) { $finalFindings.Add($f) }
