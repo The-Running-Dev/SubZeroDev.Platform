@@ -171,36 +171,42 @@ describe("S7.7 — shutdown() on both instances exits cleanly", () => {
 const HANGING_PAUSE_MS = 111;
 const EXITING_PAUSE_MS = 222;
 
-/** `spawnInstances` re-imported under a stubbed `startWorkload`. `vi.doMock` is deliberate rather
- *  than a hoisted `vi.mock`: the criteria above this one need the real lifecycle, and they share
- *  this file so that the README's single documented command (S7.6) runs the whole of S7. */
-async function spawnWithOneHangingShutdown(
-  hanging: 0 | 1,
-): Promise<Outcome<readonly [WorkloadInstanceUnderTest, WorkloadInstanceUnderTest], unknown>> {
+/** Stubs `../src/lifecycle.js`'s `startWorkload` so it resolves to a fake `WorkloadProcess` whose
+ *  `shutdown` is `buildShutdown(configuration)` — the one thing each S7.7 case below needs to vary.
+ *  `vi.doMock` is deliberate rather than a hoisted `vi.mock`: the criteria above this one need the
+ *  real lifecycle, and they share this file so that the README's single documented command (S7.6)
+ *  runs the whole of S7. */
+function mockLifecycleShutdown(buildShutdown: (configuration: WorkloadConfiguration) => WorkloadProcess["shutdown"]): void {
   vi.resetModules();
   vi.doMock("../src/lifecycle.js", async () => {
     const actual = await vi.importActual<typeof import("../src/lifecycle.js")>("../src/lifecycle.js");
     return {
       ...actual,
-      startWorkload: async (configuration: WorkloadConfiguration): Promise<Outcome<WorkloadProcess, StartupError>> => {
-        const hangs =
-          configuration.storage.kind === "durable" && configuration.storage.store.readWritePauseMs === HANGING_PAUSE_MS;
-        return {
-          ok: true,
-          value: {
-            listening: { host: "127.0.0.1", port: hangs ? 1 : 2 },
-            probes: {
-              liveness: () => ({ status: "healthy" }),
-              readiness: async () => ({ status: "healthy" }),
-            },
-            shutdown: () =>
-              hangs
-                ? new Promise<never>(() => {})
-                : Promise.resolve({ ok: true as const, value: undefined as void }),
+      startWorkload: async (configuration: WorkloadConfiguration): Promise<Outcome<WorkloadProcess, StartupError>> => ({
+        ok: true,
+        value: {
+          listening: { host: "127.0.0.1", port: 1 },
+          probes: {
+            liveness: () => ({ status: "healthy" }),
+            readiness: async () => ({ status: "healthy" }),
           },
-        };
-      },
+          shutdown: buildShutdown(configuration),
+        },
+      }),
     };
+  });
+}
+
+/** `spawnInstances` re-imported under `mockLifecycleShutdown`'s stub, with `hanging` selecting
+ *  which instance's `shutdown()` never settles. */
+async function spawnWithOneHangingShutdown(
+  hanging: 0 | 1,
+): Promise<Outcome<readonly [WorkloadInstanceUnderTest, WorkloadInstanceUnderTest], unknown>> {
+  mockLifecycleShutdown((configuration) => {
+    const hangs =
+      configuration.storage.kind === "durable" && configuration.storage.store.readWritePauseMs === HANGING_PAUSE_MS;
+    return () =>
+      hangs ? new Promise<never>(() => {}) : Promise.resolve({ ok: true as const, value: undefined as void });
   });
 
   const { spawnInstances: underTest } = await import("../src/harness.js");
@@ -223,12 +229,10 @@ describe("S7.7 — an instance that does not exit within its bound fails the har
   it(
     "reports InstanceShutdownFailed against the hung instance's own index, and not against its sibling",
     async () => {
-      // Both cases are driven concurrently: each waits out the same real shutdown bound, so
-      // overlapping them costs one bound rather than two.
-      const [zeroHangs, oneHangs] = await Promise.all([
-        spawnWithOneHangingShutdown(0),
-        spawnWithOneHangingShutdown(1),
-      ]);
+      // Spawning under the stub is near-instant (no real bound is waited on until shutdown()
+      // below), so the two cases are set up sequentially rather than raced.
+      const zeroHangs = await spawnWithOneHangingShutdown(0);
+      const oneHangs = await spawnWithOneHangingShutdown(1);
       if (!zeroHangs.ok || !oneHangs.ok) throw new Error("the stubbed spawn should have succeeded");
 
       const [hungZero, healthyOne] = zeroHangs.value;
@@ -263,24 +267,10 @@ describe("S7.7 — an instance that does not exit within its bound fails the har
   );
 
   it("reports InstanceShutdownFailed, named the same way, when the underlying shutdown resolves an error", async () => {
-    vi.resetModules();
-    vi.doMock("../src/lifecycle.js", async () => {
-      const actual = await vi.importActual<typeof import("../src/lifecycle.js")>("../src/lifecycle.js");
-      return {
-        ...actual,
-        startWorkload: async (): Promise<Outcome<WorkloadProcess, StartupError>> => ({
-          ok: true,
-          value: {
-            listening: { host: "127.0.0.1", port: 1 },
-            probes: {
-              liveness: () => ({ status: "healthy" }),
-              readiness: async () => ({ status: "healthy" }),
-            },
-            shutdown: async () => ({ ok: false as const, error: { code: "DumpWriteFailed" as const } }),
-          } as unknown as WorkloadProcess,
-        }),
-      };
-    });
+    mockLifecycleShutdown(() => async () => ({
+      ok: false as const,
+      error: { code: "DumpWriteFailed" as const, cause: { code: "DumpWriteFailed" as const, path: "/dev/null" } },
+    }));
 
     const { spawnInstances: underTest } = await import("../src/harness.js");
     const spawned = (await underTest(
@@ -315,7 +305,9 @@ const README_HEADING = "## Run the two-instance contention proof";
 function documentedCommands(readme: string): readonly string[] {
   const section = readme.slice(readme.indexOf(README_HEADING));
   if (!section.startsWith(README_HEADING)) throw new Error(`${README_PATH} has no "${README_HEADING}" section`);
-  const fence = /```bash\n([\s\S]*?)```/.exec(section.slice(0, section.indexOf("\n## ", README_HEADING.length)));
+  const nextHeading = section.indexOf("\n## ", README_HEADING.length);
+  const sectionEnd = nextHeading === -1 ? section.length : nextHeading;
+  const fence = /```bash\n([\s\S]*?)```/.exec(section.slice(0, sectionEnd));
   if (!fence?.[1]) throw new Error(`"${README_HEADING}" documents no bash block`);
   return fence[1]
     .split("\n")
@@ -334,19 +326,26 @@ describe("S7.5, S7.6 — the CI job runs the README's own documented commands, i
 
     let searchFrom = 0;
     for (const command of commands) {
-      // Matched as the whole of a line — either a line of a `run:` block scalar or the whole value
-      // of a single-line `run:` — so a command that merely appears as a prefix of a longer one does
-      // not satisfy the criterion's "verbatim".
+      // Matched at the start of a line — either a line of a `run:` block scalar or the value of a
+      // single-line `run:` — followed by whitespace or end of line, so a command that merely
+      // appears as a substring of an unrelated token does not satisfy the criterion's "verbatim",
+      // while a trailing flag or chained command on the same line still does.
       const literal = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const asOwnLine = new RegExp(`^[ \\t]*(?:run:[ \\t]*)?${literal}[ \\t]*$`, "m");
+      const asOwnLine = new RegExp(`^[ \\t]*(?:run:[ \\t]*)?${literal}(?:[ \\t]|$)`, "m");
       const found = asOwnLine.exec(workflow.slice(searchFrom));
       expect(found, `${WORKFLOW_PATH} does not run the documented command "${command}" after the one before it`)
         .not.toBeNull();
+      const matchIndex = searchFrom + (found?.index ?? 0);
+
+      // The README says "From `workloads/game-service`", so the step running THIS command must set
+      // that working directory itself — not merely have the string appear somewhere else in the file.
+      const stepStart = workflow.lastIndexOf("\n      - name:", matchIndex);
+      const step = workflow.slice(stepStart, matchIndex);
+      expect(step, `the step running "${command}" has no working-directory: workloads/game-service`).toContain(
+        "working-directory: workloads/game-service",
+      );
+
       searchFrom += (found?.index ?? 0) + (found?.[0].length ?? 0);
     }
-
-    // The README says "From `workloads/game-service`", so the job must run them from there too —
-    // the same command from the repository root is a different command.
-    expect(workflow).toContain("working-directory: workloads/game-service");
   });
 });
