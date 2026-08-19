@@ -90,7 +90,7 @@ public sealed class EdgeHostTests
             builder.UseEnvironment("Development");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", workload.BaseAddress);
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:00.300");
-            builder.UseSetting("GameEdge:LivenessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
         });
         using var client = factory.CreateClient();
 
@@ -112,7 +112,7 @@ public sealed class EdgeHostTests
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
-            builder.UseSetting("GameEdge:LivenessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
         });
 
         var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
@@ -155,7 +155,7 @@ public sealed class EdgeHostTests
             builder.UseEnvironment("Development");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", workloadBaseAddress.ToString());
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
-            builder.UseSetting("GameEdge:LivenessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
         });
 
     private static int FindClosedPort()

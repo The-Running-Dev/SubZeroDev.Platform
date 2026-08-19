@@ -44,11 +44,12 @@ ASPNETCORE_ENVIRONMENT=Production \
 
 Run from the built DLL's own directory, not the repository root — ASP.NET resolves
 `appsettings.json` against the process's working directory, and `ForwardTimeout` and
-`LivenessTimeout`'s defaults live only there.
+`ReadinessTimeout`'s defaults live only there.
 
 Liveness is `GET /health/live` and never touches the workload; readiness is `GET /health/ready`
-and probes the workload's own `/livez`. With the workload stopped, the edge stays up: liveness
-still answers `200`, readiness answers `503` naming the failed check.
+and probes the workload's own `/readyz` — so a workload that is alive but unable to serve (its
+store unreachable) makes the edge report not-ready too. With the workload stopped, the edge stays
+up: liveness still answers `200`, readiness answers `503` naming the failed check.
 
 ## Run the replay against each
 

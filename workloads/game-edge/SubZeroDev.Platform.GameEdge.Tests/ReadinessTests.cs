@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SubZeroDev.Platform.Abstractions;
@@ -8,19 +9,19 @@ using SubZeroDev.Platform.Testing;
 
 namespace SubZeroDev.Platform.GameEdge.Tests;
 
-/// <summary>S7.3, S7.4, S7.7 — the readiness check's own shape, its reaction to the probe, and what
-/// it does and does not touch on the workload.</summary>
+/// <summary>S7.3, S7.4, S7.7, S10.1, S10.2, S10.5 — the readiness check's own shape, its reaction to
+/// the probe, and what it does and does not touch on the workload.</summary>
 public sealed class ReadinessTests
 {
     private static GameEdgeOptions Options(Uri workloadBaseAddress) => new()
     {
         WorkloadBaseAddress = workloadBaseAddress,
         ForwardTimeout = TimeSpan.FromSeconds(5),
-        LivenessTimeout = TimeSpan.FromSeconds(2),
+        ReadinessTimeout = TimeSpan.FromSeconds(2),
     };
 
     [Fact]
-    public void S7_4_declares_readiness_required_and_touches_an_external_dependency()
+    public void S7_4_S10_4_declares_readiness_required_and_touches_an_external_dependency()
     {
         var check = new GameWorkloadReadinessCheck(
             new StubProbe(Result<EdgeError>.Success()),
@@ -66,7 +67,7 @@ public sealed class ReadinessTests
     }
 
     [Fact]
-    public async Task S7_7_readiness_probes_only_liveness_and_never_reaches_a_game_operation()
+    public async Task S7_7_S10_5_readiness_probes_only_readiness_and_never_reaches_a_game_operation()
     {
         await using var workload = await FakeWorkload.StartAsync();
         var options = Options(new Uri(workload.BaseAddress));
@@ -88,7 +89,77 @@ public sealed class ReadinessTests
             Assert.Equal(HealthStatus.Healthy, report.Aggregate);
         }
 
+        // S10.5: no game operation ever reached the workload, so its session count — which only
+        // moves in response to a recorded request — stayed zero across every one of those probes.
         Assert.Empty(workload.Requests);
+    }
+
+    [Fact]
+    public async Task S10_1_reports_unhealthy_when_the_workloads_readiness_is_down_even_if_its_liveness_is_up()
+    {
+        await using var workload = await FakeWorkload.StartAsync();
+        workload.LivenessStatus = 200;
+        workload.ReadinessStatus = 503;
+        var options = Options(new Uri(workload.BaseAddress));
+
+        var check = new GameWorkloadReadinessCheck(
+            new GameWorkloadProbe(new StubHttpClientFactory(workload.BaseAddress), options),
+            options);
+
+        var result = await check.CheckAsync(CancellationToken.None);
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+    }
+
+    [Fact]
+    public async Task S10_1_reports_healthy_when_the_workloads_readiness_is_up_even_if_its_liveness_is_down()
+    {
+        await using var workload = await FakeWorkload.StartAsync();
+        workload.LivenessStatus = 503;
+        workload.ReadinessStatus = 200;
+        var options = Options(new Uri(workload.BaseAddress));
+
+        var check = new GameWorkloadReadinessCheck(
+            new GameWorkloadProbe(new StubHttpClientFactory(workload.BaseAddress), options),
+            options);
+
+        var result = await check.CheckAsync(CancellationToken.None);
+
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public async Task S10_2_reports_healthy_when_the_workload_is_fully_healthy()
+    {
+        await using var workload = await FakeWorkload.StartAsync();
+        workload.LivenessStatus = 200;
+        workload.ReadinessStatus = 200;
+        var options = Options(new Uri(workload.BaseAddress));
+
+        var check = new GameWorkloadReadinessCheck(
+            new GameWorkloadProbe(new StubHttpClientFactory(workload.BaseAddress), options),
+            options);
+
+        var result = await check.CheckAsync(CancellationToken.None);
+
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public void S10_3_GameEdgeOptions_has_no_LivenessTimeout_member_and_ReadinessTimeout_governs_the_probe()
+    {
+        var members = typeof(GameEdgeOptions).GetProperties().Select(property => property.Name);
+
+        Assert.DoesNotContain("LivenessTimeout", members);
+        Assert.Contains("ReadinessTimeout", members);
+    }
+
+    /// <summary>A minimal <see cref="IHttpClientFactory"/> for tests exercising the real
+    /// <see cref="GameWorkloadProbe"/> against a <see cref="FakeWorkload"/>, without composing the
+    /// DI container S7.7/S10.5 already do.</summary>
+    private sealed class StubHttpClientFactory(string baseAddress) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new() { BaseAddress = new Uri(baseAddress) };
     }
 
     /// <summary>Not a real check — exists only to demonstrate the registry rule
