@@ -1,0 +1,89 @@
+{
+  "gates": [
+    {
+      "name": "game-service \u2014 npm test (full vitest suite)",
+      "status": "Passed",
+      "detail": "17 test files passed, 1 skipped; 156 tests passed, 1 skipped. Includes tests/contention-two-instances.test.ts (7 passed), the file this branch changes."
+    },
+    {
+      "name": "game-service \u2014 tsc --noEmit",
+      "status": "Passed",
+      "detail": "Exit 0, no diagnostics."
+    },
+    {
+      "name": "dotnet build -c Release",
+      "status": "Passed",
+      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). 25 projects."
+    },
+    {
+      "name": "dotnet test -c Release",
+      "status": "Failed",
+      "detail": "Failed!  - Failed: 1, Passed: 264, Skipped: 0, Total: 265 - SubZeroDev.Platform.Tests.dll (net10.0)\nPassed!  - Failed: 0, Passed: 15, Skipped: 0, Total: 15 - SubZeroDev.Platform.GameEdge.Tests.dll (net10.0)\n\n[xUnit.net] SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [FAIL]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\n\nCause is the host, not the branch: BoundOnAnyNonLoopbackAddress calls Dns.GetHostAddresses(Dns.GetHostName()); this machine's hostname is 'mac' and does not resolve ('ping: cannot resolve mac: Unknown host'), so the call throws instead of returning a list. Untouched by this branch, whose diff is one TypeScript test file and one Markdown table row."
+    },
+    {
+      "name": "Pester \u2014 Invoke-Pester -Path tools",
+      "status": "Passed",
+      "detail": "Tests Passed: 95, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0 across 6 test files."
+    },
+    {
+      "name": "PowerShell parse-check (all *.ps1)",
+      "status": "Passed",
+      "detail": "All .ps1 files parsed cleanly via [System.Management.Automation.Language.Parser]::ParseFile."
+    },
+    {
+      "name": "build/Test-SliceStatusMarkers.ps1",
+      "status": "Passed",
+      "detail": "Slice status markers consistent across 11 slice(s) in design/30-slices.md."
+    },
+    {
+      "name": "build/Test-WorkloadIsolation.ps1",
+      "status": "Passed",
+      "detail": "No project under src/ or samples/ references workloads/ (25 project files checked)."
+    },
+    {
+      "name": "build/Test-PackageManifests.ps1",
+      "status": "Passed",
+      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6."
+    },
+    {
+      "name": "build/Test-SampleRoundTrip.ps1",
+      "status": "Passed",
+      "detail": "Both roles served their probes; the outbox row survived process death and dispatched after restart."
+    },
+    {
+      "name": "build/Test-Documentation.ps1",
+      "status": "Passed",
+      "detail": "Documentation checks passed across 43 Markdown file(s), with 2 warning(s) (pre-existing 'Json' vs 'JSON' terminology warnings in design/d3/90-decisions.md)."
+    },
+    {
+      "name": "site \u2014 npm run build",
+      "status": "Passed",
+      "detail": "Built in 327ms; roadmap and index chunks emitted, no errors."
+    },
+    {
+      "name": "git diff --check",
+      "status": "Passed",
+      "detail": "No whitespace errors; working tree clean apart from .claude/gates.json written by this run."
+    },
+    {
+      "name": "build/Test-ApiReference.ps1",
+      "status": "DidNotRun",
+      "reason": "docfx is not on PATH on this host. The script throws before doing any work: 'docfx is not on PATH. Install it with: dotnet tool install --global docfx'. The corresponding CI check on the pull request is where this answer comes from."
+    },
+    {
+      "name": "docs.ps1 -BuildOnly (production docs build)",
+      "status": "DidNotRun",
+      "reason": "Not attempted: it depends on the docfx API reference step above, which cannot run on this host without docfx. Docker itself is available, so Docker is not the blocker."
+    },
+    {
+      "name": "build/Test-DocumentationArtifact.ps1",
+      "status": "DidNotRun",
+      "reason": "No such script in this repository \u2014 build/ ships ConvertTo-DocumentationHomepage, Test-ApiReference, Test-Documentation, Test-PackageManifests, Test-SampleRoundTrip, Test-SliceStatusMarkers and Test-WorkloadIsolation only. Listed because verify.md names it as a shape to look for."
+    },
+    {
+      "name": "CI steps flagged '# verification: true'",
+      "status": "DidNotRun",
+      "reason": "None exist. No step in any of the four workflow files carries the flag, so flag-based discovery returned zero gates and every entry above is an optional non-CI-gated check run on judgement instead. This is the already-open issue #131."
+    }
+  ]
+}
