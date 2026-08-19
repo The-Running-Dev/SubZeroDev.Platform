@@ -6,6 +6,7 @@
  * schema of its own, so this is the one entry point an operator's own shell reaches.
  */
 import { migrateToHead } from "../src/migrations.js";
+import { RUN_SCHEMA_CONNECT_TIMEOUT_MS, RUN_SCHEMA_POOL_SIZE } from "../src/harness.js";
 import type { SchemaName } from "../src/types.js";
 
 const connectionString =
@@ -14,8 +15,8 @@ const schema = process.env["GAME_SERVICE_DB_SCHEMA"];
 
 const outcome = await migrateToHead({
   connectionString,
-  poolSize: 5,
-  connectTimeoutMs: 5000,
+  poolSize: RUN_SCHEMA_POOL_SIZE,
+  connectTimeoutMs: RUN_SCHEMA_CONNECT_TIMEOUT_MS,
   schema: schema ? (schema as unknown as SchemaName) : null,
 });
 
@@ -24,4 +25,4 @@ if (!outcome.ok) {
   process.exit(1);
 }
 
-process.stdout.write(`migrated ${schema ?? "public"} to head\n`);
+process.stdout.write(`migrated ${schema || "public"} to head\n`);

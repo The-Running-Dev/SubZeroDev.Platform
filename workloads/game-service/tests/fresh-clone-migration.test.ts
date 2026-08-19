@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 
 import { createTestSchema, RawSchemaClient, TEST_CONNECTION_STRING } from "./support/database.js";
+import type { TestSchema } from "./support/database.js";
 import { dropSchemaByName } from "../src/migrations.js";
 import type { SchemaName } from "../src/types.js";
 
@@ -38,26 +39,31 @@ async function appliedMigrations(schema: SchemaName): Promise<string[]> {
 describe("S11.3 — the documented migration command reaches the same head other callers reach", () => {
   it("applies the identical migration set the test harness's own migrateToHead reaches", async () => {
     const documentedSchema = freshSchemaName();
+    let reference: TestSchema | null = null;
 
-    await execFileAsync(process.execPath, [TSX_CLI, MIGRATE_SCRIPT], {
-      cwd: REPO_ROOT,
-      env: {
-        ...process.env,
-        GAME_SERVICE_DB_CONNECTION_STRING: TEST_CONNECTION_STRING,
-        GAME_SERVICE_DB_SCHEMA: String(documentedSchema),
-      },
-    });
-
-    const reference = await createTestSchema();
     try {
+      await execFileAsync(process.execPath, [TSX_CLI, MIGRATE_SCRIPT], {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          GAME_SERVICE_DB_CONNECTION_STRING: TEST_CONNECTION_STRING,
+          GAME_SERVICE_DB_SCHEMA: String(documentedSchema),
+        },
+      });
+
+      reference = await createTestSchema();
       const documented = await appliedMigrations(documentedSchema);
       const referenceApplied = await appliedMigrations(reference.schema);
 
       expect(documented.length).toBeGreaterThan(0);
       expect(documented).toEqual(referenceApplied);
     } finally {
-      await reference.drop();
-      await dropSchemaByName(TEST_CONNECTION_STRING, String(documentedSchema), 5000);
+      // Isolated so one failed drop doesn't suppress the other — `dropSchemaByName` is `drop
+      // schema if exists`, so it's safe to call even when `documentedSchema` was never created.
+      await Promise.allSettled([
+        dropSchemaByName(TEST_CONNECTION_STRING, String(documentedSchema), 5000),
+        reference?.drop(),
+      ]);
     }
   });
 });
