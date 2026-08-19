@@ -22,16 +22,16 @@ rewritten in place, so a citation to a number resolves to exactly one statement.
 > the design's proofs depends on it, and the design's Open question 11 records that the vocabulary is
 > the engine's to ratify.
 
-> **One count in [`10-design.md`](10-design.md) does not survive the source, and this contract takes
-> the source's side.** Open question 3 calls `SessionStoreErrorCode` *"a closed union of seven
+> **One count in [`10-design.md`](10-design.md) did not survive the source, and this contract took
+> the source's side.** Open question 3 called `SessionStoreErrorCode` *"a closed union of seven
 > members"* and `concurrent_modification` *"an eighth member"*; the decision log of 2026-08-12
-> repeats it. Read at `0.6.1` on the engine's `main` (`src/engine/src/core/session/types.ts`), the
-> union has **eight** members — `unknown_session`, `unknown_save`, `storage_failure`,
-> `unknown_campaign`, `invalid_state`, `unknown_kind`, `save_requires_migration`, `migration_failed`
-> — so `concurrent_modification` is the **ninth**. Nothing else in the design turns on the count: the
-> widening carries a `core.reason.*` message obligation whichever ordinal it takes, which is the part
-> the design was actually establishing. The correction belongs to `/design`, not here; this contract
-> declares nine members and says why.
+> repeats it, and keeps it, because a dated entry records what was believed on its date. The union
+> before the widening carried **eight** members — `unknown_session`, `unknown_save`,
+> `storage_failure`, `unknown_campaign`, `invalid_state`, `unknown_kind`, `save_requires_migration`,
+> `migration_failed` — so `concurrent_modification` is the **ninth**, which is what the engine ships
+> at `0.8.0`. Nothing else in the design turned on the count: the widening carries a `core.reason.*`
+> message obligation whichever ordinal it takes, which is the part the design was actually
+> establishing. `10-design.md` was corrected to say so on 2026-08-19.
 
 ---
 
@@ -192,7 +192,7 @@ export interface ProfileAchievementRow {
 }
 ```
 
-**`ProjectionAudience` is the engine's own type** — `"player" | "ai"` at `0.6.1` — imported, never
+**`ProjectionAudience` is the engine's own type** — `"player" | "ai"` at `0.8.0` — imported, never
 re-declared. The column carries the constraint, so a value the engine does not name cannot be stored.
 
 **`profileId` is `string | null` on the row and an *absent key* on the record.** The engine's
@@ -206,7 +206,7 @@ cannot read it, cannot supply it, and cannot be made to depend on it, which is t
 makes the lock the store's and the design's adjudication load-bearing rather than stylistic.
 
 **`SaveRow` carries no `version`.** `saveGame` mints a fresh `saveId` on every call and writes
-through `writeSave` only — verified at `0.6.1` — so a save row has exactly one writer for its whole
+through `writeSave` only — verified at `0.8.0` — so a save row has exactly one writer for its whole
 life and an optimistic lock would guard nothing.
 
 ### Workload — the guarded write and the lifecycle classification
@@ -431,7 +431,10 @@ export function runPortConformance(
 ```
 
 **One assertion set, run over two targets**, which is what makes it a conformance suite rather than a
-second set of unit tests. It covers `sessions.get/put`, `saves.get/put` and `profiles.load/save`; the
+second set of unit tests. It covers `sessions.get/put`, `saves.get/put`, `saves.delete` and
+`profiles.load/save` — **seven methods, not six**: the engine's `SaveRecordStore` declares `delete`
+beside `get` and `put`, and no operation in the contract's table reaches it, which is precisely why
+it needs the suite. The suite also covers the
 three profile outcomes; the set-union merge including the divergence the durable `save` deliberately
 carries; and the round trip that keeps host metadata out of game state.
 
@@ -444,16 +447,16 @@ session write survives it.
 **The reference target's `persistence` is the workload's own map-backed implementation, not the
 engine's.** The engine exports the `SessionPersistence` *type* and no implementation of it — its
 in-memory session store keeps private `Map`s and treats `persistence` as an optional host port
-(verified at `0.6.1`). `createInMemoryProfileStore` *is* an engine-supplied `ProfileStore`, so half
+(verified at `0.8.0`). `createInMemoryProfileStore` *is* an engine-supplied `ProfileStore`, so half
 of the design's *"the engine's in-memory implementations"* is literal and half resolves to G1's
 `inMemoryPersistence()` ([Additions](#additions-requiring-a-decision-log-entry), item 2).
 
-**The answer the suite returns is "yes for five methods, conditionally for the sixth."**
+**The answer the suite returns is "yes for six methods, conditionally for the seventh."**
 `profiles.save` is the one method where the two implementations are asserted to *differ* — the
 durable store's merge is additive where the engine's replaces — so for that method the shared
 assertion cannot establish conformance. What stands in its place is a property of the engine's
 *caller*, asserted directly: every `save` the engine issues carries the loaded set plus additions,
-read off `upsertAchievements` at `0.6.1`.
+read off `upsertAchievements` at `0.8.0`.
 
 ---
 
@@ -563,9 +566,13 @@ file and brought to head by `node-pg-migrate` under its own advisory lock.
 
 ### Schema bookkeeping and the rule for every migration after the first
 
-One migrations table, owned by `node-pg-migrate` and not by this contract. Each migration applies in
-its own transaction under the tool's advisory lock, so two instances starting together cannot both
-apply one migration and no partial schema survives a failure.
+One migrations table, owned by `node-pg-migrate` and not by this contract. A migration run applies in
+a single transaction — the whole run, not one transaction per migration — under the tool's advisory
+lock, so two instances starting together cannot both apply one migration and no partial schema
+survives a failure. **The run-wide transaction is the stronger of the two shapes**: a multi-migration run that
+fails halfway leaves nothing applied, where per-migration transactions would leave the earlier ones
+in place. It is what the tool does by default and what this workload takes; the constraint that
+matters is the outcome, not the granularity.
 
 **Every migration after the first must be backward compatible with the previously deployed code**,
 because two instances share one store and are not restarted atomically. Additive columns with
@@ -820,7 +827,7 @@ serve.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `Unreachable` | The runner cannot connect | **Yes** | Startup retries with backoff, reporting not ready. No partial schema exists — each migration applies in its own transaction |
+| `Unreachable` | The runner cannot connect | **Yes** | Startup retries with backoff, reporting not ready. No partial schema exists — the whole run applies in one transaction |
 | `LockTimeout` | The advisory lock is not acquired within the runner's bound | **Yes** | As above. The other instance is mid-migration; the next attempt finds the schema at head |
 | `MigrationFailed` | A migration's SQL fails | **No** | The process stays up and not-ready, naming the migration. A retry re-runs the same SQL against the same schema |
 
@@ -872,11 +879,21 @@ The engine's `ProfileWarningCode` members are used unchanged and none is invente
 | Code | Raised when | Response | State left behind |
 |---|---|---|---|
 | `profile_missing` | No `profile` row for the id | The game action's `200`, carrying the warning and an empty achievement set | None |
-| `profile_corrupt` | `format_version` is not `1`, or an achievement row fails shape validation | As above | The row, untouched |
+| `profile_corrupt` | `format_version` is not `1`, an achievement row fails shape validation, **or the read itself fails** | As above | The row, untouched |
 | `profile_write_failed` | The adapter caught its own driver error on a profile write — **it returns `ok: false` and does not throw** | The game action's `200`, carrying the warning | **The session write, which already committed and is not rolled back** |
 
 **None of the three ever produces a broken game**, and all three are asserted by the port-conformance
 suite — the only proof that reaches these ports at all.
+
+**`profile_corrupt` absorbs a store outage, and that is forced by the port rather than chosen.**
+`ProfileStore.load` returns a `ProfileLoadResult` and has no error channel, so a connectivity failure
+and a malformed row arrive at the same return statement with nothing to tell them apart. The adapter
+answers the warning the port has. **The cost, stated where it can be found next to the other one:**
+while the store is degraded, every profile read reports `profile_corrupt` and an empty achievement
+set on a `200`, so a player's achievements read as absent for the length of the outage — the same
+silent shape the `format_version` two-step rule exists to prevent, arrived at by a different route.
+It self-corrects, because the merge is a set union and the next successful action re-derives what was
+earned; nothing is lost, only unreported. Readiness is what surfaces the underlying condition.
 
 **No retry on `profile_write_failed`.** Achievements are re-derivable on the next action because the
 store's merge is a set union, which is the second reason the merge is a union rather than a replace.
@@ -953,7 +970,7 @@ these continue from 48.
 | 86 | Four perturbations are asserted red: the guard removed produces two `200`s; an artificially stale version is rejected; an unreachable store produces `503` and not `409`; and a dump pointed at an empty schema fails comparison A | Proof harness |
 | 87 | `readWritePauseMs` is `0` in every configuration but a perturbed harness's, and a test asserts the seam is inert at `0` | Store, Proof harness |
 | 88 | After a conflict, the loser's action has left no trace in the winner's state; merging is never attempted | Proof harness |
-| 89 | The port-conformance suite runs the same assertions over both targets and covers all six port methods; `profiles.save` is the one declared divergence and its conditional conformance rests on an asserted property of the engine's caller | Proof harness |
+| 89 | The port-conformance suite runs the same assertions over both targets and covers all seven port methods — `sessions.get/put`, `saves.get/put/delete`, `profiles.load/save`; `profiles.save` is the one declared divergence and its conditional conformance rests on an asserted property of the engine's caller | Proof harness |
 | 90 | The two instances are anonymous: nothing keys on which instance served a request, and no instance identity is modelled, stored or logged as an identifier | Composition, Proof harness |
 | 91 | Both instances bind loopback, and the two-instance harness introduces no public exposure | Proof harness |
 | 92 | The edge's readiness check probes the workload's readiness endpoint; it plays no game operation and creates no session | Edge |
@@ -1072,7 +1089,7 @@ small and named here rather than left for a reader to discover in the code.
    gave `RecordIdSource`.
 2. **The conformance suite's reference target is the workload's map-backed `SessionPersistence`, not
    the engine's.** The design says "the engine's in-memory implementations"; the engine exports the
-   `SessionPersistence` type and no implementation of it (verified at `0.6.1`). `ProfileStore` is
+   `SessionPersistence` type and no implementation of it (verified at `0.8.0`). `ProfileStore` is
    literal — `createInMemoryProfileStore` is the engine's. The suite is unchanged in value: G1's
    map-backed adapter is the implementation the byte-identity proof already trusts.
 3. **`ComposedWorkload.close()` and `DurableStore.close()`.** The design gives the sweep a timer and
