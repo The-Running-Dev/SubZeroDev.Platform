@@ -346,7 +346,7 @@ export type StoreError =
   | { readonly code: "IsolationLevelUnsupported"; readonly isolationLevel: string }
   | { readonly code: "StatementFailed" }
   | { readonly code: "IdCollision" }
-  | { readonly code: "RowUndeserializable" };
+  | { readonly code: "RowUndeserializable"; readonly column: string };
 
 /** `20-contract.md`, "Migrations — `MigrationError`". Same footing as `StoreError` above. */
 export type MigrationError =

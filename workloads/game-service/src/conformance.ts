@@ -113,6 +113,43 @@ async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome
   return ok(undefined);
 }
 
+// ---------------------------------------------------------------------------- S13.6: saves.delete, the seventh method
+
+async function checkSavesDelete(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+  const saveId = freshId("conformance-delete-save");
+  const saveRecord: StoredSaveRecord = {
+    saveId,
+    campaignId: FIXTURE_CAMPAIGN_ID,
+    blob: JSON.stringify({ marker: freshId("delete-blob") }),
+    savedAtSeq: 1,
+    audience: "player",
+  };
+  await target.persistence.saves.put(saveRecord);
+  await target.persistence.saves.delete(saveId);
+  const afterDelete = await target.persistence.saves.get(saveId);
+  if (afterDelete !== undefined) {
+    return err({
+      code: "MethodDiverged",
+      method: "saves.delete",
+      target: target.label,
+      detail: "a save put and then deleted was still returned by saves.get",
+    });
+  }
+
+  // Deleting an absent id is a no-op that fails neither.
+  try {
+    await target.persistence.saves.delete(freshId("conformance-never-existed-save"));
+  } catch {
+    return err({
+      code: "MethodDiverged",
+      method: "saves.delete",
+      target: target.label,
+      detail: "deleting an absent save id failed instead of being a no-op",
+    });
+  }
+  return ok(undefined);
+}
+
 // ---------------------------------------------------------------------------- S9.2, S9.3: profiles.load outcomes
 
 async function seed(
@@ -483,6 +520,7 @@ async function checkEngineCallerProperty(target: ConformanceTarget): Promise<Out
 export async function runPortConformance(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
   const steps: readonly (() => Promise<Outcome<void, ConformanceError>>)[] = [
     () => checkSessionsAndSaves(target),
+    () => checkSavesDelete(target),
     () => checkProfileMissing(target),
     () => checkProfileCorrupt(target),
     () => checkProfileWriteFailure(target),

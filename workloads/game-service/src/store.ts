@@ -341,6 +341,42 @@ interface RawSessionRow {
   readonly expires_at: Date;
 }
 
+/** S13.1: a `select` succeeding is not itself proof the row is usable — a column whose SQL type
+ *  was widened after the migration ran can hold a value the declared TypeScript type cannot. This
+ *  is checked once, here, rather than trusted at each of `sessions.get`'s two call sites (the
+ *  direct read and the row this module hands back to the engine), and named by column rather than
+ *  reported as one opaque failure, per `StoreError.RowUndeserializable`'s contract. */
+function firstInvalidSessionColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["tenant_id"] !== "string") return "tenant_id";
+  if (typeof raw["session_id"] !== "string") return "session_id";
+  if (typeof raw["blob"] !== "string") return "blob";
+  if (typeof raw["audience"] !== "string") return "audience";
+  if (typeof raw["attempt_counter"] !== "number") return "attempt_counter";
+  if (typeof raw["replay_compatible"] !== "boolean") return "replay_compatible";
+  if (typeof raw["engine_created_at"] !== "string") return "engine_created_at";
+  if (typeof raw["engine_updated_at"] !== "string") return "engine_updated_at";
+  if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
+  if (typeof raw["version"] !== "bigint") return "version";
+  if (typeof raw["engine_version"] !== "string") return "engine_version";
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
+  if (!(raw["row_updated_at"] instanceof Date)) return "row_updated_at";
+  if (!(raw["expires_at"] instanceof Date)) return "expires_at";
+  return null;
+}
+
+/** Same reasoning as `firstInvalidSessionColumn`, scoped to the columns `toStoredSaveRecord`
+ *  actually maps — `save`'s guarded-write-free shape (no `version`) means this is the only place a
+ *  malformed `save` row can be caught (S13.2). */
+function firstInvalidSaveColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["save_id"] !== "string") return "save_id";
+  if (typeof raw["campaign_id"] !== "string") return "campaign_id";
+  if (typeof raw["blob"] !== "string") return "blob";
+  if (typeof raw["saved_at_seq"] !== "number") return "saved_at_seq";
+  if (typeof raw["audience"] !== "string") return "audience";
+  if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
+  return null;
+}
+
 function toSessionRow(raw: RawSessionRow): SessionRow {
   return {
     tenantId: raw.tenant_id as TenantId,
@@ -525,7 +561,12 @@ export async function openDurableStore(
             throw new Error("durable session read failed", { cause: classifyStoreError(error, "other") });
           }
           if (result.rows.length === 0) return undefined;
-          const row = toSessionRow(result.rows[0] as RawSessionRow);
+          const rawRow = result.rows[0] as Record<string, unknown>;
+          const invalidColumn = firstInvalidSessionColumn(rawRow);
+          if (invalidColumn !== null) {
+            throw new Error("durable session read failed", { cause: { code: "RowUndeserializable", column: invalidColumn } });
+          }
+          const row = toSessionRow(rawRow as unknown as RawSessionRow);
           versions.record(sessionId, row.version);
           return toStoredSessionRecord(row);
         },
@@ -567,7 +608,12 @@ export async function openDurableStore(
             throw new Error("durable save read failed", { cause: classifyStoreError(error, "other") });
           }
           if (result.rows.length === 0) return undefined;
-          return toStoredSaveRecord(result.rows[0] as RawSaveRow);
+          const rawRow = result.rows[0] as Record<string, unknown>;
+          const invalidColumn = firstInvalidSaveColumn(rawRow);
+          if (invalidColumn !== null) {
+            throw new Error("durable save read failed", { cause: { code: "RowUndeserializable", column: invalidColumn } });
+          }
+          return toStoredSaveRecord(rawRow as unknown as RawSaveRow);
         },
         put: async (record: StoredSaveRecord): Promise<void> => {
           const input: SaveRowInput = {
@@ -619,6 +665,18 @@ export async function openDurableStore(
         return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_missing", profileId }] };
       }
       if (rows.rows[0]?.format_version !== 1) {
+        return corruptProfileResult(profileId);
+      }
+      // S13.3: `ProfileStore.load` has no error channel, so a `profile_achievement` column widened
+      // to hold a value its declared type cannot is folded into `profile_corrupt` here rather than
+      // thrown as `StoreError.RowUndeserializable` — that variant exists for ports (`sessions.get`,
+      // `saves.get`) that do have one.
+      const shapeInvalid = rows.rows.some(
+        (row) =>
+          (row.campaign_id !== null && typeof row.campaign_id !== "string") ||
+          (row.achievement_id !== null && typeof row.achievement_id !== "string"),
+      );
+      if (shapeInvalid) {
         return corruptProfileResult(profileId);
       }
       const achievements = rows.rows
@@ -719,15 +777,31 @@ export async function openDurableStore(
       }
     },
     async sweepOnce(): Promise<Outcome<SweepResult, StoreError>> {
+      // S13.4/S13.5: run under `LifecycleBounds.sweepStatementTimeoutMs`, on one checked-out
+      // client rather than `pool.query`'s own auto-acquire-per-call — a `set local` inside a
+      // transaction is session state, so both deletes must share the connection it was set on.
+      // The `finally` release is what keeps a timed-out tick from holding a connection past its
+      // own failure — with the pool sized to one, a serving request right after must still succeed.
       const statements = sweepStatements(tenantId, bounds.retentionHorizonSeconds);
+      // `pool.connect()` itself is inside the `try`: a connect failure (the store unreachable, the
+      // exact condition this tick is most likely to hit) must classify and return, on the same
+      // footing as every statement failure below — not escape uncaught, which would also silently
+      // stop `compose.ts`'s recursive `scheduleSweep()` from ever being called again (S4.9,
+      // invariant 63).
+      let client: PoolClient | undefined;
       try {
-        const [sessions, saves] = await Promise.all([
-          pool.query(statements.sessions.text, statements.sessions.values as unknown[]),
-          pool.query(statements.saves.text, statements.saves.values as unknown[]),
-        ]);
+        client = await pool.connect();
+        await client.query("begin");
+        await client.query(`set local statement_timeout = ${Math.trunc(bounds.sweepStatementTimeoutMs)}`);
+        const sessions = await client.query(statements.sessions.text, statements.sessions.values as unknown[]);
+        const saves = await client.query(statements.saves.text, statements.saves.values as unknown[]);
+        await client.query("commit");
         return ok({ sessionsRemoved: sessions.rowCount ?? 0, savesRemoved: saves.rowCount ?? 0 });
       } catch (error) {
+        if (client) await client.query("rollback").catch(() => {});
         return err(classifyStoreError(error, "other"));
+      } finally {
+        client?.release();
       }
     },
     async close(): Promise<void> {

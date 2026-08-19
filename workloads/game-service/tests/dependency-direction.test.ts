@@ -203,6 +203,50 @@ describe("S6.8 — the MCP surface's module graph does not reach StoreSerializat
   });
 });
 
+/**
+ * S13.7 — invariant 77 grows a second forbidden target: "neither surface's module graph reaches
+ * `StoreSerializationHandle` **or Store**". `Store` here is the module (`store.ts`), not a single
+ * named export of it — Store's whole public surface (`openDurableStore`, `DurableStore`'s
+ * construction, the statement builders) is the boundary either surface must never cross, on the
+ * same footing as `pathsUnderHarnessOrTests`' file-identity check below rather than `reachesTarget`'s
+ * identifier-based one.
+ */
+const STORE_MODULE = resolve(SRC_ROOT, "store.ts");
+
+function reachesModule(entryFile: string, moduleFile: string): boolean {
+  const visited = new Set<string>();
+  const stack = [resolve(entryFile)];
+
+  while (stack.length > 0) {
+    const file = stack.pop()!;
+    if (file === moduleFile) return true;
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    const source = parse(file);
+    for (const specifier of localSpecifiers(source)) {
+      stack.push(resolveRelative(file, specifier));
+    }
+  }
+  return false;
+}
+
+describe("S13.7 — neither surface's module graph reaches Store", () => {
+  it("the HTTP surface's module graph does not reach store.ts", () => {
+    expect(reachesModule(resolve(SRC_ROOT, "http-surface.ts"), STORE_MODULE)).toBe(false);
+  });
+
+  it("the MCP surface's module graph does not reach store.ts", () => {
+    expect(reachesModule(resolve(SRC_ROOT, "mcp-surface.ts"), STORE_MODULE)).toBe(false);
+  });
+
+  it("the perturbation: a fixture importing store.ts is itself caught by the same check", () => {
+    // Asserted rather than assumed (S13.7's own "the perturbation is asserted, not the passing
+    // state alone") — a fixture file that does the one thing the two checks above must catch.
+    expect(reachesModule(resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/imports-store-fixture.ts"), STORE_MODULE)).toBe(true);
+  });
+});
+
 /** The fresh-clone migration entry point (`scripts/migrate.ts`) is the one caller of
  *  `migrateToHead` an operator's own shell reaches — the design's dependency graph ends "nothing
  *  depends on a harness" (`design/10-design.md`), and a script an operator runs that transitively
