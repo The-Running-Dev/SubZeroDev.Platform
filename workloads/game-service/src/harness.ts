@@ -15,7 +15,7 @@
 import { randomBytes } from "node:crypto";
 import { startWorkload } from "./lifecycle.js";
 import { dropSchemaByName, migrateToHead } from "./migrations.js";
-import { DEFAULT_LIFECYCLE_BOUNDS, err, ok } from "./types.js";
+import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE, err, ok } from "./types.js";
 import type {
   HarnessError,
   Outcome,
@@ -25,12 +25,6 @@ import type {
   TwoInstanceOptions,
   WorkloadInstance,
 } from "./types.js";
-
-// Same defaults `tests/support/database.ts` and `tests/support/hosted-entrypoint.ts` build every
-// non-production `StoreConnection` from — a run schema is provisioning, not a load test, so
-// nothing here is tuned. Exported so those two files import this pair instead of re-typing it.
-export const RUN_SCHEMA_POOL_SIZE = 5;
-export const RUN_SCHEMA_CONNECT_TIMEOUT_MS = 5000;
 
 let runSchemaCounter = 0;
 
@@ -46,8 +40,8 @@ export async function createRunSchema(connectionString: string): Promise<Outcome
   const name = freshRunSchemaName();
   const connection: StoreConnection = {
     connectionString,
-    poolSize: RUN_SCHEMA_POOL_SIZE,
-    connectTimeoutMs: RUN_SCHEMA_CONNECT_TIMEOUT_MS,
+    poolSize: DEFAULT_STORE_POOL_SIZE,
+    connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
     schema: name,
   };
 
@@ -56,7 +50,7 @@ export async function createRunSchema(connectionString: string): Promise<Outcome
     // `createSchema: true` (`migrations.ts`) issues its `CREATE SCHEMA IF NOT EXISTS` before the
     // migration transaction, so a failure here can still leave a pristine, empty schema behind —
     // best-effort cleanup, since there is no `RunSchema` handle to hand the caller for this path.
-    await dropSchemaByName(connectionString, name as unknown as string, RUN_SCHEMA_CONNECT_TIMEOUT_MS).catch(() => {});
+    await dropSchemaByName(connectionString, name as unknown as string, DEFAULT_STORE_CONNECT_TIMEOUT_MS).catch(() => {});
     return err({ code: "SchemaCreateFailed", detail: JSON.stringify(migrated.error) });
   }
 
@@ -64,7 +58,7 @@ export async function createRunSchema(connectionString: string): Promise<Outcome
     name,
     async drop(): Promise<Outcome<void, HarnessError>> {
       try {
-        await dropSchemaByName(connectionString, name as unknown as string, RUN_SCHEMA_CONNECT_TIMEOUT_MS);
+        await dropSchemaByName(connectionString, name as unknown as string, DEFAULT_STORE_CONNECT_TIMEOUT_MS);
         return ok(undefined);
       } catch (error) {
         return err({

@@ -15,9 +15,8 @@
  * durable replay's own requirement that no TTL can elapse mid-run (S8.4) — so there is no env var
  * for it.
  */
-import { RUN_SCHEMA_CONNECT_TIMEOUT_MS, RUN_SCHEMA_POOL_SIZE } from "../../src/harness.js";
 import { startWorkload } from "../../src/lifecycle.js";
-import { DEFAULT_LIFECYCLE_BOUNDS } from "../../src/types.js";
+import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE } from "../../src/types.js";
 import type { SchemaName, StorageProfile, WorkloadConfiguration } from "../../src/types.js";
 
 function storageProfile(): StorageProfile {
@@ -36,8 +35,8 @@ function storageProfile(): StorageProfile {
     store: {
       connection: {
         connectionString,
-        poolSize: RUN_SCHEMA_POOL_SIZE,
-        connectTimeoutMs: RUN_SCHEMA_CONNECT_TIMEOUT_MS,
+        poolSize: DEFAULT_STORE_POOL_SIZE,
+        connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
         schema: schema as SchemaName,
       },
       bounds: DEFAULT_LIFECYCLE_BOUNDS,

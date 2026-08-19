@@ -13,11 +13,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+const SCRIPTS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../scripts");
 const TARGET_NAME = "StoreSerializationHandle";
 
 function resolveRelative(fromFile: string, specifier: string): string {
@@ -199,5 +200,43 @@ describe("S4.9 — the HTTP surface's module graph does not reach StoreSerializa
 describe("S6.8 — the MCP surface's module graph does not reach StoreSerializationHandle", () => {
   it("names no import of StoreSerializationHandle anywhere in its transitive module graph", () => {
     expect(reachesTarget(resolve(SRC_ROOT, "mcp-surface.ts"), TARGET_NAME)).toBe(false);
+  });
+});
+
+/** The fresh-clone migration entry point (`scripts/migrate.ts`) is the one caller of
+ *  `migrateToHead` an operator's own shell reaches — the design's dependency graph ends "nothing
+ *  depends on a harness" (`design/10-design.md`), and a script an operator runs that transitively
+ *  imports test support or the proof harness (`src/harness.ts`) contradicts that even though
+ *  nothing observes it at runtime (`design/90-decisions.md`, S12). Walks the same transitive
+ *  closure of local imports the checks above do, this time reporting every visited file — the
+ *  entry file itself excepted — that resolves under `tests/` or is `src/harness.ts`. */
+function pathsUnderHarnessOrTests(entryFile: string): string[] {
+  const entry = resolve(entryFile);
+  const harnessFile = resolve(SRC_ROOT, "harness.ts");
+  const visited = new Set<string>();
+  const stack = [entry];
+  const offenders: string[] = [];
+
+  while (stack.length > 0) {
+    const file = stack.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    if (file !== entry && (file.includes(`${sep}tests${sep}`) || file === harnessFile)) {
+      offenders.push(file);
+      continue;
+    }
+
+    const source = parse(file);
+    for (const specifier of localSpecifiers(source)) {
+      stack.push(resolveRelative(file, specifier));
+    }
+  }
+  return offenders;
+}
+
+describe("S12.8 — the documented migration script's module graph names nothing under tests/ or the proof harness", () => {
+  it("reaches neither a tests/ file nor src/harness.ts from scripts/migrate.ts", () => {
+    expect(pathsUnderHarnessOrTests(resolve(SCRIPTS_ROOT, "migrate.ts"))).toEqual([]);
   });
 });

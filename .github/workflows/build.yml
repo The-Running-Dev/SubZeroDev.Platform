@@ -197,6 +197,31 @@ jobs:
           GAME_SERVICE_DB_SCHEMA: ci_documented_migrate
         run: npm run migrate
 
+      # S12.11: the README's own documented durable-start command, run here rather than a private
+      # equivalent — if it stops existing or stops reaching a serving, ready instance, this step is
+      # what fails. Targets its own schema, migrated by the process itself rather than by the step
+      # above, so this proves the self-migrating start path specifically.
+      - name: Start the workload against the durable store, the documented way
+        working-directory: workloads/game-service
+        env:
+          GAME_SERVICE_PORT: "8081"
+          GAME_SERVICE_STORAGE: durable
+          GAME_SERVICE_DB_CONNECTION_STRING: postgresql://game_service:game_service@127.0.0.1:5432/game_service
+          GAME_SERVICE_DB_SCHEMA: ci_documented_durable_start
+        run: |
+          set -e
+          npm start > /tmp/durable-workload.log 2>&1 &
+          DURABLE_WORKLOAD_PID=$!
+
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8081/readyz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8081/readyz
+          echo
+
+          kill "$DURABLE_WORKLOAD_PID" || true
+
       # S11.1/S11.2: the README's own documented commands, run here rather than a private
       # equivalent — if either stops existing or stops reproducing its proof, this step is what
       # fails.

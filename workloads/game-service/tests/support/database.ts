@@ -12,10 +12,9 @@
  */
 import { Client, Pool } from "pg";
 import { randomBytes } from "node:crypto";
-import { RUN_SCHEMA_CONNECT_TIMEOUT_MS, RUN_SCHEMA_POOL_SIZE } from "../../src/harness.js";
 import { dropSchemaByName, migrateToHead, quoteIdentifier } from "../../src/migrations.js";
 import { BIGINT_VERSION_TYPES } from "../../src/store.js";
-import { DEFAULT_LIFECYCLE_BOUNDS } from "../../src/types.js";
+import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE } from "../../src/types.js";
 import type { DurableStoreConfiguration, LifecycleBounds, SchemaName, StoreConnection } from "../../src/types.js";
 
 export const TEST_CONNECTION_STRING =
@@ -31,8 +30,8 @@ export function defaultBounds(overrides: Partial<LifecycleBounds> = {}): Lifecyc
 export function connectionFor(schema: SchemaName, overrides: Partial<StoreConnection> = {}): StoreConnection {
   return {
     connectionString: TEST_CONNECTION_STRING,
-    poolSize: RUN_SCHEMA_POOL_SIZE,
-    connectTimeoutMs: RUN_SCHEMA_CONNECT_TIMEOUT_MS,
+    poolSize: DEFAULT_STORE_POOL_SIZE,
+    connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
     schema,
     ...overrides,
   };
@@ -94,7 +93,7 @@ export async function createTestSchema(): Promise<TestSchema> {
     schema,
     connection,
     async drop(): Promise<void> {
-      await dropSchemaByName(TEST_CONNECTION_STRING, schema as unknown as string, RUN_SCHEMA_CONNECT_TIMEOUT_MS);
+      await dropSchemaByName(TEST_CONNECTION_STRING, schema as unknown as string, DEFAULT_STORE_CONNECT_TIMEOUT_MS);
     },
   };
 }

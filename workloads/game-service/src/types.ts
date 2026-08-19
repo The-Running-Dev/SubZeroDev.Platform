@@ -247,17 +247,30 @@ export interface LifecycleBounds {
   readonly sweepStatementTimeoutMs: number;
 }
 
-/** Generous enough that a proof or test run is never bound by its own TTLs, and comfortably clear
- *  of `ASSUMED_FORWARD_TIMEOUT_SECONDS` for the `retentionHorizonSeconds` check `compose()`
- *  performs (`compose.ts`). The one set of "out of the way" bounds every non-production
- *  `DurableStoreConfiguration` in this codebase is built from. */
+/** The production defaults — 30 days, 365 days, 30 days — and the one set of bounds every
+ *  `DurableStoreConfiguration` in this codebase is built from, proof and test runs included, so
+ *  a run is never bound by its own TTLs without also being the values `main.ts`'s durable profile
+ *  ships. Comfortably clear of `ASSUMED_FORWARD_TIMEOUT_SECONDS` for the `retentionHorizonSeconds`
+ *  check `compose()` performs (`compose.ts`). The retention horizon deliberately does not equal
+ *  the save TTL (`design/90-decisions.md`, S12) — retention is how long a swept-past row's id
+ *  stops being distinguishable from one that never existed, not how long a save is kept. */
 export const DEFAULT_LIFECYCLE_BOUNDS: LifecycleBounds = {
   sessionIdleTtlSeconds: 2_592_000,
   saveTtlSeconds: 31_536_000,
-  retentionHorizonSeconds: 31_536_000,
+  retentionHorizonSeconds: 2_592_000,
   sweepIntervalSeconds: 3600,
   sweepStatementTimeoutMs: 5000,
 };
+
+/** The stated, un-tuned pool size and connect timeout every `StoreConnection` this workload
+ *  builds uses — the proof harness's own run-scoped schemas (`harness.ts`'s `createRunSchema`),
+ *  the fresh-clone migration entry point (`scripts/migrate.ts`), and the durable process entry
+ *  point (`main.ts`) alike. One number moved here, once, rather than duplicated at each of those
+ *  three module boundaries — `design/90-decisions.md`, S12: `scripts/migrate.ts` reaching into
+ *  the proof harness for these was the dependency direction that contradicted "nothing depends on
+ *  a harness". */
+export const DEFAULT_STORE_POOL_SIZE = 5;
+export const DEFAULT_STORE_CONNECT_TIMEOUT_MS = 5000;
 
 export interface DurableStoreConfiguration {
   readonly connection: StoreConnection;
