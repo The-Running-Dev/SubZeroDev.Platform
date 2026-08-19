@@ -3,12 +3,12 @@ description: Reconcile the kit into every SubZeroDev.* repository, unattended. U
 argument-hint: [repo name[,repo name...]]
 ---
 
-<!-- companion:start -->
+<!-- companion:declared:start -->
 **Per-repo companion:** `.claude/commands/install-all-local.md`. Read it now, if it exists — an absent,
 empty, or frontmatter-only file is no companion, and this file then stands alone.
 It may override: `extra-steps`, `tightened-authorization`. It may never override anything in
 [`.claude/COMPANIONS.md`](../COMPANIONS.md) § *Never*, which is also where these categories are defined.
-<!-- companion:end -->
+<!-- companion:declared:end -->
 
 Run `INSTALL.md`'s reconciliation against every sibling repository, in one unattended pass. **$1**, if given, is an explicit ordered list of repo names (comma-separated) — only those run, in that order. Bare, it discovers every `SubZeroDev.*` sibling of this kit and runs them alphabetically.
 

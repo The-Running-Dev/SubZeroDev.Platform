@@ -2,12 +2,12 @@
 description: Discover this repository's gates, run them, and report honestly what did and did not run
 ---
 
-<!-- companion:start -->
+<!-- companion:declared:start -->
 **Per-repo companion:** `.claude/commands/verify-local.md`. Read it now, if it exists — an absent,
 empty, or frontmatter-only file is no companion, and this file then stands alone.
 It may override: `vocabulary`, `extra-steps`, `gate-commands`. It may never override anything in
 [`.claude/COMPANIONS.md`](../COMPANIONS.md) § *Never*, which is also where these categories are defined.
-<!-- companion:end -->
+<!-- companion:declared:end -->
 
 Run the checks this repository actually has, and report the result without softening it.
 
@@ -45,10 +45,21 @@ their local equivalents:
 |---|---|
 | `Parse-check PowerShell scripts` | Parse every `*.ps1` with `[System.Management.Automation.Language.Parser]::ParseFile`, as the step does |
 | `Run Pester tests` | `Invoke-Pester -Path tools -Output Detailed -PassThru` |
+| `Validate the core/companion split` | `./tools/Test-Companion.ps1` |
+| `Check the design state against the tree` | `./tools/Test-DesignState.ps1` |
 
 A repository can gain, lose, or rename flagged steps over time — re-derive this table from
-the workflow files rather than trusting a memorized list; the two rows above describe this
+the workflow files rather than trusting a memorized list; the four rows above describe this
 repository's steps as of this writing, not a fixed schema.
+
+**Two of those steps exit 2 as well as 0 and 1, and 2 is not a failure — it is the third
+list.** `Test-Companion.ps1` and `Test-DesignState.ps1` both distinguish *ran and found
+something* from *could not run at all*, and the exit code is how they say which: 0 is `Passed`,
+1 is `Failed`, and **2 is `DidNotRun`, with the script's own could-not-evaluate reasons as the
+`reason`**. Folding 2 into `Failed` loses the distinction the three lists exist for; folding it
+into `Passed` is the substitution this whole command exists to prevent. Either way CI is red —
+the workflow fails the step on 1 and 2 alike — and that is a separate question from which list
+the gate belongs in here.
 
 Then look for anything else the repository ships that is not CI-gated. These are optional —
 worth running and worth naming if run, but their absence from CI means they never enter the
@@ -88,6 +99,10 @@ Did not run:      <gate> — <why: tool missing, Docker down, no such script>
   point of discovering gates by flag instead of by looking: a flagged step cannot be
   silently absent from the report the way a gate nobody thought to search for could be.
   Cross-check the list you are about to write against the flags you found before finishing.
+- **A gate that reported *could not evaluate* is named in the third list, never the first.**
+  `Test-DesignState.ps1` exiting 2 means the design state was not read — an absent state set,
+  an unparseable record, a projector that would not run, an unauthenticated `gh`. Its
+  `reason` is the script's own could-not-evaluate output, quoted, not a paraphrase.
 - **Quote failures.** Paste the failing output into the artifact's `detail` field. A summary of a failure is a claim about a failure — `Test-VerifyReport.ps1` rejects a `detail` too short to plausibly be pasted output.
 - **Never write "all checks pass"** unless every discovered gate is in the first list. If anything is in the third list, the honest sentence names it: *"the three that ran passed; the documentation build did not run because Docker is unavailable."*
 - **A gate that cannot run locally is not a gate you may report on.** Say so, and say that the corresponding CI check on the pull request is where the answer will come from.

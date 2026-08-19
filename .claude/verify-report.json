@@ -1,84 +1,54 @@
 {
   "gates": [
     {
-      "name": "Flagged CI gates (# verification: true)",
-      "status": "DidNotRun",
-      "reason": "No step in .github/workflows/*.yml carries the '# verification: true' comment, and .github/workflows/verify.yml — the file verify.md's own translation table names — does not exist in this repository. The flagged-gate set is empty, so the discovery mechanism contributed nothing and every gate below was found by the optional, non-CI-declared route instead."
-    },
-    {
       "name": "git diff --check",
       "status": "Passed",
-      "detail": "Exit 0 on the branch worktree — no whitespace errors and no trailing double-space line breaks in the three changed files."
+      "detail": "No whitespace errors reported; command exited 0 with no output."
+    },
+    {
+      "name": "dotnet build (SubZeroDev.Platform.slnx, Release)",
+      "status": "Passed",
+      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). Time Elapsed 00:01:05.45"
+    },
+    {
+      "name": "dotnet test (SubZeroDev.Platform.slnx, Release)",
+      "status": "Failed",
+      "detail": "Total tests: 265, Passed: 264, Failed: 1. Failing test: SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else\nError Message:\n System.Net.Sockets.SocketException : nodename nor servname provided, or not known\nStack Trace:\n   at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in WorkerProbeTests.cs:line 88\nThe test resolves this machine's own hostname via DNS to find a non-loopback address to bind against; that lookup fails on this local network/sandbox (no local DNS resolution for the hostname), unrelated to S13's changes."
+    },
+    {
+      "name": "Pester tests (tools/*.Tests.ps1)",
+      "status": "Passed",
+      "detail": "Invoke-Pester -Path tools -Output Detailed -PassThru: 7 files run (Measure-Session, Sync-Kit, Test-Companion, Test-DesignDrift, Test-VerifyReport, Test-WriteSurface, Wait-PullRequestCheck.Tests.ps1). Tests Passed: 95, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0."
     },
     {
       "name": "build/Test-SliceStatusMarkers.ps1",
       "status": "Passed",
-      "detail": "Slice status markers consistent across 11 slice(s) in 'design/30-slices.md'. Note for the reader: this gate checks internal consistency only (at most one 'in progress', no 'shipped' after a 'queued'), so it passes over a ledger that reads S3 'in progress' and S4-S11 'queued' while all eleven have merged."
+      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md."
     },
     {
       "name": "build/Test-Documentation.ps1",
       "status": "Passed",
-      "detail": "Documentation checks passed across 43 Markdown file(s), with 2 warning(s). Both warnings are pre-existing terminology hits in design/d3/90-decisions.md (archived effort), lines 1138 and 1141: \"Use 'JSON' instead of 'Json'\"."
+      "detail": "design/d3/90-decisions.md:1138:66 [Warning] Terminology: Use 'JSON' instead of 'Json'.\ndesign/d3/90-decisions.md:1141:948 [Warning] Terminology: Use 'JSON' instead of 'Json'.\nDocumentation checks passed across 43 Markdown file(s), with 2 warning(s). Exit code 0."
     },
     {
-      "name": "build/Test-WorkloadIsolation.ps1",
+      "name": "workloads/game-service: npm run typecheck",
       "status": "Passed",
-      "detail": "No project under src/ or samples/ references workloads/ (25 project file(s) checked) — invariant 95."
+      "detail": "> @subzerodev/game-service@0.1.0 typecheck\n> tsc --noEmit\nCompleted with no type errors and no output."
     },
     {
-      "name": "build/Test-PackageManifests.ps1",
-      "status": "Passed",
-      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Six .nupkg packed successfully; NuGet emitted 'missing a readme' informational notices, which the script does not treat as failures."
-    },
-    {
-      "name": "build/Test-SampleRoundTrip.ps1",
-      "status": "Passed",
-      "detail": "Both roles served their probes. The outbox row survived process death and dispatched order 92e15087-b6bd-4326-8b11-db8c1f2051a7 after restart."
-    },
-    {
-      "name": "build/Test-ApiReference.ps1",
+      "name": "CI-flagged gates (# verification: true)",
       "status": "DidNotRun",
-      "reason": "Tool missing. The script threw at build/Test-ApiReference.ps1:65 — \"docfx is not on PATH. Install it with: dotnet tool install --global docfx\". docfx is not installed on this machine, so the API-reference check has no answer here; the corresponding CI check on the pull request is where it comes from."
+      "reason": "No workflow step in .github/workflows/*.yml carries a '# verification: true' comment above its 'name:' line (grep -rn 'verification: true' .github/workflows/*.yml returned no matches) -- this repository currently declares no gates through that mechanism, so none could be discovered or run by flag."
     },
     {
-      "name": "tools/Test-DesignDrift.ps1",
-      "status": "Passed",
-      "detail": "Slices compared: 11. Findings: 0. Could not evaluate: 0. No drift."
+      "name": "workloads/game-service: full npm test suite (npx vitest run, incl. contention/durable-replay/conformance)",
+      "status": "DidNotRun",
+      "reason": "Not a CI-flagged gate. Reproducing it matches build.yml's game-service job: build the .NET edge, install a pinned OpenTelemetry Collector binary, start the workload and edge processes, bring up docker-compose's Postgres, run the migration, and run ~8 vitest suites against that live stack. Out of scope for this local pass given the time budget; the corresponding CI job on the pull request (build.yml / game-service) is where this suite's answer comes from."
     },
     {
-      "name": "PowerShell parse-check (all *.ps1, excluding node_modules/bin/obj)",
-      "status": "Passed",
-      "detail": "Every *.ps1 parsed with [System.Management.Automation.Language.Parser]::ParseFile — parse errors: 0."
-    },
-    {
-      "name": "Invoke-Pester -Path tools",
-      "status": "Passed",
-      "detail": "Tests Passed: 95, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0 across 6 files (Sync-Kit, Test-Companion, Test-DesignDrift, Test-VerifyReport, Test-WriteSurface, Wait-PullRequestCheck). Measure-Session.Tests.ps1 was not picked up by that discovery run and was run separately: Tests Passed: 15, Failed: 0. 110 tests across all 7 files, none failing."
-    },
-    {
-      "name": "dotnet build SubZeroDev.Platform.slnx --configuration Release",
-      "status": "Passed",
-      "detail": "Build succeeded. 0 Warning(s). 0 Error(s). Time Elapsed 00:00:10.31."
-    },
-    {
-      "name": "dotnet test SubZeroDev.Platform.slnx --configuration Release --no-build",
-      "status": "Failed",
-      "detail": "Failed!  - Failed: 1, Passed: 264, Skipped: 0, Total: 265 - SubZeroDev.Platform.Tests.dll (net10.0). Passed! - Failed: 0, Passed: 19, Total: 19 - SubZeroDev.Platform.GameEdge.Tests.dll (net10.0).\n\nThe one failure is WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else:\n  System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n     at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n     at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n     at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\n\nThe test resolves this machine's own hostname to find a non-loopback address to probe against; DNS resolution of the host name fails on this Mac. This pull request changes three Markdown files under design/ and no C#, so the failure is not attributable to the diff — but it ran, it failed, and it is reported as failed rather than explained away. CI is where the same test's real answer comes from."
-    },
-    {
-      "name": "workloads/game-service — npm run typecheck",
-      "status": "Passed",
-      "detail": "tsc --noEmit completed with exit 0 and no diagnostics."
-    },
-    {
-      "name": "workloads/game-service — npx vitest run (full suite, against the compose-provisioned PostgreSQL)",
-      "status": "Passed",
-      "detail": "Test Files 19 passed | 1 skipped (20). Tests 164 passed | 1 skipped (165). Duration 23.46s. The skipped file is tests/trace-evidence.test.ts, guarded by describe.skipIf(!process.env[\"OTEL_COLLECTOR_BIN\"]) — the OpenTelemetry Collector binary that build.yml's game-service job installs is not present on this machine, so that one test did not run here."
-    },
-    {
-      "name": "./docs.ps1 -BuildOnly",
-      "status": "Passed",
-      "detail": "Built 'gameoflife-docs'. (build-only). Docker was available and running, so this gate did run rather than being skipped for want of it."
+      "name": "site/: npm run check (docs status-page site) and docs.ps1 -BuildOnly (combined documentation build)",
+      "status": "DidNotRun",
+      "reason": "docs.ps1 needs Docker (per the discovery table) and runs inside the published docs-template container image (ghcr.io/the-running-dev/docs-template:latest) with node_modules and PowerShell preinstalled, the same as docs-ci.yml's 'verify' job -- not reproduced locally in this pass. The corresponding CI check (Docs CI / Verify Documentation Build) on the pull request is where this build's answer comes from."
     }
   ]
 }

@@ -216,6 +216,31 @@ function validateStorageConfiguration(storage: StorageProfile): Outcome<void, Co
   return ok(undefined);
 }
 
+/**
+ * S13.8/S13.9 — the seam `SessionPersistence`, `ProfileStore` and `LifecycleProbe` are composed
+ * behind (`20-contract.md`: "the lifecycle probe is composed behind the same seam `SessionPersistence`
+ * and `ProfileStore` are"; invariant 74). G2 applies no decorator — `IDENTITY_STORAGE_DECORATOR` is
+ * the only one ever passed — but every one of the three ports this workload builds, for both storage
+ * profiles, passes through this one function on its way to a caller, so a future authorization
+ * decorator (G3) wraps all three by construction rather than by remembering to extend a two-port
+ * wrapper to a third. Exported so S13.8/S13.9 can assert the structural claim directly, with a
+ * counting decorator standing in for G3's real one, without needing `compose()`'s own fixed
+ * signature to grow a parameter the contract does not carry.
+ */
+export interface StorageSeam {
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  readonly lifecycle: LifecycleProbe;
+}
+
+export type StorageDecorator = (seam: StorageSeam) => StorageSeam;
+
+export const IDENTITY_STORAGE_DECORATOR: StorageDecorator = (seam) => seam;
+
+export function composeStorageSeam(seam: StorageSeam, decorate: StorageDecorator = IDENTITY_STORAGE_DECORATOR): StorageSeam {
+  return decorate(seam);
+}
+
 export async function compose(
   configuration: WorkloadConfiguration,
   contract: ContractPackage,
@@ -248,25 +273,30 @@ export async function compose(
   });
 
   if (configuration.storage.kind === "in-memory") {
-    const { persistence, sessions, saves } = inMemoryPersistence();
-
-    const store: SessionStore = createSessionLayer({
-      engine,
-      registry: registry.value,
-      persistence,
-      profiles: createInMemoryProfileStore(),
-      ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
-    });
-
-    const stores: StoreProvider = { forRequest: () => store };
+    const { persistence: rawPersistence, sessions, saves } = inMemoryPersistence();
 
     // The no-op probe: every id classifies `absent`, so `unknown_session`/`unknown_save` pass
     // through Dispatch verbatim and Dispatch carries no branch on which store was composed
     // (`20-contract.md`, "Composition — workload").
-    const lifecycle: LifecycleProbe = {
+    const rawLifecycle: LifecycleProbe = {
       session: async () => ok("absent"),
       save: async () => ok("absent"),
     };
+
+    // S13.9: the in-memory configuration's no-op probe is composed behind the same seam as its
+    // persistence and profiles, so invariant 74 is not a durable-only property.
+    const seam = composeStorageSeam({ persistence: rawPersistence, profiles: createInMemoryProfileStore(), lifecycle: rawLifecycle });
+
+    const store: SessionStore = createSessionLayer({
+      engine,
+      registry: registry.value,
+      persistence: seam.persistence,
+      profiles: seam.profiles,
+      ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
+    });
+
+    const stores: StoreProvider = { forRequest: () => store };
+    const lifecycle = seam.lifecycle;
 
     const serialization: StoreSerializationHandle = {
       async snapshot(): Promise<StoreSerializationSnapshot> {
@@ -406,20 +436,10 @@ export async function compose(
     ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() }
     : null;
 
-  const stores: StoreProvider = {
-    forRequest(): SessionStore {
-      const active = durableStore;
-      return createSessionLayer({
-        engine,
-        registry: registry.value,
-        persistence: active ? active.persistenceForRequest() : unavailablePersistence(),
-        profiles: active ? active.profiles : unavailableProfiles(),
-        ...(replaySources ?? {}),
-      });
-    },
-  };
-
-  const lifecycle: LifecycleProbe = {
+  // S13.8: the lifecycle probe is composed behind the same seam `SessionPersistence` and
+  // `ProfileStore` are — the identical `composeStorageSeam` function, on the identical (identity,
+  // in G2) decorator, at both call sites below.
+  const rawLifecycle: LifecycleProbe = {
     session: (sessionId: string) =>
       withDurableStore(
         () => err({ code: "Unreachable" }),
@@ -430,6 +450,29 @@ export async function compose(
         () => err({ code: "Unreachable" }),
         (store) => store.lifecycle.save(saveId),
       ),
+  };
+  const lifecycle: LifecycleProbe = composeStorageSeam({
+    persistence: unavailablePersistence(),
+    profiles: unavailableProfiles(),
+    lifecycle: rawLifecycle,
+  }).lifecycle;
+
+  const stores: StoreProvider = {
+    forRequest(): SessionStore {
+      const active = durableStore;
+      const seam = composeStorageSeam({
+        persistence: active ? active.persistenceForRequest() : unavailablePersistence(),
+        profiles: active ? active.profiles : unavailableProfiles(),
+        lifecycle: rawLifecycle,
+      });
+      return createSessionLayer({
+        engine,
+        registry: registry.value,
+        persistence: seam.persistence,
+        profiles: seam.profiles,
+        ...(replaySources ?? {}),
+      });
+    },
   };
 
   const serialization: StoreSerializationHandle = {
