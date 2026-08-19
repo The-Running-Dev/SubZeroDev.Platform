@@ -4,13 +4,16 @@
  * PostgreSQL database" (`design/30-slices.md`, S3). `docker-compose.yml` under the workload root
  * provisions the server this connects to; nothing here starts one.
  *
- * Each test gets its own schema, created and dropped here rather than through `createRunSchema`
- * (`20-contract.md`'s proof-harness function) — that signature is S8's to build. This is a
- * same-purpose, private equivalent scoped to this slice's own suite.
+ * Each test gets its own schema, created here rather than through `createRunSchema`
+ * (`20-contract.md`'s proof-harness function, `../../src/harness.ts`) — this suite names and scopes
+ * its schemas independently of the proof harness's own run-scoped naming. Teardown shares
+ * `createRunSchema`'s own `dropSchemaByName` (`../../src/migrations.ts`) rather than a second
+ * hand-rolled copy.
  */
 import { Client, Pool } from "pg";
 import { randomBytes } from "node:crypto";
-import { migrateToHead, quoteIdentifier } from "../../src/migrations.js";
+import { RUN_SCHEMA_CONNECT_TIMEOUT_MS, RUN_SCHEMA_POOL_SIZE } from "../../src/harness.js";
+import { dropSchemaByName, migrateToHead, quoteIdentifier } from "../../src/migrations.js";
 import { BIGINT_VERSION_TYPES } from "../../src/store.js";
 import { DEFAULT_LIFECYCLE_BOUNDS } from "../../src/types.js";
 import type { DurableStoreConfiguration, LifecycleBounds, SchemaName, StoreConnection } from "../../src/types.js";
@@ -28,8 +31,8 @@ export function defaultBounds(overrides: Partial<LifecycleBounds> = {}): Lifecyc
 export function connectionFor(schema: SchemaName, overrides: Partial<StoreConnection> = {}): StoreConnection {
   return {
     connectionString: TEST_CONNECTION_STRING,
-    poolSize: 5,
-    connectTimeoutMs: 5000,
+    poolSize: RUN_SCHEMA_POOL_SIZE,
+    connectTimeoutMs: RUN_SCHEMA_CONNECT_TIMEOUT_MS,
     schema,
     ...overrides,
   };
@@ -91,13 +94,7 @@ export async function createTestSchema(): Promise<TestSchema> {
     schema,
     connection,
     async drop(): Promise<void> {
-      const client = new Client({ connectionString: TEST_CONNECTION_STRING });
-      await client.connect();
-      try {
-        await client.query(`drop schema if exists ${quoteIdentifier(schema as unknown as string)} cascade`);
-      } finally {
-        await client.end();
-      }
+      await dropSchemaByName(TEST_CONNECTION_STRING, schema as unknown as string, RUN_SCHEMA_CONNECT_TIMEOUT_MS);
     },
   };
 }

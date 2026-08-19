@@ -1,8 +1,15 @@
 /**
- * The proof harness — S5. `runInProcess` and `runHosted` drive the identical fixture through the
- * identical `Dispatcher` code, differing only in transport: run 1 calls it directly, run 2 crosses
- * the socket a real `startWorkload` process binds. Neither retries and neither normalizes, because
- * a byte-identity suite that can be told what to skip stops comparing anything.
+ * The proof harness — S5 and S8. `runInProcess` and `runHosted` drive the identical fixture
+ * through the identical `Dispatcher` code, differing only in transport: run 1 calls it directly,
+ * run 2 crosses the socket a real `startWorkload` process binds. Neither retries and neither
+ * normalizes, because a byte-identity suite that can be told what to skip stops comparing anything.
+ *
+ * `runDurableReplay` (S8) is `runHosted` under a different name for a durable target: the durable
+ * run's own `HostedTarget` already reads its shutdown dump through `store.ts`'s
+ * `select … order by … collate "C"` handle rather than a map (`compose.ts`'s durable branch), so
+ * nothing about driving the fixture or reading the dump back differs — only what the caller
+ * composed the target from. Kept as its own export, not a caller alias for `runHosted`, so a
+ * failure names the schema it ran against.
  */
 import { createDispatcher } from "./dispatch.js";
 import { compose } from "./compose.js";
@@ -18,6 +25,7 @@ import type {
   ReplayError,
   ReplayFixture,
   RunResult,
+  RunSchema,
   StoreSerializationSnapshot,
   Transcript,
   ValidatedArguments,
@@ -154,6 +162,22 @@ export async function runHosted(
   return ok({ transcript, serialization: dump.value });
 }
 
+/** Drives the durable proof over the identical path `runHosted` drives the in-memory one — the
+ *  design's own claim that the two runs differ only in what the target was composed from, never
+ *  in how the harness talks to it. `schema` names no branch here; it identifies the run in a
+ *  failure's log line, the one thing `ReplayError` itself has no field for. */
+export async function runDurableReplay(
+  fixture: ReplayFixture,
+  target: HostedTarget,
+  schema: RunSchema,
+): Promise<Outcome<RunResult, ReplayError>> {
+  const result = await runHosted(fixture, target);
+  if (!result.ok) {
+    console.error(`[game-service] durable replay failed against schema ${String(schema.name)}`, result.error);
+  }
+  return result;
+}
+
 function blobLocator(kind: "sessions" | "saves", index: number): string {
   return `${kind}[${index}]`;
 }
@@ -186,6 +210,26 @@ export function compareSerializations(
         return { matched: false, firstDivergence: divergence };
       }
     }
+  }
+  return { matched: true, firstDivergence: null };
+}
+
+/** Runs before comparison A, not instead of it (`20-contract.md`): two empty ordered sets compare
+ *  byte-identical, so a dump that read the wrong schema would pass comparison A while comparison B
+ *  passed on its own merits. The counts are asserted against the fixture's own expected numbers
+ *  rather than against zero — "not empty" is satisfied by one row as easily as by all of them. */
+export function assertNonEmpty(
+  snapshot: StoreSerializationSnapshot,
+  expectedSessions: number,
+  expectedSaves: number,
+): ComparisonResult {
+  if (snapshot.sessions.length !== expectedSessions || snapshot.saves.length !== expectedSaves) {
+    const divergence: Divergence = {
+      locator: "assertNonEmpty",
+      expected: `sessions=${expectedSessions} saves=${expectedSaves}`,
+      actual: `sessions=${snapshot.sessions.length} saves=${snapshot.saves.length}`,
+    };
+    return { matched: false, firstDivergence: divergence };
   }
   return { matched: true, firstDivergence: null };
 }

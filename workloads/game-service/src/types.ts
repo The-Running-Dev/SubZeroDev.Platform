@@ -498,3 +498,12 @@ export type HarnessError =
   | { readonly code: "SchemaDropFailed"; readonly schema: SchemaName; readonly detail: string }
   | { readonly code: "InstanceSpawnFailed"; readonly instance: 0 | 1; readonly detail: string }
   | { readonly code: "InstanceShutdownFailed"; readonly instance: 0 | 1; readonly detail: string };
+
+/** `20-contract.md`, "Proof harness — the durable replay, the two instances, the conformance
+ *  suite". A pristine schema per run, created and dropped by the harness — the counting
+ *  `RecordIdSource` mints `counting-session-id-0` on every run, so a second run against a dirty
+ *  schema is a primary-key violation in the middle of the replay (S8.6). */
+export interface RunSchema {
+  readonly name: SchemaName;
+  drop(): Promise<Outcome<void, HarnessError>>;
+}

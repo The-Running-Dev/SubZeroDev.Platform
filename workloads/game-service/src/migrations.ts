@@ -35,6 +35,20 @@ export function pgErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+/** The connect/drop/end mechanics shared by every schema teardown in this package —
+ *  `harness.ts`'s `RunSchema.drop()` and `tests/support/database.ts`'s `createTestSchema` both call
+ *  this rather than re-implementing it, so a fix (like the connect timeout below) reaches both.
+ *  Throws on failure; callers that need an `Outcome` catch and wrap it themselves. */
+export async function dropSchemaByName(connectionString: string, schema: string, connectTimeoutMs: number): Promise<void> {
+  const client = new Client({ connectionString, connectionTimeoutMillis: connectTimeoutMs });
+  await client.connect();
+  try {
+    await client.query(`drop schema if exists ${quoteIdentifier(schema)} cascade`);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 function isConnectionError(error: unknown): boolean {
   const code = pgErrorCode(error);
   return code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT" || code === "EHOSTUNREACH";
