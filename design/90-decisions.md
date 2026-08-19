@@ -603,46 +603,7 @@ Reversibility: cheap
 
 ## Open
 
-**S12 — the durable process, and five guards the slices never carried.** Staged by `/reconcile` on
-2026-08-19, decided by Ben in that pass, and owned by `/slices` to write and `/slice` to implement.
-Every item below is the code side of a divergence this reconciliation resolved in the code's
-direction; the design and contract already read the way the finished slice must make the tree read.
-
-- **The durable configuration is unreachable from the process entry point.** `src/main.ts` hard-codes
-  `storage: { kind: "in-memory" }`. It needs env-driven durable configuration, a README section, and
-  a CI step that starts a durable instance the documented way — S11.1's *"starting one instance
-  against it"* has no command behind it today.
-- **Nothing runs migrations at startup.** `migrateToHead` is called only by `scripts/migrate.ts`, the
-  harness and tests, so `MigrationError`'s three variants have no startup caller and *Concurrent
-  startup migrations* has no code path. It belongs in `compose()`'s durable branch, before the first
-  connect, with the backoff `10-design.md` *Control flow* 1 describes.
-- **The sweep runs under no statement timeout.** `LifecycleBounds.sweepStatementTimeoutMs` is
-  declared, defaulted, and read by nothing; an unbounded `delete` can pin a pool connection
-  indefinitely, which is the `PoolExhausted` condition the same contract names.
-- **`saves.delete` is unasserted.** Both conformance targets implement it and `runPortConformance`
-  never calls it. Invariant 89 now says seven methods.
-- **`StoreError.RowUndeserializable` is declared and constructed nowhere.** The row mappers cast
-  driver output without validation, so store corruption answers `500` by accident rather than by
-  classification — the shape the design deliberately closed for `storage_failure`.
-- **The dependency-direction test never gained Store as a second forbidden target.** Invariant 77 and
-  amended invariant 17 both specify the gate; `tests/dependency-direction.test.ts` checks only
-  `StoreSerializationHandle`. The property holds today by inspection and nothing guards it.
-- **`scripts/migrate.ts` depends on the proof harness** for two constants, against the design's
-  *nothing depends on a harness*. They belong beside `DEFAULT_LIFECYCLE_BOUNDS`.
-- **`DEFAULT_LIFECYCLE_BOUNDS.retentionHorizonSeconds` is 365 days**, where the contract's production
-  default is 30. `src/types.ts` calls the constant non-production and
-  `tests/durable-replay.test.ts:116` calls it "production bounds" — two comments in one tree
-  disagreeing about one constant, which invariant 82 turns on.
-- **Invariant 74 is neither structural nor asserted.** Persistence and profiles reach
-  `createSessionLayer` while the lifecycle probe reaches `createDispatcher`, so a decorator at the
-  port seam — the shape G3's brief names — would not sit in the probe's path. The contract wrote this
-  down because *"G3 cannot discover it"*.
-
-**`30-slices.md`'s status markers are stale, and this is `/slices`' to fix.** S1–S2 read `shipped`,
-S3 `in progress`, S4–S11 `queued`, while all eleven merged (#136–#144). `build/Test-SliceStatusMarkers.ps1`
-checks only internal consistency — at most one *in progress*, no *shipped* after a *queued* — so the
-ledger passes its own gate while being false. A gate that cannot tell a true ledger from a
-self-consistent wrong one is worth naming alongside the fix.
+_(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147))_
 
 ---
 
