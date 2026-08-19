@@ -1,44 +1,84 @@
 {
   "gates": [
     {
-      "name": ".NET build and tests",
-      "status": "Failed",
-      "detail": "dotnet restore succeeded; dotnet build --no-restore --configuration Release succeeded (0 warnings, 0 errors). dotnet test --no-build --configuration Release --verbosity normal: Total tests: 265, Passed: 264, Failed: 1.\n\nFailing test: SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else\nError Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\nStack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\n\nThe test resolves a non-loopback address via DNS to assert the worker does not bind to it; this local sandbox blocks that DNS resolution outright (unrelated to session/save/profile code touched by this PR, which lives entirely under workloads/game-service). Not reproduced by any change on this branch."
-    },
-    {
-      "name": "Sample round trip",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-SampleRoundTrip.ps1 — 'Both roles served their probes in .' and 'The outbox row survived process death and dispatched order 396dda33-9f81-4216-b5e2-4c650595ea1e after restart.'"
-    },
-    {
-      "name": "Workload isolation",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1 — 'No project under src/ or samples/ references workloads/ (25 project file(s) checked).'"
-    },
-    {
-      "name": "Game-service suite",
-      "status": "Passed",
-      "detail": "npm install; npm run typecheck (tsc --noEmit, clean, no output); npm test (vitest run) — Test Files 18 passed | 1 skipped (19), Tests 163 passed | 1 skipped (164). Includes the new tests/conformance.test.ts (7 tests, S9.1-S9.9) run separately first via npx vitest run tests/conformance.test.ts: Test Files 1 passed (1), Tests 7 passed (7)."
-    },
-    {
-      "name": "Documentation gate",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1 — 'Documentation checks passed across 43 Markdown file(s), with 2 warning(s).' Warnings are pre-existing terminology notices in design/d3/90-decisions.md (lines 1138, 1141: \"Use 'JSON' instead of 'Json'\"), unrelated to this PR's diff."
-    },
-    {
-      "name": "Slice status markers",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1 — 'Slice status markers consistent across 11 slice(s) in .../design/30-slices.md.'"
-    },
-    {
-      "name": "Documentation build and site check",
-      "status": "Passed",
-      "detail": "./docs.ps1 -BuildOnly — 'Built 'gameoflife-docs'. (build-only)' (built the docs-template Docker image successfully). npm --prefix site ci — installed 325 packages clean. npm --prefix site run check — format:check (Prettier clean), lint (oxlint: 1 pre-existing warning in src/shared.tsx, no errors), typecheck (tsc -b clean), test (vitest: 6 test files, 57 tests, all passed), test:build (vite build succeeded, 'Both built HTML entry points contain their required static metadata.'), test:merge ('Package merge preserves docs and rejects all protected-boundary violations.')."
-    },
-    {
-      "name": "API reference gate",
+      "name": "Flagged CI gates (# verification: true)",
       "status": "DidNotRun",
-      "reason": "pwsh ./build/Test-ApiReference.ps1 throws: 'docfx is not on PATH. Install it with: dotnet tool install --global docfx'. docfx is not installed in this local environment; not part of the cached gate set discovered from .claude/gates.json, but attempted anyway since build/ ships it. The corresponding CI check on this pull request is where the answer comes from."
+      "reason": "No step in .github/workflows/*.yml carries the '# verification: true' comment, and .github/workflows/verify.yml — the file verify.md's own translation table names — does not exist in this repository. The flagged-gate set is empty, so the discovery mechanism contributed nothing and every gate below was found by the optional, non-CI-declared route instead."
+    },
+    {
+      "name": "git diff --check",
+      "status": "Passed",
+      "detail": "Exit 0 on the branch worktree — no whitespace errors and no trailing double-space line breaks in the three changed files."
+    },
+    {
+      "name": "build/Test-SliceStatusMarkers.ps1",
+      "status": "Passed",
+      "detail": "Slice status markers consistent across 11 slice(s) in 'design/30-slices.md'. Note for the reader: this gate checks internal consistency only (at most one 'in progress', no 'shipped' after a 'queued'), so it passes over a ledger that reads S3 'in progress' and S4-S11 'queued' while all eleven have merged."
+    },
+    {
+      "name": "build/Test-Documentation.ps1",
+      "status": "Passed",
+      "detail": "Documentation checks passed across 43 Markdown file(s), with 2 warning(s). Both warnings are pre-existing terminology hits in design/d3/90-decisions.md (archived effort), lines 1138 and 1141: \"Use 'JSON' instead of 'Json'\"."
+    },
+    {
+      "name": "build/Test-WorkloadIsolation.ps1",
+      "status": "Passed",
+      "detail": "No project under src/ or samples/ references workloads/ (25 project file(s) checked) — invariant 95."
+    },
+    {
+      "name": "build/Test-PackageManifests.ps1",
+      "status": "Passed",
+      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Six .nupkg packed successfully; NuGet emitted 'missing a readme' informational notices, which the script does not treat as failures."
+    },
+    {
+      "name": "build/Test-SampleRoundTrip.ps1",
+      "status": "Passed",
+      "detail": "Both roles served their probes. The outbox row survived process death and dispatched order 92e15087-b6bd-4326-8b11-db8c1f2051a7 after restart."
+    },
+    {
+      "name": "build/Test-ApiReference.ps1",
+      "status": "DidNotRun",
+      "reason": "Tool missing. The script threw at build/Test-ApiReference.ps1:65 — \"docfx is not on PATH. Install it with: dotnet tool install --global docfx\". docfx is not installed on this machine, so the API-reference check has no answer here; the corresponding CI check on the pull request is where it comes from."
+    },
+    {
+      "name": "tools/Test-DesignDrift.ps1",
+      "status": "Passed",
+      "detail": "Slices compared: 11. Findings: 0. Could not evaluate: 0. No drift."
+    },
+    {
+      "name": "PowerShell parse-check (all *.ps1, excluding node_modules/bin/obj)",
+      "status": "Passed",
+      "detail": "Every *.ps1 parsed with [System.Management.Automation.Language.Parser]::ParseFile — parse errors: 0."
+    },
+    {
+      "name": "Invoke-Pester -Path tools",
+      "status": "Passed",
+      "detail": "Tests Passed: 95, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0 across 6 files (Sync-Kit, Test-Companion, Test-DesignDrift, Test-VerifyReport, Test-WriteSurface, Wait-PullRequestCheck). Measure-Session.Tests.ps1 was not picked up by that discovery run and was run separately: Tests Passed: 15, Failed: 0. 110 tests across all 7 files, none failing."
+    },
+    {
+      "name": "dotnet build SubZeroDev.Platform.slnx --configuration Release",
+      "status": "Passed",
+      "detail": "Build succeeded. 0 Warning(s). 0 Error(s). Time Elapsed 00:00:10.31."
+    },
+    {
+      "name": "dotnet test SubZeroDev.Platform.slnx --configuration Release --no-build",
+      "status": "Failed",
+      "detail": "Failed!  - Failed: 1, Passed: 264, Skipped: 0, Total: 265 - SubZeroDev.Platform.Tests.dll (net10.0). Passed! - Failed: 0, Passed: 19, Total: 19 - SubZeroDev.Platform.GameEdge.Tests.dll (net10.0).\n\nThe one failure is WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else:\n  System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n     at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n     at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n     at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\n\nThe test resolves this machine's own hostname to find a non-loopback address to probe against; DNS resolution of the host name fails on this Mac. This pull request changes three Markdown files under design/ and no C#, so the failure is not attributable to the diff — but it ran, it failed, and it is reported as failed rather than explained away. CI is where the same test's real answer comes from."
+    },
+    {
+      "name": "workloads/game-service — npm run typecheck",
+      "status": "Passed",
+      "detail": "tsc --noEmit completed with exit 0 and no diagnostics."
+    },
+    {
+      "name": "workloads/game-service — npx vitest run (full suite, against the compose-provisioned PostgreSQL)",
+      "status": "Passed",
+      "detail": "Test Files 19 passed | 1 skipped (20). Tests 164 passed | 1 skipped (165). Duration 23.46s. The skipped file is tests/trace-evidence.test.ts, guarded by describe.skipIf(!process.env[\"OTEL_COLLECTOR_BIN\"]) — the OpenTelemetry Collector binary that build.yml's game-service job installs is not present on this machine, so that one test did not run here."
+    },
+    {
+      "name": "./docs.ps1 -BuildOnly",
+      "status": "Passed",
+      "detail": "Built 'gameoflife-docs'. (build-only). Docker was available and running, so this gate did run rather than being skipped for want of it."
     }
   ]
 }

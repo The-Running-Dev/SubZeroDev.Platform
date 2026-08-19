@@ -1,34 +1,70 @@
 {
-  "manifestHash": "c2b118bddb6363a8010347a4f04492187d9a2bd6564175be35c6c6911761ca43",
+  "manifestHash": "33747e5d976f282be43610e19a211073e953064a5cf7d51e7af541fa20620f57",
   "generated": "2026-08-19",
   "gates": [
     {
-      "name": ".NET build and tests",
-      "command": "dotnet restore; dotnet build --no-restore --configuration Release; dotnet test --no-build --configuration Release --verbosity normal"
+      "name": "git diff --check",
+      "command": "git diff --check"
     },
     {
-      "name": "Sample round trip",
-      "command": "pwsh ./build/Test-SampleRoundTrip.ps1"
+      "name": "build/Test-SliceStatusMarkers.ps1",
+      "command": "pwsh -File build/Test-SliceStatusMarkers.ps1"
     },
     {
-      "name": "Workload isolation",
-      "command": "pwsh ./build/Test-WorkloadIsolation.ps1"
+      "name": "build/Test-Documentation.ps1",
+      "command": "pwsh -File build/Test-Documentation.ps1"
     },
     {
-      "name": "Game-service suite",
-      "command": "npm install; npm run typecheck; npm test"
+      "name": "build/Test-WorkloadIsolation.ps1",
+      "command": "pwsh -File build/Test-WorkloadIsolation.ps1"
     },
     {
-      "name": "Documentation gate",
-      "command": "pwsh ./build/Test-Documentation.ps1"
+      "name": "build/Test-PackageManifests.ps1",
+      "command": "pwsh -File build/Test-PackageManifests.ps1"
     },
     {
-      "name": "Slice status markers",
-      "command": "pwsh ./build/Test-SliceStatusMarkers.ps1"
+      "name": "build/Test-SampleRoundTrip.ps1",
+      "command": "pwsh -File build/Test-SampleRoundTrip.ps1"
     },
     {
-      "name": "Documentation build and site check",
-      "command": "./docs.ps1 -BuildOnly; npm --prefix site ci; npm --prefix site run check"
+      "name": "build/Test-ApiReference.ps1",
+      "command": "pwsh -File build/Test-ApiReference.ps1"
+    },
+    {
+      "name": "tools/Test-DesignDrift.ps1",
+      "command": "pwsh -File tools/Test-DesignDrift.ps1"
+    },
+    {
+      "name": "PowerShell parse-check (all *.ps1, excluding node_modules/bin/obj)",
+      "command": "pwsh -Command \"Get-ChildItem . -Filter *.ps1 -Recurse | Where-Object { $_.FullName -notmatch (String)node_modules|/bin/|/obj/ } | ForEach-Object { [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$null) }\""
+    },
+    {
+      "name": "Invoke-Pester -Path tools",
+      "command": "pwsh -Command \"Invoke-Pester -Path tools -Output Detailed -PassThru\""
+    },
+    {
+      "name": "dotnet build SubZeroDev.Platform.slnx --configuration Release",
+      "command": "dotnet build SubZeroDev.Platform.slnx --configuration Release"
+    },
+    {
+      "name": "dotnet test SubZeroDev.Platform.slnx --configuration Release --no-build",
+      "command": "dotnet test SubZeroDev.Platform.slnx --configuration Release --no-build"
+    },
+    {
+      "name": "workloads/game-service — npm run typecheck",
+      "command": "npm --prefix workloads/game-service run typecheck"
+    },
+    {
+      "name": "workloads/game-service — npx vitest run (full suite, against the compose-provisioned PostgreSQL)",
+      "command": "cd workloads/game-service; docker compose up -d; npx vitest run"
+    },
+    {
+      "name": "./docs.ps1 -BuildOnly",
+      "command": "pwsh -File docs.ps1 -BuildOnly"
+    },
+    {
+      "name": "Flagged CI gates (# verification: true)",
+      "command": "grep -rn \"verification: true\" .github/workflows/"
     }
   ]
 }
