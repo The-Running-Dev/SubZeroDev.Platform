@@ -9,6 +9,158 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-20 — `ProbeResult.detail` reaches the wire, because the endpoint is the only surface an operator reads
+
+Context: `detail` was added by its own entry below, given a `StoreError` mapping by another, and
+asserted by two test suites — all against `compose().readiness()`'s return value. `lifecycle.ts`'s
+probe handler serialized `{ status }` and dropped it, so no operator could ever read it.
+`10-design.md` says the operator sees "the readiness body naming the store check"; only the log line
+delivered that. The field's whole justification — telling a condition waiting clears from one that
+never will — went unmet while every document said otherwise.
+Chosen: the readiness body carries `detail` when the probe does, and omits the member when it does
+not; `20-contract.md`'s readiness section states it so the transport obligation is declared rather
+than inferred. Asserted over a real socket, because the in-process value was already correct while
+the body was not.
+Rejected: amending the design to say `detail` is process-internal. Cheaper, and it accepts machinery
+with no consumer — two decision entries, two pure mapping functions and their tests, serving nothing.
+Rejected: removing `detail` and relying on the log lines. Reverses three entries and puts the
+isolation-level condition back to reading like a transient outage, which the "Readiness names which
+store condition" entry rejected on its own terms.
+Retained cost: the probe body grows one optional member. Nothing parses it — the edge's own check
+reads the status code alone — so it is diagnostic, not a shape a caller may branch on.
+Reversibility: cheap — one ternary in the probe handler.
+
+### 2026-08-20 — The conformance suite's reference target provokes its degraded outcomes, rather than returning canned ones
+
+Context: `inMemoryConformanceTarget` wrapped the engine's `createInMemoryProfileStore` and
+intercepted `load`/`save`, returning `corruptProfileResult` and `profileWriteFailedResult` —
+**imported from `store.ts`**, the durable store's own helpers. So for `profile_corrupt` and
+`profile_write_failed` the two targets agreed because one called the other's constructor, and the
+engine's store was built and then bypassed on exactly the two paths the suite exists to compare. The
+suite's stated answer — "the same assertion passing over the engine's own is what says the durable
+one fills the port" — was vacuous for two of its eight assertions, and had been since S9.
+Chosen: both outcomes go through the engine's own seams. `onSave` is live, so a write-failure seed is
+a set the callback closes over. `raw` is copied at construction, so a corrupt seed writes a
+`formatVersion: 2` entry — the same malformation the durable target seeds as `format_version = 2` —
+into a mirror of every accepted save and rebuilds the store from it, which is what puts the entry in
+front of the engine's `isValidPlayerProfile`. `conformance.ts` no longer imports from `store.ts`.
+Rejected: amending the contract to admit the stub and declare conformance for those two outcomes
+durable-only. It records a materially weaker deliverable than the brief asked for, permanently.
+Rejected: leaving `raw` unreached and stubbing only corruption. The asymmetry is the problem, not its
+size — the durable side provokes both conditions genuinely, and a reference target that provokes
+neither is not a second implementation.
+Retained cost: the target mirrors accepted saves so a rebuild loses nothing written earlier in a run.
+The mirror is bookkeeping for the rebuild only — the engine's store still validates, clones and
+replaces.
+Reversibility: cheap — one builder function.
+
+### 2026-08-20 — The sweep's log line names the failing statement; the rows it did not remove stay unknowable
+
+Context: `10-design.md` promised, in two places, that a failed sweep is logged "with the failing
+statement", and in one of them also with "the rows it did not remove". `compose.ts` logged a
+classified `StoreError` — `{ code: "StatementFailed" }` — which says neither. The sweep sits on
+neither the serving path nor the readiness check, so this log line is the whole of its
+observability, and it did not say which of the two `delete`s failed.
+Chosen: split, each half following the side already right. `sweepOnce` tracks the step in flight and
+`StatementFailed` gains an optional `statement` — the same shape `RowUndeserializable.column`
+already takes, and optional so no serving-path caller changes. `10-design.md` loses "and the rows it
+did not remove", which *Additions* item 5 had already adjudicated as unknowable without a second
+query against a store that has just failed one.
+Rejected: amending both design sentences to "logs the classified failure". Shrinks the one condition
+nothing else can surface to a bare code.
+Rejected: a second query for the retained count on failure. Reverses a settled adjudication to
+recover a number that bounds storage, not correctness — and the query can fail too.
+Reversibility: cheap — one tracked local, one optional field.
+
+### 2026-08-20 — Invariant 57 narrows to the check the store actually performs
+
+Context: invariant 57 read "Every connection the store uses reports `read committed`; the store
+asserts it at connect". `openDurableStore` checks one probe connection at pool open, releases it, and
+registers no per-connection hook; the `StoreError` row's "after the store asserts it" additionally
+read as set-then-verify, which the store has never done.
+Chosen: the documents narrow. 57 states the open-time check and says plainly it is not re-checked per
+pooled connection; the `IsolationLevelUnsupported` row says the store checks and refuses and never
+sets the level. The condition is a server, database, role or pooler default — static — so one probe
+catches every case the design names.
+Rejected: `pool.on("connect")` checking every acquisition. Buys a pooler that varies isolation per
+connection — which nothing in the design contemplates — at a round trip on every new connection, and
+the handler has no clean way to refuse, so a mid-life failure would not be the startup refusal the
+contract's own "Caller does" column describes.
+Rejected: recording it as known-and-retained and changing neither. Leaves the invariant literally
+stronger than the tree, which is the shape `AGENTS.md`'s "a document states only what the tree cannot"
+exists to stop.
+Reversibility: cheap either way; the code is unchanged.
+
+### 2026-08-20 — The design is corrected on the conformance reference target, and the contract's Addition stops quoting it
+
+Context: `10-design.md` said the suite runs "once over the engine's in-memory implementations".
+Only `ProfileStore` is the engine's; `persistence` is the workload's own map-backed one, because the
+engine exports the `SessionPersistence` type and no implementation of it. `20-contract.md`'s
+*Additions* item 2 recorded the correction — but by **quoting the design's live sentence**, so the
+error stayed in the design and `docs/docs/guide.md` regenerated it verbatim into the human-facing
+page, about a headline deliverable.
+Chosen: correct `10-design.md`, and reword Addition item 2 to record where the correction came from
+rather than quote a sentence that no longer says it. The guide is regenerated afterwards.
+Rejected: leaving the design as the historical record the Addition cites and correcting only the
+guide. `/make-human-docs` generates from `design/`, so the correction would have to be remembered at
+every regeneration rather than derived — which is exactly how the guide went wrong this time.
+Rejected: changing nothing, on the grounds that a reader who reaches the contract finds the
+correction. The guide is the human-facing document and nothing in it points at *Additions* item 2.
+Reversibility: cheap — two sentences.
+
+### 2026-08-20 — Saves are admitted to the brief's lifecycle scope, closing the last binding-document conflict
+
+Context: the brief's lifecycle criteria named *sessions* in every clause. G2 shipped saves a 365-day
+absolute TTL, an `expires_at` and index, a sweep that hard-deletes them, and `save_expired` widening
+a closed union in a published contract package. Recorded as design Open question 10 and contract
+*Unresolved* 2, and carried unresolved through `/design`, `/contract`, `/slices` and two
+reconciliations — `AGENTS.md` makes non-goals binding until the brief changes, and a design document
+cannot discharge a constraint by disagreeing with it. With G2 landed, the code was the side that had
+won by default.
+Chosen: Ben amended `00-brief.md` to admit saves on their own clock, and the design's Open question 10
+and the contract's *Unresolved* 2 are struck through against it. Nothing in the design, the contract
+or the tree moves. Sessions and saves keep their separate numbers, for the reason Open question 2
+gave: a session is resumable working state on an idle clock, a save is immutable and is the artifact
+a player would notice losing.
+Rejected: narrowing the code to sessions. `save.expires_at` and its index out of a live schema by
+migration, the sweep narrowed to `session`, `save_expired` out of `TransportErrorCode` and the status
+mapping — a contract minor and a regenerated vendored tarball — and `LifecycleProbe.save` left with
+no caller. The reasoning that produced the save TTL survived scrutiny; only the brief's silence did.
+Rejected: recording that the code shipped first and leaving it open. Carries a stated conflict with a
+binding document into G3, which begins by rerunning G2's proofs.
+Reversibility: expensive from here, and that is part of why it was decided rather than deferred again.
+
+### 2026-08-20 — The pool swallows background errors on idle clients, deliberately
+
+Context: `pg` emits `error` on an idle pooled client when the server restarts or a connection is
+dropped, and an unhandled `error` event terminates the Node process. `store.ts` registers
+`pool.on("error", () => {})`. Written down because an empty handler reads as an oversight to anyone
+who has not met that behaviour, and a later session could "fix" it into a crash.
+Chosen: swallow it. A request that subsequently reaches into the broken pool produces its own
+`Unreachable` classification through `classifyStoreError`, so the condition is reported on the path
+that can report it — and readiness, which evaluates the store on every probe, surfaces it.
+Rejected: logging each occurrence. A server restart emits one per idle client, so the signal is a
+burst proportional to pool size describing one event readiness already reports.
+Rejected: no handler. The failure mode is a process exit for a transient condition the design
+explicitly says the workload survives by staying up and reporting not-ready.
+Reversibility: cheap.
+
+### 2026-08-20 — A snapshot taken while the durable store is unavailable answers empty, and says so in the log
+
+Context: `StoreSerializationHandle.snapshot()` has no error channel — it always resolves — so
+`compose()`'s durable branch has no way to report that no store is connected. It returns
+`{ sessions: [], saves: [] }` and logs. The shape matters more than it looks: two empty ordered sets
+compare byte-identical, which is the exact failure `assertNonEmpty` and invariant 84 exist to catch.
+Chosen: return empty and log it, so an empty dump taken during an outage is not silently
+indistinguishable from a genuinely empty store. The proof side is guarded independently —
+`assertNonEmpty` runs before comparison A and asserts the fixture's own expected counts.
+Rejected: throwing. `snapshot()` is called at shutdown under the replay profile; a throw there turns
+a diagnostic into a failed exit path, and `writeDeterminismDump` already has its own failure variant
+for a write that does not land.
+Rejected: widening the handle with an error channel. A signature the contract does not carry, for a
+condition the proof already catches from the other side.
+Reversibility: cheap.
+
 ### 2026-08-20 — Readiness never reports a running migration, and the contract stopped promising one
 
 Context: `20-contract.md`'s readiness paragraph and `types.ts`'s `ProbeResult.detail` comment both
@@ -910,15 +1062,9 @@ Reversibility: cheap
 
 ## Open
 
-- **S13.1 was ticked on half a criterion, and the other half was never achievable.** The criterion
-  requires that a request reaching a malformed row *"answers `internal_failure` at `500`,
-  distinguished in the same suite from `storage_failure` at `503`"*. `tests/row-guards.test.ts`
-  asserts the thrown `cause` only — it issues no request and asserts no status — and the wire half
-  cannot be met, for the reason recorded on 2026-08-20 (`RowUndeserializable` answers 503). The
-  contract is corrected; `design/30-slices.md` is not this command's to edit and the criterion still
-  reads as met. What needs deciding is whether the criterion is amended or the tick withdrawn.
+_Nothing staged._
 
-_(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147))_
+_(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147); and the S13.1 half-criterion question, resolved in place by amending the criterion — `c5eda09`, and the entry above dated 2026-08-20, "`RowUndeserializable` answers 503".)_
 
 ---
 

@@ -100,8 +100,8 @@ async function spawnOne(
         store: {
           connection: {
             connectionString: options.connectionString,
-            poolSize: 5,
-            connectTimeoutMs: 5000,
+            poolSize: DEFAULT_STORE_POOL_SIZE,
+            connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
             schema: options.schema,
           },
           bounds: DEFAULT_LIFECYCLE_BOUNDS,

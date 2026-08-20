@@ -174,6 +174,15 @@ The binding list. Everything here is out of scope for every agent until this fil
 - **What expires, on what clock, and what a caller sees when it has** are decided and tested. A
   session that has been evicted is not the same answer as a session that never existed, and the
   wire says which.
+- **Saves are in scope too, on their own clock.** *(Amended 2026-08-20. The clauses above named
+  sessions only, and `/design` read that as the whole of the scope while specifying an absolute TTL,
+  a sweep and a distinct wire code for saves as well — recorded as design Open question 10 and
+  carried unresolved through `/contract` and `/slices`.)* The same reasoning applies and reaches the
+  same place: a save that no longer clears itself on restart is unbounded storage, and a save that
+  is gone is not the same answer as one that never existed. **Sessions and saves do not share a
+  number.** A session is resumable working state on an idle clock; a save is immutable and is the
+  artifact a player would notice losing, so it gets an absolute clock from insert and a much longer
+  one. G3 owns whatever account surface later wants to override either.
 
 **Both:**
 

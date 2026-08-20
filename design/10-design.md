@@ -655,8 +655,13 @@ port methods and no more. Its ten steps carry no `profileId`, so `profiles.load`
 are never called, and no operation in the contract's table calls `saves.delete` at all — the profile
 store is composed and never exercised, which is how G1 left it and which the brief's *"every store
 operation is exercised against the durable implementation"* does not allow to stand. The proof is a conformance suite written **against the ports, not the wire**, and run
-twice: once over the engine's in-memory implementations and once over the durable ones, asserting the
-same behaviour from both.
+twice: once over a reference target — the workload's own map-backed `SessionPersistence` paired with
+the engine's `createInMemoryProfileStore`, since the engine exports the persistence *type* and no
+implementation of it — and once over the durable ones, asserting the same behaviour from both. **The
+reference target's two degraded profile outcomes are provoked through the engine store's own `raw`
+and `onSave` seams**, never stubbed at the boundary: a target that answered `profile_corrupt` with a
+canned value would agree with the durable store by construction, and the assertion would establish
+nothing about either implementation.
 
 It covers `sessions.get/put`, `saves.get/put`, `saves.delete` and `profiles.load/save` — **seven
 methods; the engine's `SaveRecordStore` declares `delete` beside `get` and `put`, and nothing on the
@@ -782,8 +787,10 @@ write-support in a later release, the same two-step every additive column takes.
 
 **Detection:** the caught error from the sweep's own statement — a driver failure, a statement
 timeout, or a lock held by the other instance's concurrent sweep. **What the system does:** logs the
-failure and the rows it did not remove, and tries again on the next tick; a tick never overlaps its
-predecessor. **State left behind:** rows past the retention horizon, retained. **What the operator
+failure and the statement that failed, and tries again on the next tick; a tick never overlaps its
+predecessor. **Not the rows it did not remove** — that number is not knowable from a failed `delete`
+without a second query against a store that has just failed one
+([`20-contract.md`](20-contract.md), *Additions*, item 5). **State left behind:** rows past the retention horizon, retained. **What the operator
 sees:** the log line, and nothing else — this is the one condition in G2 that no readiness check and
 no request can surface, because the sweep is not on either path. **Retry:** automatic, every tick,
 indefinitely. **Why it is not more than this:** the sweep bounds storage, not correctness — an
@@ -1152,10 +1159,12 @@ not to be open at all** — they were answerable by reading the engine repositor
 would otherwise have re-asked. **5 remains and belongs to `/contract`.**
 
 **8 through 11 were opened by the red-team pass of 2026-08-12** and are numbered after the original
-seven for the same reason those keep their numbers. **9 and 10 are not this document's to close:
-they are conflicts with the brief, and the brief is not a document a model may author.** They are
-recorded here so that the disagreement is visible to `/contract` and `/slices` rather than resolved
-by whichever document a later session happens to read first.
+seven for the same reason those keep their numbers. **9 and 10 were not this document's to close:
+they were conflicts with the brief, and the brief is not a document a model may author.** They were
+recorded here so the disagreement was visible to `/contract` and `/slices` rather than resolved by
+whichever document a later session happened to read first. **Both are now closed by Ben's amendments
+to [`00-brief.md`](00-brief.md)** — 9 on 2026-08-12, 10 on 2026-08-20 — and 11 by the engine
+shipping the vocabulary at `0.8.0`. **8 is the one that remains open.**
 
 1. **Does the tenant column belong in the primary key, given the non-goal's wording?**
    **Settled: yes — in the primary key, with the implicit constant supplied in every query.** §7's
@@ -1254,15 +1263,20 @@ by whichever document a later session happens to read first.
    and signed off. It stays open here because `AGENTS.md` makes non-goals binding *until that file
    changes*, and a design document cannot discharge a constraint by disagreeing with it.
 
-10. **Does session lifecycle extend to saves, or only to sessions?**
-    The brief's lifecycle criteria name sessions in every clause. This design gives saves a 365-day
-    absolute TTL, a `save_expired` wire code that widens a closed union in a published package, and a
-    sweep that hard-deletes them — settled as Open question 2 and logged, but derived from a criterion
-    that did not ask for it. The consequence is that G2 permanently destroys the artifact this
-    document elsewhere calls *"immutable and… the artifact a player would notice losing"*, on a clock
-    the brief never set and before G3 exists to own or warn about it. **Also a brief conflict rather
-    than a defect**, and it resolves either way in one edit: the brief admits saves to the lifecycle
-    scope, or the sweep stops at sessions and `save_expired` comes out of the contract.
+10. ~~**Does session lifecycle extend to saves, or only to sessions?**~~
+    **Resolved 2026-08-20, by Ben: the brief admits saves to the lifecycle scope, on their own
+    clock.** The brief's lifecycle criteria named sessions in every clause while this design gave
+    saves a 365-day absolute TTL, a `save_expired` wire code that widens a closed union in a
+    published package, and a sweep that hard-deletes them — settled as Open question 2 and logged,
+    but derived from a criterion that did not ask for it. That was a brief conflict rather than a
+    defect, and it stayed open through `/contract` and `/slices` because a design document cannot
+    discharge a binding constraint by disagreeing with it. [`00-brief.md`](00-brief.md) now carries
+    the clause, so nothing in this document, the contract or the tree moves.
+    **Rejected: narrowing the code to sessions.** `save.expires_at` and its index would come out of
+    a live schema by migration, the sweep would narrow to `session`, `save_expired` would come out of
+    `TransportErrorCode` and the status mapping — a contract minor and a regenerated vendored
+    tarball — and `LifecycleProbe.save` would lose its only caller. The reasoning that produced the
+    save TTL survived scrutiny; only the brief's silence did not.
 
 11. **What happens between now and the engine ratifying `concurrent_modification`?**
     Every conflict assertion in *Control flow* 3 — both contention proofs, the perturbation red-gate,

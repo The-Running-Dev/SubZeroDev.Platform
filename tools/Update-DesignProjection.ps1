@@ -171,6 +171,45 @@ function Get-InvariantsProjectionContent {
     ,@($lines)
 }
 
+function Get-RankSortKey {
+    param([string] $Rank)
+    if ($Rank -match '^\d+$') { return [double]$Rank }
+    [double]::MaxValue
+}
+
+function Get-OutstandingProjectionContent {
+    <#
+        Renders WorkRef records whose State is OPEN, ordered by Rank - a numeric Rank (project
+        position, or a bare issue number) sorts first and low-to-high; a non-numeric Rank
+        (`milestone/<n>`) has no board position to compare against a numeric one, so it sorts
+        after every numeric Rank and ties are broken by issue number (S14.3 does not promise a
+        single total order across sources, only that Rank is never absent).
+
+        A closed WorkRef is not "outstanding work" and is left out here - it stays in
+        design/state/work/ as a record, per I16, but this projection only ever renders the
+        mirror's live half.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
+    $refs = @($Records | Where-Object { $_.Kind -eq 'WorkRef' -and $_.Scalars['State'] -eq 'OPEN' } |
+        Sort-Object -Property @{ Expression = { Get-RankSortKey -Rank $_.Scalars['Rank'] } }, @{ Expression = { [int]$_.Scalars['Issue'] } })
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('| Rank | Issue | Title | Criteria | Mirrored at |')
+    $lines.Add('|---|---|---|---|---|')
+    if ($refs.Count -eq 0) {
+        $lines.Add('| _(no outstanding WorkRef records yet)_ | | | | |')
+    }
+    foreach ($ref in $refs) {
+        $issue = $ref.Scalars['Issue']
+        $title = $ref.Scalars['Title']
+        $rank = $ref.Scalars['Rank']
+        $criteria = @(if ($ref.Lists.ContainsKey('Criteria')) { @($ref.Lists['Criteria'] | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) } else { @() })
+        $criteriaCell = if ($criteria.Count -eq 0) { '—' } else { ($criteria -join ', ') }
+        $mirroredAt = $ref.Scalars['MirroredAt']
+        $lines.Add("| $rank | #$issue | $title | $criteriaCell | ``$mirroredAt`` |")
+    }
+    ,@($lines)
+}
+
 function Get-AgentProjectionContent {
     <#
         S7.10. Renders only what a WorkRef record actually carries - Issue, Title, Criteria,

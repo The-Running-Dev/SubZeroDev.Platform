@@ -32,7 +32,7 @@ import type {
 import type { Campaign, StoryGraphCampaignSource } from "@the-running-dev/game-engine/authoring";
 import { Pool } from "pg";
 import { quoteIdentifier } from "./migrations.js";
-import { corruptProfileResult, IMPLICIT_TENANT_ID, openDurableStore, profileWriteFailedResult } from "./store.js";
+import { IMPLICIT_TENANT_ID, openDurableStore } from "./store.js";
 import { err, ok } from "./types.js";
 import type { ConformanceError, ConformanceTarget, DurableStoreConfiguration, Outcome, SemanticVersion } from "./types.js";
 
@@ -565,35 +565,38 @@ function inMemoryReferencePersistence(): SessionPersistence {
 }
 
 /**
- * The engine's `createInMemoryProfileStore` cannot be seeded after construction — its `raw` seed
- * option is copied once, at construction, and the two seed methods here are called at test time
- * against an already-built target. This wraps a real `createInMemoryProfileStore()` instance and
- * intercepts `load`/`save` only for ids added to `corruptIds`/`failIds`, returning exactly the
- * shapes the store's own `load`/`save` produce for those cases (mirrored from
- * `core/session/profile-store.js`'s `emptyProfile` plus `profile_corrupt`/`profile_write_failed`
- * warnings) — everything else, including the achievement-union scenario S9.5 drives itself,
- * delegates straight through to the real store. Same footing as `store.ts`'s
- * `corruptProfileResult`/`profileWriteFailedResult`, duplicated there for the durable side for
- * the identical reason: the real shape is intercepted at the boundary because there is no seam to
- * seed the real implementation through.
+ * The reference target's two degraded profile outcomes are provoked through the engine's own
+ * seams, never stubbed at the boundary (`20-contract.md`, "ConformanceTarget": *a malformed raw
+ * entry against the engine's in-memory profile store*). That distinction is the suite: a target
+ * that answered `profile_corrupt` by returning a canned value would agree with the durable store
+ * by construction, and the assertion would establish nothing about either implementation.
+ *
+ * The two seams differ in how they are reached, and only one of them needs machinery:
+ *
+ * - **`onSave` is live.** The engine evaluates it on every write, so a write-failure seed is a
+ *   set membership the callback closes over and reaches the engine's own `ok: false` branch
+ *   verbatim.
+ * - **`raw` is copied at construction** (`new Map(options?.raw)`), and the suite seeds an
+ *   already-built target — so a malformed entry can only reach `isValidPlayerProfile` through a
+ *   store rebuilt from the entries so far. `raw` below mirrors every accepted `save` for exactly
+ *   that rebuild, so seeding corruption for one profile does not discard another written earlier
+ *   in the run; the engine's store stays the thing that validates, clones and replaces.
  */
 export function inMemoryConformanceTarget(): ConformanceTarget {
-  const real = createInMemoryProfileStore();
-  const corruptIds = new Set<string>();
+  const raw = new Map<string, unknown>();
   const failIds = new Set<string>();
 
+  const onSave = (profile: PlayerProfile): boolean => !failIds.has(profile.profileId);
+
+  let store = createInMemoryProfileStore({ raw, onSave });
+
   const profiles: ProfileStore = {
-    async load(profileId) {
-      if (corruptIds.has(profileId)) {
-        return corruptProfileResult(profileId);
-      }
-      return real.load(profileId);
-    },
+    // Read at call time, not captured — `seedCorruptProfile` replaces the instance.
+    load: (profileId) => store.load(profileId),
     async save(profile) {
-      if (failIds.has(profile.profileId)) {
-        return profileWriteFailedResult(profile.profileId);
-      }
-      return real.save(profile);
+      const result = await store.save(profile);
+      if (result.ok) raw.set(profile.profileId, structuredClone(profile));
+      return result;
     },
   };
 
@@ -602,7 +605,10 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
     persistence: inMemoryReferencePersistence(),
     profiles,
     async seedCorruptProfile(profileId: string): Promise<void> {
-      corruptIds.add(profileId);
+      // `formatVersion` 2 — the same malformation the durable target seeds as `format_version = 2`,
+      // and one the engine rejects on `isValidPlayerProfile`'s own `formatVersion !== 1` branch.
+      raw.set(profileId, { formatVersion: 2, profileId, achievements: [] });
+      store = createInMemoryProfileStore({ raw, onSave });
     },
     async seedProfileWriteFailure(profileId: string): Promise<void> {
       failIds.add(profileId);

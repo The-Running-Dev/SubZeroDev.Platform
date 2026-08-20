@@ -212,12 +212,55 @@ describe("S13.4/S13.5 — the sweep runs under its configured statement timeout"
 
       const result = await store.sweepOnce();
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe("StatementFailed");
+      if (!result.ok) {
+        expect(result.error.code).toBe("StatementFailed");
+        // The failing *statement*, not only its class. This log line is the whole of the sweep's
+        // observability — it sits on neither the serving path nor the readiness check — so a bare
+        // "StatementFailed" would not say which of the two deletes failed (`10-design.md`, "The
+        // sweep fails").
+        if (result.error.code === "StatementFailed") {
+          expect(result.error.statement).toContain("delete from session");
+        }
+      }
 
       // With the pool sized to one, a serving request afterward could not succeed if the timed-out
       // sweep still held the only connection — proving the release happened.
       const stillServes = await store.check();
       expect(stillServes.ok).toBe(true);
+    } finally {
+      await blocker.query("rollback").catch(() => {});
+      await blocker.close();
+      await store.close();
+      await schema.drop();
+    }
+  });
+
+  it("names the save delete, distinctly from the session delete, when that is the statement that failed", async () => {
+    const schema = await createTestSchema();
+    const configuration = configurationFor(schema.schema, {
+      connection: { poolSize: 1 },
+      bounds: defaultBounds({ sweepStatementTimeoutMs: 100, retentionHorizonSeconds: 0 }),
+    });
+    const opened = await openDurableStore(configuration, ENGINE_VERSION);
+    if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
+    const store = opened.value;
+    const blocker = await RawSchemaClient.connect(schema.schema);
+    try {
+      // No session row at all, so the sweep's first delete matches nothing and completes; the
+      // locked save row is what its second delete blocks on. Two runs, one label each, is what
+      // makes the label load-bearing rather than decorative.
+      await blocker.query(
+        "insert into save (tenant_id, save_id, campaign_id, blob, saved_at_seq, audience, engine_version, expires_at) " +
+          "values ('implicit-tenant', 's-sweep-label', 'c', '{}', 1, 'player', '1.0.0', now() - interval '1 day')",
+      );
+      await blocker.query("begin");
+      await blocker.query("select * from save where save_id = $1 for update", ["s-sweep-label"]);
+
+      const result = await store.sweepOnce();
+      expect(result.ok).toBe(false);
+      if (!result.ok && result.error.code === "StatementFailed") {
+        expect(result.error.statement).toContain("delete from save");
+      }
     } finally {
       await blocker.query("rollback").catch(() => {});
       await blocker.close();
