@@ -1,49 +1,94 @@
 {
   "gates": [
     {
-      "name": "No CI-gated checks found (# verification: true)",
+      "name": "Discovery: `# verification: true` flagged CI steps",
       "status": "DidNotRun",
-      "reason": "Scanned every file in .github/workflows/ (build.yml, docs-ci.yml, docs-deploy.yml, release.yml) for a '# verification: true' comment above a step's name: line - none exists anywhere in this repository. This is issue #131 (the flag has never been added), so this /verify run discovered zero required gates via the documented mechanism; every check below is optional/not-CI-gated rather than a discovered gate."
+      "reason": "No workflow in .github/workflows/ carries the flag \u2014 build.yml, docs-ci.yml, docs-deploy.yml and release.yml were each scanned and none has a `# verification: true` comment, and there is no verify.yml. Zero gates are discoverable by the mechanism /verify owns, which is exactly what issue #131 reports. Every entry below is therefore an optional, non-CI-gated local check, not a discovered gate."
     },
     {
-      "name": "Parse-check PowerShell scripts",
+      "name": "build/Test-Documentation.ps1",
       "status": "Passed",
-      "detail": "[System.Management.Automation.Language.Parser]::ParseFile against every *.ps1 in the repository (recursive): All PowerShell scripts parse cleanly. No parse errors on any file."
+      "detail": "Documentation checks passed across 76 Markdown file(s), with 2 warning(s). Both warnings are pre-existing and in design/d3/90-decisions.md (Terminology: Use 'JSON' instead of 'Json'), not in any file this branch touches."
     },
     {
-      "name": "Invoke-Pester -Path tools",
+      "name": "build/Test-SliceStatusMarkers.ps1",
+      "status": "Passed",
+      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md."
+    },
+    {
+      "name": "tools/Test-DesignDrift.ps1",
+      "status": "Passed",
+      "detail": "Slices compared: 13. Findings: 0. Could not evaluate: 0. No drift."
+    },
+    {
+      "name": "tools/Test-Companion.ps1",
+      "status": "Passed",
+      "detail": "Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid, Findings: {}."
+    },
+    {
+      "name": "tools/Test-WriteSurface.ps1",
+      "status": "Passed",
+      "detail": "Write surface OK - 0 changed path(s), all within the allowed prefixes."
+    },
+    {
+      "name": "build/Test-PackageManifests.ps1",
+      "status": "Passed",
+      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Six .nupkg files packed successfully; the only messages are NuGet's 'missing a readme' best-practice notices, which the script does not treat as failures."
+    },
+    {
+      "name": "build/Test-WorkloadIsolation.ps1",
+      "status": "Passed",
+      "detail": "No project under src/ or samples/ references workloads/ (25 project file(s) checked)."
+    },
+    {
+      "name": "npm --prefix workloads/game-service run typecheck",
+      "status": "Passed",
+      "detail": "> @subzerodev/game-service@0.1.0 typecheck\n> tsc --noEmit\n(no diagnostics, exit 0)"
+    },
+    {
+      "name": "dotnet build --configuration Release",
+      "status": "Passed",
+      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). Time Elapsed 00:00:09.77."
+    },
+    {
+      "name": "tools/Test-DesignState.ps1",
       "status": "Failed",
-      "detail": "Tests Passed: 226, Failed: 28, Skipped: 0, Inconclusive: 0, NotRun: 0 (up from 222/32 before this PR's fix). All 28 remaining failures trace to design/state/ and design/state-index.md being absent from this repository (issue #151): Read-DesignState/Test-DesignState tests against this repo's own tree, S12.6 'a checkout with design/state/ removed' (1 BeforeAll/AfterAll setup failure), and Update-DesignProjection's S7.2 '-DryRun writes nothing' (Refusals.Count: Expected 0, but got 6 - 5x DocumentMissing for design/state-index.md, 1x RegionMissing for an 'invariants' region in design/20-contract.md). None of these 28 are touched by, or newly caused by, this PR's diff - verified by stashing the fix and reproducing exactly the same 32 failures as before (the 4 this PR fixes, plus these 28)."
+      "detail": "Exit code 2. Findings (91), all Blocking=True: 46 [UnrecordedArtifact] (every .claude/commands/*.md, every tools/*.ps1, AGENTS.md, agent.md, README.md, design/00-brief.md, design/10-design.md, design/20-contract.md, design/30-slices.md, design/90-decisions.md, .claude/COMPANIONS.md, both .github/ISSUE_TEMPLATE files) each reported as 'tree artifact of kind X has no active unit record naming it as Anchor'; and 45 [LogEntryUnrecorded], one per decision heading in design/90-decisions.md, each 'log heading has no decision record naming it as Anchor'. Reported (32, Blocking=False): [MirrorStale] work/<n>: MirroredAt 'af3d73df05f2f58270fd874070a7c374a0a88dfa' is not the current commit '2625a6dd06188f977332d055d526252f8b48ca85' \u2014 one for each of the 32 WorkRef records. Could not evaluate (1): [ContractListUnreadable] SectionNotFound: design/20-contract.md. BASELINE: on main this same script also exits 2, but with Findings {} and Reported {} \u2014 its could-not-evaluate list is 'StateSetAbsent: design/state/ is missing or holds zero records' plus the same ContractListUnreadable, and its whole report is the single line 'StateSetAbsent: nothing to check.' So this branch does not change the exit code; it changes the checker from a vacuous skip into 91 blocking findings, because design/state/ now has content but holds only work/ records and no unit or decision records. This check is NOT CI-gated in this repository (see the discovery entry above)."
     },
     {
-      "name": "tools/Test-Companion.ps1 (core/companion split)",
-      "status": "Passed",
-      "detail": "Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid, Findings: {}, CoreCount: 21, AbsentCount: 21."
-    },
-    {
-      "name": "tools/Test-DesignState.ps1 (design state against the tree)",
-      "status": "DidNotRun",
-      "reason": "Exit code 2 (could-not-evaluate, not a failure): [ContractListUnreadable] SectionNotFound in design/20-contract.md, and [StateSetAbsent] design/state/ is missing or holds zero records. Both trace to issue #151 - design/state/ and its supporting document sections do not exist in this repository yet, so the checker has nothing to read."
-    },
-    {
-      "name": "dotnet build",
-      "status": "Passed",
-      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). All 11 projects built: Abstractions, Core, Observability, Persistence, Hosting, Testing, GameEdge, Sample.Web, GameEdge.Tests, Sample.Worker, Tests. Time Elapsed 00:00:21.97."
-    },
-    {
-      "name": "dotnet test",
+      "name": "Invoke-Pester -Path tools -Output Detailed -PassThru",
       "status": "Failed",
-      "detail": "SubZeroDev.Platform.GameEdge.Tests: Passed 19/19. SubZeroDev.Platform.Tests: Failed 1, Passed 264, Total 265. The one failure is WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else: System.Net.Sockets.SocketException 'nodename nor servname provided, or not known' at System.Net.Dns.GetHostEntryOrAddressesCore, called from BoundOnAnyNonLoopbackAddress at WorkerProbeTests.cs:100 - a DNS/hostname resolution failure in this sandbox environment, not code touched by this PR's diff (tools/Update-DesignProjection.ps1 only)."
+      "detail": "Tests completed in 132.6s. Tests Passed: 229, Failed: 25, Skipped: 0. TotalCount 254, PassedCount 229, FailedCount 25. Failing tests are concentrated in the design-state tooling suites, e.g. 'S4.6: unit/command/track and unit/document/agents-md exist and their closures are complete', 'S12.5: the check exits 0 against this repository, and names the largest closure and its size', 'reports ContractListUnreadable - uncomputed, never clean - when the table cannot be read', 'this repository's own table and its own enumeration agree', 'S16.1/S16.2: this repository has one Contract record per design/20-contract.md Public-surface entry', 'S7.2: -DryRun against the real repository writes nothing', and 'the \"Run Pester tests\" step carries a GH_TOKEN env, the same as \"Check the design state against the tree\"' (that last one asserts against a verify.yml this repository does not have). BASELINE: the same command on a clean worktree of main gives TotalCount 254, PassedCount 226, FailedCount 28. So this branch does not regress the suite \u2014 it moves it from 28 failures to 25, three fewer, because committing design/state/work/ satisfies tests that previously found no state set at all. Issue #158 records this suite as failing '32 of 254'; the current figure on main is 28, so that issue's count is itself stale. This suite is NOT CI-gated in this repository \u2014 no workflow runs Invoke-Pester, which is the second half of what #158 reports."
     },
     {
-      "name": "build/Test-Documentation.ps1 (Markdown link and terminology gate)",
-      "status": "Passed",
-      "detail": "Ran against the repository root (default Path). Exit code 0, no findings printed - clean run covering README.md/TODO.md and cross-file relative links/heading anchors and terminology rules."
+      "name": "dotnet test --no-build --configuration Release",
+      "status": "Failed",
+      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265, Duration: 1 m 2 s - SubZeroDev.Platform.Tests.dll (net10.0). (SubZeroDev.Platform.GameEdge.Tests.dll passed 19/19.) The failure:\n  Failed SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [1 s]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nThe test resolves this host's own name to enumerate non-loopback addresses; that resolution fails on this machine. It is an environment property, not a property of this branch \u2014 this branch changes no C# \u2014 but it was not re-run on main to confirm, so it is reported as a failure rather than dismissed."
     },
     {
-      "name": "docs.ps1 -BuildOnly (Docusaurus documentation site build)",
+      "name": "build/Test-ApiReference.ps1",
       "status": "DidNotRun",
-      "reason": "Docker is available but this check was not run - it builds the docs/ Docusaurus site, which this PR's diff (tools/Update-DesignProjection.ps1 only) does not touch, and a prior session's own finding (memory: docs.ps1 -BuildOnly doesn't actually test the Docusaurus build, only a partial check) means it would not add confidence proportionate to its cost here."
+      "reason": "docfx is not on PATH. The script throws at build/Test-ApiReference.ps1:65 with 'docfx is not on PATH. Install it with: dotnet tool install --global docfx'. The dotnet build it runs first succeeded (0 Warning(s), 0 Error(s)) before the throw."
+    },
+    {
+      "name": "Docusaurus site build (docs-ci.yml, 'Verify Documentation Build' job)",
+      "status": "DidNotRun",
+      "reason": "`./docs.ps1 -BuildOnly` was run and exited 0, but it only builds the 'gameoflife-docs' Docker image \u2014 it does not invoke /template/scripts/docs-build.ps1, the status-page site build, the site merge, or the Pages artifact step that the docs-ci job runs. The real link-and-build verification therefore did not run locally; the docs-ci check on the pull request is where that answer comes from."
+    },
+    {
+      "name": "Workload integration suites (replay, replay-edge, contention-one-instance, contention-two-instances, durable-replay, conformance, npm test)",
+      "status": "DidNotRun",
+      "reason": "Each requires the CI-orchestrated environment build.yml sets up \u2014 a started PostgreSQL durable store, a migrated schema, and the workload and edge running the documented way, plus the outbound-OTLP port blocking. None of that was provisioned locally, so none of these suites was attempted. The build.yml checks on the pull request are where these answers come from."
+    },
+    {
+      "name": "build/Test-SampleRoundTrip.ps1",
+      "status": "DidNotRun",
+      "reason": "The build.yml step that runs it is preceded by a 'Block outbound OTLP ports for the sample run' step that manipulates host firewall rules; that precondition was not established locally, so the script was not run."
+    },
+    {
+      "name": "git diff --check",
+      "status": "Passed",
+      "detail": "No whitespace errors or conflict markers. `git status --short --branch` reports '## track-drain-open-and-work-mirror...origin/track-drain-open-and-work-mirror' with no modified, staged, or untracked paths \u2014 the tree is clean and fully pushed."
     }
   ]
 }
