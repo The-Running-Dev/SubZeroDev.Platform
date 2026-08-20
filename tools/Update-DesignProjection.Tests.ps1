@@ -103,6 +103,45 @@ Describe 'Update-DesignProjection: rendering' {
         $content | Should -Match 'S7 @ `deadbeef`'
         $content | Should -Match 'S7\.1, S7\.2'
     }
+
+    It 'S14.8: outstanding renders an honest empty table with no WorkRef records' {
+        New-UnitFixture
+        $graph = Read-DesignStateGraph -Path $TestDrive
+        (Get-OutstandingProjectionContent -Records $graph.Records) -join "`n" | Should -Match 'no outstanding WorkRef records yet'
+    }
+
+    It 'S14.8: outstanding renders an OPEN WorkRef''s rank, issue, title, criteria and mirror commit' {
+        $record = New-DesignRecord -Id 'work/57' -Kind 'WorkRef' -Path 'design/state/work/57.md' `
+            -Scalars @{ Issue = '57'; Title = 'S14 — Work state'; State = 'OPEN'; Rank = '3'; MirroredAt = 'abc1234' } `
+            -Lists @{ Criteria = @('S14.1', 'S14.2') } -Prose @{}
+        $content = (Get-OutstandingProjectionContent -Records @($record)) -join "`n"
+        $content | Should -Match '\| 3 \| #57 \| S14 — Work state \| S14\.1, S14\.2 \| `abc1234` \|'
+    }
+
+    It 'S14.8: outstanding excludes a CLOSED WorkRef - closed work is not outstanding' {
+        $open = New-DesignRecord -Id 'work/1' -Kind 'WorkRef' -Path 'design/state/work/1.md' `
+            -Scalars @{ Issue = '1'; Title = 'Open one'; State = 'OPEN'; Rank = '1'; MirroredAt = 'sha' } -Lists @{} -Prose @{}
+        $closed = New-DesignRecord -Id 'work/2' -Kind 'WorkRef' -Path 'design/state/work/2.md' `
+            -Scalars @{ Issue = '2'; Title = 'Closed one'; State = 'CLOSED'; Rank = '2'; MirroredAt = 'sha' } -Lists @{} -Prose @{}
+        $content = (Get-OutstandingProjectionContent -Records @($open, $closed)) -join "`n"
+        $content | Should -Match 'Open one'
+        $content | Should -Not -Match 'Closed one'
+    }
+
+    It 'S14.8: outstanding orders numeric ranks low-to-high, with a non-numeric rank sorting after every numeric one' {
+        $third  = New-DesignRecord -Id 'work/30' -Kind 'WorkRef' -Path 'design/state/work/30.md' `
+            -Scalars @{ Issue = '30'; Title = 'Third'; State = 'OPEN'; Rank = '5'; MirroredAt = 'sha' } -Lists @{} -Prose @{}
+        $first  = New-DesignRecord -Id 'work/10' -Kind 'WorkRef' -Path 'design/state/work/10.md' `
+            -Scalars @{ Issue = '10'; Title = 'First'; State = 'OPEN'; Rank = '1'; MirroredAt = 'sha' } -Lists @{} -Prose @{}
+        $last   = New-DesignRecord -Id 'work/20' -Kind 'WorkRef' -Path 'design/state/work/20.md' `
+            -Scalars @{ Issue = '20'; Title = 'Last'; State = 'OPEN'; Rank = 'milestone/9'; MirroredAt = 'sha' } -Lists @{} -Prose @{}
+        $content = (Get-OutstandingProjectionContent -Records @($third, $first, $last)) -join "`n"
+        (($content -split "`n") | Where-Object { $_ -match 'First|Third|Last' }) | Should -Be @(
+            '| 1 | #10 | First | — | `sha` |'
+            '| 5 | #30 | Third | — | `sha` |'
+            '| milestone/9 | #20 | Last | — | `sha` |'
+        )
+    }
 }
 
 Describe 'Update-DesignProjection: region location and refusal (S7.7, I29)' {

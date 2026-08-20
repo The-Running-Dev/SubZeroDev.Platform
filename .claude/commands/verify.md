@@ -26,6 +26,18 @@ step's own `name:`. **A step without the flag is not a gate this command owns**,
 happens to run something useful — do not add it to the report on your own judgement, and
 do not drop the flag from a step that is still meant to gate the repository.
 
+**Which steps carry the flag.** Flag a step when its failure means the *repository* is
+broken, and its `run:` block translates to a local invocation. In practice that is the
+typechecks, linters, test suites, parse checks, packaging assertions and smoke probes —
+the steps that return a verdict on the tree. It is **not** checkout, toolchain setup,
+dependency installation, credential preconditions, container start/stop, image save/load,
+publishing or deployment steps, or `uses:`-only steps that run no command of their own.
+Those can fail, and CI goes red when they do, but they fail as plumbing rather than as a
+judgement on the code, and a report listing them describes the runner instead of the
+repository. When a step both prepares and asserts, flag it only if the assertion is the
+point of the step.
+
+
 **Check the cache first.** `tools/Test-GatesCache.ps1 -RepoRoot <repo>` hashes the files
 this discovery reads (every workflow's full content — so a flag added, moved, or removed
 invalidates it same as any other step edit — plus `package.json`'s content and whether the
@@ -66,9 +78,9 @@ worth running and worth naming if run, but their absence from CI means they neve
 "did not run because it did not run" failure mode the flag exists to close:
 
 ```powershell
-Get-Content package.json | Select-String '"scripts"' -Context 0,20
-Get-ChildItem . -Filter *.sln, *.csproj -Recurse -Depth 2
-Get-ChildItem build -Filter *.ps1
+if (Test-Path package.json) { Get-Content package.json | Select-String '"scripts"' -Context 0,20 }
+Get-ChildItem . -Include *.sln, *.csproj -Recurse -Depth 2
+if (Test-Path build) { Get-ChildItem build -Filter *.ps1 }
 Test-Path docs.ps1
 ```
 

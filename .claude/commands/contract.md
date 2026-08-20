@@ -50,8 +50,12 @@ Rules:
 
 ## Re-run
 
-Rewrites `design/20-contract.md` in full from the current `design/10-design.md` — there is no
-partial regeneration. A scaffold already replaced by a pointer to a materialised declaration
+`design/20-contract.md` is **repository-scoped**: a landed path's standing contract — the
+invariants and surface for work already shipped — stands as written and is never rewritten
+away because a later run covers a different path. A re-run regenerates the section(s) that
+correspond to the `design/10-design.md` pass that invoked it, and leaves every other landed
+path's content untouched — there is no whole-document rewrite that starts from a blank
+document. A scaffold already replaced by a pointer to a materialised declaration
 (*Semantics, not shape*, above) must stay a pointer; a re-run never turns it back into a
-scaffold. `## Unresolved` only ever shrinks between runs, as signatures get resolved — an
-entry a previous run resolved must never reappear.
+scaffold, landed path or not. `## Unresolved` only ever shrinks between runs, as signatures
+get resolved — an entry a previous run resolved must never reappear.

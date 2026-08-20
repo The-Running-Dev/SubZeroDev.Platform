@@ -56,10 +56,22 @@ BeforeAll {
         $full
     }
 
-    # A minimal but exact stand-in for design/20-contract.md § "The divergence classes",
-    # carrying the same 22 ids Test-DesignState.ps1 declares, so end-to-end tests below do not
-    # spuriously raise ClassListDisagreement while exercising something else entirely.
+    # A minimal but exact stand-in for the two sections of design/20-contract.md the checker
+    # parses about itself - the same 23 class ids Test-DesignState.ps1 declares, and a verbatim
+    # copy of § "Artifacts of a unit kind"'s table - so end-to-end tests below do not spuriously
+    # raise ClassListDisagreement or GlobDisagreement while exercising something else entirely.
+    # The glob table agrees with the enumeration over any tree by construction, which is exactly
+    # the property GlobDisagreement exists to keep true of the real document.
     $script:MinimalContract = @'
+### Artifacts of a unit kind
+
+| Kind | Glob | Excluded |
+|---|---|---|
+| command | `.claude/commands/*.md` | `*-local.md` |
+| script | `tools/*.ps1` | `*.Tests.ps1` |
+| document | `design/*.md`, `templates/design/*.md`, `*.md`, `.claude/COMPANIONS.md`, `.github/ISSUE_TEMPLATE/*.md`, `codex/PROFILES.md` | `design/FROZEN.md`, `CLAUDE.md` |
+| invariant | not a tree path | — |
+
 ### The divergence classes
 
 **This is the closed list.**
@@ -80,6 +92,7 @@ BeforeAll {
 | `EnforcementUnevidenced` | x | x |
 | `ClosureOverBudget` | x | x |
 | `ClassListDisagreement` | x | x |
+| `GlobDisagreement` | x | x |
 
 **Reported, never blocking.**
 
@@ -237,6 +250,32 @@ Describe 'Test-DesignState: id resolution and record-level classes' {
         $withEvidence = New-Record -Id 'I1' -Kind 'Invariant' -Scalars @{ Enforcement = 'code' } -Lists @{ Evidence = @('tools/x.Tests.ps1') }
         $instruction = New-Record -Id 'I2' -Kind 'Invariant' -Scalars @{ Enforcement = 'instruction' } -Lists @{ Evidence = @() }
         $findings = Test-EnforcementUnevidenced -Records @($withEvidence, $instruction)
+        $findings.Count | Should -Be 0
+    }
+
+    It 'S18.1: EnforcementUnevidenced fires for a superseded decision with no SupersededBy' -Tag 'Fires','EnforcementUnevidenced' {
+        $d = New-Record -Id 'decision/x' -Kind 'Decision' -Scalars @{ Status = 'superseded' }
+        $findings = Test-EnforcementUnevidenced -Records @($d)
+        $findings.Count | Should -Be 1
+        $findings[0].Detail | Should -Match "SupersededBy"
+    }
+
+    It 'S18.3: EnforcementUnevidenced does not fire for an accepted decision with no SupersededBy' -Tag 'NearMiss','EnforcementUnevidenced' {
+        $d = New-Record -Id 'decision/x' -Kind 'Decision' -Scalars @{ Status = 'accepted' }
+        $findings = Test-EnforcementUnevidenced -Records @($d)
+        $findings.Count | Should -Be 0
+    }
+
+    It 'S18.1: EnforcementUnevidenced fires for an answered question with no AnsweredBy' -Tag 'Fires','EnforcementUnevidenced' {
+        $q = New-Record -Id 'question/x' -Kind 'Question' -Scalars @{ Status = 'answered' }
+        $findings = Test-EnforcementUnevidenced -Records @($q)
+        $findings.Count | Should -Be 1
+        $findings[0].Detail | Should -Match "AnsweredBy"
+    }
+
+    It 'S18.3: EnforcementUnevidenced does not fire for an open question with no AnsweredBy' -Tag 'NearMiss','EnforcementUnevidenced' {
+        $q = New-Record -Id 'question/x' -Kind 'Question' -Scalars @{ Status = 'open' }
+        $findings = Test-EnforcementUnevidenced -Records @($q)
         $findings.Count | Should -Be 0
     }
 }
@@ -588,7 +627,7 @@ Kind: command
 
 Describe 'Test-DesignState: ClassListDisagreement (S5.1)' {
 
-    It 'raises nothing when the contract document declares exactly the same 22 ids' -Tag 'NearMiss','ClassListDisagreement' {
+    It 'raises nothing when the contract document declares exactly the same 23 ids' -Tag 'NearMiss','ClassListDisagreement' {
         New-TreeFile -RelativePath 'design/20-contract.md' -Content $script:MinimalContract
         $result = Test-ClassListAgreement -ContractPath (Join-Path $TestDrive 'design/20-contract.md')
         $result.Finding | Should -BeNullOrEmpty
@@ -614,6 +653,134 @@ Describe 'Test-DesignState: ClassListDisagreement (S5.1)' {
         New-TreeFile -RelativePath 'design/20-contract.md' -Content $script:MinimalContract
         $parsed = Get-ContractClassIds -ContractPath (Join-Path $TestDrive 'design/20-contract.md')
         $parsed.Ids.CouldNotEvaluate | Should -Not -Contain 'DesignStateFailure'
+    }
+}
+
+Describe 'Test-DesignState: GlobDisagreement (#74)' {
+
+    BeforeAll {
+        # A throwaway tree carrying one artifact per globbed kind plus one of each exclusion, so
+        # every case below varies only the contract table against a tree that does not move.
+        $script:GlobRoot = Join-Path $TestDrive 'globfixture'
+        foreach ($rel in @(
+            '.claude/commands/alpha.md', '.claude/commands/beta-local.md',
+            'tools/Thing.ps1', 'tools/Thing.Tests.ps1',
+            'design/10-design.md', 'design/FROZEN.md',
+            'templates/design/00-brief.md', 'templates/design/CLAUDE.md',
+            'README.md', 'CLAUDE.md',
+            '.claude/COMPANIONS.md', '.github/ISSUE_TEMPLATE/bug.md', 'codex/PROFILES.md'
+        )) {
+            $full = Join-Path $script:GlobRoot $rel
+            New-Item -ItemType Directory -Path (Split-Path $full -Parent) -Force | Out-Null
+            Set-Content -LiteralPath $full -Value 'x' -Encoding utf8NoBOM
+        }
+
+        # The table as design/20-contract.md carries it. Each test below rewrites one cell.
+        $script:GlobTable = @'
+| Kind | Glob | Excluded |
+|---|---|---|
+| command | `.claude/commands/*.md` | `*-local.md` |
+| script | `tools/*.ps1` | `*.Tests.ps1` |
+| document | `design/*.md`, `templates/design/*.md`, `*.md`, `.claude/COMPANIONS.md`, `.github/ISSUE_TEMPLATE/*.md`, `codex/PROFILES.md` | `design/FROZEN.md`, `CLAUDE.md` |
+| invariant | not a tree path | — |
+
+trailing prose
+'@
+
+        function New-GlobContract {
+            param([Parameter(Mandatory)][string] $Name, [Parameter(Mandatory)][string] $Table)
+            $full = Join-Path $TestDrive "globcontracts/$Name.md"
+            New-Item -ItemType Directory -Path (Split-Path $full -Parent) -Force | Out-Null
+            Set-Content -LiteralPath $full -Value $Table -Encoding utf8NoBOM
+            $full
+        }
+    }
+
+    It 'raises nothing when every kind resolves to exactly what the checker enumerates' -Tag 'NearMiss','GlobDisagreement' {
+        $path = New-GlobContract -Name 'agree' -Table $script:GlobTable
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $result.Findings | Should -BeNullOrEmpty
+        $result.CouldNotEvaluate | Should -BeNullOrEmpty
+    }
+
+    It 'fires when the contract drops an exclusion the checker still applies' -Tag 'Fires','GlobDisagreement' {
+        $table = $script:GlobTable -replace '\| `\*-local\.md` \|', '| — |'
+        $path = New-GlobContract -Name 'no-local-exclusion' -Table $table
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $result.Findings.Class | Should -Contain 'GlobDisagreement'
+        $finding = @($result.Findings | Where-Object { $_.Subject -eq 'command' })[0]
+        $finding.Detail | Should -Match 'the contract''s patterns reach'
+        $finding.Detail | Should -Match 'beta-local\.md'
+        $finding.Blocking | Should -BeTrue
+    }
+
+    It 'fires when the checker enumerates a location the contract''s patterns do not reach' -Tag 'Fires','GlobDisagreement' {
+        $table = $script:GlobTable -replace ', `\.github/ISSUE_TEMPLATE/\*\.md`', ''
+        $path = New-GlobContract -Name 'no-issue-templates' -Table $table
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $finding = @($result.Findings | Where-Object { $_.Subject -eq 'document' })[0]
+        $finding.Detail | Should -Match 'the checker enumerates'
+        $finding.Detail | Should -Match 'ISSUE_TEMPLATE/bug\.md'
+    }
+
+    <#
+        The case Option 1A could not have caught, and the reason this class compares resolved
+        file sets. The document row still names exactly two exclusions - the token count and
+        every other token are unchanged - but one of them changes scope from a
+        repository-relative path to a basename pattern, so it now also excludes
+        templates/design/CLAUDE.md, which Get-DocumentGlobFiles still enumerates.
+    #>
+    It 'fires when an exclusion changes scope while the token list stays the same size' -Tag 'Fires','GlobDisagreement' {
+        $table = $script:GlobTable -replace '`design/FROZEN\.md`, `CLAUDE\.md`', '`design/FROZEN.md`, `*CLAUDE.md`'
+        $path = New-GlobContract -Name 'exclusion-scope' -Table $table
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $finding = @($result.Findings | Where-Object { $_.Subject -eq 'document' })[0]
+        $finding | Should -Not -BeNullOrEmpty
+        $finding.Detail | Should -Match 'templates/design/CLAUDE\.md'
+    }
+
+    It 'does not fire merely because an exclusion path repeats a basename elsewhere in the tree' -Tag 'NearMiss','GlobDisagreement' {
+        # templates/design/CLAUDE.md and CLAUDE.md share a basename; only the latter is excluded
+        # on both sides, which is the near-miss the case above turns into a fire.
+        $path = New-GlobContract -Name 'basename-collision' -Table $script:GlobTable
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $result.Findings | Should -BeNullOrEmpty
+    }
+
+    It 'fires when the table carries no patterns for a kind the checker enumerates' -Tag 'Fires','GlobDisagreement' {
+        $table = $script:GlobTable -replace '\| script \| `tools/\*\.ps1` \| `\*\.Tests\.ps1` \|\r?\n', ''
+        $path = New-GlobContract -Name 'no-script-row' -Table $table
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $finding = @($result.Findings | Where-Object { $_.Subject -eq 'script' })[0]
+        $finding.Detail | Should -Match 'carries no patterns for it'
+    }
+
+    It 'does not compare the invariant row, which has no pattern in either cell' -Tag 'NearMiss','GlobDisagreement' {
+        $parsed = Get-ContractGlobPatterns -ContractPath (New-GlobContract -Name 'invariant-row' -Table $script:GlobTable)
+        $parsed.Failure | Should -BeNullOrEmpty
+        $parsed.Kinds.Keys | Should -Not -Contain 'invariant'
+        $parsed.Kinds.Keys | Should -Contain 'document'
+    }
+
+    It 'reports ContractListUnreadable - uncomputed, never clean - when the table cannot be read' {
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath (Join-Path $TestDrive 'globcontracts/absent.md')
+        $result.Findings | Should -BeNullOrEmpty
+        $result.CouldNotEvaluate.Reason | Should -Be 'ContractListUnreadable'
+        $result.CouldNotEvaluate.Detail | Should -Match 'uncomputed, not clean'
+    }
+
+    It 'reports ContractListUnreadable when the document exists but carries no glob table' {
+        $path = New-GlobContract -Name 'no-table' -Table "# Contract`n`nnothing tabular here`n"
+        $result = Test-GlobDisagreement -RepoPath $script:GlobRoot -ContractPath $path
+        $result.CouldNotEvaluate.Reason | Should -Be 'ContractListUnreadable'
+        $result.CouldNotEvaluate.Detail | Should -Match 'GlobTableNotFound'
+    }
+
+    It 'this repository''s own table and its own enumeration agree' -Tag 'NearMiss','GlobDisagreement' {
+        $repo = Split-Path $PSScriptRoot -Parent
+        $result = Test-GlobDisagreement -RepoPath $repo -ContractPath (Join-Path $repo 'design/20-contract.md')
+        $result.CouldNotEvaluate | Should -BeNullOrEmpty
+        $result.Findings | Should -BeNullOrEmpty
     }
 }
 
@@ -923,6 +1090,72 @@ Describe 'Test-DesignState against this repository''s own tree' {
     It 'S7.9: the projector runs against this repository and ProjectionStale does not fire - the committed regions match their regeneration' {
         $script:RealResult.CouldNotEvaluate | Where-Object { $_.Reason -eq 'ProjectorFailed' } | Should -BeNullOrEmpty
         (@($script:RealResult.Findings | Where-Object { $_.Class -eq 'ProjectionStale' })).Count | Should -Be 0
+    }
+
+    It 'S16.1/S16.2: this repository has one Contract record per design/20-contract.md Public-surface entry, and OwnerMismatch reports none' {
+        # S14 wrote tools/Update-WorkMirror.ps1 and contract/update-workmirror with it, so the
+        # S16.6 exclusion (a Declaration pointing at an absent file) no longer applies - the
+        # count grew from 8 to 9 with it.
+        $graph = Read-DesignStateGraph -Path $script:RepoRoot
+        $contracts = @($graph.Records | Where-Object { $_.Kind -eq 'Contract' })
+        $contracts.Count | Should -Be 9
+        (@($script:RealResult.Findings | Where-Object { $_.Class -eq 'OwnerMismatch' })).Count | Should -Be 0
+    }
+
+    It 'S16.5: design/state-index.md''s consumers region lists real consumers, not the empty-set placeholder' {
+        $text = Get-Content -LiteralPath (Join-Path $script:RepoRoot 'design/state-index.md') -Raw
+        $text | Should -Not -Match '_\(no contract records yet\)_'
+        $text | Should -Match 'unit/command/pr'
+    }
+
+    It 'S17.2: every invariant row in the real Invariants section sits inside the single invariants region, none below it' {
+        $contractPath = Join-Path $script:RepoRoot 'design/20-contract.md'
+        $text = Get-Content -LiteralPath $contractPath -Raw
+        $start = $text.IndexOf("`n## Invariants")
+        $rest = $text.Substring($start + 1)
+        $end = $rest.IndexOf("`n## ", 1)
+        $section = if ($end -lt 0) { $rest } else { $rest.Substring(0, $end) }
+
+        $regionStart = $section.IndexOf('<!-- invariants:start -->')
+        $regionEnd = $section.IndexOf('<!-- invariants:end -->')
+        $regionStart | Should -BeGreaterThan -1
+        $regionEnd | Should -BeGreaterThan $regionStart
+
+        $before = $section.Substring(0, $regionStart)
+        $after = $section.Substring($regionEnd + '<!-- invariants:end -->'.Length)
+        $rowPattern = '(?m)^\|\s*\*\*I\d+\*\*\s*\|'
+        ([regex]::Matches($before, $rowPattern)).Count | Should -Be 0
+        ([regex]::Matches($after, $rowPattern)).Count | Should -Be 0
+
+        $graph = Read-DesignStateGraph -Path $script:RepoRoot
+        # Active only: a retired invariant leaves the rendered table, which is the invariant unit
+        # set rather than a history (design/20-contract.md, "The state set", I30).
+        $recordedCount = (@($graph.Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' })).Count
+        $parsed = Get-ContractInvariantIds -ContractPath $contractPath
+        $parsed.Ids.Count | Should -Be $recordedCount
+    }
+
+    It 'S18.6: EnforcementUnevidenced rejects this repository''s own superseded decision once its SupersededBy line is removed, and clears once it is restored' {
+        $supersededPath = Join-Path $script:RepoRoot 'design/state/decisions/2026-08-03-ticking-checkbox-is-the-users.md'
+        $original = Get-Content -LiteralPath $supersededPath -Raw
+        $original | Should -Match '(?m)^SupersededBy:'
+        try {
+            $stripped = $original -replace '(?m)^SupersededBy:.*\r?\n', ''
+            Set-Content -LiteralPath $supersededPath -Value $stripped -Encoding utf8NoBOM -NoNewline
+
+            $strippedResult = Invoke-DesignStateCheck -RepoPath $script:RepoRoot
+            $strippedResult.ExitCode | Should -Be 1
+            $hit = @($strippedResult.Findings | Where-Object { $_.Class -eq 'EnforcementUnevidenced' -and $_.Subject -eq 'decision/2026-08-03-ticking-checkbox-is-the-users' })
+            $hit.Count | Should -Be 1
+            $hit[0].Detail | Should -Match 'SupersededBy'
+        } finally {
+            Set-Content -LiteralPath $supersededPath -Value $original -Encoding utf8NoBOM -NoNewline
+        }
+
+        $restoredResult = Invoke-DesignStateCheck -RepoPath $script:RepoRoot
+        (@($restoredResult.Findings | Where-Object { $_.Class -eq 'EnforcementUnevidenced' })).Count | Should -Be 0
+        $restoredResult.ExitCode | Should -Be 0
+        (& git -C $script:RepoRoot status --short) | Should -Be $script:StatusBefore
     }
 }
 
