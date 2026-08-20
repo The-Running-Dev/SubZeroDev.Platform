@@ -1,54 +1,101 @@
 {
+  "manifestHash": "f6b94fc15903cefc09aaad327ce249c5295cee8bcdacedacad66d5cdfdc20968",
+  "generated": "2026-08-20",
   "gates": [
+    {
+      "name": "CI-gated checks (# verification: true)",
+      "status": "DidNotRun",
+      "reason": "No .github/workflows/*.yml file in this repository carries a '# verification: true' comment above a step's 'name:' line - discovery (grep across build.yml, docs-ci.yml, docs-deploy.yml, release.yml) found zero flagged steps. This is the gap tracked by open issue #131 ('/verify's # verification: true flag has never been added to this repository's workflows'). No check below is a discovered CI gate; every entry that follows is an optional, non-CI-gated script or suite this repository ships, run for its own sake."
+    },
     {
       "name": "git diff --check",
       "status": "Passed",
-      "detail": "No whitespace errors reported; command exited 0 with no output."
+      "detail": "Ran against the branch's diff from origin/main (docs/docs/guide.md only). No trailing whitespace, no leftover conflict markers, exit 0."
     },
     {
-      "name": "dotnet build (SubZeroDev.Platform.slnx, Release)",
+      "name": "Parse-check PowerShell scripts ([System.Management.Automation.Language.Parser]::ParseFile)",
       "status": "Passed",
-      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). Time Elapsed 00:01:05.45"
+      "detail": "All 31 *.ps1 files under the repository parsed cleanly with the PowerShell language parser; zero parse errors returned."
     },
     {
-      "name": "dotnet test (SubZeroDev.Platform.slnx, Release)",
+      "name": "Pester tests (tools/*.Tests.ps1, Invoke-Pester -Path tools)",
       "status": "Failed",
-      "detail": "Total tests: 265, Passed: 264, Failed: 1. Failing test: SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else\nError Message:\n System.Net.Sockets.SocketException : nodename nor servname provided, or not known\nStack Trace:\n   at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in WorkerProbeTests.cs:line 88\nThe test resolves this machine's own hostname via DNS to find a non-loopback address to bind against; that lookup fails on this local network/sandbox (no local DNS resolution for the hostname), unrelated to S13's changes."
+      "detail": "Tests Passed: 206, Failed: 6, Skipped: 0. Plus 1 BeforeAll/AfterAll block failure. Failures: (1) Read-DesignState.Tests.ps1 'S4.6: unit/command/track and unit/document/agents-md exist and their closures are complete' - Expected $true, but got $false ($byId.ContainsKey('unit/command/track') | Should -BeTrue). (2) Test-DesignState.Tests.ps1 'S5.6: the real run names a largest closure, its unit, and its largest contributor' - Expected a value, but got $null or empty ($script:RealResult.LargestClosure | Should -Not -BeNullOrEmpty). (3) Test-DesignState.Tests.ps1 'S12.5: the check exits 0 against this repository, and names the largest closure and its size' - Expected 0, because findings: ; could not evaluate: [ContractListUnreadable] SectionNotFound: design/20-contract.md | [StateSetAbsent] design/state/ is missing or holds zero records, but got 2. (4/5) Test-DesignState.Tests.ps1 'S12.6: a checkout with design/state/ removed' block failed with InvalidOperationException: A 'break' or 'continue' statement with a label that does not match any enclosing loop escaped from your code (known Pester issue pester/Pester#2669), taking its two child assertions (exits 2 reporting StateSetAbsent; and never 0) down with it. (6) Update-DesignProjection.Tests.ps1 'S7.2: -DryRun against the real repository writes nothing' - Expected 0, but got 6 ($result.Refusals.Count | Should -Be 0). All six failures are self-tests asserting properties of this repository's own design/state/ tree and design/20-contract.md's section shape, not of docs/docs/guide.md or anything this PR touches; the design/state/ set referenced (design/state/) does not exist in this working tree."
     },
     {
-      "name": "Pester tests (tools/*.Tests.ps1)",
+      "name": "Validate the core/companion split (tools/Test-Companion.ps1)",
       "status": "Passed",
-      "detail": "Invoke-Pester -Path tools -Output Detailed -PassThru: 7 files run (Measure-Session, Sync-Kit, Test-Companion, Test-DesignDrift, Test-VerifyReport, Test-WriteSurface, Wait-PullRequestCheck.Tests.ps1). Tests Passed: 95, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0."
+      "detail": "Companion split OK - 21 core command(s) checked, 0 companion files present, 21 cores with no companion. State: Valid. Findings: none. Exit 0."
     },
     {
-      "name": "build/Test-SliceStatusMarkers.ps1",
+      "name": "Check the design state against the tree (tools/Test-DesignState.ps1)",
+      "status": "DidNotRun",
+      "reason": "Exit code 2 (DidNotRun/could-not-evaluate, not Failed). Two could-not-evaluate reasons reported: [ContractListUnreadable] SectionNotFound: design/20-contract.md; [StateSetAbsent] design/state/ is missing or holds zero records. Findings: 0, Reported: 0."
+    },
+    {
+      "name": "dotnet build --configuration Release",
       "status": "Passed",
-      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md."
+      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). All 12 projects (5 src, 2 workload edge, 2 samples, 3 test projects) built. Time Elapsed 00:00:22.93."
+    },
+    {
+      "name": "dotnet test --no-build --configuration Release",
+      "status": "Failed",
+      "detail": "Total tests: 265, Passed: 264, Failed: 1. The one failure: SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else - System.Net.Sockets.SocketException: nodename nor servname provided, or not known, at System.Net.Dns.GetHostAddresses in WorkerProbeTests.cs:100 (BoundOnAnyNonLoopbackAddress). This is a DNS-resolution failure in this sandboxed local environment (the test resolves a non-loopback address to assert the worker does NOT bind to it) and is unrelated to docs/docs/guide.md, the only file this PR changes."
+    },
+    {
+      "name": "build/Test-WorkloadIsolation.ps1",
+      "status": "Passed",
+      "detail": "No project under src/ or samples/ references workloads/ (25 project file(s) checked). Exit 0."
     },
     {
       "name": "build/Test-Documentation.ps1",
       "status": "Passed",
-      "detail": "design/d3/90-decisions.md:1138:66 [Warning] Terminology: Use 'JSON' instead of 'Json'.\ndesign/d3/90-decisions.md:1141:948 [Warning] Terminology: Use 'JSON' instead of 'Json'.\nDocumentation checks passed across 43 Markdown file(s), with 2 warning(s). Exit code 0."
+      "detail": "Documentation checks passed across 44 Markdown file(s), with 2 warning(s): design/d3/90-decisions.md:1138:66 and :1141:948, both 'Terminology: Use JSON instead of Json'. Both warnings are pre-existing, in an archived design/d3 document unrelated to this PR, and are Warning severity (non-blocking by default). Exit 0."
     },
     {
-      "name": "workloads/game-service: npm run typecheck",
+      "name": "build/Test-SliceStatusMarkers.ps1",
       "status": "Passed",
-      "detail": "> @subzerodev/game-service@0.1.0 typecheck\n> tsc --noEmit\nCompleted with no type errors and no output."
+      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md. Exit 0."
     },
     {
-      "name": "CI-flagged gates (# verification: true)",
-      "status": "DidNotRun",
-      "reason": "No workflow step in .github/workflows/*.yml carries a '# verification: true' comment above its 'name:' line (grep -rn 'verification: true' .github/workflows/*.yml returned no matches) -- this repository currently declares no gates through that mechanism, so none could be discovered or run by flag."
+      "name": "build/Test-PackageManifests.ps1 (dotnet pack to scratch dir)",
+      "status": "Passed",
+      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. All six shipped .nupkg files produced, each version 0.1.0 (0.x), none depending on SubZeroDev.Platform.Testing. Exit 0."
     },
     {
-      "name": "workloads/game-service: full npm test suite (npx vitest run, incl. contention/durable-replay/conformance)",
+      "name": "build/Test-ApiReference.ps1",
       "status": "DidNotRun",
-      "reason": "Not a CI-flagged gate. Reproducing it matches build.yml's game-service job: build the .NET edge, install a pinned OpenTelemetry Collector binary, start the workload and edge processes, bring up docker-compose's Postgres, run the migration, and run ~8 vitest suites against that live stack. Out of scope for this local pass given the time budget; the corresponding CI job on the pull request (build.yml / game-service) is where this suite's answer comes from."
+      "reason": "Requires docfx, which is not installed in this local environment ('docfx not found'). This check is not reproducible locally without it; the corresponding CI check on the pull request, if any, is where the answer would come from."
     },
     {
-      "name": "site/: npm run check (docs status-page site) and docs.ps1 -BuildOnly (combined documentation build)",
+      "name": "build/Test-SampleRoundTrip.ps1",
       "status": "DidNotRun",
-      "reason": "docs.ps1 needs Docker (per the discovery table) and runs inside the published docs-template container image (ghcr.io/the-running-dev/docs-template:latest) with node_modules and PowerShell preinstalled, the same as docs-ci.yml's 'verify' job -- not reproduced locally in this pass. The corresponding CI check (Docs CI / Verify Documentation Build) on the pull request is where this build's answer comes from."
+      "reason": "Script is documented as Linux-only (signals processes via a P/Invoke to libc kill(2) and reads the store with sqlite3, both POSIX-signal-dependent). This environment is Darwin (macOS), so it cannot run here; it runs in build.yml's ubuntu-latest CI job."
+    },
+    {
+      "name": "docs.ps1 -BuildOnly (docker build of the docs image)",
+      "status": "Passed",
+      "detail": "docker build succeeded: image 'gameoflife-docs' built from docs/Dockerfile against ghcr.io/the-running-dev/docs-template:latest, layers exported and tagged. Exit 0. Note: -BuildOnly only proves the image assembles (Dockerfile COPYs docs/ over /template) - it does not run the Docusaurus build itself, which is the next entry."
+    },
+    {
+      "name": "Docusaurus production build (docs-ci.yml's verify job step, reproduced via /template/scripts/docs-build.ps1 -SourceDocs ./docs -OutputPath artifacts/docs inside ghcr.io/the-running-dev/docs-template:latest)",
+      "status": "Passed",
+      "detail": "[DOCS-BUILD] Overlaying docs over /template ... Pre Build Process Completed Successfully. [webpackbar] Server: Compiled successfully in 52.66s. [webpackbar] Client: Compiled successfully in 1.90m. [SUCCESS] Generated static files in artifacts. [DOCS-BUILD] Done. Static site available at artifacts/docs. Exit 0. This is the check that actually compiles docs/docs/guide.md (frontmatter, Mermaid fences, links) through Docusaurus, reproducing docs-ci.yml's 'verify' job's 'Build documentation' step."
+    },
+    {
+      "name": "workloads/game-service: npm run typecheck (tsc --noEmit)",
+      "status": "Passed",
+      "detail": "tsc --noEmit completed with no output and exit 0."
+    },
+    {
+      "name": "workloads/game-service: npm run test (vitest, against docker compose's PostgreSQL)",
+      "status": "Failed",
+      "detail": "With 'docker compose up -d' run first (game-service-postgres-1, healthy) per the workload README: Test Files 4 failed | 20 passed | 1 skipped (25). Tests 8 failed | 182 passed | 1 skipped (191). Every one of the 8 failures is 'Error: Test timed out in 5000ms' on tests that spawn real subprocesses or run real timers against the local Postgres container: contention-two-instances.test.ts S7.1/S7.2/S7.3-S7.4 (spawnInstances / cross-instance round trip / two-instance contention), compose.test.ts S4.4/S4.7/S4.8 (readiness flip, sweep reclaim, sweep never touching profile rows), contention-one-instance.test.ts S6.1/S6.6, and fresh-clone-migration.test.ts S11.3. None is a functional assertion failure (no 'expected X, got Y') - all are the vitest default 5000ms timeout elapsing on this local machine's Docker/subprocess latency. Before Postgres was started, all 48 durable-store tests failed with '{\"code\":\"Unreachable\"}' from migrateToHead, which is the expected DidNotRun-shaped failure for an unprovisioned store, not a code defect; that state is superseded by this run."
+    },
+    {
+      "name": "site: npm run check (prettier --check, oxlint, tsc -b, vitest, build, verify-build.mjs, verify-merge.mjs)",
+      "status": "Passed",
+      "detail": "format:check: all matched files use Prettier code style. lint: 1 pre-existing warning (src/shared.tsx:12:14, react/only-export-components), no errors. typecheck: tsc -b clean. test: 57 passed (6 test files). test:build: vite build succeeded, both built HTML entry points contain their required static metadata. test:merge: package merge preserves docs and rejects all protected-boundary violations. Exit 0."
     }
   ]
 }
