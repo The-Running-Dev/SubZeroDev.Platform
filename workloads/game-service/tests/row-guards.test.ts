@@ -119,6 +119,43 @@ describe("S13.2 — the same seeding against a save row is classified the same w
       await schema.drop();
     }
   });
+
+  // The save checker covers every column `saveSelectStatement` returns, not only the six
+  // `toStoredSaveRecord` maps. `row_created_at` is the cleanest witness for that: it is a host
+  // column that reaches no record and sits in no predicate, so before the widening it was selected
+  // and then trusted. (`tenant_id` and `expires_at` cannot witness it — the statement's own
+  // predicates fail the query first, which is why their checks are a backstop rather than a
+  // reachable branch.)
+  it("names a host column that no StoredSaveRecord field is mapped from", async () => {
+    const schema = await createTestSchema();
+    const opened = await openDurableStore(configurationFor(schema.schema), ENGINE_VERSION);
+    if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
+    const store = opened.value;
+    try {
+      await store.persistenceForRequest().saves.put(saveRecord("s13-2-host"));
+
+      const raw = await RawSchemaClient.connect(schema.schema);
+      try {
+        await raw.query("alter table save alter column row_created_at type text");
+      } finally {
+        await raw.close();
+      }
+
+      let caught: unknown;
+      try {
+        await store.persistenceForRequest().saves.get("s13-2-host");
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const cause = (caught as Error).cause as { code?: string; column?: string } | undefined;
+      expect(cause?.code).toBe("RowUndeserializable");
+      expect(cause?.column).toBe("row_created_at");
+    } finally {
+      await store.close();
+      await schema.drop();
+    }
+  });
 });
 
 describe("S13.3 — the same seeding against profile/profile_achievement rows yields profile_corrupt, not RowUndeserializable", () => {

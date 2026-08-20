@@ -634,10 +634,13 @@ Acceptance:
 - **S13.1** With a `session` row seeded so a column's value cannot satisfy the type its mapper
   declares — the column's SQL type widened and a value written that the declared type cannot hold —
   `sessions.get` fails with `StoreError.RowUndeserializable` naming the column, and a request
-  reaching it answers `internal_failure` at `500`, distinguished in the same suite from
-  `storage_failure` at `503`.
-- **S13.2** The same seeding against a `save` row is classified the same way, and the guarded write
-  path is unaffected: a `RowUndeserializable` read is never reclassified as `conflict`.
+  reaching it answers `storage_failure` at `503` — not `internal_failure` at `500`, which the read
+  ports have no channel to reach (`90-decisions.md`, 2026-08-20, "`RowUndeserializable` answers
+  503"). The criterion is the thrown `cause` and the column it names.
+- **S13.2** The same seeding against a `save` row is classified the same way, over **every** column
+  `saveSelectStatement` returns rather than only those a `StoredSaveRecord` field is mapped from; and
+  the guarded write path is unaffected: a `RowUndeserializable` read is never reclassified as
+  `conflict`.
 - **S13.3** The same seeding against a `profile` or `profile_achievement` row yields `profile_corrupt`
   and an empty achievement set on a `200` — not `RowUndeserializable` — because `ProfileStore.load`
   has no error channel. Both answers are asserted in one suite, so the two are told apart rather

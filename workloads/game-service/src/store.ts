@@ -364,16 +364,29 @@ function firstInvalidSessionColumn(raw: Record<string, unknown>): string | null 
   return null;
 }
 
-/** Same reasoning as `firstInvalidSessionColumn`, scoped to the columns `toStoredSaveRecord`
- *  actually maps — `save`'s guarded-write-free shape (no `version`) means this is the only place a
- *  malformed `save` row can be caught (S13.2). */
+/** Same reasoning as `firstInvalidSessionColumn`, and scoped the same way — to every column
+ *  `saveSelectStatement` returns, not merely to the subset `toStoredSaveRecord` maps. `save`'s
+ *  guarded-write-free shape (no `version`) means this is the only place a malformed `save` row can
+ *  be caught (S13.2), so a selected host column widened out from under its declared type would
+ *  otherwise reach no check at all; and the two checkers covering different fractions of their own
+ *  selects would read as an oversight rather than a choice.
+ *
+ *  `tenant_id` and `expires_at` are checked here for the same reason their session counterparts
+ *  are, and with the same caveat: the statement's own `tenant_id = $1` and `expires_at > now()`
+ *  predicates would fail the query before a widened value could reach this function, so those two
+ *  lines are a backstop against a later statement that drops a predicate, not a branch any current
+ *  query can take. */
 function firstInvalidSaveColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["tenant_id"] !== "string") return "tenant_id";
   if (typeof raw["save_id"] !== "string") return "save_id";
   if (typeof raw["campaign_id"] !== "string") return "campaign_id";
   if (typeof raw["blob"] !== "string") return "blob";
   if (typeof raw["saved_at_seq"] !== "number") return "saved_at_seq";
   if (typeof raw["audience"] !== "string") return "audience";
   if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
+  if (typeof raw["engine_version"] !== "string") return "engine_version";
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
+  if (!(raw["expires_at"] instanceof Date)) return "expires_at";
   return null;
 }
 
