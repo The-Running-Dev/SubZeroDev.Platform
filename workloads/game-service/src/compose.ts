@@ -54,6 +54,7 @@ import type {
   ReplayDeterminismProfile,
   SemanticVersion,
   StorageProfile,
+  StoreError,
   StoreProvider,
   StoreSerializationHandle,
   StoreSerializationSnapshot,
@@ -189,6 +190,28 @@ export function migrationNotReadyDetail(error: MigrationError): string {
   if (error.code === "LockTimeout") return "migration lock timeout";
   if (error.code === "MigrationFailed") return `migration failed: ${error.migration}`;
   return "migration runner unreachable";
+}
+
+/** The same mapping as `migrationNotReadyDetail` above, for the store's own side of startup.
+ *  `20-contract.md`'s `StoreError` table requires an `IsolationLevelUnsupported` store to report
+ *  not-ready **naming the isolation level found** — a `read committed` misconfiguration is the one
+ *  store condition no amount of waiting clears, and reporting it as "store unreachable" tells an
+ *  operator to wait for a recovery that cannot come. Pure, for the same reason its migration
+ *  counterpart is: the mapping is checkable without provoking each condition against a live
+ *  database. */
+export function storeNotReadyDetail(error: StoreError): string {
+  switch (error.code) {
+    case "IsolationLevelUnsupported":
+      return `store isolation level ${error.isolationLevel}, not read committed`;
+    case "PoolExhausted":
+      return "store connection pool exhausted";
+    case "IdCollision":
+    case "RowUndeserializable":
+    case "StatementFailed":
+      return "store statement failed";
+    default:
+      return "store unreachable";
+  }
 }
 
 function validateStorageConfiguration(storage: StorageProfile): Outcome<void, CompositionError> {
@@ -396,7 +419,7 @@ export async function compose(
       notReadyDetail = null;
       return;
     }
-    notReadyDetail = "store unreachable";
+    notReadyDetail = storeNotReadyDetail(opened.error);
     console.error("[game-service] durable store connection attempt failed", opened.error);
     scheduleReconnect(DURABLE_RECONNECT_INTERVAL_MS);
   }

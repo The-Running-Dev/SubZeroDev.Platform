@@ -222,18 +222,16 @@ answer.
 Open items for whoever next edits [`design/00-brief.md`](../../design/00-brief.md) (S11.4), and
 two facts every proof in this effort depends on:
 
-- **Two brief conflicts remain unresolved.** The tenant column (`tenant_id`) is present in every
-  primary key and every statement (invariant 51) despite the brief's tenant non-goal wording; and
-  the `save` table carries a 365-day absolute lifecycle, an `expires_at` column and a sweep that
-  hard-deletes past it, despite the brief naming only sessions in its lifecycle criteria
-  (`20-contract.md`, Unresolved 2). Neither is this effort's to resolve — both are
-  `00-brief.md`'s author's decision.
-- **Every proof here depends on the engine having ratified `concurrent_modification` under the
-  name and brand this contract assumes** (`SESSION_PERSISTENCE_CONFLICT`,
-  `SessionPersistenceConflict`; `20-contract.md`, Unresolved 3). The exposure if the engine
-  ratifies a different name or brand shape is rework in S1 (the engine seam) and in this
-  contract — nothing downstream of the brand changes shape, because the adapter throws a branded
-  value and Dispatch only ever maps a code.
+- **One brief conflict remains unresolved.** The `save` table carries a 365-day absolute
+  lifecycle, an `expires_at` column and a sweep that hard-deletes past it, despite the brief
+  naming only sessions in its lifecycle criteria (`20-contract.md`, Unresolved 2). It is not this
+  effort's to resolve — it is `00-brief.md`'s author's decision. The tenant conflict this note
+  once also named was resolved on 2026-08-12 by an amendment to `00-brief.md`, which now permits
+  the implicit tenant in every key and statement.
+- **The engine has ratified `concurrent_modification` under the name and brand this contract
+  assumes** (`SESSION_PERSISTENCE_CONFLICT`, `SessionPersistenceConflict`), and the vendored
+  engine `0.8.0` ships both — so every proof here rests on a published artifact rather than on a
+  pending pull request.
 - **A session's idle TTL advances only on an accepted write, never on a read.** `expires_at` is
   recomputed from the database clock on every accepted write and left untouched by every read, so
   a session read continuously for its whole TTL still expires (`20-contract.md`, Open question 8;

@@ -10,7 +10,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, connect as netConnect } from "node:net";
 import type { AddressInfo, Socket } from "node:net";
 
-import { compose, migrationNotReadyDetail } from "../src/compose.js";
+import { compose, migrationNotReadyDetail, storeNotReadyDetail } from "../src/compose.js";
 import { startWorkload } from "../src/lifecycle.js";
 import { dropSchemaByName, quoteIdentifier } from "../src/migrations.js";
 import { contract } from "./support/harness.js";
@@ -279,5 +279,18 @@ describe("S12.7 — the readiness detail names a lock timeout, distinctly from a
     // detail-surfacing machinery against the same code path this mapping feeds; what remains
     // untested end to end is `migrations.ts`'s own `isLockTimeout` classification of Postgres's
     // `55P03`/`57014`, which is unit-level, driver-facing logic outside this slice's `Touches`.
+  });
+
+  // Reconciliation after S13: `20-contract.md`'s `StoreError` table requires an
+  // `IsolationLevelUnsupported` store to report not-ready *naming the isolation level found*, and
+  // every store-open failure reported "store unreachable" alike — so the one store condition no
+  // amount of waiting clears read to an operator as the one waiting does clear.
+  it("storeNotReadyDetail names the isolation level found, distinctly from an unreachable store", () => {
+    expect(storeNotReadyDetail({ code: "IsolationLevelUnsupported", isolationLevel: "serializable" })).toBe(
+      "store isolation level serializable, not read committed",
+    );
+    expect(storeNotReadyDetail({ code: "Unreachable" })).toBe("store unreachable");
+    expect(storeNotReadyDetail({ code: "PoolExhausted" })).not.toBe("store unreachable");
+    expect(storeNotReadyDetail({ code: "StatementFailed" })).not.toBe("store unreachable");
   });
 });
