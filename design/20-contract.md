@@ -320,9 +320,11 @@ type-level fact rather than a branch anyone has to keep correct.
 
 **All three lifecycle bounds are configuration, and the production defaults are 30 days, 365 days and
 30 days.** Sessions and saves deliberately do not share a number. The defaults are values, not the
-mechanism — the expiry proofs set them to seconds, and the replay takes the defaults precisely
-because a session that expired between two of its ten steps would report a serialization failure for
-a clock problem.
+mechanism; in practice every proof runs at them. Expiry is asserted by seeding `expires_at` into the
+past rather than by shortening a TTL and waiting, so the replay's requirement — that no session
+expire between two of its ten steps, which would report a serialization failure for a clock problem —
+holds by construction rather than by each proof choosing the right bounds. Only
+`retentionHorizonSeconds` is varied, by the sweep proofs.
 
 **`retentionHorizonSeconds` is required to exceed any request's duration by a wide margin**, and that
 requirement is what makes it impossible for a sweep to fall between a live request's read and its
@@ -359,9 +361,17 @@ readiness probe was introduced to surface. **The stated cost is that readiness c
 
 **`ProbeResult.detail` amends G1's declaration (`g1/20-contract.md`), which had no such field.**
 While the durable branch is not yet ready, it names which startup condition is holding it back — a
-migration still running, its advisory lock held past its bound, a failed migration naming which one,
-or the store simply unreachable (`design/90-decisions.md`, "Startup migrations"). Present only on an
-unhealthy result; absent everywhere else, including every G1-era caller that never populated it.
+migration's advisory lock held past its bound, a failed migration naming which one, or the store
+itself unreachable, unreachable at the wrong isolation level, or out of connections
+(`design/90-decisions.md`, "Startup migrations"). Present only on an unhealthy result; absent
+everywhere else, including every G1-era caller that never populated it.
+
+**A migration still running is deliberately not among them.** The listener binds only once the first
+startup attempt settles, and that attempt runs the migration inside itself
+(`design/90-decisions.md`, 2026-08-20, "Migrating inside the first startup attempt is what bounds the
+bind"), so no probe is ever served while a migration is in flight and no detail string could report
+one. Naming that condition would require binding the listener ahead of the migration — the ordering
+that decision considered and declined.
 
 ### Workload — the sweep
 
@@ -730,6 +740,17 @@ constraint is stated here rather than in G3 because G3 cannot discover it.
 **The three ports enter as one value, not three parameters**, which is what makes the decorator's
 coverage checkable: a seam member added later is a compile error at every implementation of
 `StorageDecorator` rather than a port that quietly goes undecorated.
+
+**What the seam guarantees is coverage of all three ports, not that all three live ports ever meet
+in one grouping.** The in-memory branch composes once, with all three live. The durable branch
+composes twice: once process-lived to obtain the lifecycle probe, and once per request to obtain the
+persistence and profile ports — because invariant 69 forbids rebuilding the probe per request, while
+`persistenceForRequest()` requires exactly that. Each call still passes a full `StorageSeam`, so no
+member escapes the decorator; but in the process-lived call the persistence and profile members are
+the unavailable placeholders, and in the per-request call the lifecycle member's result is discarded.
+**G3's decorator must therefore expect to be applied more than once per process, to see placeholder
+members in some applications, and to carry no state between them.** That is stated here for the same
+reason the seam itself is: G3 cannot discover it.
 
 **Composition owns the sweep timer**, calls `sweepOnce`, and never starts a tick while its
 predecessor is still running. The in-memory configuration starts no timer.

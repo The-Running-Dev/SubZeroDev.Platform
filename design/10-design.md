@@ -488,8 +488,8 @@ Then, for the durable configuration:
    already declared gone.** Reads treat an expired row as absent, so a request that read a live row
    microseconds before its TTL elapsed would otherwise extend it by a full TTL while a concurrent
    read on the other instance was answering `session_expired`. The predicate is cheap here and would
-   be a data-correcting migration once rows exist; test TTLs are set in seconds, which makes the
-   window routine rather than theoretical.
+   be a data-correcting migration once rows exist; the expiry proofs seed `expires_at` into the past
+   directly rather than waiting out a shortened TTL, which makes the window exact rather than raced.
 4. **Zero rows affected is classified, never assumed, and the classification has three branches.**
    The adapter re-reads the row.
    - Present with a **different version** → **conflict**.
@@ -617,11 +617,17 @@ database schema, migrating it, and dropping it afterwards.** The counting `Recor
 key. **The tenant column must not be used for this** — isolating runs by tenant is tenancy behaviour,
 which is a binding non-goal, and it is exactly the shortcut a durable store makes tempting.
 
-**The durable replay runs with TTLs that cannot elapse during it.** All three lifecycle values are
-configuration so that the expiry proofs can set them to seconds, and the replay is the one proof for
-which that setting is poison: a session that expires between two of the ten steps returns
-`unknown_session`, diverges from the golden transcript, and reports a serialization failure for a
-clock problem. The replay takes the production defaults; only the lifecycle proofs shorten them.
+**The durable replay runs with TTLs that cannot elapse during it — as does every other proof.** All
+three lifecycle values are configuration, but no proof shortens the two TTLs to make a row expire:
+the expiry proofs seed `expires_at` into the past with a direct `update` and then read through the
+port, which asserts the predicate under test without a timing race and leaves `sessionIdleTtlSeconds`
+and `saveTtlSeconds` at their production defaults everywhere. Only `retentionHorizonSeconds` is
+varied, by the sweep proofs, which need a horizon a seeded row can already be past.
+
+**The replay is the proof a shortened TTL would poison**, which is why invariant 82 names it: a
+session that expires between two of the ten steps returns `unknown_session`, diverges from the golden
+transcript, and reports a serialization failure for a clock problem. Seeding expiry rather than
+waiting it out makes that hazard structural rather than a setting each proof must remember.
 
 **Comparison A asserts the dumps are non-empty before it asserts they are equal.** Two empty ordered
 sets compare byte-identical, so a dump that reads the wrong schema — a `search_path` that does not
@@ -1162,8 +1168,9 @@ by whichever document a later session happens to read first.
 
 2. **What are the two TTLs and the retention horizon?**
    **Settled: session idle TTL 30 days, save TTL 365 days, retention horizon 30 days.** The design
-   requires all three to be configuration so tests can set them to seconds, and that is unchanged —
-   these are the production defaults, not the mechanism. Sessions and saves deliberately do **not**
+   requires all three to be configuration, and that is unchanged — these are the production defaults,
+   not the mechanism. In practice only the retention horizon is varied by a proof; expiry itself is
+   asserted by seeding `expires_at` into the past. Sessions and saves deliberately do **not**
    share a number: a session is resumable working state on an idle clock, a save is immutable and is
    the artifact a player would notice losing, so it gets an absolute year from insert. The horizon
    only has to exceed any request's duration; 30 days is generous for a tombstone a few columns wide.

@@ -378,8 +378,11 @@ export type ProbeStatus = "healthy" | "unhealthy";
 export interface ProbeResult {
   readonly status: ProbeStatus;
   // Present only while `status` is `"unhealthy"` on the durable branch's readiness probe, naming
-  // which startup condition — a still-running migration, a lock held past its bound, a failed
-  // migration, or an unreachable store — is holding it back (`design/30-slices.md`, S12.6/S12.7).
+  // which startup condition — a lock held past its bound, a failed migration, or a store that is
+  // unreachable, at the wrong isolation level, or out of connections — is holding it back
+  // (`design/30-slices.md`, S12.6/S12.7). A *running* migration is not among them: the listener
+  // binds only after the first startup attempt settles, and that attempt runs the migration, so no
+  // probe is served while one is in flight (`20-contract.md`, "Workload — readiness").
   readonly detail?: string;
 }
 

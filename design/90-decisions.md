@@ -9,6 +9,100 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-20 — Readiness never reports a running migration, and the contract stopped promising one
+
+Context: `20-contract.md`'s readiness paragraph and `types.ts`'s `ProbeResult.detail` comment both
+listed "a migration still running" as a condition `detail` names. No such string exists:
+`migrationNotReadyDetail` maps `LockTimeout`, `MigrationFailed` and unreachable, and nothing else.
+The condition is not merely unimplemented but unreachable — the listener binds only once the first
+startup attempt settles, and that attempt runs the migration inside itself, so no probe is served
+while one is in flight.
+Chosen: both documents change. The detail list becomes the conditions that exist, and the contract
+states plainly why a running migration is not among them, with the pointer to the bind-ordering entry
+below.
+Rejected: making the code match by binding the listener before the migration, so a probe could be
+served mid-migration and the string become reachable. That reverses this log's own bind-ordering
+adjudication of the same day — which weighed exactly this trade and chose the settle before the bind
+— to make one detail string live. The ordering is load-bearing; the string is not.
+Reversibility: cheap — the paragraph and the comment.
+
+### 2026-08-20 — The storage seam guarantees port coverage, not one live grouping
+
+Context: `20-contract.md` said every one of the three ports passes through `composeStorageSeam` "at
+every call site", which reads as a promise that a decorator sees the three live ports together. The
+durable branch composes the seam twice: once process-lived for the lifecycle probe, once per request
+for persistence and profiles — because invariant 69 forbids rebuilding the probe per request while
+`persistenceForRequest()` requires exactly that per request. Each call passes a full `StorageSeam`, so
+coverage holds; but one grouping carries placeholder persistence and profiles, and the other discards
+its lifecycle member.
+Chosen: the contract gains the distinction, and states the three consequences G3's decorator actually
+inherits — it is applied more than once per process, it sees placeholder members in some
+applications, and it may carry no state between them. G3 cannot discover any of that from invariant
+74.
+Rejected: making the probe per-request so a single seam carries all three live. It costs invariant 69,
+rebuilds the probe on every request for no runtime benefit, and buys only the literal reading of a
+sentence that was easier to correct.
+Reversibility: cheap — a paragraph; the composition is unchanged.
+
+### 2026-08-20 — Expiry is proved by seeding `expires_at`, not by shortening a TTL
+
+Context: three passages — `10-design.md` twice, `20-contract.md` once, and one line of this log —
+said the expiry proofs set the lifecycle bounds to seconds, and that only the replay takes the
+production defaults. No proof does. `sessionIdleTtlSeconds` and `saveTtlSeconds` are at their
+defaults everywhere; expiry is asserted by an `update` that seeds `expires_at` into the past and then
+a read through the port. Only `retentionHorizonSeconds` is varied, by the sweep proofs.
+Chosen: the documents describe what the proofs do. The bounds stay configuration — that is a real
+property and unchanged — but the claim that proofs shorten them is dropped, and invariant 82's
+guarantee is restated as structural rather than as a setting each proof must remember.
+Rejected: changing the proofs to shorten the TTLs so the sentences become true. It would add
+short-TTL configuration paths and reintroduce the timing race the seeded row removes — a strictly
+worse proof bought to preserve three sentences.
+Reversibility: cheap — prose only.
+
+### 2026-08-20 — The `int8` parser override is scoped to this store's own `Pool`, not to `pg-types`
+
+Context: `pg` returns `int8` (OID 20) columns as JS `string`, to avoid the silent precision loss a
+`number` would take on values outside its exact range. `session.version` is exactly such a column and
+the contract requires its runtime type to be `bigint` (S3.17) — a numeric-looking `string` compares
+equal on a round trip while making arithmetic on it a concatenation, so the guarded write's version
+advance would append rather than increment. An override was therefore needed, and the obvious spelling
+is `pgTypes.setTypeParser(20, BigInt)`.
+Chosen: `BIGINT_VERSION_TYPES`, a `CustomTypesConfig` passed through `pg`'s per-instance `types`
+option so the override lives on this store's `Pool` and nothing else. Exported, so test support
+applies the identical override to its own raw pools rather than depending on `store.ts` having
+already run a global side effect first.
+Rejected: `pgTypes.setTypeParser`. It mutates the process-wide `pg-types` registry, so every other
+`pg.Pool`/`Client` in the process — including any a future workload, script or test harness opens —
+silently reparses OID 20. That is an action at a distance whose failure mode is a value quietly
+changing type in code that never asked for it, and it makes the override order-dependent: whichever
+module imported first wins.
+Rejected: mapping `version` at the row boundary instead, in `toSessionRow`. The `string` would still
+be what `pg` handed back, so `firstInvalidSessionColumn`'s `typeof raw["version"] !== "bigint"` check
+— the one that makes S13.1's claim about `version` meaningful — would have to be weakened to accept
+either form, which is the guard being removed to accommodate the thing it guards against.
+Reversibility: cheap — one exported constant and one `Pool` option.
+
+### 2026-08-20 — The save-row checker covers the whole select, not just the mapped columns
+
+Context: `firstInvalidSessionColumn` checked all fourteen columns `sessionSelectStatement` returns,
+while `firstInvalidSaveColumn` checked six of the ten `saveSelectStatement` returns — omitting
+`tenant_id`, `engine_version`, `row_created_at` and `expires_at`, the four that reach no
+`StoredSaveRecord` field. `20-contract.md`'s `StoreError` table states the condition unqualified ("a
+row whose columns do not satisfy their declared types"), and `save` has no guarded write, so this
+checker is the only place a malformed `save` row is caught at all.
+Chosen: widen the checker to all ten, matching the select rather than the mapper. Four `typeof` lines,
+symmetric with the session checker, and the contract's sentence becomes true as written.
+Rejected: recording the narrowing as a decision and leaving six. The narrowing is defensible on its
+own terms — an unmapped column cannot corrupt a record no one reads — but two checkers covering
+different fractions of their own selects is the kind of asymmetry a later reader repairs as an
+oversight, and an entry explaining why four lines are absent costs more than the four lines.
+Retained cost: `tenant_id` and `expires_at` are unreachable through the current statement, whose own
+`tenant_id = $1` and `expires_at > now()` predicates fail the query before a widened value could
+reach the checker. They are a backstop against a statement that later drops a predicate, and are
+noted as such in the code so no one writes a test for a branch that cannot be taken. `row_created_at`
+is the reachable witness and `row-guards.test.ts` uses it.
+Reversibility: cheap — four lines and one test case.
+
 ### 2026-08-20 — The storage seam is a declared type, because G3 inherits it rather than discovers it
 
 Context: S13 added `StorageSeam`, `StorageDecorator`, `IDENTITY_STORAGE_DECORATOR` and
@@ -562,7 +656,8 @@ is a compile-time constant rather than a resolved one. What is being bought is t
 shape* is right from the first migration.
 
 **(2) Session idle TTL 30 days; save TTL 365 days; retention horizon 30 days.** Production
-defaults only — all three stay configuration, so the suite still sets them to seconds. Sessions
+defaults only — all three stay configuration, though in the event only the retention horizon is
+varied by a proof and expiry is asserted by seeding `expires_at` into the past. Sessions
 and saves deliberately take different numbers: a session is resumable working state on an idle
 clock, a save is immutable and is the artifact a player would notice losing, so it takes an
 absolute year from insert. The horizon's only stated requirement is that it exceed any request's
