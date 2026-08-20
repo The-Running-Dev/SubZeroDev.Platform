@@ -18,7 +18,17 @@
     {
       "name": "docs.ps1 -BuildOnly",
       "status": "Passed",
-      "detail": "Building 'gameoflife-docs' from /Users/ben/Dropbox/Projects/SubZeroDev.Platform/docs (base: ghcr.io/the-running-dev/docs-template:latest) ... #8 naming to docker.io/library/gameoflife-docs:latest done. Built 'gameoflife-docs'. (build-only). EXIT: 0. Docusaurus fails the build on unresolved links, so this exercises the regenerated docs/docs/guide.md through the real site build."
+      "detail": "Building 'gameoflife-docs' from /Users/ben/Dropbox/Projects/SubZeroDev.Platform/docs (base: ghcr.io/the-running-dev/docs-template:latest) ... #8 naming to docker.io/library/gameoflife-docs:latest done. Built 'gameoflife-docs'. (build-only). EXIT: 0. NOTE, DISCOVERED AFTER THIS RUN: -BuildOnly only builds the Docker image (a plain COPY layer) and never runs the Docusaurus site build inside it, so this check does not exercise Markdown link resolution and passing it is not evidence the site actually builds. It is retained here for what it does check (the image itself); the real build is the next entry."
+    },
+    {
+      "name": "docker run ghcr.io/the-running-dev/docs-template:latest Invoke-DocsBuild (the actual CI invocation, run locally)",
+      "status": "Failed",
+      "detail": "First run, at commit 994a53f: Error: MDX compilation failed for file \"/template/docs/guide.md\" — Cause: Markdown link with URL `../../design/20-contract.md` in source file \"docs/guide.md\" (84:14) couldn't be resolved. Make sure it references a local Markdown file that exists within the current plugin. This surfaced first via the pushed PR's CI check 'Verify Documentation Build' (Wait-PullRequestCheck against 994a53f), then reproduced locally by running the docs-template image's real Invoke-DocsBuild command instead of docs.ps1 -BuildOnly. Root cause: the Docusaurus site only overlays docs/ into the build image; design/ is not part of that tree, so the six relative links the regeneration wrote (../../design/20-contract.md, ../../design/10-design.md) cannot resolve there even though they resolve fine on GitHub. Fixed at 05fed3f by switching those six links to the github.com blob URLs docs/docs/*.md already uses elsewhere for the same files (e.g. observability.md, implementation-plan.md). Re-run after the fix (see next entry) passed."
+    },
+    {
+      "name": "docker run ghcr.io/the-running-dev/docs-template:latest Invoke-DocsBuild, re-run after the link fix",
+      "status": "Passed",
+      "detail": "[DOCS-BUILD] Overlaying '/work/docs' over '/template' ... [webpackbar] Server: Compiled successfully in 54.85s [webpackbar] Client: Compiled successfully in 2.13m [SUCCESS] Generated static files in \"artifacts\". [DOCS-BUILD] Copying static site to '/tmp/docsout' ... [DOCS-BUILD] Done. Exit 0, at commit 05fed3f. Also confirmed via the PR's own 'Verify Documentation Build' CI check going green on 05fed3fcfc20b76f0939777d9d3a7455fd28da16 (Wait-PullRequestCheck, PollCount 6, State Passed)."
     },
     {
       "name": "npm run typecheck (workloads/game-service)",
