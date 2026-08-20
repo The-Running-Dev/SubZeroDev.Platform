@@ -3,7 +3,7 @@
     {
       "name": "Discovery: # verification: true flagged CI steps",
       "status": "DidNotRun",
-      "reason": "No gate declares itself in this repository. Scanned every file in .github/workflows/ (build.yml, docs-ci.yml, docs-deploy.yml, release.yml) for the '# verification: true' comment; zero matches, and the verify.yml the skill's example table names does not exist here. tools/Test-GatesCache.ps1 reported Stale with gates:null, and the committed .claude/gates.json from the prior run also holds \"gates\": null under the identical manifestHash f6b94fc1 — so the previous /verify on this tree discovered none either. Everything below is the optional, non-CI-gated set the skill lists second; none of it is a flagged gate."
+      "reason": "No gate declares itself in this repository. Scanned every file in .github/workflows/ (build.yml, docs-ci.yml, docs-deploy.yml, release.yml) for the '# verification: true' comment; zero matches, and the verify.yml the skill's example table names does not exist here. tools/Test-GatesCache.ps1 reported Stale with gates:null, and the committed .claude/gates.json from the prior run also holds \"gates\": null under the identical manifestHash f6b94fc1 \u2014 so the previous /verify on this tree discovered none either. Everything below is the optional, non-CI-gated set the skill lists second; none of it is a flagged gate."
     },
     {
       "name": "npm run typecheck (workloads/game-service)",
@@ -13,7 +13,7 @@
     {
       "name": "npm test / npx vitest run (workloads/game-service)",
       "status": "Passed",
-      "detail": "Test Files 24 passed | 1 skipped (25); Tests 191 passed | 1 skipped (192); duration 32.78s. Run against a live PostgreSQL 17 brought up from workloads/game-service/docker-compose.yml. Includes tests/row-guards.test.ts (6 passed), which carries the new S13.2 case asserting saves.get names row_created_at."
+      "detail": "Test Files 24 passed | 1 skipped (25); Tests 191 passed | 1 skipped (192); duration 23.01s. Run against a live PostgreSQL 17 brought up from workloads/game-service/docker-compose.yml. Includes tests/row-guards.test.ts, which carries the new S13.2 case asserting saves.get names row_created_at."
     },
     {
       "name": "build/Test-Documentation.ps1",
@@ -43,7 +43,7 @@
     {
       "name": "dotnet test (SubZeroDev.Platform.slnx, Release)",
       "status": "Failed",
-      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265, Duration: 35 s - SubZeroDev.Platform.Tests.dll (net10.0)\n[xUnit.net 00:00:01.77]     SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [FAIL]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nSubZeroDev.Platform.GameEdge.Tests.dll passed 19/19.\nCAUSE: environmental, not a code failure. BoundOnAnyNonLoopbackAddress calls Dns.GetHostAddresses(Dns.GetHostName()); this host's name is 'mac' and does not resolve ('ping: cannot resolve mac: Unknown host'). NOT ATTRIBUTABLE TO THIS BRANCH: git diff --name-only lists only design/*.md, docs/docs/guide.md, and three files under workloads/game-service/ — no .NET source is touched."
+      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265, Duration: 30 s - SubZeroDev.Platform.Tests.dll (net10.0)\n[xUnit.net 00:00:01.66]     SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [FAIL]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nSubZeroDev.Platform.GameEdge.Tests.dll passed 19/19.\nCAUSE: environmental, not a code failure. BoundOnAnyNonLoopbackAddress calls Dns.GetHostAddresses(Dns.GetHostName()); this host's name is 'mac' and does not resolve ('ping: cannot resolve mac: Unknown host'). NOT ATTRIBUTABLE TO THIS BRANCH: git diff --name-only lists only design/*.md, docs/docs/guide.md, and three files under workloads/game-service/ \u2014 no .NET source is touched."
     },
     {
       "name": "Invoke-Pester -Path tools",
@@ -58,12 +58,12 @@
     {
       "name": "docs.ps1 -BuildOnly",
       "status": "Passed",
-      "detail": "Built 'gameoflife-docs'. (build-only) — Docker image built from ghcr.io/the-running-dev/docs-template:latest with docs/ copied in, exit 0. NOTE: this builds the image only; it does not run a Docusaurus production build, so it does not by itself prove docs/docs/guide.md renders. The Markdown itself was linted by build/Test-Documentation.ps1 above."
+      "detail": "Built 'gameoflife-docs'. (build-only) \u2014 Docker image built from ghcr.io/the-running-dev/docs-template:latest with docs/ copied in, exit 0. NOTE: this builds the image only; it does not run a Docusaurus production build, so it does not by itself prove docs/docs/guide.md renders. The Markdown itself was linted by build/Test-Documentation.ps1 above."
     },
     {
       "name": "build/Test-ApiReference.ps1",
       "status": "DidNotRun",
-      "reason": "Not run. It is not a flagged gate, it exercises the generated API reference, and nothing on this branch touches the API surface it reads — the diff is design Markdown, the generated guide, and three TypeScript files under workloads/game-service/. Named here rather than omitted so the list of shipped build scripts is complete."
+      "reason": "Not run. It is not a flagged gate, it exercises the generated API reference, and nothing on this branch touches the API surface it reads \u2014 the diff is design Markdown, the generated guide, and three TypeScript files under workloads/game-service/. Named here rather than omitted so the list of shipped build scripts is complete."
     }
   ]
 }
