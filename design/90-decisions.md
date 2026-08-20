@@ -1062,15 +1062,9 @@ Reversibility: cheap
 
 ## Open
 
-- **S13.1 was ticked on half a criterion, and the other half was never achievable.** The criterion
-  requires that a request reaching a malformed row *"answers `internal_failure` at `500`,
-  distinguished in the same suite from `storage_failure` at `503`"*. `tests/row-guards.test.ts`
-  asserts the thrown `cause` only — it issues no request and asserts no status — and the wire half
-  cannot be met, for the reason recorded on 2026-08-20 (`RowUndeserializable` answers 503). The
-  contract is corrected; `design/30-slices.md` is not this command's to edit and the criterion still
-  reads as met. What needs deciding is whether the criterion is amended or the tick withdrawn.
+_Nothing staged._
 
-_(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147))_
+_(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147); and the S13.1 half-criterion question, resolved in place by amending the criterion — `c5eda09`, and the entry above dated 2026-08-20, "`RowUndeserializable` answers 503".)_
 
 ---
 
