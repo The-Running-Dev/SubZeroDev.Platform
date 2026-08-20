@@ -344,7 +344,12 @@ export type StoreError =
   | { readonly code: "Unreachable" }
   | { readonly code: "PoolExhausted" }
   | { readonly code: "IsolationLevelUnsupported"; readonly isolationLevel: string }
-  | { readonly code: "StatementFailed" }
+  // `statement` is the same shape `RowUndeserializable.column` takes and exists for the same
+  // reason — a log line an operator can act on. Optional because only the sweep is required to
+  // name it (`10-design.md`, "The sweep fails": the one condition no readiness check and no
+  // request can surface, so the log line is the whole of its observability); every serving-path
+  // caller answers `storage_failure` at `503` and the statement is implied by the operation.
+  | { readonly code: "StatementFailed"; readonly statement?: string }
   | { readonly code: "IdCollision" }
   | { readonly code: "RowUndeserializable"; readonly column: string };
 

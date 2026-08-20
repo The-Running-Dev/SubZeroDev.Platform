@@ -80,8 +80,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** `"insert"` context is what lets a primary-key collision (`23505`) classify as `IdCollision`
- *  rather than an ordinary `StatementFailed` — the distinction the S3.12 caller depends on. */
-function classifyStoreError(error: unknown, context: "insert" | "other"): StoreError {
+ *  rather than an ordinary `StatementFailed` — the distinction the S3.12 caller depends on.
+ *
+ *  `statement`, when supplied, is attached to a `StatementFailed` classification and to that one
+ *  only — the other classifications name a condition rather than a statement, and a connect that
+ *  was refused has no statement to name. Supplied by the sweep, whose log line is the whole of its
+ *  observability (`10-design.md`, "The sweep fails"); the serving-path callers leave it off,
+ *  because there the operation already identifies the statement. */
+function classifyStoreError(error: unknown, context: "insert" | "other", statement?: string): StoreError {
   const code = pgErrorCode(error);
   if (context === "insert" && code === "23505") return { code: "IdCollision" };
   if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "EHOSTUNREACH") {
@@ -96,7 +102,7 @@ function classifyStoreError(error: unknown, context: "insert" | "other"): StoreE
   if (error instanceof Error && /timeout exceeded when trying to connect/i.test(error.message)) {
     return { code: "PoolExhausted" };
   }
-  return { code: "StatementFailed" };
+  return statement === undefined ? { code: "StatementFailed" } : { code: "StatementFailed", statement };
 }
 
 /** The minimal shape `writeSessionRow` needs from a connection — `pg.Pool` and `pg.PoolClient`
@@ -802,17 +808,26 @@ export async function openDurableStore(
       // stop `compose.ts`'s recursive `scheduleSweep()` from ever being called again (S4.9,
       // invariant 63).
       let client: PoolClient | undefined;
+      // Which step is in flight, so a failure names the statement rather than only its class —
+      // the design gives this tick's log line the whole of the sweep's observability, and
+      // "StatementFailed" alone does not say whether it was the session delete or the save one.
+      let inFlight = "connect";
       try {
         client = await pool.connect();
+        inFlight = "begin";
         await client.query("begin");
+        inFlight = "set local statement_timeout";
         await client.query(`set local statement_timeout = ${Math.trunc(bounds.sweepStatementTimeoutMs)}`);
+        inFlight = statements.sessions.text;
         const sessions = await client.query(statements.sessions.text, statements.sessions.values as unknown[]);
+        inFlight = statements.saves.text;
         const saves = await client.query(statements.saves.text, statements.saves.values as unknown[]);
+        inFlight = "commit";
         await client.query("commit");
         return ok({ sessionsRemoved: sessions.rowCount ?? 0, savesRemoved: saves.rowCount ?? 0 });
       } catch (error) {
         if (client) await client.query("rollback").catch(() => {});
-        return err(classifyStoreError(error, "other"));
+        return err(classifyStoreError(error, "other", inFlight));
       } finally {
         client?.release();
       }
