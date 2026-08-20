@@ -23,6 +23,7 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      # verification: true
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
 
@@ -44,6 +45,7 @@ jobs:
       # checks rather than the development carve-outs. build/Test-SampleRoundTrip.ps1 is shared with
       # release.yml's verify-restore job (S9.2/S9.3), which runs the identical script against the
       # sample built from the published packages instead of these project references.
+      # verification: true
       - name: Run the sample in both roles
         env:
           ASPNETCORE_ENVIRONMENT: Production
@@ -52,6 +54,7 @@ jobs:
       # S3.14 / invariant 45: the dependency direction between the framework and a hosted workload
       # is one-way. Nothing in MSBuild enforces it, so the gate is a build step rather than a
       # convention, and it runs on every push and pull request like the rest of this job.
+      # verification: true
       - name: Assert no framework project references a workload
         run: pwsh ./build/Test-WorkloadIsolation.ps1
 
@@ -105,6 +108,7 @@ jobs:
         working-directory: workloads/game-service
         run: npm install
 
+      # verification: true
       - name: Typecheck
         working-directory: workloads/game-service
         run: npm run typecheck
@@ -112,6 +116,7 @@ jobs:
       # S9.1/S9.2: workloads/game-service/README.md's own commands, run here rather than a
       # private equivalent -- if a documented command stops existing or stops starting a server
       # that answers its documented health paths, this step is what fails.
+      # verification: true
       - name: Start the workload and the edge, the documented way
         run: |
           set -e
@@ -148,10 +153,12 @@ jobs:
           pkill -f "SubZeroDev.Platform.GameEdge.dll" || true
           kill "$WORKLOAD_PID" || true
 
+      # verification: true
       - name: Run the replay against the workload
         working-directory: workloads/game-service
         run: npx vitest run tests/replay.test.ts
 
+      # verification: true
       - name: Run the replay against the edge
         working-directory: workloads/game-service
         env:
@@ -191,6 +198,7 @@ jobs:
       # private equivalent — if it stops existing or stops bringing a fresh schema to head, this
       # step is what fails. Targets its own schema rather than `public`, so it neither depends on
       # nor is depended on by any other step in this job.
+      # verification: true
       - name: Migrate the schema to head, the documented way
         working-directory: workloads/game-service
         env:
@@ -201,6 +209,7 @@ jobs:
       # equivalent — if it stops existing or stops reaching a serving, ready instance, this step is
       # what fails. Targets its own schema, migrated by the process itself rather than by the step
       # above, so this proves the self-migrating start path specifically.
+      # verification: true
       - name: Start the workload against the durable store, the documented way
         working-directory: workloads/game-service
         env:
@@ -227,6 +236,7 @@ jobs:
       # S11.1/S11.2: the README's own documented commands, run here rather than a private
       # equivalent — if either stops existing or stops reproducing its proof, this step is what
       # fails.
+      # verification: true
       - name: Run the one-instance contention proof
         working-directory: workloads/game-service
         run: npx vitest run tests/contention-one-instance.test.ts
@@ -234,6 +244,7 @@ jobs:
       # S7.5/S7.6: the README's own documented command, run here rather than a private
       # equivalent — if it stops existing or stops reproducing the contention proof, this step
       # is what fails.
+      # verification: true
       - name: Run the two-instance contention proof
         working-directory: workloads/game-service
         run: npx vitest run tests/contention-two-instances.test.ts
@@ -241,14 +252,17 @@ jobs:
       # S11.1/S11.2: the README's own documented commands, run here rather than a private
       # equivalent — if either stops existing or stops reproducing its proof, this step is what
       # fails.
+      # verification: true
       - name: Run the durable replay
         working-directory: workloads/game-service
         run: npx vitest run tests/durable-replay.test.ts
 
+      # verification: true
       - name: Run the port-conformance suite
         working-directory: workloads/game-service
         run: npx vitest run tests/conformance.test.ts
 
+      # verification: true
       - name: Test
         working-directory: workloads/game-service
         env:

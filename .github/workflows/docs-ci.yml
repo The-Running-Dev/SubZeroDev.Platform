@@ -44,6 +44,7 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            # verification: true
             - name: Validate Markdown links, terminology, and generated files
               run: ./build/Test-Documentation.ps1
     # --- DocumentationGate:end ---
@@ -64,6 +65,7 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            # verification: true
             - name: Validate design/30-slices.md's Status markers
               run: ./build/Test-SliceStatusMarkers.ps1
 
@@ -98,6 +100,7 @@ jobs:
             # deploy as long as the bundle still compiled -- `check` is what a
             # contributor runs locally before pushing, made a required step
             # here too, not a weaker CI-only substitute for it.
+            # verification: true
             - name: Build and verify the status-page site
               run: |
                   npm --prefix site ci
