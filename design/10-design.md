@@ -419,14 +419,18 @@ second decision and is checkable by the same build-time assertion that already e
 ### 1. Startup, and the background sweep — triggered by process start
 
 Read configuration, including the store's connection settings, the two TTLs and the determinism
-profile. **Bind the listener and report live as soon as the first startup attempt settles** — a
+profile. **Assert the contract's recorded engine version against the resolved package's before
+anything else is built** — G1's invariant 11, unchanged, and a mismatch fails startup: no store is
+built and the listener never binds. It is asserted here rather than on the store's success path
+because it is the one startup condition no retry can clear, and a process that bound and reported
+not-ready against it would be backing off against a dependency that cannot change underneath it.
+**Bind the listener and report live as soon as the first startup attempt settles** — a
 listener bound against a store whose reachability is still unknown would answer `503` for the length
 of that window without ever being able to say why. Report **not ready** until the store is usable.
 The first attempt, and then with backoff: **run migrations to head under the migration tool's own
 advisory lock, then connect** — two instances starting together must not both apply the same
 migration, and a lock the tool already owns is not machinery this design should reimplement. On
-success, compose the process-lived parts, assert the contract's recorded engine version against the
-resolved package's (G1's invariant, unchanged), and report ready.
+success, compose the process-lived parts and report ready.
 
 **Migrating inside that first attempt is what bounds the bind, and the bound is the lock's, not the
 connection's.** The wait is the migration runner's own connect, plus its `lock_timeout` — the

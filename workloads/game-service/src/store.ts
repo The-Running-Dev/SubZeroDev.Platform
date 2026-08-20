@@ -30,8 +30,11 @@ import type {
   LifecycleProbe,
   LifecycleState,
   Outcome,
+  ProfileAchievementRow,
+  ProfileRow,
   ProjectionAudience,
   ReadVersionMap,
+  SaveRow,
   SemanticVersion,
   SessionRow,
   SessionRowVersion,
@@ -431,22 +434,107 @@ function toStoredSessionRecord(row: SessionRow): StoredSessionRecord {
 }
 
 interface RawSaveRow {
+  readonly tenant_id: string;
   readonly save_id: string;
   readonly campaign_id: string;
   readonly blob: string;
   readonly saved_at_seq: number;
   readonly audience: string;
   readonly profile_id: string | null;
+  readonly engine_version: string;
+  readonly row_created_at: Date;
+  readonly expires_at: Date;
 }
 
-function toStoredSaveRecord(raw: RawSaveRow): StoredSaveRecord {
+/** Every column `saveSelectStatement` returns, not merely the subset the engine record carries —
+ *  the same raw → row → record path `sessions.get` takes, so the two reads have one shape rather
+ *  than two. `firstInvalidSaveColumn` has already checked all ten, which is what makes the casts
+ *  below assertions about a validated row rather than hopes about an unvalidated one. */
+function toSaveRow(raw: RawSaveRow): SaveRow {
   return {
+    tenantId: raw.tenant_id as TenantId,
     saveId: raw.save_id,
     campaignId: raw.campaign_id,
     blob: raw.blob,
     savedAtSeq: raw.saved_at_seq,
     audience: raw.audience as ProjectionAudience,
-    ...(raw.profile_id !== null ? { profileId: raw.profile_id } : {}),
+    profileId: raw.profile_id,
+    engineVersion: raw.engine_version as SemanticVersion,
+    rowCreatedAt: raw.row_created_at as DatabaseInstant,
+    expiresAt: raw.expires_at as DatabaseInstant,
+  };
+}
+
+/** One row of `profiles.load`'s left join: the `profile` columns, repeated per achievement, and the
+ *  `profile_achievement` columns, `null` throughout when the profile has none. `row_created_at`
+ *  appears on both tables, so the achievement's is aliased rather than shadowing the profile's. */
+interface RawProfileJoinRow {
+  readonly tenant_id: string;
+  readonly profile_id: string;
+  readonly format_version: number;
+  readonly row_created_at: Date;
+  readonly row_updated_at: Date;
+  readonly campaign_id: string | null;
+  readonly achievement_id: string | null;
+  readonly achievement_row_created_at: Date | null;
+}
+
+/** The `profile` half of the join. Same reasoning as `firstInvalidSessionColumn`, and the same
+ *  caveat: `tenant_id` and `profile_id` are the statement's own predicates, so those two lines are
+ *  a backstop against a later statement that drops one, not a branch any current query can take. */
+function firstInvalidProfileColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["tenant_id"] !== "string") return "tenant_id";
+  if (typeof raw["profile_id"] !== "string") return "profile_id";
+  if (typeof raw["format_version"] !== "number") return "format_version";
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
+  if (!(raw["row_updated_at"] instanceof Date)) return "row_updated_at";
+  return null;
+}
+
+/** The `profile_achievement` half. All three are `null` together on a profile with no achievements
+ *  — that is the left join's own shape, not a malformed row — so each is checked only when present. */
+function firstInvalidProfileAchievementColumn(raw: Record<string, unknown>): string | null {
+  if (raw["campaign_id"] !== null && typeof raw["campaign_id"] !== "string") return "campaign_id";
+  if (raw["achievement_id"] !== null && typeof raw["achievement_id"] !== "string") return "achievement_id";
+  if (raw["achievement_row_created_at"] !== null && !(raw["achievement_row_created_at"] instanceof Date)) {
+    return "row_created_at";
+  }
+  return null;
+}
+
+function toProfileRow(raw: RawProfileJoinRow): ProfileRow {
+  return {
+    tenantId: raw.tenant_id as TenantId,
+    profileId: raw.profile_id,
+    formatVersion: raw.format_version,
+    rowCreatedAt: raw.row_created_at as DatabaseInstant,
+    rowUpdatedAt: raw.row_updated_at as DatabaseInstant,
+  };
+}
+
+/** Called only for a row whose achievement columns are non-null — the `filter` at the call site is
+ *  what establishes that, and it is why the three casts here are not widened to accept `null`. */
+function toProfileAchievementRow(raw: RawProfileJoinRow): ProfileAchievementRow {
+  return {
+    tenantId: raw.tenant_id as TenantId,
+    profileId: raw.profile_id,
+    campaignId: raw.campaign_id as string,
+    achievementId: raw.achievement_id as string,
+    rowCreatedAt: raw.achievement_row_created_at as DatabaseInstant,
+  };
+}
+
+/** Host columns stop here (invariant 48): `tenantId`, `engineVersion`, `rowCreatedAt` and
+ *  `expiresAt` are on `SaveRow` and on no `StoredSaveRecord`. `profileId: null` maps to an *absent*
+ *  key, never a member holding `undefined` — the same rule `toStoredSessionRecord` applies. */
+function toStoredSaveRecord(row: SaveRow): StoredSaveRecord {
+  return {
+    saveId: row.saveId,
+    campaignId: row.campaignId,
+    blob: row.blob,
+    savedAtSeq: row.savedAtSeq,
+    audience: row.audience,
+    ...(row.profileId !== null ? { profileId: row.profileId } : {}),
   };
 }
 
@@ -632,7 +720,7 @@ export async function openDurableStore(
           if (invalidColumn !== null) {
             throw new Error("durable save read failed", { cause: { code: "RowUndeserializable", column: invalidColumn } });
           }
-          return toStoredSaveRecord(rawRow as unknown as RawSaveRow);
+          return toStoredSaveRecord(toSaveRow(rawRow as unknown as RawSaveRow));
         },
         put: async (record: StoredSaveRecord): Promise<void> => {
           const input: SaveRowInput = {
@@ -671,8 +759,14 @@ export async function openDurableStore(
       // `profile_corrupt`, per `20-contract.md`'s three-warning vocabulary for `load`.
       let rows;
       try {
-        rows = await pool.query<{ format_version: number; campaign_id: string | null; achievement_id: string | null }>(
-          "select p.format_version, pa.campaign_id, pa.achievement_id from profile p " +
+        // Every column `ProfileRow` and `ProfileAchievementRow` declare, not only the three the
+        // `PlayerProfile` needs: those two types are the store's internal shape for these tables
+        // (`20-contract.md`, "Workload — the durable rows"), and a type nothing selects the columns
+        // for is a declaration with no producer rather than a shape. The host columns stop at the
+        // row types — none reaches the `PlayerProfile` below.
+        rows = await pool.query<RawProfileJoinRow>(
+          "select p.tenant_id, p.profile_id, p.format_version, p.row_created_at, p.row_updated_at, " +
+            "pa.campaign_id, pa.achievement_id, pa.row_created_at as achievement_row_created_at from profile p " +
             "left join profile_achievement pa on pa.tenant_id = p.tenant_id and pa.profile_id = p.profile_id " +
             "where p.tenant_id = $1 and p.profile_id = $2",
           [tenantId, profileId],
@@ -683,26 +777,31 @@ export async function openDurableStore(
       if (rows.rows.length === 0) {
         return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_missing", profileId }] };
       }
-      if (rows.rows[0]?.format_version !== 1) {
+      // S13.3: `ProfileStore.load` has no error channel, so a column widened to hold a value its
+      // declared type cannot is folded into `profile_corrupt` here rather than thrown as
+      // `StoreError.RowUndeserializable` — that variant exists for ports (`sessions.get`,
+      // `saves.get`) that do have one. Checked before either mapping below, so every cast in
+      // `toProfileRow`/`toProfileAchievementRow` is an assertion about a validated row.
+      const firstRow = rows.rows[0];
+      if (firstRow === undefined || firstInvalidProfileColumn(firstRow as unknown as Record<string, unknown>) !== null) {
         return corruptProfileResult(profileId);
       }
-      // S13.3: `ProfileStore.load` has no error channel, so a `profile_achievement` column widened
-      // to hold a value its declared type cannot is folded into `profile_corrupt` here rather than
-      // thrown as `StoreError.RowUndeserializable` — that variant exists for ports (`sessions.get`,
-      // `saves.get`) that do have one.
-      const shapeInvalid = rows.rows.some(
-        (row) =>
-          (row.campaign_id !== null && typeof row.campaign_id !== "string") ||
-          (row.achievement_id !== null && typeof row.achievement_id !== "string"),
-      );
-      if (shapeInvalid) {
+      if (rows.rows.some((row) => firstInvalidProfileAchievementColumn(row as unknown as Record<string, unknown>) !== null)) {
         return corruptProfileResult(profileId);
       }
+
+      const profileRow = toProfileRow(firstRow);
+      // The one host column the engine's `PlayerProfile` does carry, and the reason `profile_corrupt`
+      // stays a reachable outcome against a normalised store — a format this release cannot read is
+      // a corrupt profile to it, not a partial one.
+      if (profileRow.formatVersion !== 1) {
+        return corruptProfileResult(profileId);
+      }
+
       const achievements = rows.rows
-        .filter((row): row is { format_version: number; campaign_id: string; achievement_id: string } =>
-          row.campaign_id !== null && row.achievement_id !== null,
-        )
-        .map((row) => ({ campaignId: row.campaign_id, achievementId: row.achievement_id }));
+        .filter((row) => row.campaign_id !== null && row.achievement_id !== null)
+        .map(toProfileAchievementRow)
+        .map((row) => ({ campaignId: row.campaignId, achievementId: row.achievementId }));
       return {
         profile: { formatVersion: 1, profileId, achievements },
         warnings: [],

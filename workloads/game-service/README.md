@@ -219,15 +219,14 @@ answer.
 
 ## Handover notes (G2)
 
-Open items for whoever next edits [`design/00-brief.md`](../../design/00-brief.md) (S11.4), and
-two facts every proof in this effort depends on:
+Three facts every proof in this effort depends on:
 
-- **One brief conflict remains unresolved.** The `save` table carries a 365-day absolute
-  lifecycle, an `expires_at` column and a sweep that hard-deletes past it, despite the brief
-  naming only sessions in its lifecycle criteria (`20-contract.md`, Unresolved 2). It is not this
-  effort's to resolve — it is `00-brief.md`'s author's decision. The tenant conflict this note
-  once also named was resolved on 2026-08-12 by an amendment to `00-brief.md`, which now permits
-  the implicit tenant in every key and statement.
+- **No brief conflict remains.** Both this note once carried are closed by amendments to
+  [`design/00-brief.md`](../../design/00-brief.md) (`20-contract.md`, Unresolved 2): the tenant
+  conflict on 2026-08-12, which now permits the implicit tenant in every key and statement, and
+  the save-lifecycle conflict on 2026-08-20, which admits saves to the lifecycle scope on their
+  own clock. The `save` table's 365-day absolute lifecycle, its `expires_at` column and the sweep
+  that hard-deletes past the retention horizon all stand as built.
 - **The engine has ratified `concurrent_modification` under the name and brand this contract
   assumes** (`SESSION_PERSISTENCE_CONFLICT`, `SessionPersistenceConflict`), and the vendored
   engine `0.8.0` ships both — so every proof here rests on a published artifact rather than on a

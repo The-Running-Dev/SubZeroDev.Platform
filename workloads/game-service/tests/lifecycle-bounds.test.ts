@@ -30,6 +30,32 @@ describe("S12.9 — the three default lifecycle bounds are the production values
   });
 });
 
+/**
+ * The other two members of `LifecycleBounds`. They bound the sweep's own work rather than a row's
+ * life, and they arrived with S13.4/S13.5 pinned by nothing at all — so an edit to either passed
+ * every gate, which is how they came to be the two values no document named
+ * (`design/90-decisions.md`, "The sweep's two bounds are the sweep's, not a row's").
+ */
+describe("the two sweep bounds are the production values, and are pinned by name", () => {
+  it("names sweepIntervalSeconds as one hour", () => {
+    expect(DEFAULT_LIFECYCLE_BOUNDS.sweepIntervalSeconds).toBe(60 * 60);
+  });
+
+  it("names sweepStatementTimeoutMs as 5 seconds", () => {
+    expect(DEFAULT_LIFECYCLE_BOUNDS.sweepStatementTimeoutMs).toBe(5_000);
+  });
+
+  it("keeps the statement timeout well inside the interval, so a tick cannot outlive its own period", () => {
+    // Not a tuned relationship — the point is only that the ordering holds. A timeout longer than
+    // the interval would let the next tick's schedule elapse while its predecessor was still
+    // running, which invariant 63 forbids and which `scheduleSweep`'s recursion currently prevents
+    // by construction rather than by these two numbers.
+    expect(DEFAULT_LIFECYCLE_BOUNDS.sweepStatementTimeoutMs).toBeLessThan(
+      DEFAULT_LIFECYCLE_BOUNDS.sweepIntervalSeconds * 1000,
+    );
+  });
+});
+
 describe("S12.10 — nothing in the tree describes DEFAULT_LIFECYCLE_BOUNDS as non-production", () => {
   it("types.ts's own docstring calls it the production defaults, not 'non-production'", () => {
     const text = readFileSync(resolve(SRC_ROOT, "types.ts"), "utf8");
