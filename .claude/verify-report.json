@@ -1,84 +1,49 @@
 {
   "gates": [
     {
-      "name": "git diff --check",
-      "status": "Passed",
-      "detail": "No whitespace errors across the branch's 12 changed files."
+      "name": "No CI-gated checks found (# verification: true)",
+      "status": "DidNotRun",
+      "reason": "Scanned every file in .github/workflows/ (build.yml, docs-ci.yml, docs-deploy.yml, release.yml) for a '# verification: true' comment above a step's name: line - none exists anywhere in this repository. This is issue #131 (the flag has never been added), so this /verify run discovered zero required gates via the documented mechanism; every check below is optional/not-CI-gated rather than a discovered gate."
     },
     {
-      "name": "build/Test-WorkloadIsolation.ps1",
+      "name": "Parse-check PowerShell scripts",
       "status": "Passed",
-      "detail": "No project under src/ or samples/ references workloads/ (25 project file(s) checked)."
-    },
-    {
-      "name": "build/Test-SliceStatusMarkers.ps1",
-      "status": "Passed",
-      "detail": "Slice status markers consistent across 13 slice(s) in 'design/30-slices.md'."
-    },
-    {
-      "name": "tools/Test-Companion.ps1",
-      "status": "Passed",
-      "detail": "State: Valid. Findings: {}. CoreCount 21, CompanionCount 0, AbsentCount 21 — no new per-repo override introduced."
-    },
-    {
-      "name": "build/Test-Documentation.ps1",
-      "status": "Passed",
-      "detail": "Documentation checks passed across 44 Markdown file(s), with 2 warning(s). Both warnings are pre-existing terminology hits in design/d3/90-decisions.md (lines 1138, 1141: \"Use 'JSON' instead of 'Json'\"), untouched by this branch."
-    },
-    {
-      "name": "build/Test-PackageManifests.ps1",
-      "status": "Passed",
-      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Six .nupkg files packed successfully."
-    },
-    {
-      "name": "dotnet build --configuration Release",
-      "status": "Passed",
-      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). Time Elapsed 00:00:07.37"
-    },
-    {
-      "name": "build/Test-SampleRoundTrip.ps1",
-      "status": "Passed",
-      "detail": "Both roles served their probes. The outbox row survived process death and dispatched order 097b43d3-1658-4cfd-88a8-814df0ddd8b1 after restart."
-    },
-    {
-      "name": "npm run typecheck (workloads/game-service)",
-      "status": "Passed",
-      "detail": "tsc --noEmit completed with no output and exit 0, over the six changed TypeScript source files and the two changed test files."
-    },
-    {
-      "name": "npm test (workloads/game-service, vitest)",
-      "status": "Passed",
-      "detail": "Test Files 24 passed | 1 skipped (25). Tests 194 passed | 1 skipped (195). Duration 24.18s. Run against the committed docker-compose.yml store. The single skip is the pre-existing OTEL_COLLECTOR_BIN conditional in tests/trace-evidence.test.ts, untouched by this branch."
-    },
-    {
-      "name": "./docs.ps1 -BuildOnly",
-      "status": "Passed",
-      "detail": "Built 'gameoflife-docs'. (build-only). Docker was available and the image built clean. NOTE: this builds the docs container image only — it does not run the Docusaurus site build, which is CI's own job (see the DidNotRun entry for it)."
+      "detail": "[System.Management.Automation.Language.Parser]::ParseFile against every *.ps1 in the repository (recursive): All PowerShell scripts parse cleanly. No parse errors on any file."
     },
     {
       "name": "Invoke-Pester -Path tools",
       "status": "Failed",
-      "detail": "Tests Passed: 222, Failed: 32, Skipped: 0. TotalCount 254. Representative failures, all in tools/Update-DesignProjection.Tests.ps1 and the design-state suites:\n  [-] Update-DesignProjection: rendering.S14.8: outstanding excludes a CLOSED WorkRef - closed work is not outstanding\n      CommandNotFoundException: The term 'Get-OutstandingProjectionContent' is not recognized as a name of a cmdlet, function, script file, or executable program.\n      at <ScriptBlock>, tools/Update-DesignProjection.Tests.ps1:126\n  [-] Update-DesignProjection against this repository's own tree.S7.2: -DryRun against the real repository writes nothing\n      Expected 0, but got 6.\n      at $result.Refusals.Count | Should -Be 0, tools/Update-DesignProjection.Tests.ps1:376\n  BeforeAll \\ AfterAll failed: 1 - S12.6: a checkout with design/state/ removed\nPRE-EXISTING: the identical run against main (1b9d50e) in a clean worktree reports TotalCount 254, PassedCount 222, FailedCount 32 — the same numbers. This branch touches no file under tools/ and does not change this result."
+      "detail": "Tests Passed: 226, Failed: 28, Skipped: 0, Inconclusive: 0, NotRun: 0 (up from 222/32 before this PR's fix). All 28 remaining failures trace to design/state/ and design/state-index.md being absent from this repository (issue #151): Read-DesignState/Test-DesignState tests against this repo's own tree, S12.6 'a checkout with design/state/ removed' (1 BeforeAll/AfterAll setup failure), and Update-DesignProjection's S7.2 '-DryRun writes nothing' (Refusals.Count: Expected 0, but got 6 - 5x DocumentMissing for design/state-index.md, 1x RegionMissing for an 'invariants' region in design/20-contract.md). None of these 28 are touched by, or newly caused by, this PR's diff - verified by stashing the fix and reproducing exactly the same 32 failures as before (the 4 this PR fixes, plus these 28)."
     },
     {
-      "name": "dotnet test --no-build --configuration Release",
+      "name": "tools/Test-Companion.ps1 (core/companion split)",
+      "status": "Passed",
+      "detail": "Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid, Findings: {}, CoreCount: 21, AbsentCount: 21."
+    },
+    {
+      "name": "tools/Test-DesignState.ps1 (design state against the tree)",
+      "status": "DidNotRun",
+      "reason": "Exit code 2 (could-not-evaluate, not a failure): [ContractListUnreadable] SectionNotFound in design/20-contract.md, and [StateSetAbsent] design/state/ is missing or holds zero records. Both trace to issue #151 - design/state/ and its supporting document sections do not exist in this repository yet, so the checker has nothing to read."
+    },
+    {
+      "name": "dotnet build",
+      "status": "Passed",
+      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). All 11 projects built: Abstractions, Core, Observability, Persistence, Hosting, Testing, GameEdge, Sample.Web, GameEdge.Tests, Sample.Worker, Tests. Time Elapsed 00:00:21.97."
+    },
+    {
+      "name": "dotnet test",
       "status": "Failed",
-      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265 - SubZeroDev.Platform.Tests.dll (net10.0). Passed! - Failed: 0, Passed: 19 - SubZeroDev.Platform.GameEdge.Tests.dll (net10.0).\nThe one failure:\n  System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n     at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n     at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n     at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nENVIRONMENTAL: this host's own hostname ('mac') does not resolve — socket.gethostbyname(socket.gethostname()) raises the same gaierror [Errno 8] outside .NET entirely. The test needs a non-loopback address for its own host. This branch changes no C#; CI's Build job is where this answer comes from."
+      "detail": "SubZeroDev.Platform.GameEdge.Tests: Passed 19/19. SubZeroDev.Platform.Tests: Failed 1, Passed 264, Total 265. The one failure is WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else: System.Net.Sockets.SocketException 'nodename nor servname provided, or not known' at System.Net.Dns.GetHostEntryOrAddressesCore, called from BoundOnAnyNonLoopbackAddress at WorkerProbeTests.cs:100 - a DNS/hostname resolution failure in this sandbox environment, not code touched by this PR's diff (tools/Update-DesignProjection.ps1 only)."
     },
     {
-      "name": "tools/Test-DesignState.ps1",
-      "status": "DidNotRun",
-      "reason": "Exited 2 (DidNotRun, not Failed). Its own could-not-evaluate output: ReportLines = {StateSetAbsent: nothing to check.}; Findings include @{Reason=StateSetAbsent; Detail=design/state/ is missing or holds zero records}. Tracked as open issue #151."
+      "name": "build/Test-Documentation.ps1 (Markdown link and terminology gate)",
+      "status": "Passed",
+      "detail": "Ran against the repository root (default Path). Exit code 0, no findings printed - clean run covering README.md/TODO.md and cross-file relative links/heading anchors and terminology rules."
     },
     {
-      "name": "build/Test-ApiReference.ps1",
+      "name": "docs.ps1 -BuildOnly (Docusaurus documentation site build)",
       "status": "DidNotRun",
-      "reason": "docfx is not on PATH. The script's own message: 'docfx is not on PATH. Install it with: dotnet tool install --global docfx'. It is a release-workflow gate (.github/workflows/release.yml:65), not a pull-request gate."
-    },
-    {
-      "name": "Docs CI - 'Verify Documentation Build' job",
-      "status": "DidNotRun",
-      "reason": "Not reproducible locally: the job runs /template/scripts/docs-build.ps1 inside a private template container (.github/workflows/docs-ci.yml:89), and ./docs.ps1 -BuildOnly builds the docs image without running the Docusaurus site build. This branch changes no file under docs/docs/, but the CI check on the PR is where the answer comes from."
+      "reason": "Docker is available but this check was not run - it builds the docs/ Docusaurus site, which this PR's diff (tools/Update-DesignProjection.ps1 only) does not touch, and a prior session's own finding (memory: docs.ps1 -BuildOnly doesn't actually test the Docusaurus build, only a partial check) means it would not add confidence proportionate to its cost here."
     }
   ]
 }
