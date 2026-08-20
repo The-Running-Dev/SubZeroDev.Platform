@@ -81,7 +81,7 @@ Two things about the schema are easy to trip over:
   cheap either way.
 
 Exact column types, indexes, and the migration rules that govern every schema change after the
-first are in [`20-contract.md`](../../design/20-contract.md).
+first are in [`20-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md).
 
 ## The concurrency mechanism
 
@@ -210,7 +210,7 @@ unreachability, the wrong isolation level (which no amount of waiting clears), o
 connection pool. A migration that is still *running* is deliberately never among them: the
 listener binds only once the first attempt settles, and the migration runs inside that attempt,
 so no probe is ever served while a migration is in flight. Exact `detail` strings live in
-[`20-contract.md`](../../design/20-contract.md).
+[`20-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md).
 
 ## The background sweep
 
@@ -262,7 +262,7 @@ long as the deployment runs.
 | An id collides on insert | `storage_failure` | `503` | *Not* the conflict code — a primary-key collision is a storage anomaly, not a lost update. Not expected under the default profile's random ids. |
 | The two instances are running different schema (or engine) versions | — | — | Not detected at runtime, by design. Safety is a rule on migrations, not a check: every migration must be backward compatible with the previously deployed code, since two instances share one store and are never restarted atomically. `engine_version` on each row records which engine wrote it, so a skew is legible afterwards rather than inferred. |
 
-Full error-variant tables, with every retry rule, live in [`20-contract.md`](../../design/20-contract.md).
+Full error-variant tables, with every retry rule, live in [`20-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md).
 
 ## The edge's readiness change
 
@@ -297,7 +297,7 @@ Three kinds of proof back this feature, run in CI from a fresh clone:
 
 This page doesn't cover the mechanics behind these proofs — the perturbation seams, the
 per-run schema isolation — only that they exist and what they establish. Details are in
-[`10-design.md`](../../design/10-design.md) and [`20-contract.md`](../../design/20-contract.md).
+[`10-design.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/10-design.md) and [`20-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md).
 
 ## Other things worth knowing
 
@@ -318,9 +318,9 @@ per-run schema isolation — only that they exist and what they establish. Detai
 
 ## Where to look next
 
-- [`20-contract.md`](../../design/20-contract.md) — exact TypeScript/C# signatures, the full
+- [`20-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md) — exact TypeScript/C# signatures, the full
   schema, every error variant, and the numbered invariants.
-- [`10-design.md`](../../design/10-design.md) — the fuller account of the mechanisms summarised
+- [`10-design.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/10-design.md) — the fuller account of the mechanisms summarised
   above, including the proof mechanics and the reasoning behind each choice.
 - [Engine Hosting Contract](engine-hosting-contract.md) — the ownership split between engine and
   host that the schema's column-owner rule is a direct application of.
