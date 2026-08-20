@@ -366,6 +366,13 @@ itself unreachable, unreachable at the wrong isolation level, or out of connecti
 (`design/90-decisions.md`, "Startup migrations"). Present only on an unhealthy result; absent
 everywhere else, including every G1-era caller that never populated it.
 
+**`detail` reaches the wire.** The readiness endpoint's body carries it whenever the probe does, and
+omits the member — never `null` — when it does not. That is stated here because it is the field's
+only point: an operator reads the endpoint, not the in-process `ProbeResult`, and a `detail` computed,
+mapped and asserted in-process but dropped at the transport is machinery with no consumer. **Nothing
+parses it.** The edge's own readiness check reads the status code alone, so this is a diagnostic
+member and not a shape a caller may branch on.
+
 **A migration still running is deliberately not among them.** The listener binds only once the first
 startup attempt settles, and that attempt runs the migration inside itself
 (`design/90-decisions.md`, 2026-08-20, "Migrating inside the first startup attempt is what bounds the
@@ -873,8 +880,8 @@ as exceptions.
 |---|---|---|---|
 | `Unreachable` | The pool cannot connect, or a connection is lost mid-statement | **Yes** — the condition is transient by nature | Readiness reports unhealthy; a request in flight becomes `storage_failure` → `503` |
 | `PoolExhausted` | A connection acquisition exceeds its timeout | **Yes** | As above. The pool is sized by configuration with a stated default and **is not tuned** — performance is a binding non-goal |
-| `IsolationLevelUnsupported` | The connection does not report `read committed` after the store asserts it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
-| `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path |
+| `IsolationLevelUnsupported` | The connection the store checks at pool open does not report `read committed`. The store **checks and refuses**; it never sets the level, because a store that silently corrected a misconfiguration would hide it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
+| `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path. **On the sweep path the variant names the failing statement**, on the same footing as `RowUndeserializable` naming its column and for the same reason — the sweep reaches no readiness check and no request, so its log line is the whole of its observability, and a bare classification does not say which of the two `delete`s failed |
 | `IdCollision` | A primary-key violation on a `createSession` or `loadGame` insert | **No** | `storage_failure` → **503**, *not* the conflict code. A collision is a storage anomaly, not a lost update, and conflating them would make the conflict code mean two things |
 | `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `storage_failure` → **503**, and the variant names the offending column for a log line. This is store corruption and a caller cannot fix it, but the workload has no channel to say so: `sessions.get` and `saves.get` return a record or throw, and the engine's own `getSession`/`getSave` convert **every** throw from the port into `storage_failure`. Reaching `internal_failure` would need a second branded throw the engine recognises — a cross-repository change bought to ease persistence, which the design names as a non-goal. The distinction an operator needs is on the row: `engine_version` separates a version skew from corruption after the fact |
 
@@ -1003,7 +1010,7 @@ these continue from 48.
 | 54 | Every guarded `session` update also predicates on `expires_at > now()`, so a write cannot resurrect a session a concurrent read is already answering `session_expired` for | Store |
 | 55 | Zero rows affected is classified by a re-read into exactly one of `conflict` or `expired`, never assumed and never reported as a storage outcome; a re-read that itself fails is `conflict` | Store |
 | 56 | A conflict leaves the store as a value branded `SessionPersistenceConflict` and never as a `StoreError`; every other adapter failure is an ordinary throw the engine reads as `storage_failure` | Store |
-| 57 | Every connection the store uses reports `read committed`; the store asserts it at connect and refuses to serve otherwise | Store |
+| 57 | The store checks that a connection reports `read committed` when the pool is opened, and refuses to serve otherwise — a single check, because the setting is a server, database, role or pooler default rather than something a connection varies. **Not re-checked per pooled connection**: a pooler that varied it per connection is outside what the design contemplates, and a per-acquisition round trip would buy that case at a cost on every connection | Store |
 | 58 | The store imports the engine's type declarations only. It never deserialises a blob, never validates game state, and never calls the engine | Store |
 | 59 | `expires_at` is computed from the **database** clock in SQL, never from the process clock, on both tables | Store |
 | 60 | A row whose `expires_at` has passed is returned as **not found** by `sessions.get` and `saves.get`, so the bound does not depend on when a sweep last ran | Store |
@@ -1067,7 +1074,7 @@ Values and signatures the design does not determine, or that a document above th
 contradicts. **Each blocks something concrete**, and none is guessed at above.
 
 **Resolved items keep their number and are struck through rather than removed**, so nothing that
-later cites one by number breaks. **1 and 3 are resolved; 2 and 4 are open, and 5 is answered here
+later cites one by number breaks. **1, 2 and 3 are resolved; 4 is open, and 5 is answered here
 because this is the stage the design routed it to.**
 
 ### ~~1. What Dispatch answers when the lifecycle probe itself fails~~
@@ -1091,22 +1098,25 @@ lost update needs, and the sweep's failure is already the one condition granted 
 merely expired is answered as one that never existed, and nothing on the wire says which. Readiness is
 what surfaces the underlying condition.
 
-### 2. One binding-document conflict remains
+### ~~2. One binding-document conflict remains~~
 
-Design Open questions 9 and 10. **Question 9 is resolved by Ben's 2026-08-12 amendment to
-[`00-brief.md`](00-brief.md); question 10 remains open.** Both keep their place here so a later
-citation resolves rather than disappearing.
+Design Open questions 9 and 10. **Both are now resolved by amendments to
+[`00-brief.md`](00-brief.md)** — question 9 on 2026-08-12, question 10 on 2026-08-20. Both keep their
+place here so a later citation resolves rather than disappearing. **No binding-document conflict
+remains**, and this heading is kept rather than renumbered for the same reason.
 
 - ~~**The tenant non-goal.**~~ **Resolved 2026-08-12, by Ben: the store supplies the implicit tenant
   as a constant in every key and statement, while no request resolves or carries a tenant and no
   behaviour varies by tenant.** The brief now permits invariant 51 directly rather than requiring
   the design to interpret around a binding non-goal.
-- **Save lifecycle.** The brief's lifecycle criteria name *sessions* in every clause. This contract
-  gives saves a 365-day absolute TTL, an `expires_at` column, a sweep that hard-deletes them, and a
-  `save_expired` code that widens a closed union in a published package. **What reverses:**
-  `save.expires_at` and its index come out of the schema, the sweep narrows to `session`,
-  `save_expired` comes out of `TransportErrorCode` and out of the status mapping, and
-  `LifecycleProbe.save` loses its only caller.
+- ~~**Save lifecycle.**~~ **Resolved 2026-08-20, by Ben: the brief admits saves to the lifecycle
+  scope, on their own clock.** The criteria named *sessions* in every clause while this contract gave
+  saves a 365-day absolute TTL, an `expires_at` column, a sweep that hard-deletes them, and a
+  `save_expired` code widening a closed union in a published package. [`00-brief.md`](00-brief.md)
+  now carries the clause; nothing above moves. **What would have reversed, recorded because the
+  alternative was real:** `save.expires_at` and its index out of the schema, the sweep narrowed to
+  `session`, `save_expired` out of `TransportErrorCode` and out of the status mapping, and
+  `LifecycleProbe.save` left without a caller.
 
 ### ~~3. The engine's ratification of `concurrent_modification` and the brand's spelling~~
 
@@ -1157,10 +1167,14 @@ small and named here rather than left for a reader to discover in the code.
    names it so the G2 slices and the engine pull request describe one thing — the same treatment G1
    gave `RecordIdSource`.
 2. **The conformance suite's reference target is the workload's map-backed `SessionPersistence`, not
-   the engine's.** The design says "the engine's in-memory implementations"; the engine exports the
-   `SessionPersistence` type and no implementation of it (verified at `0.8.0`). `ProfileStore` is
-   literal — `createInMemoryProfileStore` is the engine's. The suite is unchanged in value: G1's
-   map-backed adapter is the implementation the byte-identity proof already trusts.
+   the engine's.** This originated here: the design said "the engine's in-memory implementations",
+   and the engine exports the `SessionPersistence` type and no implementation of it (verified at
+   `0.8.0`). `ProfileStore` is literal — `createInMemoryProfileStore` is the engine's, and both of
+   the reference target's degraded outcomes are provoked through its own `raw` and `onSave` seams
+   rather than stubbed at the boundary. The suite is unchanged in value: G1's map-backed adapter is
+   the implementation the byte-identity proof already trusts. **[`10-design.md`](10-design.md) has
+   since been corrected to say the same**, so this item records where the correction came from
+   rather than a live disagreement.
 3. **`ComposedWorkload.close()` and `DurableStore.close()`.** The design gives the sweep a timer and
    the store a pool and says nothing about stopping either. A process that cannot stop its timer does
    not exit, which makes this mechanically forced rather than a design choice — but it is a signature

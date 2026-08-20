@@ -223,7 +223,16 @@ function serve(
 
       if (path === "/livez" || path === "/readyz") {
         const result = path === "/livez" ? probes.liveness() : await probes.readiness();
-        const body = JSON.stringify({ status: result.status });
+        // `detail` reaches the wire when the probe carries one, which is the only surface an
+        // operator reads (`20-contract.md`, "Workload — readiness"; `10-design.md`, "The store is
+        // unreachable at startup" — "the readiness body naming the store check"). Omitted, never
+        // null, when there is none: the member is optional on `ProbeResult` and a body carrying
+        // `"detail": null` would be a third state neither document describes. Nothing parses it —
+        // the edge's own check reads the status code alone (`Readiness.cs`) — so this is a
+        // diagnostic member, not a contract a caller may branch on.
+        const body = JSON.stringify(
+          result.detail === undefined ? { status: result.status } : { status: result.status, detail: result.detail },
+        );
         response.writeHead(result.status === "healthy" ? 200 : 503, { "content-type": "application/json" });
         response.end(body);
         return;

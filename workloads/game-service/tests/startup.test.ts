@@ -19,6 +19,8 @@ import { compose } from "../src/compose.js";
 import { startWorkload, createProbeSurface, CONTRACT_PATH_VARIABLE } from "../src/lifecycle.js";
 import { contract, dispatcherOver, recordingStore } from "./support/harness.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
+import { freePort } from "./support/free-port.js";
+import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE } from "../src/types.js";
 
 const DEFAULT_CONFIGURATION = {
   listen: { host: "127.0.0.1", port: 0 },
@@ -327,5 +329,73 @@ describe("S3.11 — probes", () => {
     await probes.surface.readiness();
 
     expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * `ProbeResult.detail` is the only thing that tells an operator which startup condition is holding
+ * readiness back, and `/readyz` is the only surface an operator reads — so a `detail` computed,
+ * mapped and asserted in-process but dropped at the transport is a field with no consumer
+ * (`10-design.md`, "The store is unreachable at startup": *the readiness body naming the store
+ * check*). Asserted over a real socket rather than against `readiness()`'s return value, because
+ * the return value was already correct while the body was not.
+ *
+ * No database: the durable profile below points at a port nothing listens on, so the first startup
+ * attempt's own migration connect is refused and `notReadyDetail` is set before `compose()`
+ * returns.
+ */
+describe("the readiness body carries ProbeResult.detail, and omits the member when there is none", () => {
+  it("names the startup condition on an unhealthy readiness body", { timeout: 20_000 }, async () => {
+    const closedPort = await freePort();
+    const started = await startWorkload({
+      listen: { host: "127.0.0.1", port: 0 },
+      determinism: { kind: "default" },
+      otlpEndpoint: null,
+      storage: {
+        kind: "durable",
+        store: {
+          connection: {
+            connectionString: `postgresql://game_service:game_service@127.0.0.1:${closedPort}/game_service`,
+            poolSize: DEFAULT_STORE_POOL_SIZE,
+            connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
+            schema: null,
+          },
+          bounds: DEFAULT_LIFECYCLE_BOUNDS,
+          readWritePauseMs: 0,
+        },
+      },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${started.value.listening.port}/readyz`);
+      expect(response.status).toBe(503);
+
+      const body = (await response.json()) as { status: string; detail?: string };
+      expect(body.status).toBe("unhealthy");
+      // The same string `readiness()` reports in-process — the transport narrows nothing.
+      expect(body.detail).toBe((await started.value.probes.readiness()).detail);
+      expect(body.detail ?? "").toContain("unreachable");
+    } finally {
+      await started.value.shutdown();
+    }
+  });
+
+  it("omits detail entirely on a healthy readiness body, rather than carrying null", async () => {
+    const started = await startWorkload(DEFAULT_CONFIGURATION);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${started.value.listening.port}/readyz`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(JSON.stringify({ status: "healthy" }));
+
+      const liveness = await fetch(`http://127.0.0.1:${started.value.listening.port}/livez`);
+      expect(await liveness.text()).toBe(JSON.stringify({ status: "healthy" }));
+    } finally {
+      await started.value.shutdown();
+    }
   });
 });

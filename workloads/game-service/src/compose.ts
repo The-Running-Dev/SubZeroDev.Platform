@@ -166,8 +166,8 @@ function contentRegistry(): Outcome<ContentRegistry, CompositionError> {
 }
 
 /** No contract field names a bound for "any request's duration" — `GameEdgeOptions.ForwardTimeout`
- *  (`design/20-contract.md` line 767) is the edge's own configured value, and it lives in a
- *  different repository and process; threading it through `WorkloadConfiguration` would need a
+ *  (`design/20-contract.md`, "The edge — .NET") is the edge's own configured value, and it lives in
+ *  a different repository and process; threading it through `WorkloadConfiguration` would need a
  *  signature the contract does not carry. This is a workload-owned constant, on the same footing
  *  as `migrations.ts`'s `LOCK_WAIT_TIMEOUT_MS` — chosen to exceed the edge's own configured value
  *  (10s in this repository's own hosted-edge test support) by a wide margin, so the production
@@ -353,8 +353,10 @@ export async function compose(
   // can wait for it instead of returning while a stray connect is still running underneath it.
   let connecting: Promise<void> | null = null;
   // What `readiness()` reports as `ProbeResult.detail` while `durableStore` is still null — which
-  // of "still migrating", "the lock is held past its bound" or "a migration's SQL failed" is
-  // current, and — for the last two — which migration (`design/30-slices.md`, S12.6/S12.7).
+  // of "the lock is held past its bound", "a migration's SQL failed" (naming which one) or a store
+  // condition is current (`design/30-slices.md`, S12.6/S12.7). A migration *still running* is not
+  // among them and cannot be: the listener binds only once the first startup attempt settles, and
+  // that attempt runs the migration inside itself (`20-contract.md`, "Workload — readiness").
   let notReadyDetail: string | null = null;
   // Once `migrateToHead` has succeeded once for this `compose()` call, the schema is at head and
   // every later retry (a store-connect failure, never a migration one) skips straight to
