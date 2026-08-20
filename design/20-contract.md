@@ -372,7 +372,7 @@ export interface SweepResult {
 }
 ```
 
-**The sweep is a plain `delete` and is idempotent**, so two instances sweeping concurrently need no
+**The sweep is two plain `delete`s in one transaction and is idempotent**, so two instances sweeping concurrently need no
 coordination and none is added. It removes only rows whose `expires_at` is older than the retention
 horizon; a row that has merely expired is retained, because an expired-but-retained row is what lets
 the wire answer `session_expired` rather than `unknown_session`.
@@ -429,7 +429,7 @@ anything.
 
 ```ts
 export interface ConformanceTarget {
-  readonly label: string;
+  readonly label: "in-memory" | "durable";
   readonly persistence: SessionPersistence;
   readonly profiles: ProfileStore;
   seedCorruptProfile(profileId: string): Promise<void>;
@@ -698,6 +698,39 @@ carries no branch on which store was built. A no-op implementation rather than a
 point: the alternative puts configuration-dependent behaviour into the module whose job is to be
 transport-neutral.
 
+#### The storage seam
+
+```ts
+export interface StorageSeam {
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  readonly lifecycle: LifecycleProbe;
+}
+
+export type StorageDecorator = (seam: StorageSeam) => StorageSeam;
+
+export const IDENTITY_STORAGE_DECORATOR: StorageDecorator;
+
+export function composeStorageSeam(seam: StorageSeam, decorate?: StorageDecorator): StorageSeam;
+```
+
+**This is invariant 74 made into a type.** The invariant says the lifecycle probe is composed behind
+the same seam `SessionPersistence` and `ProfileStore` are; a seam nothing names is a convention, and
+a convention is what a later effort extends to two of the three ports and not the third. Every one of
+the three ports this workload builds — for **both** storage profiles, at every call site — passes
+through `composeStorageSeam` on its way to a caller, so a decorator wraps all three by construction
+rather than by being remembered.
+
+**G2 applies no decorator, and `IDENTITY_STORAGE_DECORATOR` is the only one that ever runs.** The
+seam exists for G3: the brief's *Lifespan* has G3 wrap these stores with an authorization decorator,
+and the probe is not a store port, so a decorator over `SessionPersistence` and `ProfileStore` alone
+would leave G3 an undecorated existence oracle answering *live / expired / absent* for any id. That
+constraint is stated here rather than in G3 because G3 cannot discover it.
+
+**The three ports enter as one value, not three parameters**, which is what makes the decorator's
+coverage checkable: a seam member added later is a compile error at every implementation of
+`StorageDecorator` rather than a port that quietly goes undecorated.
+
 **Composition owns the sweep timer**, calls `sweepOnce`, and never starts a tick while its
 predecessor is still running. The in-memory configuration starts no timer.
 
@@ -822,7 +855,7 @@ as exceptions.
 | `IsolationLevelUnsupported` | The connection does not report `read committed` after the store asserts it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
 | `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path |
 | `IdCollision` | A primary-key violation on a `createSession` or `loadGame` insert | **No** | `storage_failure` → **503**, *not* the conflict code. A collision is a storage anomaly, not a lost update, and conflating them would make the conflict code mean two things |
-| `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `internal_failure` → `500`. This is store corruption; a caller cannot fix it and the workload must not guess |
+| `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `storage_failure` → **503**, and the variant names the offending column for a log line. This is store corruption and a caller cannot fix it, but the workload has no channel to say so: `sessions.get` and `saves.get` return a record or throw, and the engine's own `getSession`/`getSave` convert **every** throw from the port into `storage_failure`. Reaching `internal_failure` would need a second branded throw the engine recognises — a cross-repository change bought to ease persistence, which the design names as a non-goal. The distinction an operator needs is on the row: `engine_version` separates a version skew from corruption after the fact |
 
 **`StoreError` never carries a conflict.** A conflict is not a store failure — it is a successful
 statement that matched no row — and it leaves the adapter as the branded throw, not as an `Outcome`
@@ -840,7 +873,7 @@ serve.
 |---|---|---|---|
 | `Unreachable` | The runner cannot connect | **Yes** | Startup retries with backoff, reporting not ready. No partial schema exists — the whole run applies in one transaction |
 | `LockTimeout` | The advisory lock is not acquired within the runner's bound | **Yes** | As above. The other instance is mid-migration; the next attempt finds the schema at head |
-| `MigrationFailed` | A migration's SQL fails | **No** | The process stays up and not-ready, naming the migration. A retry re-runs the same SQL against the same schema |
+| `MigrationFailed` | A migration's SQL fails | **Yes**, on a backing-off loop | The process stays up and not-ready, naming the migration in `ProbeResult.detail`, and retries — `compose()`'s shape is *come up not ready and keep trying*, and a migration that failed on a lock, a full disk or a permission not yet granted recovers without a process restart. Consecutive failures back the shared retry loop off exponentially to a cap, because `node-pg-migrate`'s advisory lock is one id for the whole **database**: a schema whose migration keeps failing must not re-request at the unbacked-off interval forever, or an unrelated schema's own migration queues behind it and times out (`design/90-decisions.md`, *Startup migrations*). **The accepted cost:** a permanently broken migration keeps re-requesting that lock at the cap, indefinitely |
 
 ### Composition — `CompositionError`
 
@@ -953,7 +986,7 @@ these continue from 48.
 | 58 | The store imports the engine's type declarations only. It never deserialises a blob, never validates game state, and never calls the engine | Store |
 | 59 | `expires_at` is computed from the **database** clock in SQL, never from the process clock, on both tables | Store |
 | 60 | A row whose `expires_at` has passed is returned as **not found** by `sessions.get` and `saves.get`, so the bound does not depend on when a sweep last ran | Store |
-| 61 | The sweep deletes only rows past the retention horizon and touches neither profile table; it is a plain `delete`, idempotent, and needs no coordination between instances | Store, Composition |
+| 61 | The sweep deletes only rows past the retention horizon and touches neither profile table; it is two plain `delete`s in one transaction, idempotent, and needs no coordination between instances | Store, Composition |
 | 62 | The retention horizon is required to exceed any request's duration by a wide margin, and a configuration that does not is rejected at startup | Composition |
 | 63 | A sweep tick never begins while its predecessor is still running, and a failed tick is caught, logged and retried on the next tick — never escaping as an unhandled rejection | Composition |
 | 64 | `save` has no `version` column and `saves.put` is an upsert; on a re-put every host column is recomputed from the writing process and the current clock | Store, Migrations |
@@ -972,7 +1005,7 @@ these continue from 48.
 | 77 | Neither surface's module graph reaches Store, in addition to G1's `StoreSerializationHandle` prohibition | HTTP surface, MCP surface |
 | 78 | Readiness evaluates the store on every probe and reports no remembered outcome; liveness consults the store never | Composition, Probes |
 | 79 | The listener binds and the process reports live before the store is reachable; an unreachable store is reported as not-ready and retried, and never aborts startup | Composition |
-| 80 | Every row a write produces carries the writing process's resolved engine package version in `engine_version`; it is stamped, never read on the serving path, and never compared at runtime | Store |
+| 80 | Every `session` and `save` row a write produces carries the writing process's resolved engine package version in `engine_version`; it is stamped, never read on the serving path, and never compared at runtime. The two profile tables carry no such column and are not in scope: `engine_version` is provenance for a **blob**, and a profile row holds none — it is normalised host-shaped columns the store writes itself, with no engine serialization whose producer could need recording | Store |
 | 81 | The durable replay runs against a schema created for that run and dropped afterwards, never against a tenant id and never against a truncated shared schema | Proof harness |
 | 82 | The durable replay runs at the production lifecycle defaults, so no session can expire between two of its steps | Proof harness |
 | 83 | The determinism dump's ordering is pinned to `collate "C"`, and the compose file pins the server encoding and the initdb locale explicitly | Composition, Proof harness |
@@ -1013,7 +1046,7 @@ Values and signatures the design does not determine, or that a document above th
 contradicts. **Each blocks something concrete**, and none is guessed at above.
 
 **Resolved items keep their number and are struck through rather than removed**, so nothing that
-later cites one by number breaks. **1 is resolved; 2, 3 and 4 are open, and 5 is answered here
+later cites one by number breaks. **1 and 3 are resolved; 2 and 4 are open, and 5 is answered here
 because this is the stage the design routed it to.**
 
 ### ~~1. What Dispatch answers when the lifecycle probe itself fails~~
@@ -1054,16 +1087,20 @@ citation resolves rather than disappearing.
   `save_expired` comes out of `TransportErrorCode` and out of the status mapping, and
   `LifecycleProbe.save` loses its only caller.
 
-### 3. The engine's ratification of `concurrent_modification` and the brand's spelling
+### ~~3. The engine's ratification of `concurrent_modification` and the brand's spelling~~
 
-Design Open question 11, unchanged. Every conflict assertion above depends on a `SessionStoreErrorCode`
-member that exists in no published engine version, and startup asserts the contract's recorded engine
-version against the resolved package's — so an instance cannot be pointed at a branch build without
-regenerating the contract first. **The design's position is that the engine pull request is the first
-deliverable and the proofs that assert the code are sequenced behind it**, which is a statement about
-ordering and costs nothing here. **What is genuinely open is a different name or a different brand
-shape**, and the exposure is rework in one slice: nothing above changes shape on the spelling, because
-the adapter throws a branded value and Dispatch maps a code.
+**Resolved 2026-08-20, by the tree rather than by a decision: the engine ratified both, at exactly
+the names above.** Engine `0.8.0` — vendored at `workloads/game-service/vendor/` and the version
+startup asserts the contract's recorded one against — exports `concurrent_modification` as the ninth
+`SessionStoreErrorCode` member and `SESSION_PERSISTENCE_CONFLICT` as `"SessionPersistenceConflict"`,
+and `writeSession`'s `catch` recognises the brand. There is no further ratification this repository
+can observe: the tarball is the artifact it consumes.
+
+**What was open, recorded because the next engine change will raise it again.** Every conflict
+assertion above depended on a union member that existed in no published engine version, and the
+design's position was that the engine pull request is the first deliverable with the proofs sequenced
+behind it. The genuine exposure was a different name or a different brand shape — rework in one
+slice, never a reshaping, because the adapter throws a branded value and Dispatch maps a code.
 
 ### 4. Design Open question 8 — what refreshes a session's idle clock
 

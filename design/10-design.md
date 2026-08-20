@@ -419,21 +419,33 @@ second decision and is checkable by the same build-time assertion that already e
 ### 1. Startup, and the background sweep — triggered by process start
 
 Read configuration, including the store's connection settings, the two TTLs and the determinism
-profile. **Bind the listener and report live as soon as the first connect attempt settles**, which is
-bounded by `connectTimeoutMs` and is the one wait the bind takes — a listener bound against a store
-whose reachability is still unknown would answer `503` for the length of that window without ever
-being able to say why. Report **not ready** until the store is usable. The first attempt, and then
-with backoff: connect, and run migrations to head under the migration tool's own advisory lock — two
-instances starting together must not both apply the same migration, and a lock the tool already owns
-is not machinery this design should reimplement. On success, compose the process-lived
-parts, assert the contract's recorded engine version against the resolved package's (G1's invariant,
-unchanged), and report ready.
+profile. **Bind the listener and report live as soon as the first startup attempt settles** — a
+listener bound against a store whose reachability is still unknown would answer `503` for the length
+of that window without ever being able to say why. Report **not ready** until the store is usable.
+The first attempt, and then with backoff: **run migrations to head under the migration tool's own
+advisory lock, then connect** — two instances starting together must not both apply the same
+migration, and a lock the tool already owns is not machinery this design should reimplement. On
+success, compose the process-lived parts, assert the contract's recorded engine version against the
+resolved package's (G1's invariant, unchanged), and report ready.
+
+**Migrating inside that first attempt is what bounds the bind, and the bound is the lock's, not the
+connection's.** The wait is the migration runner's own connect, plus its `lock_timeout` — the
+dominant term by an order of magnitude — plus the migration run, and only then the store connect
+bounded by `connectTimeoutMs`. **The cost, stated because it is larger than the one this paragraph
+originally allowed for:** a first start against a lock another instance is holding can keep the
+listener unbound for tens of seconds, and an unbound listener answers *nothing* — not even the `503`
+the argument above is built on. That is accepted rather than fixed because the alternative is to bind
+before the schema is known to exist, which puts the process in a state where the only honest answer
+to every request is the same `503` it would give unbound, minus the operator's ability to tell a slow
+start from a refused one. The bound is a rule on the lock timeout: it must stay short enough that a
+contended start is a slow start rather than an outage.
 
 **Starting-but-not-ready is the deliberate choice**, and it is G1's own precedent from the edge: a host
 that refuses to start tells an operator that something is wrong, while a host that starts and names its
 failing readiness check tells them *what*.
 
-**The sweep** runs on a timer in every instance and is a plain `delete` — idempotent, so two instances
+**The sweep** runs on a timer in every instance and is two plain `delete`s, one per bounded table, in
+one transaction — idempotent, so two instances
 sweeping concurrently need no coordination and none is added. It removes session and save rows whose
 `expires_at` is older than the configured **retention horizon**, and nothing else. It does not touch a
 row that has merely expired: an expired-but-retained row is what lets the wire answer *expired* rather
@@ -443,13 +455,15 @@ than *unknown*, and the horizon is what bounds how long that costs storage.
 duration, which is what makes it impossible for a sweep to delete a row between a live request's read
 and its write.
 
-**A sweep that fails is a first-class outcome, not an exception that escapes a timer.** Its statement
-runs under a statement timeout, its failure is caught, and the next tick simply tries again — the
+**A sweep that fails is a first-class outcome, not an exception that escapes a timer.** Its statements
+run under a statement timeout, its failure is caught, and the next tick simply tries again — the
 work is idempotent, so a missed sweep costs retained rows and nothing else. A tick never starts while
 the previous one is still running. The failure is what a readiness check will not show and what a
 serving request will not hit, so it is the one condition in G2 that could persist unobserved; it is
-therefore logged at each occurrence with the row count it did not remove, which is the whole of the
-observability the brief's non-goal leaves room for.
+therefore logged at each occurrence with the failing statement, which is the whole of the
+observability the brief's non-goal leaves room for. A failed `delete` cannot report the rows it did
+not remove without a second query against a store that has just failed one
+([`20-contract.md`](20-contract.md), *Additions*, item 5).
 
 ### 2. One operation, end to end — triggered by a caller
 
@@ -688,7 +702,14 @@ no trace in the winner's state.
 ### The store is unreachable at startup
 
 **Detection:** connection failure, or the migration runner's. **What the system does:** the process
-stays up, reports live, reports **not ready**, and retries with backoff. It never serves an operation.
+stays up, reports live, reports **not ready**, and retries with backoff. **It serves every operation
+and every one fails** — the listener is bound and both surfaces are built, so a caller that addresses
+it anyway reaches a persistence whose every method throws, and gets `storage_failure` at `503` for a
+game operation and the profile warnings on a `200` for a profile read or write. Those are the same
+answers a connected-but-failing store gives, which is the point: the window is not a distinct wire
+behaviour a caller has to learn. **Falling back to an in-memory store for that window was rejected**
+— a caller would be served a session that silently ceases to exist the moment the durable store
+connects, which is the one failure worse than the outage it hides.
 **What the operator sees:** the readiness body naming the store check, and a log line naming the host
 and the failure. **State left behind:** none — no partial migration, because the runner applies the
 whole run in a single transaction under its advisory lock. **Retry:** automatic, at startup only. Once

@@ -9,6 +9,118 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-20 — The storage seam is a declared type, because G3 inherits it rather than discovers it
+
+Context: S13 added `StorageSeam`, `StorageDecorator`, `IDENTITY_STORAGE_DECORATOR` and
+`composeStorageSeam` to `compose.ts` as exported interfaces, and touched no document. `AGENTS.md`
+forbids a public interface that is not in `20-contract.md`; the contract carried the *obligation*
+(invariant 74 — the lifecycle probe is composed behind the same seam the two store ports are) and
+not the mechanism. The gap matters in one direction only: the seam's whole reason for existing is
+G3's authorization decorator, and G3 cannot discover a seam from an invariant that only says one
+exists.
+Chosen: declare the four in `20-contract.md` under *Composition — workload*, and state why the three
+ports enter as one value rather than as three parameters — a seam member added later is then a
+compile error at every `StorageDecorator` rather than a port that quietly goes undecorated.
+Rejected: a decision entry alone, with the four unexported and the seam private to `compose.ts`.
+`storage-seam.test.ts` asserts the structural claim through these exports, so it would have to reach
+inside the module or the assertion goes away — and a private seam does not deliver the inheritance
+the design says the constraint exists for.
+Rejected: extending a two-port wrapper by hand when G3 arrives. That is the convention this replaces,
+and the failure it invites is the one the design already names: a decorator over `SessionPersistence`
+and `ProfileStore` leaves the probe as an undecorated existence oracle, answering *live / expired /
+absent* for any id a caller supplies.
+Reversibility: cheap — the decorator parameter is optional and defaults to identity, so nothing
+outside `compose.ts` and its own test passes one today.
+
+### 2026-08-20 — `RowUndeserializable` answers 503, because the read ports have no channel to reach 500
+
+Context: `20-contract.md`'s `StoreError` table said a malformed row answers `internal_failure` at
+`500`, and S13.1 made that a criterion. The tree cannot produce it: `sessions.get`/`saves.get` return
+a record or throw, and the engine's own `getSession`/`getSave` catch **every** throw from the port and
+raise `storage_failure`. S13's test asserts the thrown `cause` and never issues a request, so the
+half of the criterion that is unachievable is also the half nothing exercised.
+Chosen: the code's behaviour, with the contract row corrected to `storage_failure` → `503` and the
+reason recorded. The variant still names the offending column, for the log line.
+Rejected: a second branded throw the engine recognises, on the pattern of the conflict brand. It is a
+cross-repository change bought to ease persistence — named as a non-goal in the brief in those words
+— and it doubles the ratification exposure the effort has only just discharged.
+Retained cost: the wire does not distinguish store corruption from a store outage. An operator
+separates them after the fact from the row's `engine_version` and the store's own log line, which is
+what `engine_version` was taken for.
+Reversibility: cheap for the contract row; expensive for the engine change, which is another
+repository's.
+
+### 2026-08-20 — A failed migration is retryable, and the contract said it was not
+
+Context: `20-contract.md`'s `MigrationError` table marked `MigrationFailed` **not** retryable, while
+`compose()` has retried it since S12 on a backing-off loop capped at 60s — a divergence the *Startup
+migrations* entry below created and never carried into the contract.
+Chosen: the code, with the contract row corrected. `compose()`'s whole shape is *come up not ready
+and keep trying*, and a migration that failed on a lock, a full disk or a permission not yet granted
+recovers without a process restart.
+Rejected: latching a `MigrationFailed` and never retrying. It is the startup abort by another name
+that the entry below already rejected, and readiness names the failed migration either way, so it
+buys the operator nothing.
+Rejected: retrying only `Unreachable` and `LockTimeout`, as the contract literally read. It needs the
+code to tell a transient SQL failure from a permanent one, which `node-pg-migrate` does not report.
+Retained cost: a permanently broken migration re-requests `node-pg-migrate`'s database-wide advisory
+lock at the cap, indefinitely. The backoff bounds the rate, not the duration.
+Reversibility: cheap — the retry is three lines in `attemptConnect`.
+
+### 2026-08-20 — Readiness names which store condition is holding startup back, not just that one is
+
+Context: `20-contract.md` requires an `IsolationLevelUnsupported` store to report not-ready *naming
+the isolation level found*. `compose()` set `notReadyDetail = "store unreachable"` for every
+`openDurableStore` failure alike, and the level reached a `console.error` only — so the one store
+condition no amount of waiting clears read to an operator exactly like the one waiting does clear.
+Chosen: `storeNotReadyDetail`, a pure `StoreError` → detail mapping beside the
+`migrationNotReadyDetail` this repository already had, asserted the same way — by calling it, not by
+provoking each condition against a live database.
+Rejected: weakening the contract row to match the code. `ProbeResult.detail` was added by its own
+decision entry to tell startup conditions apart; covering migrations and not the store behind them is
+an inconsistency a reader hits immediately.
+Rejected: special-casing `IsolationLevelUnsupported` alone. That is the general mapping written once
+as an exception, and the next variant needing a name re-opens it.
+Reversibility: cheap — one exported pure function and one call site.
+
+### 2026-08-20 — Migrating inside the first startup attempt is what bounds the bind, and the bound is the lock's
+
+Context: `10-design.md` said the bind waits only for the first connect attempt, *"bounded by
+`connectTimeoutMs`"*. S12 put `migrateToHead` ahead of the connect inside that awaited attempt, so
+the bind also waits the runner's own connect, its `lock_timeout`, and the migration run — the lock
+timeout dominating by an order of magnitude.
+Chosen: the code, with the design corrected to state the real ordering and the real bound, and to
+state the cost it originally allowed for a smaller version of: a first start against a contended lock
+keeps the listener unbound for tens of seconds, and an unbound listener answers *nothing* — not even
+the `503` that paragraph's own argument is built on.
+Rejected: binding first and migrating on the background retry loop. It restores the design's stated
+property exactly, and was declined because a process bound before its schema is known to exist can
+only answer the same `503` it would give unbound, minus the operator's ability to tell a slow start
+from a refused one.
+Rejected: shortening `LOCK_WAIT_TIMEOUT_MS` so the worst case is short. A timeout shortened to make a
+wait acceptable hides the behaviour it exists to catch (`agent.md`), and trades a document edit for a
+tuning guess.
+Retained cost: the bind's worst case is now a rule on the lock timeout rather than a number the
+design names.
+Reversibility: cheap in either direction — the migration call is one awaited statement in
+`attemptConnect`.
+
+### 2026-08-20 — A workload whose store never connected serves every operation, and every one fails
+
+Context: `10-design.md`'s *The store is unreachable at startup* said *"It never serves an
+operation."* The tree binds, builds both surfaces, and dispatches into `unavailablePersistence()`.
+The 2026-08-19 entry that chose that behaviour was written against `20-contract.md`, which was
+silent — nobody checked this sentence, which said the opposite.
+Chosen: the code, with the design corrected to say what a caller actually gets: `storage_failure` at
+`503` for a game operation and the profile warnings on a `200`, which are the same answers a
+connected-but-failing store gives. The window is not a wire behaviour a caller has to learn.
+Rejected: gating dispatch on readiness so the sentence becomes true. The 2026-08-19 entry already
+rejected this shape as a startup abort by another name, and a blanket refusal is *less* informative
+than a `503` that names the condition.
+Rejected: reading the sentence as "never serves one successfully". It is the one sentence a reader
+consults to learn what a request gets in that window, and it answered the opposite of the truth.
+Reversibility: cheap.
+
 ### 2026-08-19 — Startup migrations: the durable branch brings its own schema to head, and a repeated migration failure backs its retry off
 
 Context: nothing ran migrations at startup — an operator had to run `npm run migrate` (or the
@@ -702,6 +814,14 @@ Reversibility: cheap
 ---
 
 ## Open
+
+- **S13.1 was ticked on half a criterion, and the other half was never achievable.** The criterion
+  requires that a request reaching a malformed row *"answers `internal_failure` at `500`,
+  distinguished in the same suite from `storage_failure` at `503`"*. `tests/row-guards.test.ts`
+  asserts the thrown `cause` only — it issues no request and asserts no status — and the wire half
+  cannot be met, for the reason recorded on 2026-08-20 (`RowUndeserializable` answers 503). The
+  contract is corrected; `design/30-slices.md` is not this command's to edit and the criterion still
+  reads as met. What needs deciding is whether the criterion is amended or the tick withdrawn.
 
 _(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147))_
 
