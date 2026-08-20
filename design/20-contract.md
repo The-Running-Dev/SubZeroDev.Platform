@@ -318,13 +318,22 @@ export interface WorkloadConfiguration {
 in-memory profile with a connection string, so "the in-memory configuration reaches no database" is a
 type-level fact rather than a branch anyone has to keep correct.
 
-**All three lifecycle bounds are configuration, and the production defaults are 30 days, 365 days and
-30 days.** Sessions and saves deliberately do not share a number. The defaults are values, not the
-mechanism; in practice every proof runs at them. Expiry is asserted by seeding `expires_at` into the
-past rather than by shortening a TTL and waiting, so the replay's requirement — that no session
-expire between two of its ten steps, which would report a serialization failure for a clock problem —
-holds by construction rather than by each proof choosing the right bounds. Only
-`retentionHorizonSeconds` is varied, by the sweep proofs.
+**Every member of `LifecycleBounds` is configuration, and all five carry a stated production
+default.** The three that bound a *row's life* are 30 days, 365 days and 30 days; sessions and saves
+deliberately do not share a number. The two that bound the *sweep's own work* are a **1-hour
+interval** and a **5-second statement timeout**, stated apart from the three because they answer a
+different question and are varied by a different set of proofs
+(`design/90-decisions.md`, "The sweep's two bounds are the sweep's, not a row's").
+
+The defaults are values, not the mechanism. **The three row bounds are what every proof runs at**:
+expiry is asserted by seeding `expires_at` into the past rather than by shortening a TTL and
+waiting, so the replay's requirement — that no session expire between two of its ten steps, which
+would report a serialization failure for a clock problem — holds by construction rather than by each
+proof choosing the right bounds. Only `retentionHorizonSeconds` is varied among them, by the sweep
+proofs. **The two sweep bounds are varied deliberately and often**: a sweep proof cannot wait an
+hour for a tick, and S13.4 drives the statement timeout below a held lock precisely to prove the
+bound is enforced. Neither is a bound the design reasons about — that is what makes them the two
+values a proof may move freely.
 
 **`retentionHorizonSeconds` is required to exceed any request's duration by a wide margin**, and that
 requirement is what makes it impossible for a sweep to fall between a live request's read and its
@@ -360,11 +369,19 @@ readiness probe was introduced to surface. **The stated cost is that readiness c
 `liveness` never consults the store and stays synchronous.
 
 **`ProbeResult.detail` amends G1's declaration (`g1/20-contract.md`), which had no such field.**
-While the durable branch is not yet ready, it names which startup condition is holding it back — a
-migration's advisory lock held past its bound, a failed migration naming which one, or the store
-itself unreachable, unreachable at the wrong isolation level, or out of connections
-(`design/90-decisions.md`, "Startup migrations"). Present only on an unhealthy result; absent
-everywhere else, including every G1-era caller that never populated it.
+Whenever the durable branch reports unhealthy it names the condition, and there are two such
+moments rather than one. **Before the store has ever connected** it names what is holding startup
+back — a migration's advisory lock held past its bound, a failed migration naming which one, or the
+store unreachable or at the wrong isolation level (`design/90-decisions.md`, "Startup migrations").
+**After it has connected and since degraded** it names what the readiness probe's own `check()`
+classified — the pool out of connections, or a statement that failed. Present only on an unhealthy
+result; absent everywhere else, including every G1-era caller that never populated it.
+
+**Which conditions each moment can name is decided by where each is reachable, not by taste.**
+`PoolExhausted` is reachable only in the second: at startup the pool holds no checked-out client, so
+`max` cannot be hit and a `connectTimeoutMs` expiry there is the server not answering — which
+`openDurableStore` classifies `Unreachable`. Naming an exhausted pool at startup would therefore
+report the one condition that cannot occur there in place of the one that did.
 
 **`detail` reaches the wire.** The readiness endpoint's body carries it whenever the probe does, and
 omits the member — never `null` — when it does not. That is stated here because it is the field's
@@ -880,7 +897,7 @@ as exceptions.
 |---|---|---|---|
 | `Unreachable` | The pool cannot connect, or a connection is lost mid-statement | **Yes** — the condition is transient by nature | Readiness reports unhealthy; a request in flight becomes `storage_failure` → `503` |
 | `PoolExhausted` | A connection acquisition exceeds its timeout | **Yes** | As above. The pool is sized by configuration with a stated default and **is not tuned** — performance is a binding non-goal |
-| `IsolationLevelUnsupported` | The connection the store checks at pool open does not report `read committed`. The store **checks and refuses**; it never sets the level, because a store that silently corrected a misconfiguration would hide it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
+| `IsolationLevelUnsupported` | The connection the store checks at pool open does not report `read committed`. The store **checks and refuses**; it never sets the level, because a store that silently corrected a misconfiguration would hide it | **Yes**, on the shared startup loop | The process stays up and not-ready, naming the isolation level found, and retries — `compose()`'s shape is *come up not ready and keep trying*, and the check runs fresh on every attempt, so a server or pooler corrected underneath a running process is picked up without a restart. **The accepted cost:** a misconfiguration nobody corrects re-opens a pool at the retry interval indefinitely |
 | `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path. **On the sweep path the variant names the failing statement**, on the same footing as `RowUndeserializable` naming its column and for the same reason — the sweep reaches no readiness check and no request, so its log line is the whole of its observability, and a bare classification does not say which of the two `delete`s failed |
 | `IdCollision` | A primary-key violation on a `createSession` or `loadGame` insert | **No** | `storage_failure` → **503**, *not* the conflict code. A collision is a storage anomaly, not a lost update, and conflating them would make the conflict code mean two things |
 | `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `storage_failure` → **503**, and the variant names the offending column for a log line. This is store corruption and a caller cannot fix it, but the workload has no channel to say so: `sessions.get` and `saves.get` return a record or throw, and the engine's own `getSession`/`getSave` convert **every** throw from the port into `storage_failure`. Reaching `internal_failure` would need a second branded throw the engine recognises — a cross-repository change bought to ease persistence, which the design names as a non-goal. The distinction an operator needs is on the row: `engine_version` separates a version skew from corruption after the fact |

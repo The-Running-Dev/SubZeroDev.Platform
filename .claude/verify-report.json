@@ -1,94 +1,29 @@
 {
   "gates": [
     {
-      "name": "Discovery: `# verification: true` flagged CI steps",
-      "status": "DidNotRun",
-      "reason": "No workflow in .github/workflows/ carries the flag \u2014 build.yml, docs-ci.yml, docs-deploy.yml and release.yml were each scanned and none has a `# verification: true` comment, and there is no verify.yml. Zero gates are discoverable by the mechanism /verify owns, which is exactly what issue #131 reports. Every entry below is therefore an optional, non-CI-gated local check, not a discovered gate."
-    },
-    {
-      "name": "build/Test-Documentation.ps1",
+      "name": "Repository Markdown link and terminology gate (build/Test-Documentation.ps1)",
       "status": "Passed",
-      "detail": "Documentation checks passed across 76 Markdown file(s), with 2 warning(s). Both warnings are pre-existing and in design/d3/90-decisions.md (Terminology: Use 'JSON' instead of 'Json'), not in any file this branch touches."
+      "detail": "design/d3/90-decisions.md:1138:66 [Warning] Terminology: Use 'JSON' instead of 'Json'.\ndesign/d3/90-decisions.md:1141:948 [Warning] Terminology: Use 'JSON' instead of 'Json'.\nDocumentation checks passed across 76 Markdown file(s), with 2 warning(s).\n[exited with code 0]\n\nThe two warnings are pre-existing, in a file this PR does not touch, and are Warning severity (does not fail the gate without -TreatWarningsAsErrors). This gate explicitly excludes docs/docs/ content by its own design (Docusaurus is the gate for that), so it does not itself cover the changed file, but it confirms nothing else in the tree regressed."
     },
     {
-      "name": "build/Test-SliceStatusMarkers.ps1",
+      "name": "Docusaurus production build (docs.ps1 -BuildOnly, then `pnpm run build` inside the built image)",
       "status": "Passed",
-      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md."
-    },
-    {
-      "name": "tools/Test-DesignDrift.ps1",
-      "status": "Passed",
-      "detail": "Slices compared: 13. Findings: 0. Could not evaluate: 0. No drift."
-    },
-    {
-      "name": "tools/Test-Companion.ps1",
-      "status": "Passed",
-      "detail": "Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid, Findings: {}."
-    },
-    {
-      "name": "tools/Test-WriteSurface.ps1",
-      "status": "Passed",
-      "detail": "Write surface OK - 0 changed path(s), all within the allowed prefixes."
-    },
-    {
-      "name": "build/Test-PackageManifests.ps1",
-      "status": "Passed",
-      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Six .nupkg files packed successfully; the only messages are NuGet's 'missing a readme' best-practice notices, which the script does not treat as failures."
-    },
-    {
-      "name": "build/Test-WorkloadIsolation.ps1",
-      "status": "Passed",
-      "detail": "No project under src/ or samples/ references workloads/ (25 project file(s) checked)."
-    },
-    {
-      "name": "npm --prefix workloads/game-service run typecheck",
-      "status": "Passed",
-      "detail": "> @subzerodev/game-service@0.1.0 typecheck\n> tsc --noEmit\n(no diagnostics, exit 0)"
-    },
-    {
-      "name": "dotnet build --configuration Release",
-      "status": "Passed",
-      "detail": "Build succeeded. 0 Warning(s), 0 Error(s). Time Elapsed 00:00:09.77."
-    },
-    {
-      "name": "tools/Test-DesignState.ps1",
-      "status": "Failed",
-      "detail": "Exit code 2. Findings (91), all Blocking=True: 46 [UnrecordedArtifact] (every .claude/commands/*.md, every tools/*.ps1, AGENTS.md, agent.md, README.md, design/00-brief.md, design/10-design.md, design/20-contract.md, design/30-slices.md, design/90-decisions.md, .claude/COMPANIONS.md, both .github/ISSUE_TEMPLATE files) each reported as 'tree artifact of kind X has no active unit record naming it as Anchor'; and 45 [LogEntryUnrecorded], one per decision heading in design/90-decisions.md, each 'log heading has no decision record naming it as Anchor'. Reported (32, Blocking=False): [MirrorStale] work/<n>: MirroredAt 'af3d73df05f2f58270fd874070a7c374a0a88dfa' is not the current commit '2625a6dd06188f977332d055d526252f8b48ca85' \u2014 one for each of the 32 WorkRef records. Could not evaluate (1): [ContractListUnreadable] SectionNotFound: design/20-contract.md. BASELINE: on main this same script also exits 2, but with Findings {} and Reported {} \u2014 its could-not-evaluate list is 'StateSetAbsent: design/state/ is missing or holds zero records' plus the same ContractListUnreadable, and its whole report is the single line 'StateSetAbsent: nothing to check.' So this branch does not change the exit code; it changes the checker from a vacuous skip into 91 blocking findings, because design/state/ now has content but holds only work/ records and no unit or decision records. This check is NOT CI-gated in this repository (see the discovery entry above)."
-    },
-    {
-      "name": "Invoke-Pester -Path tools -Output Detailed -PassThru",
-      "status": "Failed",
-      "detail": "Tests completed in 132.6s. Tests Passed: 229, Failed: 25, Skipped: 0. TotalCount 254, PassedCount 229, FailedCount 25. Failing tests are concentrated in the design-state tooling suites, e.g. 'S4.6: unit/command/track and unit/document/agents-md exist and their closures are complete', 'S12.5: the check exits 0 against this repository, and names the largest closure and its size', 'reports ContractListUnreadable - uncomputed, never clean - when the table cannot be read', 'this repository's own table and its own enumeration agree', 'S16.1/S16.2: this repository has one Contract record per design/20-contract.md Public-surface entry', 'S7.2: -DryRun against the real repository writes nothing', and 'the \"Run Pester tests\" step carries a GH_TOKEN env, the same as \"Check the design state against the tree\"' (that last one asserts against a verify.yml this repository does not have). BASELINE: the same command on a clean worktree of main gives TotalCount 254, PassedCount 226, FailedCount 28. So this branch does not regress the suite \u2014 it moves it from 28 failures to 25, three fewer, because committing design/state/work/ satisfies tests that previously found no state set at all. Issue #158 records this suite as failing '32 of 254'; the current figure on main is 28, so that issue's count is itself stale. This suite is NOT CI-gated in this repository \u2014 no workflow runs Invoke-Pester, which is the second half of what #158 reports."
-    },
-    {
-      "name": "dotnet test --no-build --configuration Release",
-      "status": "Failed",
-      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265, Duration: 1 m 2 s - SubZeroDev.Platform.Tests.dll (net10.0). (SubZeroDev.Platform.GameEdge.Tests.dll passed 19/19.) The failure:\n  Failed SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [1 s]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nThe test resolves this host's own name to enumerate non-loopback addresses; that resolution fails on this machine. It is an environment property, not a property of this branch \u2014 this branch changes no C# \u2014 but it was not re-run on main to confirm, so it is reported as a failure rather than dismissed."
-    },
-    {
-      "name": "build/Test-ApiReference.ps1",
-      "status": "DidNotRun",
-      "reason": "docfx is not on PATH. The script throws at build/Test-ApiReference.ps1:65 with 'docfx is not on PATH. Install it with: dotnet tool install --global docfx'. The dotnet build it runs first succeeded (0 Warning(s), 0 Error(s)) before the throw."
-    },
-    {
-      "name": "Docusaurus site build (docs-ci.yml, 'Verify Documentation Build' job)",
-      "status": "DidNotRun",
-      "reason": "`./docs.ps1 -BuildOnly` was run and exited 0, but it only builds the 'gameoflife-docs' Docker image \u2014 it does not invoke /template/scripts/docs-build.ps1, the status-page site build, the site merge, or the Pages artifact step that the docs-ci job runs. The real link-and-build verification therefore did not run locally; the docs-ci check on the pull request is where that answer comes from."
-    },
-    {
-      "name": "Workload integration suites (replay, replay-edge, contention-one-instance, contention-two-instances, durable-replay, conformance, npm test)",
-      "status": "DidNotRun",
-      "reason": "Each requires the CI-orchestrated environment build.yml sets up \u2014 a started PostgreSQL durable store, a migrated schema, and the workload and edge running the documented way, plus the outbound-OTLP port blocking. None of that was provisioned locally, so none of these suites was attempted. The build.yml checks on the pull request are where these answers come from."
-    },
-    {
-      "name": "build/Test-SampleRoundTrip.ps1",
-      "status": "DidNotRun",
-      "reason": "The build.yml step that runs it is preceded by a 'Block outbound OTLP ports for the sample run' step that manipulates host firewall rules; that precondition was not established locally, so the script was not run."
+      "detail": "docs.ps1 -BuildOnly succeeded (docker build, COPY-only, no content validation by itself):\nBuilt 'gameoflife-docs'. (build-only)\n\nThat alone does not exercise Docusaurus, so a real `pnpm run build` was run inside the built image to validate the changed page (docs.ps1 -BuildOnly is known from prior sessions not to catch broken links on its own):\n[webpackbar] Server: Compiled successfully in 32.85s\n[webpackbar] Client: Compiled successfully in 1.10m\n[SUCCESS] Generated static files in \"artifacts\".\n\nDocusaurus fails the build on unresolved links inside docs/, so a clean build confirms the guide's added cross-links and Mermaid diagrams render and resolve. The built image was removed afterward (docker rmi gameoflife-docs)."
     },
     {
       "name": "git diff --check",
       "status": "Passed",
-      "detail": "No whitespace errors or conflict markers. `git status --short --branch` reports '## track-drain-open-and-work-mirror...origin/track-drain-open-and-work-mirror' with no modified, staged, or untracked paths \u2014 the tree is clean and fully pushed."
+      "detail": "No output — no whitespace errors in the diff."
+    },
+    {
+      "name": "CI-gated steps flagged `# verification: true` in .github/workflows/*.yml",
+      "status": "DidNotRun",
+      "reason": "This repository has never added the `# verification: true` flag to any workflow step (confirmed by grep across .github/workflows/*.yml: zero matches), so /verify's flag-based discovery finds no mandatory gate set to run. This gap is already tracked as issue #131 ('/verify's `# verification: true` flag has never been added to this repository's workflows'). Nothing was skipped on judgement here — there was nothing flagged to run."
+    },
+    {
+      "name": ".NET build/test and the game-service workload suite (build.yml: dotnet build/test, durable-store proofs, two-instance contention, edge replay)",
+      "status": "DidNotRun",
+      "reason": "Not reproduced locally. This PR changes only docs/docs/guide.md — no file under src/, workloads/, tests/, or samples/ is touched — and this suite (12 .NET projects plus a Node workload job requiring a Postgres container and a downloaded OpenTelemetry Collector) takes many minutes and is unrelated to a documentation regeneration. build.yml's own build and game-service jobs on this pull request are the authoritative result for those checks."
     }
   ]
 }
