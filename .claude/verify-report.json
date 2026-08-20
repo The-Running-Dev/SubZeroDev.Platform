@@ -3,27 +3,47 @@
     {
       "name": "Discovery: # verification: true flagged CI steps",
       "status": "DidNotRun",
-      "reason": "No gate declares itself in this repository. Scanned every file in .github/workflows/ (build.yml, docs-ci.yml, docs-deploy.yml, release.yml) for the '# verification: true' comment; zero matches, and the verify.yml the skill's example table names does not exist here. tools/Test-GatesCache.ps1 reported Stale with gates:null, and the committed .claude/gates.json from the prior run also holds \"gates\": null under the identical manifestHash f6b94fc1 \u2014 so the previous /verify on this tree discovered none either. Everything below is the optional, non-CI-gated set the skill lists second; none of it is a flagged gate."
+      "reason": "No gate declares itself in this repository. Scanned every file in .github/workflows/ (build.yml, docs-ci.yml, docs-deploy.yml, release.yml) for the '# verification: true' comment; zero matches, and the verify.yml the skill's example table names does not exist here. tools/Test-GatesCache.ps1 reported Stale (the committed .claude/gates.json held a prior gates:null entry), re-discovery found zero flagged steps, and the cache was rewritten with gates:[] under the current manifest hash. Everything below is the optional, non-CI-gated set the skill lists second; none of it is a flagged gate."
     },
     {
-      "name": "npm run typecheck (workloads/game-service)",
+      "name": "git diff --check (origin/main...HEAD)",
       "status": "Passed",
-      "detail": "tsc --noEmit, clean, no diagnostics. Covers the widened firstInvalidSaveColumn and the edited ProbeResult.detail comment in src/types.ts."
-    },
-    {
-      "name": "npm test / npx vitest run (workloads/game-service)",
-      "status": "Passed",
-      "detail": "Test Files 24 passed | 1 skipped (25); Tests 191 passed | 1 skipped (192); duration 23.01s. Run against a live PostgreSQL 17 brought up from workloads/game-service/docker-compose.yml. Includes tests/row-guards.test.ts, which carries the new S13.2 case asserting saves.get names row_created_at."
+      "detail": "No whitespace errors. Exit 0."
     },
     {
       "name": "build/Test-Documentation.ps1",
       "status": "Passed",
-      "detail": "Documentation checks passed across 44 Markdown file(s), with 2 warning(s). Both warnings are pre-existing terminology hits in design/d3/90-decisions.md lines 1138 and 1141 ('Use JSON instead of Json'), untouched by this branch. Exit 0."
+      "detail": "Documentation checks passed across 44 Markdown file(s), with 2 warning(s). Both warnings are pre-existing terminology hits in design/d3/90-decisions.md lines 1138 and 1141 ('Use JSON instead of Json'), untouched by this branch (the only file this branch changes is docs/docs/guide.md). Exit 0, matching how docs-ci.yml's Documentation job actually invokes it (no -TreatWarningsAsErrors)."
+    },
+    {
+      "name": "docs.ps1 -BuildOnly",
+      "status": "Passed",
+      "detail": "Building 'gameoflife-docs' from /Users/ben/Dropbox/Projects/SubZeroDev.Platform/docs (base: ghcr.io/the-running-dev/docs-template:latest) ... #8 naming to docker.io/library/gameoflife-docs:latest done. Built 'gameoflife-docs'. (build-only). EXIT: 0. NOTE, DISCOVERED AFTER THIS RUN: -BuildOnly only builds the Docker image (a plain COPY layer) and never runs the Docusaurus site build inside it, so this check does not exercise Markdown link resolution and passing it is not evidence the site actually builds. It is retained here for what it does check (the image itself); the real build is the next entry."
+    },
+    {
+      "name": "docker run ghcr.io/the-running-dev/docs-template:latest Invoke-DocsBuild (the actual CI invocation, run locally)",
+      "status": "Failed",
+      "detail": "First run, at commit 994a53f: Error: MDX compilation failed for file \"/template/docs/guide.md\" — Cause: Markdown link with URL `../../design/20-contract.md` in source file \"docs/guide.md\" (84:14) couldn't be resolved. Make sure it references a local Markdown file that exists within the current plugin. This surfaced first via the pushed PR's CI check 'Verify Documentation Build' (Wait-PullRequestCheck against 994a53f), then reproduced locally by running the docs-template image's real Invoke-DocsBuild command instead of docs.ps1 -BuildOnly. Root cause: the Docusaurus site only overlays docs/ into the build image; design/ is not part of that tree, so the six relative links the regeneration wrote (../../design/20-contract.md, ../../design/10-design.md) cannot resolve there even though they resolve fine on GitHub. Fixed at 05fed3f by switching those six links to the github.com blob URLs docs/docs/*.md already uses elsewhere for the same files (e.g. observability.md, implementation-plan.md). Re-run after the fix (see next entry) passed."
+    },
+    {
+      "name": "docker run ghcr.io/the-running-dev/docs-template:latest Invoke-DocsBuild, re-run after the link fix",
+      "status": "Passed",
+      "detail": "[DOCS-BUILD] Overlaying '/work/docs' over '/template' ... [webpackbar] Server: Compiled successfully in 54.85s [webpackbar] Client: Compiled successfully in 2.13m [SUCCESS] Generated static files in \"artifacts\". [DOCS-BUILD] Copying static site to '/tmp/docsout' ... [DOCS-BUILD] Done. Exit 0, at commit 05fed3f. Also confirmed via the PR's own 'Verify Documentation Build' CI check going green on 05fed3fcfc20b76f0939777d9d3a7455fd28da16 (Wait-PullRequestCheck, PollCount 6, State Passed)."
+    },
+    {
+      "name": "npm run typecheck (workloads/game-service)",
+      "status": "Passed",
+      "detail": "tsc --noEmit, clean, no diagnostics. This branch touches no TypeScript source (docs/docs/guide.md only); run for completeness."
+    },
+    {
+      "name": "npm test / npx vitest run (workloads/game-service)",
+      "status": "Passed",
+      "detail": "Test Files 24 passed | 1 skipped (25); Tests 191 passed | 1 skipped (192); duration 40.53s. Run against a live PostgreSQL 17 brought up from workloads/game-service/docker-compose.yml (the first attempt, before Postgres was started, showed 10 files / 49 tests failing with {\"code\":\"Unreachable\"} from migrateToHead, confirming the store, not the code, was the cause; re-run after `docker compose up -d` passed clean). Container torn down with `docker compose down` after the run."
     },
     {
       "name": "build/Test-SliceStatusMarkers.ps1",
       "status": "Passed",
-      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md. Exit 0. Relevant because this branch edits the S13.1/S13.2 acceptance criteria in that file."
+      "detail": "Slice status markers consistent across 13 slice(s) in design/30-slices.md. Exit 0."
     },
     {
       "name": "build/Test-WorkloadIsolation.ps1",
@@ -33,7 +53,7 @@
     {
       "name": "build/Test-PackageManifests.ps1",
       "status": "Passed",
-      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Exit 0. Emits six 'missing a readme' NuGet advisories (Core, Observability, Persistence, Hosting, Testing, ...), which are pre-existing pack warnings and not failures."
+      "detail": "All six package manifests are consistent with S9.1, S9.5 and S9.6. Exit 0. Emits six 'missing a readme' NuGet advisories (Core, Observability, Persistence, Hosting, Testing, Abstractions), which are pre-existing pack warnings and not failures."
     },
     {
       "name": "tools/Test-Companion.ps1",
@@ -43,27 +63,17 @@
     {
       "name": "dotnet test (SubZeroDev.Platform.slnx, Release)",
       "status": "Failed",
-      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265, Duration: 30 s - SubZeroDev.Platform.Tests.dll (net10.0)\n[xUnit.net 00:00:01.66]     SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [FAIL]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nSubZeroDev.Platform.GameEdge.Tests.dll passed 19/19.\nCAUSE: environmental, not a code failure. BoundOnAnyNonLoopbackAddress calls Dns.GetHostAddresses(Dns.GetHostName()); this host's name is 'mac' and does not resolve ('ping: cannot resolve mac: Unknown host'). NOT ATTRIBUTABLE TO THIS BRANCH: git diff --name-only lists only design/*.md, docs/docs/guide.md, and three files under workloads/game-service/ \u2014 no .NET source is touched."
+      "detail": "Failed! - Failed: 1, Passed: 264, Skipped: 0, Total: 265, Duration: 45 s - SubZeroDev.Platform.Tests.dll (net10.0)\n[xUnit.net 00:00:02.33]     SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [FAIL]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\nSubZeroDev.Platform.GameEdge.Tests.dll passed 19/19.\nCAUSE: environmental, not a code failure. BoundOnAnyNonLoopbackAddress calls Dns.GetHostAddresses(Dns.GetHostName()); this host's name is 'mac' and does not resolve. NOT ATTRIBUTABLE TO THIS BRANCH: git diff --name-only lists only docs/docs/guide.md — no .NET source is touched. Identical failure, same test, same cause, reported unchanged in the prior /verify run on PR #153 (commit c5eda09)."
     },
     {
       "name": "Invoke-Pester -Path tools",
       "status": "Failed",
-      "detail": "Total=212 Passed=206 Failed=6 Skipped=0\nFAILED: Read-DesignState against this repository's own state set.S4.6: unit/command/track and unit/document/agents-md exist and their closures are complete\nFAILED: Test-DesignState against this repository's own tree.S5.6: the real run names a largest closure, its unit, and its largest contributor\nFAILED: Test-DesignState against this repository's own tree.S12.5: the check exits 0 against this repository, and names the largest closure and its size\nFAILED: S12.6: a checkout with design/state/ removed.S12.6: exits 2 reporting StateSetAbsent\nFAILED: S12.6: a checkout with design/state/ removed.S12.6: and never 0\nFAILED: Update-DesignProjection against this repository's own tree.S7.2: -DryRun against the real repository writes nothing\nPRE-EXISTING: all six are the absent design/state/ tree already filed as issue #151, reproduced unchanged on this branch."
+      "detail": "Tests Passed: 206, Failed: 6, Skipped: 0, Inconclusive: 0, NotRun: 0\nFAILED: S4.6: unit/command/track and unit/document/agents-md exist and their closures are complete\nFAILED: S5.6: the real run names a largest closure, its unit, and its largest contributor\nFAILED: S12.5: the check exits 0 against this repository, and names the largest closure and its size\nFAILED: S12.6: a checkout with design/state/ removed — exits 2 reporting StateSetAbsent\nFAILED: S12.6: a checkout with design/state/ removed — and never 0\nFAILED: S7.2: -DryRun against the real repository writes nothing\nPRE-EXISTING: all six are the absent design/state/ tree already filed as issue #151, reproduced unchanged on this branch. git diff --name-only lists only docs/docs/guide.md — no tooling under tools/ is touched."
     },
     {
       "name": "tools/Test-DesignState.ps1",
       "status": "DidNotRun",
       "reason": "Reported could-not-evaluate, exit code 2, so the design state was never read. CouldNotEvaluate: {Reason=ContractListUnreadable; Detail=SectionNotFound: design/20-contract.md}, {Reason=StateSetAbsent; Detail=design/state/ is missing or holds zero records}. ReportLines: 'StateSetAbsent: nothing to check.' This is issue #151, pre-existing and unchanged by this branch."
-    },
-    {
-      "name": "docs.ps1 -BuildOnly",
-      "status": "Passed",
-      "detail": "Built 'gameoflife-docs'. (build-only) \u2014 Docker image built from ghcr.io/the-running-dev/docs-template:latest with docs/ copied in, exit 0. NOTE: this builds the image only; it does not run a Docusaurus production build, so it does not by itself prove docs/docs/guide.md renders. The Markdown itself was linted by build/Test-Documentation.ps1 above."
-    },
-    {
-      "name": "build/Test-ApiReference.ps1",
-      "status": "DidNotRun",
-      "reason": "Not run. It is not a flagged gate, it exercises the generated API reference, and nothing on this branch touches the API surface it reads \u2014 the diff is design Markdown, the generated guide, and three TypeScript files under workloads/game-service/. Named here rather than omitted so the list of shipped build scripts is complete."
     }
   ]
 }
