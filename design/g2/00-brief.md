@@ -17,7 +17,7 @@ held was in a `Map`, and the brief said so deliberately — sessions lost on res
 own use of them.
 
 That makes the proof real and the product unusable. It also leaves the sharpest hosted problem
-untouched. [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 names it:
+untouched. [`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §6.1 names it:
 two `submitAction` calls against one session, arriving at two instances, both read the same
 envelope, both apply an action, and one write silently overwrites the other. **It is a determinism
 break that presents as a lost update** — no error, no failed validation, and a surviving state the
@@ -52,7 +52,7 @@ it.
 so the implementations are Node: the workload's own database client, its own migrations, inside
 `workloads/game-service/`. G2 is Track B only, and Platform's `Persistence` package gains no
 consumer from it. **The named cost:** this repository ends up with two persistence stories that
-share no code, and [ADR-002](../docs/docs/adr/ADR-002-implementation-technology.md)'s EF Core
+share no code, and [ADR-002](../../docs/docs/adr/ADR-002-implementation-technology.md)'s EF Core
 baseline governs neither of them on this side.
 
 **Noted for later, not decided now:** whether the migrations and the tenant column should follow
@@ -67,7 +67,7 @@ and
 [`server/src/profile-store.ts`](https://github.com/The-Running-Dev/SubZeroDev.Adventures/blob/main/server/src/profile-store.ts)
 fill both ports in about 460 lines of Node against plain `pg`, which is proof the shape works. Its
 schema is **not** reusable — it carries no tenant identifier, and
-[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §7 requires one from the
+[`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §7 requires one from the
 first schema, defaulted to a single implicit tenant, precisely because adding isolation after data
 exists is a correctness migration on every table at once.
 
@@ -95,7 +95,7 @@ The binding list. Everything here is out of scope for every agent until this fil
   account operations a hosted service will eventually need (`list_saves`, `delete_account`) are the
   account surface — G3's, and never merged with the game surface. The per-player resume query
   Adventures fills with its own `listSavesForPlayer` is exactly this shape, and it stays out.
-- **The edge becoming a Platform package.** [ADR-007](../docs/docs/adr/ADR-007-second-hosted-workload.md)
+- **The edge becoming a Platform package.** [ADR-007](../../docs/docs/adr/ADR-007-second-hosted-workload.md)
   admits SkyNet HR as a second hosted workload and justifies generalising the edge on that evidence.
   Rule 5 of that ADR says it schedules nothing and the work is a new effort with its own brief.
   **This is not that brief.** G2 touches `workloads/game-edge/` only where durable state forces it
@@ -230,7 +230,7 @@ replaced without ceremony once it has done so.
 ## Decisions taken here that override a recommendation elsewhere
 
 1. **The §6.1 contradiction is logged, not resolved in this brief.**
-   [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 resolves concurrency
+   [`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §6.1 resolves concurrency
    with compare-and-swap on the sequence number, stating that *"the engine's save handle already
    exposes `savedAtSeq` — so the version is present and needs no new concept."* The evidence
    disagrees. The contended row is the **session**, whose version is `attemptCounter` — the engine
