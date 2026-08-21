@@ -287,14 +287,42 @@ export type StorageProfile =
   | { readonly kind: "in-memory" }
   | { readonly kind: "durable"; readonly store: DurableStoreConfiguration };
 
-/** `GAME_SERVICE_STORAGE=durable` plus its two companion variables, read the same way by every
- *  process entry point this workload has — `main.ts`'s own process and the proof harness's hosted
- *  entry point (`tests/support/hosted-entrypoint.ts`) alike — so the three env var names and the
- *  `StorageProfile` they build live in one place rather than two independently-maintained copies.
+/** `GAME_SERVICE_DETERMINISM=replay` plus both companion variables selects the replay profile;
+ *  anything else — unset, any other value, or either companion variable missing — is the default
+ *  profile. Read the same way by both process entry points this workload has, `main.ts` and
+ *  `harness-entrypoint.ts`, for the reason `durableStorageProfileFromEnv` below is: one reader per
+ *  profile, not one per entry point. Without it the replay profile S4 delivers would be reachable
+ *  only from a programmatic `startWorkload` caller, never from a process an operator starts. */
+export function determinismProfileFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): DeterminismProfile {
+  if (env["GAME_SERVICE_DETERMINISM"] !== "replay") {
+    return { kind: "default" };
+  }
+  const fixedInstant = env["GAME_SERVICE_FIXED_INSTANT"];
+  const dumpPath = env["GAME_SERVICE_DUMP_PATH"];
+  if (!fixedInstant || !dumpPath) {
+    return { kind: "default" };
+  }
+  return { kind: "replay", fixedInstant, dumpPath };
+}
+
+/** `GAME_SERVICE_STORAGE=durable` plus its companion variables, read the same way by every
+ *  process entry point this workload has — `main.ts`'s own process and the proof harness's own
+ *  entry point (`harness-entrypoint.ts`) alike — so the env var names and the `StorageProfile`
+ *  they build live in one place rather than two independently-maintained copies.
  *  `requireSchema` is the one difference between those two callers: a real operator's durable
  *  process defaults a missing schema to `public`, while the proof harness's own discipline (S8) is
  *  that a schema is never implicit, because the isolation a per-run schema gives every proof
- *  depends on one always being named. */
+ *  depends on one always being named.
+ *
+ *  `GAME_SERVICE_READ_WRITE_PAUSE_MS` is the perturbation seam, and it defaults to `0` — including
+ *  when it is set to anything that is not a non-negative integer, so a typo cannot arm a
+ *  diagnostic. It is readable here rather than only from a programmatic caller because S7's two
+ *  instances are now real child processes and the pause is the only thing that tells them apart
+ *  (`design/90-decisions.md`, 2026-08-21, "The two-instance proof spawns real processes"); this is
+ *  the same shape `GAME_SERVICE_DETERMINISM` already takes, and invariant 87 — the seam is inert at
+ *  `0`, and `0` is what every configuration but a perturbed harness's carries — is unchanged by it. */
 export function durableStorageProfileFromEnv(
   env: Readonly<Record<string, string | undefined>>,
   options: { readonly requireSchema: boolean },
@@ -310,6 +338,7 @@ export function durableStorageProfileFromEnv(
   if (options.requireSchema && !schema) {
     return err({ setting: "GAME_SERVICE_DB_SCHEMA" });
   }
+  const pause = Number.parseInt(env["GAME_SERVICE_READ_WRITE_PAUSE_MS"] ?? "", 10);
   return ok({
     kind: "durable",
     store: {
@@ -320,7 +349,7 @@ export function durableStorageProfileFromEnv(
         schema: schema ? (schema as unknown as SchemaName) : null,
       },
       bounds: DEFAULT_LIFECYCLE_BOUNDS,
-      readWritePauseMs: 0,
+      readWritePauseMs: Number.isInteger(pause) && pause >= 0 ? pause : 0,
     },
   });
 }

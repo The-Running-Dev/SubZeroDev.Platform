@@ -9,6 +9,98 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-21 — The two-instance proof spawns real processes
+
+Context: `/reconcile`. `10-design.md` specifies the two-instance contention proof as "**two
+processes**, two ports, one schema, started by the harness," and says "the two-instance harness
+still spawns its own processes." `spawnInstances` called `startWorkload` twice in the vitest
+process, so both instances were HTTP listeners sharing one event loop, one module registry and one
+heap. `workloads/game-service/README.md` published the design's wording — "proving the same
+guarantee holds across processes as within one" — so the claim was not merely internal.
+Chosen by Ben: **the code changes to match the design.** `spawnOne` now spawns
+`src/harness-entrypoint.ts` as a genuine child process, the same entry point and the same
+`process.execPath`/`tsx` mechanism `tests/support/hosted-target.ts` already used for the durable
+replay, addressed over a real bound socket and shut down by a byte on stdin. The entry point moved
+from `tests/support/hosted-entrypoint.ts` to `src/` beside the harness that spawns it, since a
+module under `src/` reaching a path under `tests/` is a dependency direction this workload takes
+nowhere else. It no longer hardcodes the replay profile — S7's instances run the default one — so
+determinism joins storage as an environment-read profile, through `determinismProfileFromEnv`,
+which `main.ts` now shares for the reason it already shared `durableStorageProfileFromEnv`: one
+reader per profile, not one per entry point. `readWritePauseMs` gained
+`GAME_SERVICE_READ_WRITE_PAUSE_MS`, defaulting to `0` including on a malformed value, because a
+pause is the only thing that distinguishes the two instances and a child process has no other
+channel to receive one.
+Rejected: **narrowing the design and the README to what the tree did.** Cheaper, and defensible —
+the compare-and-swap is enforced in PostgreSQL and the two object graphs were genuinely
+independent. Declined because it gives up the property the proof exists to establish: module-level
+shared state and true parallelism are exactly what process separation rules out, and a proof whose
+framing no longer matches the failure it targets stops being evidence for it.
+Rejected: **spawning `src/main.ts` itself**, which would have made the proof run the operator's own
+process. Declined because `main.ts` shuts down on `SIGINT`/`SIGTERM`, and libuv raises every signal
+name on Windows as `TerminateProcess`; giving it a stdin trigger to suit the harness would shut
+down any service started with stdin redirected from `/dev/null`.
+Retained cost, recorded rather than dropped: `harness.ts` and `tests/support/hosted-target.ts` now
+carry two similar spawn-and-wait-for-readiness implementations. Extracting one primitive was
+declined **in this pass** rather than on the merits — refactoring `hosted-target.ts` would put the
+byte-identity proof, the older and more load-bearing of the two, at regression risk inside a
+reconciliation. Staged under `## Open` for `/track`.
+Reversibility: cheap for the spawn change; the entry-point move is a `git mv` and one path
+constant.
+
+### 2026-08-21 — The suite bounds its own parallelism, and its timeout clears the harness's bounds
+
+Context: making S7's instances real processes pushed the suite past what vitest's defaults
+tolerate. At one worker per core the process-spawning proofs ran concurrently enough that children
+missed their own readiness bounds, and the 5-second default `testTimeout` sat *below*
+`SPAWN_BOUND_MS` (15s) and `SHUTDOWN_BOUND_MS` (10s) — so the runner killed a test before
+`spawnInstances` could ever report `InstanceSpawnFailed` or `InstanceShutdownFailed`. Eight tests
+failed for machine load, none for a defect.
+Chosen: a `vitest.config.ts` setting exactly two things — `maxWorkers: 4`, and
+`testTimeout: 30_000`. The timeout is the correctness half: a declared error variant that the test
+runner makes unobservable is a variant nothing can assert, and S7.7 asserts one. The worker bound
+is the flakiness half — a bound a busy machine can blow is a gate whose red does not mean the thing
+it proves is broken. The full suite went from 8 failures at 64s to 0 at 29s, so the bound bought
+wall-clock time rather than costing it.
+Rejected: **raising the timeouts alone.** It would have left the suite's failure rate a function of
+how loaded the machine is, which is the property that makes a gate untrustworthy rather than slow.
+Rejected: **`maxWorkers: 1`.** The suite is dominated by process startup and database round trips
+rather than CPU, so serialising outright buys headroom nothing needs at a real wall-clock cost.
+Rejected: **per-test timeouts on the affected tests only.** The mismatch is between the runner's
+default and this suite's whole character; fixing it case by case leaves the next process-spawning
+test to rediscover it.
+Reversibility: cheap — one file, two settings.
+
+### 2026-08-21 — `expired` and `conflict` reach the wire as one code, and the documents now say so
+
+Context: `/reconcile`. `GuardedWriteOutcome`'s third member, invariant 55 and `10-design.md`'s
+*Control flow* 2 step 4 all exist so a guarded write rejected by the `expires_at` predicate is
+classified **`expired`, not conflict** — the design's own justification being that "a re-read that
+cannot change an answer is not a classification." In the tree both classifications leave
+`sessions.put` as the same `SessionPersistenceConflict` brand, so the engine raises
+`concurrent_modification` and the wire answers `409` either way; the distinction survives only as
+`DurableWriteConflict.outcome`, an inert member this workload's own tests read and nothing else
+does. Neither document stated the wire consequence: the design routed only the conflict, and the
+contract's Dispatch table listed no origin for an expired write.
+Chosen by Ben: **the documents change to match the code.** `10-design.md` step 5 and
+`20-contract.md`'s `GuardedWriteOutcome` and Dispatch table now say both classifications reach the
+engine as one brand and the wire as `concurrent_modification` at `409`, that the classification is
+therefore diagnostic rather than a routing decision, and what that costs: a caller whose write lost
+to expiry is told to re-read and decide rather than that the session expired, and learns which on
+that re-read — an expired row reads as absent, the engine raises `unknown_session`, and the
+lifecycle probe answers `session_expired` at `404`. Step 4 also gained the floor the enumeration
+omitted: anything the three branches do not name is `conflict`, which in practice is one shape —
+present, same version, still live, reachable only through a delete-and-reinsert between the write
+and the re-read.
+Rejected: **routing `expired` to `session_expired` on the wire.** It needs a second brand the
+engine recognises — a cross-repository engine change bought to ease persistence, which
+[`00-brief.md`](00-brief.md) names as a non-goal — or a Dispatch-side unwrap of the store's own
+error shape, which puts a store type inside the module whose job is to be transport-neutral. The
+purchase is one saved round trip on the rarest path in the system.
+Retained cost: a three-member type and a three-branch classification whose branches are not
+distinguishable by any caller. Kept because the store still needs to say *why* zero rows were
+affected, and the member is where that lands.
+Reversibility: cheap — prose over settled behaviour.
+
 ### 2026-08-21 — A wrong isolation level is retryable, and the contract said it was not
 
 Context: `20-contract.md`'s `StoreError` table marked `IsolationLevelUnsupported` **not** retryable —
@@ -1174,7 +1266,13 @@ Reversibility: cheap
 
 ## Open
 
-_Nothing staged._
+- The proof harness carries two spawn-and-wait-for-readiness implementations — `src/harness.ts`'s
+  `spawnOne` and `tests/support/hosted-target.ts`'s `spawnHostedWorkload` — since the two-instance
+  proof became real processes on 2026-08-21. One primitive, with the replay target's dump reading
+  and the two-instance target's `WorkloadInstance` shape built on top, is the shape that stops the
+  two drifting apart. Deferred out of that reconciliation deliberately: refactoring
+  `hosted-target.ts` puts the byte-identity proof at regression risk, which is not a cost a
+  reconciliation pass should take on.
 
 _(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147); and the S13.1 half-criterion question, resolved in place by amending the criterion — `c5eda09`, and the entry above dated 2026-08-20, "`RowUndeserializable` answers 503".)_
 

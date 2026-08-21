@@ -1,31 +1,37 @@
 /**
- * The harness's own process entry point for S5's hosted run, and S8's durable one. Runs the
- * identical startup path `src/main.ts` does — `startWorkload` under the replay profile — but is
- * shut down over a stdin byte rather than a POSIX signal.
+ * The proof harness's own process entry point — S5's and S8's hosted replay targets, and S7's two
+ * contending instances. Runs the identical startup path `src/main.ts` does — `startWorkload` over
+ * the same `GAME_SERVICE_*` environment variables — but is shut down over a stdin byte rather than
+ * a POSIX signal.
  *
  * `child.kill('SIGTERM')` only terminates a child process gracefully on POSIX; on Windows, libuv's
  * `uv_kill` calls `TerminateProcess` unconditionally for every signal name, so a portable harness
  * cannot rely on one. A parent-closed write to the child's stdin is delivered the same way on every
- * platform, so that is this entry point's one shutdown trigger. `main.ts` itself is untouched — an
- * operator still starts the workload the way S3/S4 built it; this is the harness's own process.
+ * platform, so that is this entry point's one shutdown trigger. **`main.ts` itself is untouched** —
+ * an operator still starts the workload the way S3/S4 built it, and a stdin trigger there would
+ * shut down any service started with its stdin redirected from `/dev/null`.
  *
- * A durable target (S8) is selected the same way `main.ts`'s own `determinismProfile()` selects
- * the replay profile: one flag plus its companion variables, anything else falling back to the
- * default this entry point already had. `bounds` is always `DEFAULT_LIFECYCLE_BOUNDS` — the
- * durable replay's own requirement that no TTL can elapse mid-run (S8.4) — so there is no env var
- * for it.
+ * It lives beside `harness.ts` rather than under `tests/support/` because `harness.ts` spawns it
+ * (`design/90-decisions.md`, 2026-08-21, "The two-instance proof spawns real processes"): a module
+ * under `src/` reaching a path under `tests/` is the one dependency direction this workload does
+ * not otherwise take. Nothing exports it from `index.ts`, on the same footing as `harness.ts`,
+ * `conformance.ts` and `replay.ts` — test-scope modules that happen to live in `src/`.
+ *
+ * Both profiles it can compose are read from the environment by the same two functions `main.ts`
+ * uses (`determinismProfileFromEnv`, `durableStorageProfileFromEnv`), so there is one reader per
+ * profile rather than one per entry point. The single difference is `requireSchema`: this process
+ * never defaults a missing schema, because the isolation a per-run schema gives every proof depends
+ * on one always being named.
  */
-import { startWorkload } from "../../src/lifecycle.js";
-import { durableStorageProfileFromEnv } from "../../src/types.js";
-import type { StorageProfile, WorkloadConfiguration } from "../../src/types.js";
+import { startWorkload } from "./lifecycle.js";
+import { determinismProfileFromEnv, durableStorageProfileFromEnv } from "./types.js";
+import type { StorageProfile, WorkloadConfiguration } from "./types.js";
 
 function storageProfile(): StorageProfile {
   // A caller that sets `GAME_SERVICE_STORAGE=durable` without both companion variables gets a
   // loud startup failure, not a silent in-memory run — the entire point of the durable replay
   // (S8) is proving persistence happened, so degrading to in-memory here would let it pass
-  // without ever having exercised Postgres. Unlike `main.ts`'s own process, this harness never
-  // defaults a missing schema either — the isolation a per-run schema gives every proof depends on
-  // one always being named (`requireSchema: true`).
+  // without ever having exercised Postgres.
   const profile = durableStorageProfileFromEnv(process.env, { requireSchema: true });
   if (!profile.ok) {
     throw new Error(`GAME_SERVICE_STORAGE=durable is missing ${profile.error.setting}`);
@@ -39,11 +45,10 @@ function configuration(): WorkloadConfiguration {
       host: process.env["GAME_SERVICE_HOST"] ?? "127.0.0.1",
       port: Number.parseInt(process.env["GAME_SERVICE_PORT"] ?? "0", 10),
     },
-    determinism: {
-      kind: "replay",
-      fixedInstant: process.env["GAME_SERVICE_FIXED_INSTANT"] ?? "",
-      dumpPath: process.env["GAME_SERVICE_DUMP_PATH"] ?? "",
-    },
+    // Env-selected rather than hardcoded to `replay`: S7's two instances run the default profile
+    // against one durable store, and S5/S8's replay targets set `GAME_SERVICE_DETERMINISM=replay`
+    // with its two companion variables. One entry point, both proofs.
+    determinism: determinismProfileFromEnv(process.env),
     otlpEndpoint: process.env["GAME_SERVICE_OTLP_ENDPOINT"] ?? null,
     storage: storageProfile(),
   };

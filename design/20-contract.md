@@ -221,7 +221,18 @@ export type LifecycleState = "live" | "expired" | "absent";
 classification.** Zero rows affected is re-read: a different `version` is `conflict`, the same
 `version` past its `expires_at` is `expired`, and an absent row is `conflict` because the caller's
 read is no longer authoritative either way. **A re-read that itself fails is `conflict`**, never a
-storage outcome — zero rows has already established the one fact the caller acts on.
+storage outcome — zero rows has already established the one fact the caller acts on. Anything the
+three do not name is `conflict` too; the members are the classification, and `conflict` is its floor.
+
+**`expired` and `conflict` leave the adapter as the same branded throw, and reach the wire as the
+same `concurrent_modification` at `409`.** `writeSession`'s `catch` discriminates on `name` and
+nothing else, so the port has exactly one channel out; a second brand is a second engine change
+bought to ease persistence, which the brief names as a non-goal. **This type is therefore diagnostic
+rather than a routing decision** — it says *why* zero rows were affected, is carried on the thrown
+value as an inert member, and is read by this workload's own tests and by nothing on the wire.
+**The cost:** a caller whose write lost to expiry is told to re-read and decide rather than that the
+session expired, and learns which it was on that re-read — an expired row reads as absent, the engine
+raises `unknown_session`, and the lifecycle probe answers `session_expired` at `404`.
 
 **`LifecycleState` is a classification and never data.** It answers *does a row exist for this id,
 and has it expired* and returns no blob, no scene and no record.
@@ -460,6 +471,16 @@ prevent.
 under test carries the pause, the second is sent inside it. Nothing else distinguishes them — the
 instances are anonymous and interchangeable, which is what makes the two-instance proof mean
 anything.
+
+**Each `WorkloadInstance` is a separate operating-system process, and that is load-bearing rather
+than incidental.** §6.1's failure is *between processes*; two compositions sharing one event loop,
+one module registry and one heap cannot establish that the compare-and-swap survives the separation
+the failure is defined by. `spawnInstances` therefore spawns the harness's own process entry point,
+the same one the hosted replay target spawns, and every input a child needs travels as an
+environment variable because that is the only channel a separate process has. **`shutdown` is a byte
+on the child's stdin, never a signal** — on Windows libuv raises every signal name as
+`TerminateProcess`, and a hard kill would leave the child's pool connections open to race the
+caller's schema drop.
 
 ```ts
 export interface ConformanceTarget {
@@ -926,7 +947,7 @@ G1's three variants are unchanged. One is added.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `StorageConfigurationInvalid` | A `durable` profile carries an unusable connection string, a non-positive pool size, or a retention horizon not greater than the configured forward timeout | **No** | Fails startup, naming the setting. This is the one storage condition that aborts rather than degrading to not-ready, because no amount of waiting makes an invalid setting valid |
+| `StorageConfigurationInvalid` | A `durable` profile carries an unusable connection string, a non-positive pool size, or a retention horizon not greater than the workload's assumed forward timeout — a constant, not the edge's own configured value, which no signature threads into the workload (`90-decisions.md`, 2026-08-19, "The retention-horizon check is enforced against an assumed forward timeout") | **No** | Fails startup, naming the setting. This is the one storage condition that aborts rather than degrading to not-ready, because no amount of waiting makes an invalid setting valid |
 
 **Store unreachability is deliberately not here.** It is a readiness condition, reported through
 `ProbeSurface.readiness` and retried with backoff, for the reason stated with `compose`.
@@ -937,7 +958,7 @@ G1's three variants are unchanged. One is added.
 
 | Code | Origin | Status | Retryable | Caller does |
 |---|---|---|---|---|
-| `concurrent_modification` | The engine, recognising the store's brand | **409** | **No, not automatically** | *Your read is stale.* Re-read with a query operation, then decide. Never resubmit blind: a retried `submitAction` is a second action |
+| `concurrent_modification` | The engine, recognising the store's brand — raised for **both** guarded-write classifications, `conflict` and `expired` alike, since the port has one channel out (see `GuardedWriteOutcome`) | **409** | **No, not automatically** | *Your read is stale.* Re-read with a query operation, then decide. Never resubmit blind: a retried `submitAction` is a second action. Where the cause was expiry, that re-read is what surfaces it, as `session_expired` |
 | `session_expired` | Dispatch, after consulting the lifecycle probe on `unknown_session` | **404** | No | The session existed and no longer does. Start a new one, or load a save |
 | `save_expired` | Dispatch, after consulting the lifecycle probe on `unknown_save` | **404** | No | As above |
 
