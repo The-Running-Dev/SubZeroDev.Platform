@@ -4,9 +4,9 @@
 re-derived, not patched.
 
 What this document does **not** decide is already owned elsewhere.
-[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) owns the ownership split and
-§7's port obligations; [ADR-005](../docs/docs/adr/ADR-005-service-contract.md) owns how a boundary
-contract comes to exist; [`g1/10-design.md`](g1/10-design.md) owns the operation table, the two
+[`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) owns the ownership split and
+§7's port obligations; [ADR-005](../../docs/docs/adr/ADR-005-service-contract.md) owns how a boundary
+contract comes to exist; [`../g1/10-design.md`](../g1/10-design.md) owns the operation table, the two
 surfaces, the wire's error semantics and the byte-identity proof's shape. G2 inherits all of it
 unchanged except where durable state forces a change, and every such change is named here.
 
@@ -79,7 +79,7 @@ answer, and the durable rows below are what the brief's criteria are asserted ag
 ### The store — engine-owned values, host-owned columns
 
 The split is the schema's organising rule and it is
-[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §7 made literal: **every field
+[`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §7 made literal: **every field
 the engine puts on its record is stored verbatim and given back unchanged; every column the host needs
 is the store's own and the engine never sees it.** A column is on exactly one side of that line.
 
@@ -1238,7 +1238,7 @@ shipping the vocabulary at `0.8.0`. **8 is the one that remains open.**
    widen `TransportErrorCode`, which is a closed union in the published package. That is a contract
    minor version and a republish. G1 consumed it as a vendored tarball; whether G2 does the same or
    switches to the registry is a delivery decision, not a design one.
-   **Left open deliberately, and routed to [`/contract`](../.claude/commands/contract.md)** — signed
+   **Left open deliberately, and routed to [`/contract`](../../.claude/commands/contract.md)** — signed
    off 2026-08-12 as belonging to the stage that owns the contract artifact. Nothing in this document
    changes on either answer, which is the test for whether it was ever a design question.
 
@@ -1256,7 +1256,7 @@ shipping the vocabulary at `0.8.0`. **8 is the one that remains open.**
 
 7. **Who corrects §6.1?**
    **Settled: this effort does, and it is done.**
-   [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 now resolves
+   [`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §6.1 now resolves
    concurrency with a store-owned version, names the session as the contended row, and states that
    saves need no lock — with a dated note recording what the paragraph used to say and why it was
    wrong. The brief's deferral was conditional on `/design` adjudicating which side was wrong; that

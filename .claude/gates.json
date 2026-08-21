@@ -1,5 +1,94 @@
 {
-  "manifestHash": "f6b94fc15903cefc09aaad327ce249c5295cee8bcdacedacad66d5cdfdc20968",
-  "generated": "2026-08-21",
-  "gates": null
+  "manifestHash": "36c79d629ff5095811135d0e24746fc2db248f31fab7c75553d2edd8b470f6f1",
+  "generated": "2026-08-22",
+  "gates": [
+    {
+      "name": "Test (build.yml, .NET job)",
+      "command": "dotnet test --no-build --configuration Release --verbosity normal"
+    },
+    {
+      "name": "Run the sample in both roles (build.yml)",
+      "command": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1"
+    },
+    {
+      "name": "Assert no framework project references a workload (build.yml)",
+      "command": "pwsh ./build/Test-WorkloadIsolation.ps1"
+    },
+    {
+      "name": "Typecheck (build.yml, game-service job)",
+      "command": "cd workloads/game-service && npm run typecheck"
+    },
+    {
+      "name": "Start the workload and the edge, the documented way (build.yml)",
+      "command": "see build.yml step 'Start the workload and the edge, the documented way'"
+    },
+    {
+      "name": "Run the replay against the workload (build.yml)",
+      "command": "cd workloads/game-service && npx vitest run tests/replay.test.ts"
+    },
+    {
+      "name": "Run the replay against the edge (build.yml)",
+      "command": "cd workloads/game-service && GAME_EDGE_DLL=<path> npx vitest run tests/replay-edge.test.ts"
+    },
+    {
+      "name": "Migrate the schema to head, the documented way (build.yml)",
+      "command": "cd workloads/game-service && GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate"
+    },
+    {
+      "name": "Start the workload against the durable store, the documented way (build.yml)",
+      "command": "cd workloads/game-service && GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start"
+    },
+    {
+      "name": "Run the one-instance contention proof (build.yml)",
+      "command": "cd workloads/game-service && npx vitest run tests/contention-one-instance.test.ts"
+    },
+    {
+      "name": "Run the two-instance contention proof (build.yml)",
+      "command": "cd workloads/game-service && npx vitest run tests/contention-two-instances.test.ts"
+    },
+    {
+      "name": "Run the durable replay (build.yml)",
+      "command": "cd workloads/game-service && npx vitest run tests/durable-replay.test.ts"
+    },
+    {
+      "name": "Run the port-conformance suite (build.yml)",
+      "command": "cd workloads/game-service && npx vitest run tests/conformance.test.ts"
+    },
+    {
+      "name": "Test (build.yml, game-service job, full npm test)",
+      "command": "cd workloads/game-service && GAME_EDGE_DLL=<path> npm test"
+    },
+    {
+      "name": "Validate Markdown links, terminology, and generated files (docs-ci.yml)",
+      "command": "pwsh ./build/Test-Documentation.ps1"
+    },
+    {
+      "name": "Validate design/30-slices.md's Status markers (docs-ci.yml)",
+      "command": "pwsh ./build/Test-SliceStatusMarkers.ps1"
+    },
+    {
+      "name": "Build and verify the status-page site (docs-ci.yml verify job)",
+      "command": "npm --prefix site ci && npm --prefix site run check"
+    },
+    {
+      "name": "Build and verify the status-page site (docs-deploy.yml)",
+      "command": "npm --prefix site ci && npm --prefix site run check"
+    },
+    {
+      "name": "PowerShell parse-check (all *.ps1)",
+      "command": "Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object { [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$null) }"
+    },
+    {
+      "name": "Invoke-Pester -Path tools",
+      "command": "Invoke-Pester -Path tools -Output Detailed -PassThru"
+    },
+    {
+      "name": "tools/Test-Companion.ps1 (core/companion split)",
+      "command": "pwsh -File tools/Test-Companion.ps1"
+    },
+    {
+      "name": "tools/Test-DesignState.ps1 (design state vs. tree)",
+      "command": "pwsh -File tools/Test-DesignState.ps1"
+    }
+  ]
 }

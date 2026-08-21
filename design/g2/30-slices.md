@@ -485,7 +485,7 @@ Acceptance:
   `ExternalDependencyInLivenessCheck`.
 - **S10.5** After the readiness check runs any number of times against a healthy workload, the
   workload's session count is still zero.
-- **S10.6** G1's edge-forwarding acceptance criteria (`g1/30-slices.md` S7.2–S7.6) still pass
+- **S10.6** G1's edge-forwarding acceptance criteria (`../g1/30-slices.md` S7.2–S7.6) still pass
   unmodified.
 
 Out of scope: anything about the two-instance proof, which addresses the workload instances directly
@@ -530,7 +530,7 @@ Acceptance:
   elsewhere.
 - **S11.6** The documentation states that a session's idle TTL advances only on an accepted write, not
   on every read, so a session read continuously for its whole TTL still expires.
-- **S11.7** G1's fresh-clone job (`g1/30-slices.md` S9) still passes unmodified in the same CI run.
+- **S11.7** G1's fresh-clone job (`../g1/30-slices.md` S9) still passes unmodified in the same CI run.
 
 Out of scope: a human-facing guide (`/make-human-docs`'s output); resolving either brief conflict,
 which is `00-brief.md`'s author's decision and not a slice's; deployment machinery beyond the

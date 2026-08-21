@@ -222,7 +222,7 @@ answer.
 Three facts every proof in this effort depends on:
 
 - **No brief conflict remains.** Both this note once carried are closed by amendments to
-  [`design/00-brief.md`](../../design/00-brief.md) (`20-contract.md`, Unresolved 2): the tenant
+  [`design/g2/00-brief.md`](../../design/g2/00-brief.md) (`20-contract.md`, Unresolved 2): the tenant
   conflict on 2026-08-12, which now permits the implicit tenant in every key and statement, and
   the save-lifecycle conflict on 2026-08-20, which admits saves to the lifecycle scope on their
   own clock. The `save` table's 365-day absolute lifecycle, its `expires_at` column and the sweep

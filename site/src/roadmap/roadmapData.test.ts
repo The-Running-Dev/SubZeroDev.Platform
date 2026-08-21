@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -216,28 +216,35 @@ describe("the active design/30-slices.md — the assertion that survives every f
   // assertions no longer guard the active effort's file. This test does:
   // a G1 slice edit that drops a status or a 'Depends on:' line fails here,
   // at the causing commit, instead of surfacing when #80 repoints the import.
-  const activeRaw = readFileSync(
-    join(
-      dirname(fileURLToPath(import.meta.url)).replace(
-        /[\\/]src[\\/]roadmap$/,
-        "",
-      ),
-      "..",
-      "design",
-      "30-slices.md",
+  const activePath = join(
+    dirname(fileURLToPath(import.meta.url)).replace(
+      /[\\/]src[\\/]roadmap$/,
+      "",
     ),
-    "utf8",
+    "..",
+    "design",
+    "30-slices.md",
   );
 
-  it("parses without throwing, and every slice carries a recognised status", () => {
-    const active = parseSlices(activeRaw);
-    expect(active.length).toBeGreaterThan(0);
-    for (const slice of active) {
-      expect(["shipped", "in-progress", "queued"]).toContain(slice.status);
-    }
-  });
+  // Between the commit that archives a finished effort's set and the
+  // /slices run that writes the next one, the active effort has a brief
+  // and no slices — stage 0 of the pipeline, matching
+  // build/Test-SliceStatusMarkers.ps1's own SKIP for the same absence.
+  if (!existsSync(activePath)) {
+    it.skip("no active slices document — the active effort has no slices yet", () => {});
+  } else {
+    const activeRaw = readFileSync(activePath, "utf8");
 
-  it("does not throw assertConsistent against its current state", () => {
-    expect(() => assertConsistent(parseSlices(activeRaw))).not.toThrow();
-  });
+    it("parses without throwing, and every slice carries a recognised status", () => {
+      const active = parseSlices(activeRaw);
+      expect(active.length).toBeGreaterThan(0);
+      for (const slice of active) {
+        expect(["shipped", "in-progress", "queued"]).toContain(slice.status);
+      }
+    });
+
+    it("does not throw assertConsistent against its current state", () => {
+      expect(() => assertConsistent(parseSlices(activeRaw))).not.toThrow();
+    });
+  }
 });

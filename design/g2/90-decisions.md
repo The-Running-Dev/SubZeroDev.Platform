@@ -4,10 +4,41 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 session relitigates the same choice.
 
 Completed efforts keep their logs with their design sets:
-[`g1/90-decisions.md`](g1/90-decisions.md), [`d3/90-decisions.md`](d3/90-decisions.md).
+[`../g1/90-decisions.md`](../g1/90-decisions.md), [`../d3/90-decisions.md`](../d3/90-decisions.md).
 
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
+
+### 2026-08-21 — G2's set archives on completion, not on the next effort's arrival
+
+Context: G2 shipped in full — S1 through S13 closed, three reconciliation passes merged, the guide
+regenerated — and the root `design/` still held its five documents. The 2026-08-08 convention
+(`../g1/90-decisions.md`) archives a completed set to `design/<effort>/`, but it was written from
+the opposite trigger: D3's set moved because G1 *needed* the root. Here no next effort exists yet,
+and G3 and D5 are both open with no brief written. Leaving the set in place meant `/design` and
+`/slices` would read G2's finished documents as the active effort — the failure that prompted this
+entry, when `/design` was invoked against a root the caller believed held something else.
+Chosen: archive on completion. The five documents move to `design/g2/`, every inbound link is
+rewritten in the same commit, and the root is left empty at stage 0 until a brief is written there.
+`design/state/` stays at the root: its `work/` mirror is a projection of this repository's issue
+tracker, not effort-scoped design content, and it survives every effort boundary. Two consequences
+are accepted rather than repaired here. `build/Test-SliceStatusMarkers.ps1` prints its designed skip
+(the 2026-08-12 entry below), and `tools/Test-DesignDrift.ps1` and `tools/Test-DesignState.ps1`
+report `SlicesDocMissing` and `ContractPathMissing` as *did not run* rather than clean —
+which is the honest answer for a root with no active effort, and is the shape
+[#151](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/151) already tracks.
+Rejected: **archiving only when the next brief is written**, faithful to the 2026-08-08 trigger and
+one fewer commit; rejected because it leaves a window — arbitrarily long, and this one was already
+days wide — in which the root advertises a finished effort as the live one, and every pipeline
+command that reads the root is wrong for the whole of it. **Moving `design/state/` under `g2/` with
+the rest** — tidier, one directory per effort; rejected because the work mirror tracks issues that
+outlive G2 (`#131` and `#151` are open now), and filing them under a completed effort makes them
+unfindable at exactly the moment the next effort needs them. **Regenerating `docs/docs/guide.md`
+instead of rewriting its six link targets** — the standing rule is never to hand-edit the generated
+guide; rejected because regeneration reads the root, which is now empty, so it cannot run until the
+next effort exists, and a path rewrite that changes no prose is what the archive convention already
+requires of every inbound link.
+Reversibility: cheap
 
 ### 2026-08-21 — The two-instance proof spawns real processes
 
@@ -186,7 +217,7 @@ Chosen: the design, corrected to assert first, with the reason stated — it is 
 condition no retry can clear, so binding and reporting not-ready against it would back off against a
 dependency that cannot change underneath the process.
 Rejected: deferring the assertion in code to match the design. It contradicts G1 invariant 11 and the
-`EngineVersionMismatch` row in `g1/20-contract.md` ("the listener never binds"), making it a G1
+`EngineVersionMismatch` row in `../g1/20-contract.md` ("the listener never binds"), making it a G1
 contract amendment rather than a G2 edit — and it would retry a permanently wrong dependency forever.
 Reversibility: cheap — one sentence.
 
@@ -1020,7 +1051,7 @@ absolute year from insert. The horizon's only stated requirement is that it exce
 duration.
 
 **(3) §6.1 is corrected in this effort, before `/contract`.**
-[`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) §6.1 now resolves
+[`engine-hosting-contract.md`](../../docs/docs/engine-hosting-contract.md) §6.1 now resolves
 concurrency with a host-owned version, names the session as the contended row, states that saves
 need no lock, and carries a dated note recording what the paragraph used to say and why it was
 wrong.
@@ -1291,12 +1322,12 @@ archive's own index; the ADR rows here are the permanent ones every effort inher
 | G2 delivers one change into the engine: a conflict outcome distinguishable from a storage outage | [`00-brief.md`](00-brief.md) |
 | §6.1 names `savedAtSeq` where the evidence says sessions version on `attemptCounter`; logged, resolved in `/design` | [`00-brief.md`](00-brief.md) |
 | Session lifecycle is admitted to G2 rather than deferred again | [`00-brief.md`](00-brief.md) |
-| Adventures is the reference implementation for G2 and G3, not a source this effort copies from | [`g1/90-decisions.md`](g1/90-decisions.md), 2026-08-09 |
-| Completed efforts archive to `design/<effort>/`; the active effort owns the root | [`g1/90-decisions.md`](g1/90-decisions.md), 2026-08-08 |
-| SkyNet HR is a second hosted workload; the edge becomes a Platform package | [ADR-007](../docs/docs/adr/ADR-007-second-hosted-workload.md) |
-| Platform is a framework plus optional application modules | [ADR-006](../docs/docs/adr/ADR-006-application-modules.md) |
-| Boundary contracts are projected, not authored; they get their own repository | [ADR-005](../docs/docs/adr/ADR-005-service-contract.md) |
-| Platform is built in-house, with ABP as an architecture reference | [ADR-004](../docs/docs/adr/ADR-004-framework-build-not-adopt.md) |
-| Package scope is per-registry, not one global name | [ADR-003](../docs/docs/adr/ADR-003-package-scopes-and-registries.md) |
-| Platform is .NET, and the product boundary is a process boundary | [ADR-002](../docs/docs/adr/ADR-002-implementation-technology.md) |
-| `SubZeroDev.Platform` is the framework, not the game product | [ADR-001](../docs/docs/adr/ADR-001-platform-identity.md) |
+| Adventures is the reference implementation for G2 and G3, not a source this effort copies from | [`../g1/90-decisions.md`](../g1/90-decisions.md), 2026-08-09 |
+| Completed efforts archive to `design/<effort>/`; the active effort owns the root | [`../g1/90-decisions.md`](../g1/90-decisions.md), 2026-08-08 |
+| SkyNet HR is a second hosted workload; the edge becomes a Platform package | [ADR-007](../../docs/docs/adr/ADR-007-second-hosted-workload.md) |
+| Platform is a framework plus optional application modules | [ADR-006](../../docs/docs/adr/ADR-006-application-modules.md) |
+| Boundary contracts are projected, not authored; they get their own repository | [ADR-005](../../docs/docs/adr/ADR-005-service-contract.md) |
+| Platform is built in-house, with ABP as an architecture reference | [ADR-004](../../docs/docs/adr/ADR-004-framework-build-not-adopt.md) |
+| Package scope is per-registry, not one global name | [ADR-003](../../docs/docs/adr/ADR-003-package-scopes-and-registries.md) |
+| Platform is .NET, and the product boundary is a process boundary | [ADR-002](../../docs/docs/adr/ADR-002-implementation-technology.md) |
+| `SubZeroDev.Platform` is the framework, not the game product | [ADR-001](../../docs/docs/adr/ADR-001-platform-identity.md) |

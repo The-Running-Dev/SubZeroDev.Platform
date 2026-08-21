@@ -2,13 +2,13 @@
 
 **Document status:** Contract. Derived from [`10-design.md`](10-design.md). Authoritative for the
 artifacts and modules it describes; [`00-brief.md`](00-brief.md) stays authoritative for scope and
-non-goals, and [`platform-identity.md`](../docs/docs/platform-identity.md) for what this repository
+non-goals, and [`platform-identity.md`](../../docs/docs/platform-identity.md) for what this repository
 is.
 
 Two languages, unchanged from G1. **TypeScript** with `strict` for the contract package and the Node
 workload. **C#** with nullable reference types enabled for the .NET edge.
 
-**[`g1/20-contract.md`](g1/20-contract.md) stays authoritative for everything it declares.** This
+**[`../g1/20-contract.md`](../g1/20-contract.md) stays authoritative for everything it declares.** This
 document declares only what durable state adds, and names every G1 declaration it amends — it never
 restates one. A type that appears below unchanged from G1 appears because a G2 member was added to
 it; a type that does not appear is unchanged and is still G1's.
@@ -379,7 +379,7 @@ a latch on startup would leave the workload reporting ready through exactly the 
 readiness probe was introduced to surface. **The stated cost is that readiness can flap.**
 `liveness` never consults the store and stays synchronous.
 
-**`ProbeResult.detail` amends G1's declaration (`g1/20-contract.md`), which had no such field.**
+**`ProbeResult.detail` amends G1's declaration (`../g1/20-contract.md`), which had no such field.**
 Whenever the durable branch reports unhealthy it names the condition, and there are two such
 moments rather than one. **Before the store has ever connected** it names what is holding startup
 back — a migration's advisory lock held past its bound, a failed migration naming which one, or the
@@ -648,7 +648,7 @@ column shapes** — `profile.format_version` above is the same two-step.
 ### Artifacts carried across a process boundary
 
 G1's five — the contract package, the authored row set, the replay fixture, the golden transcript and
-the determinism dump — are unchanged, and [`g1/20-contract.md`](g1/20-contract.md) stays their home.
+the determinism dump — are unchanged, and [`../g1/20-contract.md`](../g1/20-contract.md) stays their home.
 **The fixture and the golden transcript gain no rows**: the same ten operations are replayed against
 a different store, and adding a profile-carrying step would have given the byte-identity proof a
 second job.
