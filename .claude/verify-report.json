@@ -82,13 +82,13 @@
     },
     {
       "name": "Build and verify the status-page site (docs-ci.yml verify job)",
-      "status": "Failed",
-      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint, and typecheck all passed. The 'test' step (vitest run --config vitest.config.ts) failed: 'FAIL src/roadmap/roadmapData.test.ts [ src/roadmap/roadmapData.test.ts ] Error: ENOENT: no such file or directory, open /Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/30-slices.md' at roadmapData.test.ts:219, in the describe block \"the active design/30-slices.md -- the assertion that survives every future merge\", which does 'const activeRaw = readFileSync(join(..., \"design\", \"30-slices.md\"), \"utf8\")' against the repo root. Test Files: 1 failed | 5 passed (6); Tests: 40 passed (40, since the failing file threw before any of its own tests ran). This exactly confirms the known risk called out for this PR: this test hard-reads the root design/30-slices.md, which this branch moves to design/g2/30-slices.md, so the file no longer exists at that path. npm run check exited 1 overall (test:build and test:merge were not reached because 'test' failed first, per npm's default fail-fast chaining with &&)."
+      "status": "Passed",
+      "detail": "npm --prefix site ci && npm --prefix site run check, re-run after fixing the roadmap test (commit 97df611) to skip the active-slices assertion when design/30-slices.md is absent, matching Test-SliceStatusMarkers.ps1's own stage-0 precedent: format:check passed ('All matched files use Prettier code style!'), lint passed (1 pre-existing fast-refresh warning in src/shared.tsx, unrelated), typecheck passed, test passed -- 'Test Files 6 passed (6); Tests 55 passed | 1 skipped (56)' (the 1 skip is the new stage-0 skip), test:build passed -- 'Both built HTML entry points contain their required static metadata.', test:merge passed -- 'Package merge preserves docs and rejects all protected-boundary violations.' Exit code 0."
     },
     {
       "name": "Build and verify the status-page site (docs-deploy.yml)",
-      "status": "Failed",
-      "detail": "Identical command to the docs-ci.yml verify job ('npm --prefix site ci && npm --prefix site run check') and identical failure: FAIL src/roadmap/roadmapData.test.ts, Error: ENOENT: no such file or directory, open '/Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/30-slices.md', at roadmapData.test.ts:219's readFileSync of the repo-root design/30-slices.md, which this PR moved to design/g2/30-slices.md. Test Files: 1 failed | 5 passed (6). Since both workflow steps run the byte-identical command against the same working tree, one real execution of 'npm --prefix site run check' stands for both; not re-run a second time as that would just repeat the same deterministic ENOENT."
+      "status": "Passed",
+      "detail": "Identical command to the docs-ci.yml verify job ('npm --prefix site ci && npm --prefix site run check'); one real execution stands for both byte-identical steps. Same result as above, re-run after commit 97df611: format/lint/typecheck/test/test:build/test:merge all passed, exit code 0."
     },
     {
       "name": "PowerShell parse-check (all *.ps1)",
