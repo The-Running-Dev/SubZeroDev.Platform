@@ -1,21 +1,29 @@
 /**
- * Proof harness — S7 and S8. Two workload instances, spawned by direct `startWorkload` calls
- * against one shared durable store — the path `src/main.ts`'s own note anticipates: "the
- * two-instance proof drives `startWorkload` with a durable profile directly, through the proof
- * harness's own `WorkloadConfiguration`, not through this process entry point." There is no env
- * var for a schema or a read/write pause, so this cannot go through the process entry point the
- * way `hosted-target.ts` does for the replay proof.
+ * Proof harness — S7 and S8. Two workload instances against one shared durable store, each a
+ * **genuine operating-system process** running `harness-entrypoint.ts` — the same `startWorkload`
+ * call `src/main.ts` makes, over the same `GAME_SERVICE_*` variables, addressed over a real bound
+ * socket.
+ *
+ * **That the instances are separate processes is the proof, not a detail of it.** The failure
+ * `engine-hosting-contract.md` §6.1 describes is between processes; two compositions sharing one
+ * event loop, one module registry and one heap cannot establish that the compare-and-swap survives
+ * the separation the failure is defined by. They ran in-process until 2026-08-21, which the
+ * design specified against throughout (`design/90-decisions.md`, "The two-instance proof spawns
+ * real processes").
  *
  * The two instances are anonymous and interchangeable (`20-contract.md`, "Proof harness"): nothing
- * distinguishes them beyond which end of `readWritePauseMs` each is configured with.
+ * distinguishes them beyond which end of `readWritePauseMs` each is configured with, which reaches
+ * the child as `GAME_SERVICE_READ_WRITE_PAUSE_MS`.
  *
  * `createRunSchema` (S8) is the durable replay's own prerequisite, on the same footing: a per-run
  * schema, created and migrated to head here, dropped by the caller once its run is done.
  */
 import { randomBytes } from "node:crypto";
-import { startWorkload } from "./lifecycle.js";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import { dropSchemaByName, migrateToHead } from "./migrations.js";
-import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE, err, ok } from "./types.js";
+import { DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE, err, ok } from "./types.js";
 import type {
   HarnessError,
   Outcome,
@@ -25,6 +33,10 @@ import type {
   TwoInstanceOptions,
   WorkloadInstance,
 } from "./types.js";
+
+const ENTRYPOINT = fileURLToPath(new URL("./harness-entrypoint.ts", import.meta.url));
+const TSX_CLI = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
+const WORKING_DIRECTORY = fileURLToPath(new URL("..", import.meta.url));
 
 let runSchemaCounter = 0;
 
@@ -85,72 +97,137 @@ async function withBound<T>(promise: Promise<T>, ms: number): Promise<T | typeof
   ]);
 }
 
+interface Listening {
+  readonly listening: { readonly host: string; readonly port: number };
+}
+
+/**
+ * One instance, as its own operating-system process: `process.execPath` running `tsx`'s CLI over
+ * `harness-entrypoint.ts`, exactly as `tests/support/hosted-target.ts` spawns the replay's target.
+ * Every input the child needs travels as an environment variable, because that is the only channel
+ * a separate process has — which is also what makes the two instances demonstrably independent.
+ *
+ * Shutdown is a byte on the child's stdin, never a signal: on Windows libuv's `uv_kill` calls
+ * `TerminateProcess` for every signal name, so a signal cannot be relied on to reach a Node child
+ * gracefully (`harness-entrypoint.ts`'s own note). A hard kill would leave the child's pool
+ * connections open and race the caller's `DROP SCHEMA ... CASCADE`.
+ */
 async function spawnOne(
   options: TwoInstanceOptions,
   readWritePauseMs: number,
   instance: 0 | 1,
 ): Promise<Outcome<WorkloadInstance, HarnessError>> {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  // An inherited override would point the child at a different contract than the one this proof
+  // is asserted against — the same reason `hosted-target.ts` deletes it.
+  delete env["GAME_SERVICE_CONTRACT"];
+  delete env["GAME_SERVICE_OTLP_ENDPOINT"];
+  // The default determinism profile: the contention proofs mint real ids, and a counting
+  // `RecordIdSource` across two instances would collide on the primary key by construction
+  // (`10-design.md`, "The replay is strictly sequential and single-instance").
+  delete env["GAME_SERVICE_DETERMINISM"];
+  env["GAME_SERVICE_HOST"] = "127.0.0.1";
+  env["GAME_SERVICE_PORT"] = "0";
+  env["GAME_SERVICE_STORAGE"] = "durable";
+  env["GAME_SERVICE_DB_CONNECTION_STRING"] = options.connectionString;
+  env["GAME_SERVICE_DB_SCHEMA"] = String(options.schema);
+  env["GAME_SERVICE_READ_WRITE_PAUSE_MS"] = String(readWritePauseMs);
+
+  let child: ChildProcessWithoutNullStreams;
   try {
-    const startPromise = startWorkload({
-      listen: { host: "127.0.0.1", port: 0 },
-      determinism: { kind: "default" },
-      otlpEndpoint: null,
-      storage: {
-        kind: "durable",
-        store: {
-          connection: {
-            connectionString: options.connectionString,
-            poolSize: DEFAULT_STORE_POOL_SIZE,
-            connectTimeoutMs: DEFAULT_STORE_CONNECT_TIMEOUT_MS,
-            schema: options.schema,
-          },
-          bounds: DEFAULT_LIFECYCLE_BOUNDS,
-          readWritePauseMs,
-        },
-      },
-    });
-    const started = await withBound(startPromise, SPAWN_BOUND_MS);
-
-    if (started === TIMED_OUT) {
-      // `startWorkload` has no cancellation of its own, so it keeps running after the bound
-      // elapses. If it later succeeds, shut the process it built back down — otherwise a caller
-      // that got `Err` here would still be leaving a live listener and store pool behind.
-      void startPromise.then(
-        (result) => {
-          if (result.ok) void result.value.shutdown();
-        },
-        () => {},
-      );
-      return err({ code: "InstanceSpawnFailed", instance, detail: `did not report ready within ${SPAWN_BOUND_MS}ms` });
-    }
-    if (!started.ok) {
-      return err({ code: "InstanceSpawnFailed", instance, detail: JSON.stringify(started.error) });
-    }
-
-    const process = started.value;
-    return ok({
-      baseAddress: `http://${process.listening.host}:${process.listening.port}`,
-      async shutdown(): Promise<Outcome<void, HarnessError>> {
-        const stopped = await withBound(process.shutdown(), SHUTDOWN_BOUND_MS);
-        if (stopped === TIMED_OUT) {
-          return err({ code: "InstanceShutdownFailed", instance, detail: `did not exit within ${SHUTDOWN_BOUND_MS}ms` });
-        }
-        if (!stopped.ok) {
-          return err({ code: "InstanceShutdownFailed", instance, detail: JSON.stringify(stopped.error) });
-        }
-        return ok(undefined);
-      },
-    });
+    child = spawn(process.execPath, [TSX_CLI, ENTRYPOINT], { cwd: WORKING_DIRECTORY, env });
   } catch (error) {
-    // `startWorkload` can throw synchronously rather than resolve to an `Outcome` (its contract
-    // load path has no try/catch of its own). Caught here so that failure still resolves to `Err`
-    // instead of rejecting `spawnInstances`'s `Promise.all` and skipping the sibling's cleanup.
     return err({
       code: "InstanceSpawnFailed",
       instance,
       detail: error instanceof Error ? error.message : String(error),
     });
   }
+
+  let stderr = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+
+  // A write to a child that has already exited emits EPIPE; with no listener Node escalates it to
+  // an uncaught exception, taking the test runner down instead of failing this instance.
+  let stdinError: Error | null = null;
+  child.stdin.on("error", (thrown: Error) => {
+    stdinError = thrown;
+  });
+
+  let hasExited = false;
+  child.once("exit", () => {
+    hasExited = true;
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    if (hasExited) {
+      resolve(child.exitCode);
+      return;
+    }
+    child.once("exit", (code) => resolve(code));
+  });
+
+  const listening = await new Promise<Listening | null>((resolve) => {
+    const lines = createInterface({ input: child.stdout });
+    const timeout = setTimeout(() => {
+      lines.close();
+      // Nothing else will ever reclaim a child that never reported ready, so the timeout is the
+      // one place that kills it.
+      child.kill("SIGKILL");
+      resolve(null);
+    }, SPAWN_BOUND_MS);
+
+    lines.on("line", (line) => {
+      try {
+        const parsed = JSON.parse(line) as Partial<Listening>;
+        if (parsed.listening) {
+          clearTimeout(timeout);
+          lines.close();
+          resolve(parsed as Listening);
+        }
+      } catch {
+        // Not the one JSON status line the entry point writes — a dependency's stray stdout must
+        // not fail the wait.
+      }
+    });
+
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      lines.close();
+      resolve(null);
+    });
+  });
+
+  if (listening === null) {
+    await exited;
+    return err({
+      code: "InstanceSpawnFailed",
+      instance,
+      detail: `did not report ready within ${SPAWN_BOUND_MS}ms; stderr:\n${stderr}`,
+    });
+  }
+
+  return ok({
+    baseAddress: `http://${listening.listening.host}:${listening.listening.port}`,
+    async shutdown(): Promise<Outcome<void, HarnessError>> {
+      if (!hasExited) child.stdin.write("shutdown\n");
+      const code = await withBound(exited, SHUTDOWN_BOUND_MS);
+      if (code === TIMED_OUT) {
+        child.kill("SIGKILL");
+        await exited;
+        return err({ code: "InstanceShutdownFailed", instance, detail: `did not exit within ${SHUTDOWN_BOUND_MS}ms` });
+      }
+      if (code !== 0 || stdinError) {
+        return err({
+          code: "InstanceShutdownFailed",
+          instance,
+          detail: `exited ${String(code)}; stderr:\n${stderr}`,
+        });
+      }
+      return ok(undefined);
+    },
+  });
 }
 
 /** Spawns both instances concurrently, against the same connection string and schema. A failure on

@@ -221,7 +221,18 @@ export type LifecycleState = "live" | "expired" | "absent";
 classification.** Zero rows affected is re-read: a different `version` is `conflict`, the same
 `version` past its `expires_at` is `expired`, and an absent row is `conflict` because the caller's
 read is no longer authoritative either way. **A re-read that itself fails is `conflict`**, never a
-storage outcome — zero rows has already established the one fact the caller acts on.
+storage outcome — zero rows has already established the one fact the caller acts on. Anything the
+three do not name is `conflict` too; the members are the classification, and `conflict` is its floor.
+
+**`expired` and `conflict` leave the adapter as the same branded throw, and reach the wire as the
+same `concurrent_modification` at `409`.** `writeSession`'s `catch` discriminates on `name` and
+nothing else, so the port has exactly one channel out; a second brand is a second engine change
+bought to ease persistence, which the brief names as a non-goal. **This type is therefore diagnostic
+rather than a routing decision** — it says *why* zero rows were affected, is carried on the thrown
+value as an inert member, and is read by this workload's own tests and by nothing on the wire.
+**The cost:** a caller whose write lost to expiry is told to re-read and decide rather than that the
+session expired, and learns which it was on that re-read — an expired row reads as absent, the engine
+raises `unknown_session`, and the lifecycle probe answers `session_expired` at `404`.
 
 **`LifecycleState` is a classification and never data.** It answers *does a row exist for this id,
 and has it expired* and returns no blob, no scene and no record.
@@ -318,13 +329,22 @@ export interface WorkloadConfiguration {
 in-memory profile with a connection string, so "the in-memory configuration reaches no database" is a
 type-level fact rather than a branch anyone has to keep correct.
 
-**All three lifecycle bounds are configuration, and the production defaults are 30 days, 365 days and
-30 days.** Sessions and saves deliberately do not share a number. The defaults are values, not the
-mechanism; in practice every proof runs at them. Expiry is asserted by seeding `expires_at` into the
-past rather than by shortening a TTL and waiting, so the replay's requirement — that no session
-expire between two of its ten steps, which would report a serialization failure for a clock problem —
-holds by construction rather than by each proof choosing the right bounds. Only
-`retentionHorizonSeconds` is varied, by the sweep proofs.
+**Every member of `LifecycleBounds` is configuration, and all five carry a stated production
+default.** The three that bound a *row's life* are 30 days, 365 days and 30 days; sessions and saves
+deliberately do not share a number. The two that bound the *sweep's own work* are a **1-hour
+interval** and a **5-second statement timeout**, stated apart from the three because they answer a
+different question and are varied by a different set of proofs
+(`design/90-decisions.md`, "The sweep's two bounds are the sweep's, not a row's").
+
+The defaults are values, not the mechanism. **The three row bounds are what every proof runs at**:
+expiry is asserted by seeding `expires_at` into the past rather than by shortening a TTL and
+waiting, so the replay's requirement — that no session expire between two of its ten steps, which
+would report a serialization failure for a clock problem — holds by construction rather than by each
+proof choosing the right bounds. Only `retentionHorizonSeconds` is varied among them, by the sweep
+proofs. **The two sweep bounds are varied deliberately and often**: a sweep proof cannot wait an
+hour for a tick, and S13.4 drives the statement timeout below a held lock precisely to prove the
+bound is enforced. Neither is a bound the design reasons about — that is what makes them the two
+values a proof may move freely.
 
 **`retentionHorizonSeconds` is required to exceed any request's duration by a wide margin**, and that
 requirement is what makes it impossible for a sweep to fall between a live request's read and its
@@ -360,11 +380,19 @@ readiness probe was introduced to surface. **The stated cost is that readiness c
 `liveness` never consults the store and stays synchronous.
 
 **`ProbeResult.detail` amends G1's declaration (`g1/20-contract.md`), which had no such field.**
-While the durable branch is not yet ready, it names which startup condition is holding it back — a
-migration's advisory lock held past its bound, a failed migration naming which one, or the store
-itself unreachable, unreachable at the wrong isolation level, or out of connections
-(`design/90-decisions.md`, "Startup migrations"). Present only on an unhealthy result; absent
-everywhere else, including every G1-era caller that never populated it.
+Whenever the durable branch reports unhealthy it names the condition, and there are two such
+moments rather than one. **Before the store has ever connected** it names what is holding startup
+back — a migration's advisory lock held past its bound, a failed migration naming which one, or the
+store unreachable or at the wrong isolation level (`design/90-decisions.md`, "Startup migrations").
+**After it has connected and since degraded** it names what the readiness probe's own `check()`
+classified — the pool out of connections, or a statement that failed. Present only on an unhealthy
+result; absent everywhere else, including every G1-era caller that never populated it.
+
+**Which conditions each moment can name is decided by where each is reachable, not by taste.**
+`PoolExhausted` is reachable only in the second: at startup the pool holds no checked-out client, so
+`max` cannot be hit and a `connectTimeoutMs` expiry there is the server not answering — which
+`openDurableStore` classifies `Unreachable`. Naming an exhausted pool at startup would therefore
+report the one condition that cannot occur there in place of the one that did.
 
 **`detail` reaches the wire.** The readiness endpoint's body carries it whenever the probe does, and
 omits the member — never `null` — when it does not. That is stated here because it is the field's
@@ -443,6 +471,16 @@ prevent.
 under test carries the pause, the second is sent inside it. Nothing else distinguishes them — the
 instances are anonymous and interchangeable, which is what makes the two-instance proof mean
 anything.
+
+**Each `WorkloadInstance` is a separate operating-system process, and that is load-bearing rather
+than incidental.** §6.1's failure is *between processes*; two compositions sharing one event loop,
+one module registry and one heap cannot establish that the compare-and-swap survives the separation
+the failure is defined by. `spawnInstances` therefore spawns the harness's own process entry point,
+the same one the hosted replay target spawns, and every input a child needs travels as an
+environment variable because that is the only channel a separate process has. **`shutdown` is a byte
+on the child's stdin, never a signal** — on Windows libuv raises every signal name as
+`TerminateProcess`, and a hard kill would leave the child's pool connections open to race the
+caller's schema drop.
 
 ```ts
 export interface ConformanceTarget {
@@ -880,7 +918,7 @@ as exceptions.
 |---|---|---|---|
 | `Unreachable` | The pool cannot connect, or a connection is lost mid-statement | **Yes** — the condition is transient by nature | Readiness reports unhealthy; a request in flight becomes `storage_failure` → `503` |
 | `PoolExhausted` | A connection acquisition exceeds its timeout | **Yes** | As above. The pool is sized by configuration with a stated default and **is not tuned** — performance is a binding non-goal |
-| `IsolationLevelUnsupported` | The connection the store checks at pool open does not report `read committed`. The store **checks and refuses**; it never sets the level, because a store that silently corrected a misconfiguration would hide it | **No** | The process stays up and not-ready, naming the isolation level found. A retry restores the same misconfiguration; only a server or pooler change clears it |
+| `IsolationLevelUnsupported` | The connection the store checks at pool open does not report `read committed`. The store **checks and refuses**; it never sets the level, because a store that silently corrected a misconfiguration would hide it | **Yes**, on the shared startup loop | The process stays up and not-ready, naming the isolation level found, and retries — `compose()`'s shape is *come up not ready and keep trying*, and the check runs fresh on every attempt, so a server or pooler corrected underneath a running process is picked up without a restart. **The accepted cost:** a misconfiguration nobody corrects re-opens a pool at the retry interval indefinitely |
 | `StatementFailed` | A driver error on a `select`, `insert`, `update` or `delete` that is not one of the above | **No** | `storage_failure` → `503` on the serving path; a logged failure and a retry on the next tick on the sweep path. **On the sweep path the variant names the failing statement**, on the same footing as `RowUndeserializable` naming its column and for the same reason — the sweep reaches no readiness check and no request, so its log line is the whole of its observability, and a bare classification does not say which of the two `delete`s failed |
 | `IdCollision` | A primary-key violation on a `createSession` or `loadGame` insert | **No** | `storage_failure` → **503**, *not* the conflict code. A collision is a storage anomaly, not a lost update, and conflating them would make the conflict code mean two things |
 | `RowUndeserializable` | A `select` returns a row whose columns do not satisfy their declared types | **No** | `storage_failure` → **503**, and the variant names the offending column for a log line. This is store corruption and a caller cannot fix it, but the workload has no channel to say so: `sessions.get` and `saves.get` return a record or throw, and the engine's own `getSession`/`getSave` convert **every** throw from the port into `storage_failure`. Reaching `internal_failure` would need a second branded throw the engine recognises — a cross-repository change bought to ease persistence, which the design names as a non-goal. The distinction an operator needs is on the row: `engine_version` separates a version skew from corruption after the fact |
@@ -909,7 +947,7 @@ G1's three variants are unchanged. One is added.
 
 | Variant | Raised when | Retryable | Caller does |
 |---|---|---|---|
-| `StorageConfigurationInvalid` | A `durable` profile carries an unusable connection string, a non-positive pool size, or a retention horizon not greater than the configured forward timeout | **No** | Fails startup, naming the setting. This is the one storage condition that aborts rather than degrading to not-ready, because no amount of waiting makes an invalid setting valid |
+| `StorageConfigurationInvalid` | A `durable` profile carries an unusable connection string, a non-positive pool size, or a retention horizon not greater than the workload's assumed forward timeout — a constant, not the edge's own configured value, which no signature threads into the workload (`90-decisions.md`, 2026-08-19, "The retention-horizon check is enforced against an assumed forward timeout") | **No** | Fails startup, naming the setting. This is the one storage condition that aborts rather than degrading to not-ready, because no amount of waiting makes an invalid setting valid |
 
 **Store unreachability is deliberately not here.** It is a readiness condition, reported through
 `ProbeSurface.readiness` and retried with backoff, for the reason stated with `compose`.
@@ -920,7 +958,7 @@ G1's three variants are unchanged. One is added.
 
 | Code | Origin | Status | Retryable | Caller does |
 |---|---|---|---|---|
-| `concurrent_modification` | The engine, recognising the store's brand | **409** | **No, not automatically** | *Your read is stale.* Re-read with a query operation, then decide. Never resubmit blind: a retried `submitAction` is a second action |
+| `concurrent_modification` | The engine, recognising the store's brand — raised for **both** guarded-write classifications, `conflict` and `expired` alike, since the port has one channel out (see `GuardedWriteOutcome`) | **409** | **No, not automatically** | *Your read is stale.* Re-read with a query operation, then decide. Never resubmit blind: a retried `submitAction` is a second action. Where the cause was expiry, that re-read is what surfaces it, as `session_expired` |
 | `session_expired` | Dispatch, after consulting the lifecycle probe on `unknown_session` | **404** | No | The session existed and no longer does. Start a new one, or load a save |
 | `save_expired` | Dispatch, after consulting the lifecycle probe on `unknown_save` | **404** | No | As above |
 

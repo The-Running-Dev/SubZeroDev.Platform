@@ -530,7 +530,15 @@ export async function compose(
         return notReadyDetail ? { status: "unhealthy", detail: notReadyDetail } : { status: "unhealthy" };
       }
       const checked = await durableStore.check();
-      return { status: checked.ok ? "healthy" : "unhealthy" };
+      if (checked.ok) return { status: "healthy" };
+      // A store that connected and has since degraded names its condition through the same mapping
+      // the startup path uses, rather than answering a bare `unhealthy` — `check()` already
+      // classifies, and dropping that left `storeNotReadyDetail`'s `PoolExhausted`,
+      // `StatementFailed`, `IdCollision` and `RowUndeserializable` branches reachable from nowhere.
+      // **This is the only path that reaches `PoolExhausted`**: at startup the pool holds no
+      // checked-out client, so `max` cannot be hit and a `connectTimeoutMs` expiry there is the
+      // server not answering — which `openDurableStore` classifies `Unreachable`, correctly.
+      return { status: "unhealthy", detail: storeNotReadyDetail(checked.error) };
     },
     async close(): Promise<void> {
       closed = true;

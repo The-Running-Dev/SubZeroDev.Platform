@@ -4,24 +4,8 @@
  * not describe, and every downstream assertion becomes conditional.
  */
 import { startWorkload } from "./lifecycle.js";
-import { durableStorageProfileFromEnv, err, ok } from "./types.js";
-import type { DeterminismProfile, Outcome, StartupError, StorageProfile, WorkloadConfiguration } from "./types.js";
-
-/** `GAME_SERVICE_DETERMINISM=replay` plus both companion variables selects the replay profile;
- *  anything else — unset, any other value, or either companion variable missing — is the default
- *  profile. Without this, the replay profile S4 delivers is reachable only from a programmatic
- *  `startWorkload` caller (tests), never from the process an operator actually starts. */
-function determinismProfile(): DeterminismProfile {
-  if (process.env["GAME_SERVICE_DETERMINISM"] !== "replay") {
-    return { kind: "default" };
-  }
-  const fixedInstant = process.env["GAME_SERVICE_FIXED_INSTANT"];
-  const dumpPath = process.env["GAME_SERVICE_DUMP_PATH"];
-  if (!fixedInstant || !dumpPath) {
-    return { kind: "default" };
-  }
-  return { kind: "replay", fixedInstant, dumpPath };
-}
+import { determinismProfileFromEnv, durableStorageProfileFromEnv, err, ok } from "./types.js";
+import type { Outcome, StartupError, StorageProfile, WorkloadConfiguration } from "./types.js";
 
 /** `GAME_SERVICE_STORAGE=durable` selects the durable profile; anything else — unset or any other
  *  value — composes the in-memory profile exactly as before, reaching no database (S12.1). The one
@@ -45,7 +29,7 @@ function configuration(): Outcome<WorkloadConfiguration, StartupError> {
     // An unset host is loopback, decided in `startWorkload` rather than here so every caller of it
     // gets the same answer (invariant 46).
     listen: { host: process.env["GAME_SERVICE_HOST"] ?? "", port },
-    determinism: determinismProfile(),
+    determinism: determinismProfileFromEnv(process.env),
     otlpEndpoint,
     storage: storage.value,
   });

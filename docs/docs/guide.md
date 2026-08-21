@@ -131,8 +131,12 @@ flowchart TD
     B --> C{"Row present?"}
     C -->|"No"| D["conflict\n(the caller's read is no longer\nauthoritative either way)"]
     C -->|"Yes, different version"| E["conflict\n(someone else's write won)"]
-    C -->|"Yes, same version,\nbut expires_at has passed"| F["expired\n(not a conflict)"]
+    C -->|"Yes, same version,\nbut expires_at has passed"| F["expired"]
     B -->|"re-read itself fails"| D
+    D --> G["SessionPersistenceConflict\n(one brand)"]
+    E --> G
+    F --> G
+    G --> H["concurrent_modification, 409"]
 ```
 
 The `expires_at > now()` half of the guard exists so a write cannot resurrect a session the
@@ -140,12 +144,20 @@ wire has already declared gone: without it, a request that read a live row micro
 its TTL elapsed could extend that session by a full TTL while a concurrent read on another
 instance was already answering `session_expired` for it.
 
-A **conflict** becomes a branded throw that the engine's `writeSession` recognises (this is
-G2's one change inside the engine itself) and turns into `concurrent_modification`, which maps
-to **`409`**. That is a different answer from **`storage_failure`** → **`503`**, which is what
-an ordinary connection failure still produces. Before G2, both arrived at the client as the
-same `503`; this is the first release where a caller can tell "someone else's write won, re-read
-and decide" apart from "the store didn't answer, retry later."
+**`conflict` and `expired` are three-way diagnostic, not a two-way routing decision.** Both
+classifications leave the store as the same branded throw — the engine's `writeSession`
+recognises the brand (this is G2's one change inside the engine itself) and turns it into a
+single reason code, `concurrent_modification`, which maps to **`409`** regardless of which of
+the two the adapter saw. The three-way split exists only so the store's own tests, and a log
+line, can say *why* zero rows were affected — nothing on the wire ever sees it. The cost: a
+caller whose write actually lost to expiry is told "your read is stale, re-read and decide"
+rather than "your session expired" — and learns which it was one round trip later, when the
+re-read comes back as `unknown_session` and the lifecycle probe answers `session_expired`.
+
+That single conflict code is a different answer from **`storage_failure`** → **`503`**, which
+is what an ordinary connection failure still produces. Before G2, both arrived at the client as
+the same `503`; this is the first release where a caller can tell "someone else's write won,
+re-read and decide" apart from "the store didn't answer, retry later."
 
 There is no merging, and nothing retries automatically — not on a conflict, anywhere in the
 stack. The loser's write is discarded in full; a rejected caller re-reads and resubmits as a
@@ -157,7 +169,11 @@ turn" the way a pessimistic lock would produce.
 losing statement raises a serialization error instead of reporting zero affected rows, which
 would have to route to `storage_failure` — every conflict would look like an outage. The store
 asserts `read committed` on connect and refuses to become ready against anything else, naming
-the level it found.
+the level it found. This check re-runs fresh on every startup attempt, so it's retried on the
+shared backoff loop like any other startup condition — a server or pooler misconfiguration that
+gets corrected while the process is up is picked up without a restart. The accepted cost is the
+opposite case: a misconfiguration nobody ever corrects keeps the process re-opening a pool at the
+retry interval indefinitely.
 
 **Saves are never contended, but their contents can still reflect an overtaken session.** A
 fresh `saveId` is minted on every `saveGame` call, so no two writers ever target one save row —
@@ -169,18 +185,27 @@ save is not a guarantee that no newer action exists.
 
 ## Startup and readiness
 
-On boot the workload reads its configuration, then makes a **first startup attempt**: it runs
-migrations to head under the migration tool's own advisory lock (safe for two instances
-starting together), then connects to the store. **The listener binds and the process reports
-live only once that first attempt settles — not before it, and not only once it succeeds.** If
-the attempt failed, the process is bound, live, and **not ready**, and it keeps retrying with
-backoff in the background; every request in the meantime fails with `storage_failure`, the same
-answer a connected-but-degraded store gives, so there is no separate "not started yet" behaviour
-for a caller to learn.
+On boot the workload reads its configuration and **immediately asserts the contract's recorded
+engine version against the resolved package's** — before anything else is built, and unchanged
+from G1. A mismatch fails startup outright: no store is built and the listener never binds. It
+runs first, ahead of the store attempt below, because it is the one startup condition no retry
+can clear — backing off against a dependency that cannot change underneath the process would be
+pointless.
+
+Once that passes, the workload makes a **first startup attempt**: it runs migrations to head
+under the migration tool's own advisory lock (safe for two instances starting together), then
+connects to the store. **The listener binds and the process reports live only once that first
+attempt settles — not before it, and not only once it succeeds.** If the attempt failed, the
+process is bound, live, and **not ready**, and it keeps retrying with backoff in the background;
+every request in the meantime fails with `storage_failure`, the same answer a
+connected-but-degraded store gives, so there is no separate "not started yet" behaviour for a
+caller to learn.
 
 ```mermaid
 flowchart TD
-    A["Read configuration"] --> B["First attempt:\nmigrate to head under the advisory lock,\nthen connect"]
+    A["Read configuration"] --> V["Assert contract's engine version\nagainst the resolved package"]
+    V -->|"Mismatch"| X["Startup fails outright.\nNo store built, listener never binds."]
+    V -->|"Match"| B["First attempt:\nmigrate to head under the advisory lock,\nthen connect"]
     B --> C{"Attempt settled"}
     C --> D["Bind listener, report LIVE"]
     D --> E{"Attempt succeeded?"}
@@ -203,29 +228,46 @@ a cached startup result — so it can flap if the store blips. That's deliberate
 check that only ever remembered the outcome of startup would keep reporting healthy through
 exactly the outage it exists to catch. `liveness()` never consults the store at all.
 
-While the workload is not ready, the readiness result carries a `detail` string naming
-**which** condition is holding it back, so an operator can tell a condition that waiting will
-clear from one that never will — a migration lock timeout, a named failed migration, plain
-unreachability, the wrong isolation level (which no amount of waiting clears), or an exhausted
-connection pool. A migration that is still *running* is deliberately never among them: the
-listener binds only once the first attempt settles, and the migration runs inside that attempt,
-so no probe is ever served while a migration is in flight. Exact `detail` strings live in
+While the workload is unhealthy, the readiness result carries a `detail` string naming **which**
+condition is holding it back — but which conditions it can name depends on **when** it's unhealthy,
+because the two moments can only reach different failures:
+
+- **Before the store has ever connected**, `detail` names what startup is waiting on: a migration
+  lock timeout, a named failed migration, or the store unreachable or at the wrong isolation
+  level.
+- **After it has connected and since degraded**, `detail` names whatever the readiness probe's own
+  check just classified — an exhausted connection pool, or a failed statement. An exhausted pool
+  specifically can't be a *startup* condition: at startup the pool holds no checked-out client, so a
+  connect timeout there can only mean the server isn't answering, which is classified as plain
+  unreachability instead.
+
+A migration that is still *running* is deliberately never among them: the listener binds only once
+the first attempt settles, and the migration runs inside that attempt, so no probe is ever served
+while a migration is in flight. Exact `detail` strings live in
 [`20-contract.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/20-contract.md).
 
 ## The background sweep
 
 Sessions carry an idle TTL (30 days by default); saves carry an absolute TTL from creation (365
-days). Both, along with the retention horizon, are configuration — but the proofs don't
-exercise them by shortening a TTL and waiting: expiry is proved by seeding a row's `expires_at`
-into the past directly, so every proof runs at the real, production bounds.
+days); rows past a **retention horizon** (30 days past expiry, by default) are hard-deleted.
+These three bound a *row's life*, and the proofs don't exercise them by shortening a TTL and
+waiting: expiry is proved by seeding a row's `expires_at` into the past directly, so every proof
+runs at the real, production bounds — only the retention horizon is ever varied, by the sweep
+proofs.
+
+Two further values bound the *sweep's own work* rather than a row's life, and are varied far more
+freely because nothing else reasons about them: a **1-hour sweep interval**, and a **5-second
+statement timeout** on the sweep's own `delete`s. A sweep proof can't wait an hour for a real
+tick, and one proof deliberately drives the statement timeout below a held lock to prove that
+bound is actually enforced.
 
 A row past its TTL is treated as **not found** on every read, immediately — that check doesn't
-wait for any background process. A separate **sweep**, running on a timer in every instance,
-hard-deletes rows only once they are past a much larger **retention horizon** (30 days past
-expiry, by default). The sweep is two plain `delete`s in one transaction and is idempotent, so
-two instances sweeping at once need no coordination between them. The retention horizon is
-required to exceed any request's duration by a wide margin, which is what makes it impossible
-for a sweep to delete a row between a live request's read and its write.
+wait for any background process. The **sweep**, running on a timer in every instance, hard-deletes
+rows only once they are past the retention horizon. The sweep is two plain `delete`s in one
+transaction and is idempotent, so two instances sweeping at once need no coordination between
+them. The retention horizon is required to exceed any request's duration by a wide margin, which
+is what makes it impossible for a sweep to delete a row between a live request's read and its
+write.
 
 The gap between "expired" and "actually deleted" is what lets the wire answer "this session
 existed and is gone" (`session_expired`, 404) instead of "no idea" (`unknown_session`, also 404
@@ -288,12 +330,21 @@ Three kinds of proof back this feature, run in CI from a fresh clone:
   across two real instances sharing one store. Neither alone is sufficient — the single-instance
   case might not even be reachable if the session layer weren't composed per request, and the
   multi-instance case is the shape the original failure actually describes.
-- **Port conformance, against both implementations.** One set of assertions run twice — once
-  over the engine's in-memory implementations, once over the durable ones — covering every port
-  method the wire itself never exercises (`saves.delete`, and everything profile-related). It
-  answers "does the durable store fill the port" for six of seven methods unconditionally, and
-  for the seventh (`profiles.save`) conditionally on a property asserted about the engine's own
-  caller, since the durable merge is additive where the engine's in-memory one replaces.
+
+  The two "instances" are genuine, separate OS processes, not two compositions sharing one
+  event loop — anything less couldn't establish that the compare-and-swap survives a real
+  process boundary. That has two practical consequences if you're extending this harness:
+  configuration reaches each child only through environment variables (there's no other
+  channel), and shutdown is a byte written to the child's stdin, never a signal — a hard kill
+  would leave the child's pool connections open to race the schema drop that follows it.
+- **Port conformance, against both implementations.** One set of assertions run twice — once over
+  a reference target, once over the durable one — covering every port method the wire itself
+  never exercises (`saves.delete`, and everything profile-related). The reference target pairs
+  the workload's own map-backed `SessionPersistence` (the engine exports the port's *type* but no
+  implementation of it) with the engine's own `createInMemoryProfileStore`. It answers "does the
+  durable store fill the port" for six of seven methods unconditionally, and for the seventh
+  (`profiles.save`) conditionally on a property asserted about the engine's own caller, since the
+  durable merge is additive where the engine's in-memory one replaces.
 
 This page doesn't cover the mechanics behind these proofs — the perturbation seams, the
 per-run schema isolation — only that they exist and what they establish. Details are in

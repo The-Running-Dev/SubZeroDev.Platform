@@ -9,6 +9,210 @@ Completed efforts keep their logs with their design sets:
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
 
+### 2026-08-21 — The two-instance proof spawns real processes
+
+Context: `/reconcile`. `10-design.md` specifies the two-instance contention proof as "**two
+processes**, two ports, one schema, started by the harness," and says "the two-instance harness
+still spawns its own processes." `spawnInstances` called `startWorkload` twice in the vitest
+process, so both instances were HTTP listeners sharing one event loop, one module registry and one
+heap. `workloads/game-service/README.md` published the design's wording — "proving the same
+guarantee holds across processes as within one" — so the claim was not merely internal.
+Chosen by Ben: **the code changes to match the design.** `spawnOne` now spawns
+`src/harness-entrypoint.ts` as a genuine child process, the same entry point and the same
+`process.execPath`/`tsx` mechanism `tests/support/hosted-target.ts` already used for the durable
+replay, addressed over a real bound socket and shut down by a byte on stdin. The entry point moved
+from `tests/support/hosted-entrypoint.ts` to `src/` beside the harness that spawns it, since a
+module under `src/` reaching a path under `tests/` is a dependency direction this workload takes
+nowhere else. It no longer hardcodes the replay profile — S7's instances run the default one — so
+determinism joins storage as an environment-read profile, through `determinismProfileFromEnv`,
+which `main.ts` now shares for the reason it already shared `durableStorageProfileFromEnv`: one
+reader per profile, not one per entry point. `readWritePauseMs` gained
+`GAME_SERVICE_READ_WRITE_PAUSE_MS`, defaulting to `0` including on a malformed value, because a
+pause is the only thing that distinguishes the two instances and a child process has no other
+channel to receive one.
+Rejected: **narrowing the design and the README to what the tree did.** Cheaper, and defensible —
+the compare-and-swap is enforced in PostgreSQL and the two object graphs were genuinely
+independent. Declined because it gives up the property the proof exists to establish: module-level
+shared state and true parallelism are exactly what process separation rules out, and a proof whose
+framing no longer matches the failure it targets stops being evidence for it.
+Rejected: **spawning `src/main.ts` itself**, which would have made the proof run the operator's own
+process. Declined because `main.ts` shuts down on `SIGINT`/`SIGTERM`, and libuv raises every signal
+name on Windows as `TerminateProcess`; giving it a stdin trigger to suit the harness would shut
+down any service started with stdin redirected from `/dev/null`.
+Retained cost, recorded rather than dropped: `harness.ts` and `tests/support/hosted-target.ts` now
+carry two similar spawn-and-wait-for-readiness implementations. Extracting one primitive was
+declined **in this pass** rather than on the merits — refactoring `hosted-target.ts` would put the
+byte-identity proof, the older and more load-bearing of the two, at regression risk inside a
+reconciliation. Staged under `## Open` for `/track`.
+Reversibility: cheap for the spawn change; the entry-point move is a `git mv` and one path
+constant.
+
+### 2026-08-21 — The suite bounds its own parallelism, and its timeout clears the harness's bounds
+
+Context: making S7's instances real processes pushed the suite past what vitest's defaults
+tolerate. At one worker per core the process-spawning proofs ran concurrently enough that children
+missed their own readiness bounds, and the 5-second default `testTimeout` sat *below*
+`SPAWN_BOUND_MS` (15s) and `SHUTDOWN_BOUND_MS` (10s) — so the runner killed a test before
+`spawnInstances` could ever report `InstanceSpawnFailed` or `InstanceShutdownFailed`. Eight tests
+failed for machine load, none for a defect.
+Chosen: a `vitest.config.ts` setting exactly two things — `maxWorkers: 4`, and
+`testTimeout: 30_000`. The timeout is the correctness half: a declared error variant that the test
+runner makes unobservable is a variant nothing can assert, and S7.7 asserts one. The worker bound
+is the flakiness half — a bound a busy machine can blow is a gate whose red does not mean the thing
+it proves is broken. The full suite went from 8 failures at 64s to 0 at 29s, so the bound bought
+wall-clock time rather than costing it.
+Rejected: **raising the timeouts alone.** It would have left the suite's failure rate a function of
+how loaded the machine is, which is the property that makes a gate untrustworthy rather than slow.
+Rejected: **`maxWorkers: 1`.** The suite is dominated by process startup and database round trips
+rather than CPU, so serialising outright buys headroom nothing needs at a real wall-clock cost.
+Rejected: **per-test timeouts on the affected tests only.** The mismatch is between the runner's
+default and this suite's whole character; fixing it case by case leaves the next process-spawning
+test to rediscover it.
+Reversibility: cheap — one file, two settings.
+
+### 2026-08-21 — `expired` and `conflict` reach the wire as one code, and the documents now say so
+
+Context: `/reconcile`. `GuardedWriteOutcome`'s third member, invariant 55 and `10-design.md`'s
+*Control flow* 2 step 4 all exist so a guarded write rejected by the `expires_at` predicate is
+classified **`expired`, not conflict** — the design's own justification being that "a re-read that
+cannot change an answer is not a classification." In the tree both classifications leave
+`sessions.put` as the same `SessionPersistenceConflict` brand, so the engine raises
+`concurrent_modification` and the wire answers `409` either way; the distinction survives only as
+`DurableWriteConflict.outcome`, an inert member this workload's own tests read and nothing else
+does. Neither document stated the wire consequence: the design routed only the conflict, and the
+contract's Dispatch table listed no origin for an expired write.
+Chosen by Ben: **the documents change to match the code.** `10-design.md` step 5 and
+`20-contract.md`'s `GuardedWriteOutcome` and Dispatch table now say both classifications reach the
+engine as one brand and the wire as `concurrent_modification` at `409`, that the classification is
+therefore diagnostic rather than a routing decision, and what that costs: a caller whose write lost
+to expiry is told to re-read and decide rather than that the session expired, and learns which on
+that re-read — an expired row reads as absent, the engine raises `unknown_session`, and the
+lifecycle probe answers `session_expired` at `404`. Step 4 also gained the floor the enumeration
+omitted: anything the three branches do not name is `conflict`, which in practice is one shape —
+present, same version, still live, reachable only through a delete-and-reinsert between the write
+and the re-read.
+Rejected: **routing `expired` to `session_expired` on the wire.** It needs a second brand the
+engine recognises — a cross-repository engine change bought to ease persistence, which
+[`00-brief.md`](00-brief.md) names as a non-goal — or a Dispatch-side unwrap of the store's own
+error shape, which puts a store type inside the module whose job is to be transport-neutral. The
+purchase is one saved round trip on the rarest path in the system.
+Retained cost: a three-member type and a three-branch classification whose branches are not
+distinguishable by any caller. Kept because the store still needs to say *why* zero rows were
+affected, and the member is where that lands.
+Reversibility: cheap — prose over settled behaviour.
+
+### 2026-08-21 — A wrong isolation level is retryable, and the contract said it was not
+
+Context: `20-contract.md`'s `StoreError` table marked `IsolationLevelUnsupported` **not** retryable —
+"a retry restores the same misconfiguration; only a server or pooler change clears it" — while
+`attemptConnect` has retried every `openDurableStore` failure alike, at a flat 5s, since S12. The
+contract's stated reason was also wrong on the mechanism: `openDurableStore` re-reads
+`current_setting('transaction_isolation')` on every attempt, so a pooler corrected underneath a
+running process **is** picked up without a restart. This is the same divergence the 2026-08-20 entry
+"A failed migration is retryable" resolved one table away, left standing in the sibling row.
+Chosen: the code, with the contract row corrected to **Retryable: Yes, on the shared startup loop**,
+and the wrong sentence deleted rather than softened. `compose()`'s whole shape is *come up not ready
+and keep trying*, and the condition an operator fixes externally is exactly the one that benefits.
+Rejected: latching the variant and never retrying, as the contract literally read. It is the startup
+abort by another name that the migration entry already rejected, and it would make two error codes
+out of one call site take different paths for no gain — an operator who fixes the pooler would need a
+restart the code does not currently require.
+Rejected: giving this variant the migration path's exponential backoff at the same time. Defensible —
+the non-transient condition currently retries harder than the transient one — but it is a second
+change bought on the back of a documentation correction, and the rate it bounds costs one pool open
+every five seconds against a database that is otherwise healthy.
+Retained cost: a misconfiguration nobody corrects re-opens a pool at the retry interval indefinitely.
+The contract row states it.
+Reversibility: cheap — one table cell.
+
+### 2026-08-21 — Readiness names a store condition after it has connected, not only before
+
+Context: `20-contract.md` and `types.ts` both said `ProbeResult.detail` names "out of connections"
+among the conditions holding readiness back. It cannot: at startup the pool holds no checked-out
+client, so `max` is unreachable and a `connectTimeoutMs` expiry is the server not answering — which
+`openDurableStore` classifies `Unreachable`. `PoolExhausted`, `StatementFailed`, `IdCollision` and
+`RowUndeserializable` were all dead branches of `storeNotReadyDetail`. The genuinely exhausted pool
+happens *after* connect, on `readiness()`'s own `check()` — which classified it correctly and then
+discarded the classification, returning a bare `unhealthy`.
+Chosen: `readiness()` passes `check()`'s `StoreError` through the same `storeNotReadyDetail` the
+startup path uses, so a store that connected and has since degraded names its condition. The
+contract's readiness section now describes two moments rather than one, and says which conditions
+each can reach and why.
+Rejected: striking "out of connections" from the documents, matching the last pass's treatment of
+"migration still running". Cheapest, and it would have left a live degraded store answering
+`unhealthy` with no reason while three quarters of an existing, tested mapping stayed unreachable.
+Rejected: routing `openDurableStore`'s connect failure through `classifyStoreError` to make the
+documented condition reachable at startup. It makes it reachable **only in the case where it is
+wrong** — a hung or unroutable database would be reported to an operator as an exhausted connection
+pool, which is the one condition that cannot occur there.
+Retained cost: readiness bodies now carry a `detail` after startup as well as before, so the contract
+obligation widened from "while not yet ready" to "whenever unhealthy". Still diagnostic; nothing
+parses it.
+Reversibility: cheap — one branch in `readiness()`.
+
+### 2026-08-21 — The store maps through its declared row types, rather than declaring three it never builds
+
+Context: `20-contract.md` opens *Workload — the durable rows* with "every row type below is the
+store's internal shape" and declares four. Only `SessionRow` was ever constructed. `SaveRow`,
+`ProfileRow` and `ProfileAchievementRow` appeared exactly once each in the tree — at their own
+declaration in `types.ts` — while `saves.get` mapped a private `RawSaveRow` straight to a
+`StoredSaveRecord` and `profiles.load` read an anonymous inline shape. `export * from "./types.js"`
+published all three, so `agent.md`'s "a name with no producer reads as implemented, and every gate
+agrees" applied literally.
+Chosen: the code. `saves.get` maps raw → `SaveRow` → `StoredSaveRecord`, the identical path
+`sessions.get` already took; `profiles.load` widens its join to select the columns `ProfileRow` and
+`ProfileAchievementRow` declare and maps through both, with the shape check widened to cover them so
+every cast is an assertion about a validated row rather than a hope about an unvalidated one.
+Rejected: deleting the three types from the contract and `types.ts`. Cheapest, and it makes the save
+path's asymmetry with the session path permanent — a private raw shape the contract does not describe
+on one read and a declared row type on the other, needing a sentence to explain why.
+Rejected: recasting them in the contract as a description of the schema rather than of the store.
+It needs something that actually checks them against the migration, or it is the same dead
+declaration with a better sentence.
+Retained cost: the profile read selects five more columns per achievement row than it needs for a
+`PlayerProfile`. Performance is a binding non-goal, and the columns are what make the row types a
+shape rather than decoration.
+Reversibility: cheap — two mappers, two validators and one widened select.
+
+### 2026-08-21 — The engine-version assertion is asserted first, and the design said otherwise
+
+Context: `10-design.md`'s *Control flow* 1 placed the assertion on the store's success path — "on
+success, compose the process-lived parts, assert the contract's recorded engine version … and report
+ready". `compose()` asserts it as its first statement, before storage validation and before any
+connection attempt, and returns `EngineVersionMismatch` so nothing is built and the listener never
+binds. `20-contract.md` states the code's behaviour outright and G1 invariant 11 says "or the process
+does not start", so the design was the only one of three documents out of step.
+Chosen: the design, corrected to assert first, with the reason stated — it is the one startup
+condition no retry can clear, so binding and reporting not-ready against it would back off against a
+dependency that cannot change underneath the process.
+Rejected: deferring the assertion in code to match the design. It contradicts G1 invariant 11 and the
+`EngineVersionMismatch` row in `g1/20-contract.md` ("the listener never binds"), making it a G1
+contract amendment rather than a G2 edit — and it would retry a permanently wrong dependency forever.
+Reversibility: cheap — one sentence.
+
+### 2026-08-21 — The sweep's two bounds are the sweep's, not a row's
+
+Context: `LifecycleBounds` has five members. Three carried a stated production default in the
+contract, a decision entry where one changed, and an assertion by name in `lifecycle-bounds.test.ts`.
+`sweepIntervalSeconds` (1 hour) and `sweepStatementTimeoutMs` (5s) arrived with S13.4/S13.5 named by
+no document, asserted by nothing, and logged nowhere — so an edit to either passed every gate. The
+statement timeout is the load-bearing one: the sweep is the single condition in G2 that no readiness
+check and no request surfaces, so a timeout too short for the rows a deployment has accumulated
+produces permanent silent retention visible only in a log line.
+Chosen: state both defaults in the contract, alongside a distinction the paragraph did not previously
+draw — three bounds on a *row's life*, which every proof runs at, and two on the *sweep's own work*,
+which the sweep proofs vary deliberately because a proof cannot wait an hour for a tick and S13.4
+drives the timeout below a held lock on purpose. Pinned by name in `lifecycle-bounds.test.ts`
+alongside the other three, plus the ordering between them.
+Rejected: a decision entry alone. Leaves both values unpinned, which is precisely how they arrived
+unrecorded.
+Rejected: raising the statement timeout for a production-sized table. Performance is a binding
+non-goal and a number presented as a result is what the brief forbids, so any new value is another
+un-tuned guess — and S13.4 needs a low one to prove the bound is enforced at all.
+Retained cost: the defaults stay un-tuned, and a deployment whose sweep outgrows five seconds learns
+it from a log line. That is the sweep's stated observability, not a gap this entry closes.
+Reversibility: cheap — two constants, now asserted by name.
+
 ### 2026-08-20 — `ProbeResult.detail` reaches the wire, because the endpoint is the only surface an operator reads
 
 Context: `detail` was added by its own entry below, given a `StoreError` mapping by another, and
@@ -1062,7 +1266,13 @@ Reversibility: cheap
 
 ## Open
 
-_Nothing staged._
+- The proof harness carries two spawn-and-wait-for-readiness implementations — `src/harness.ts`'s
+  `spawnOne` and `tests/support/hosted-target.ts`'s `spawnHostedWorkload` — since the two-instance
+  proof became real processes on 2026-08-21. One primitive, with the replay target's dump reading
+  and the two-instance target's `WorkloadInstance` shape built on top, is the shape that stops the
+  two drifting apart. Deferred out of that reconciliation deliberately: refactoring
+  `hosted-target.ts` puts the byte-identity proof at regression risk, which is not a cost a
+  reconciliation pass should take on.
 
 _(previously tracked out of this section: issues [#146](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/146), [#147](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/147); and the S13.1 half-criterion question, resolved in place by amending the criterion — `c5eda09`, and the entry above dated 2026-08-20, "`RowUndeserializable` answers 503".)_
 
