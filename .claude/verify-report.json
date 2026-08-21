@@ -1,29 +1,44 @@
 {
   "gates": [
     {
-      "name": "Repository Markdown link and terminology gate (build/Test-Documentation.ps1)",
-      "status": "Passed",
-      "detail": "design/d3/90-decisions.md:1138:66 [Warning] Terminology: Use 'JSON' instead of 'Json'.\ndesign/d3/90-decisions.md:1141:948 [Warning] Terminology: Use 'JSON' instead of 'Json'.\nDocumentation checks passed across 76 Markdown file(s), with 2 warning(s).\n[exited with code 0]. The two warnings are pre-existing, in a file this PR does not touch, and are Warning severity (does not fail the gate without -TreatWarningsAsErrors). This gate excludes docs/docs/ content by its own design, so it does not itself cover the changed file, but it confirms nothing else in the tree regressed."
+      "name": "CI-gated steps (`# verification: true`)",
+      "status": "DidNotRun",
+      "reason": "Zero matches for the `# verification: true` flag across all four workflow files (build.yml, docs-ci.yml, docs-deploy.yml, release.yml), and no .github/workflows/verify.yml exists at all. No step in this repository is currently discoverable as a CI gate by the flag this command relies on. This is the same absence already tracked as issue #131."
     },
     {
-      "name": "Docusaurus production build, run the way docs-ci.yml's verify job actually runs it (pristine ghcr.io/the-running-dev/docs-template:latest, docs-build.ps1 -SourceDocs ./docs against a fresh checkout)",
+      "name": "Docusaurus production build (docs-template image, covers the changed file)",
       "status": "Passed",
-      "detail": "docker run --rm -v \"$(pwd):/workspace:ro\" -w /workspace ghcr.io/the-running-dev/docs-template:latest pwsh -File /template/scripts/docs-build.ps1 -SourceDocs ./docs -OutputPath /tmp/artifacts/docs\nOverlaying '/workspace/docs' over '/template' ... Building static site ... webpackbar Server: Compiled successfully in 23.50s / Client: Compiled successfully in 44.79s / [SUCCESS] Generated static files in \"artifacts\". / Copying static site to '/tmp/artifacts/docs' ... Done.\n[exited with code 0]. No broken-link errors, including for the changed guide page's added cross-links and Mermaid diagrams.\n\nAn earlier local attempt using this repo's own docs.ps1 -BuildOnly wrapper, followed by running the image's 'Invoke-DocsBuild' dispatch command against that already-baked image, failed with 'Docusaurus found broken links!' on every page's link to '/'. Investigated and confirmed a false positive specific to that reproduction path, not a real gate failure: docs.ps1's Dockerfile does `COPY . .` at docker-build time, baking this repo's own docs/src/pages/index.md (a legitimate, repo-authored site-root page) into /template/src/pages. The base image's own docs-build.ps1 (source read directly from the built image at /PSModule/Scripts/docs-build.ps1) then runs a self-described leaked-template-page check before its own overlay step: 'The image excludes src/pages for this reason (see .dockerignore), so finding one here means that exclusion regressed' -- it cannot distinguish a genuine base-image leak from a consumer's own page already baked in by an earlier COPY, so it deletes /template/src/pages, and the second overlay never restores it because -SourceDocs defaults to './docs' (a subdirectory that does not contain src/pages). docs-ci.yml's real 'verify' job never hits this: it runs the *pristine*, un-baked base image directly against a fresh checkout ('/template/scripts/docs-build.ps1 -SourceDocs ./docs'), which is exactly what this corrected run reproduces, and it passed. The docs.ps1 -BuildOnly + Invoke-DocsBuild combination is a bug in the local double-bake reproduction, not in this PR, this repository's docs-ci.yml, or the upstream image."
+      "detail": "Ran via ghcr.io/the-running-dev/docs-template:latest, /template/scripts/docs-build.ps1 -SourceDocs <clean copy of docs/> -OutputPath <out>, matching how docs-ci.yml's build step invokes it. Server: Compiled successfully in 37.72s / Client: Compiled successfully in 2.06m / [SUCCESS] Generated static files in \"artifacts\". / [DOCS-BUILD] Copying static site to '/out' ... / [DOCS-BUILD] Done. Static site available at '/out'. Exit code 0. No broken-link errors; only pre-existing noise ([WARN] Projects Configuration Missing, Using Defaults; a Node ExperimentalWarning about localStorage)."
+    },
+    {
+      "name": "build/Test-Documentation.ps1 (repository Markdown link/terminology gate)",
+      "status": "Passed",
+      "detail": "Documentation checks passed across 76 Markdown file(s), with 2 warning(s): design/d3/90-decisions.md:1138:66 and :1141:948, both \"Terminology: Use 'JSON' instead of 'Json'.\" Both warnings are pre-existing in design/d3/90-decisions.md, untouched by this branch. Exit code 0. Note: this gate excludes docs/docs/ content by its own design, so it does not cover the changed file (docs/docs/implementation-plan.md) \u2014 the Docusaurus build above is the gate that does."
     },
     {
       "name": "git diff --check",
       "status": "Passed",
-      "detail": "git diff --check produced no output against the branch's changes — no whitespace errors, no unresolved merge conflict markers."
+      "detail": "No output; exit code 0. No trailing whitespace or conflict markers in the diff."
     },
     {
-      "name": "CI-gated steps flagged '# verification: true' in .github/workflows/*.yml",
-      "status": "DidNotRun",
-      "reason": "grep across .github/workflows/*.yml for the literal comment '# verification: true' returns zero matches — this repository has never added the flag to any workflow step, and there is not even a verify.yml workflow file present (only build.yml, docs-ci.yml, docs-deploy.yml, release.yml). This gap is already tracked as issue #131 (/verify's # verification: true flag has never been added to this repository's workflows). Nothing was skipped on judgement here — there was nothing flagged to run."
+      "name": "PowerShell parse-check (all *.ps1)",
+      "status": "Passed",
+      "detail": "Every *.ps1 file in the repository parsed via [System.Management.Automation.Language.Parser]::ParseFile with zero parse errors. \"All .ps1 files parsed cleanly\". Exit code 0."
     },
     {
-      "name": ".NET build/test and the game-service workload suite (build.yml: dotnet build/test, durable-store proofs, two-instance contention, edge replay)",
+      "name": "tools/Test-Companion.ps1 (core/companion split)",
+      "status": "Passed",
+      "detail": "Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid, Findings: {}, CoreCount: 21, CompanionCount: 0, AbsentCount: 21. Exit code 0."
+    },
+    {
+      "name": "tools/Test-DesignState.ps1 (design state vs. tree)",
       "status": "DidNotRun",
-      "reason": "Not reproduced locally. This PR changes only docs/docs/guide.md — no file under src/, workloads/, tests/, or samples/ is touched — and this suite (multiple .NET projects plus a Node workload job requiring a Postgres container and a downloaded OpenTelemetry Collector) takes many minutes and is unrelated to a documentation regeneration. build.yml's own build and game-service jobs on this pull request are the authoritative result for those checks."
+      "reason": "Exit code 2 (could-not-evaluate, not a failure verdict). CouldNotEvaluate: [ContractListUnreadable] SectionNotFound: /Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/20-contract.md. The checker could not read the contract's glob/section table at all, so it could not evaluate the tree against it. This is a pre-existing condition, unrelated to this branch's one-file docs change; also related to design/state/ absence tracked in issue #151."
+    },
+    {
+      "name": "Invoke-Pester -Path tools",
+      "status": "Failed",
+      "detail": "Tests Passed: 229, Failed: 25, Skipped: 0, Inconclusive: 0, NotRun: 0, Total: 254. Failures are concentrated in Test-DesignState.Tests.ps1 (GlobDisagreement, S4.6, S12.x, S16.x, S17.x, S18.x cases) and Update-DesignProjection.Tests.ps1 (S7.2), consistent with the same design/20-contract.md SectionNotFound condition above, plus one CI-workflow authentication test ('the \"Run Pester tests\" step carries a GH_TOKEN env, the same as \"Check the design state against the tree\"' \u2014 moot while no such step exists, per the first row above). This is the same broken suite already tracked as issue #158 (that issue recorded 32/254 failing; this run shows 25/254 \u2014 the count has drifted since #158 was filed, but the suite is still not green from a fresh clone)."
     }
   ]
 }

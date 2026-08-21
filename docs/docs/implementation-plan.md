@@ -33,7 +33,7 @@ Measured, not assumed.
 | | State |
 |---|---|
 | Game Engine | **Past MVP, and now consumable.** `@the-running-dev/game-engine` **0.4.0 is published** to GitHub Packages with a 26-entry public surface. Two further kinds and four campaign arcs beyond the MVP |
-| Platform | **Documents only.** No packages, no code. Scope is open — see the caution below |
+| Platform | **D3 shipped.** Six packages — Abstractions, Core, Hosting, Observability, Persistence, Testing — build, pack and publish to a private GitHub Packages feed at an explicitly unstable 0.x, and the sample restores and runs on them ([S1–S9](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/30-slices.md), merged 2026-08-03 to 2026-08-07). The public identifiers are deliberately unspent. **Built, but not yet proven by an outside product** — see §4 |
 | Automator | Specified, unstarted |
 | Plugin contract | **Its own repository**, [SubZeroDev.PluginContract](https://github.com/The-Running-Dev/SubZeroDev.PluginContract), public, tagged `v0.1.0`. Schemas written and validated; not yet published at version-pathed URLs |
 | Architecture specs | **Version-controlled**, [SubZeroDev.Architecture](https://github.com/The-Running-Dev/SubZeroDev.Architecture), private |
@@ -61,14 +61,19 @@ Platform and Game Engine hosting are **not one sequence**, and treating them as 
 main scheduling error available here.
 
 ```text
-Track A — Platform     D3 → D4 → D5      (Phase 2, then Phase 5, then Phase 8)
-Track B — GEaaS        G1 → G2 → G3 → G4  (unblocked — the engine package is published)
+Track A — Platform     D3 ✓ → D5        D4 is gated on evidence, not on its turn
+Track B — GEaaS        G1 ✓ → G2 ✓ → G3 → G4
 ```
 
 Track A sits **off the ecosystem critical path** and can proceed in parallel with plugin and
-Automator work. Track B used to block on the engine's packaging; **it no longer does** — 0.4.0 is
-published, so G1 can start whenever it is wanted, independently of Platform, and adopt Platform
-later.
+Automator work. Track B's old block on the engine's packaging is long gone — 0.4.0 is published, and
+**G1 and G2 have both since shipped in full.** What remains open on either track is D4, D5, G3 and
+G4.
+
+**D4 is not a position in a queue.** Its own done-criterion is evidence — two named consumers,
+one of which actually runs on the package — so it fires when that evidence exists rather than when
+its turn comes. Writing it into the sequence between D3 and D5 implied a calendar gate it never had, and made
+any D5 work look like it was jumping the line. It is not.
 
 That is deliberate, and it is the same reasoning the extraction guard applies: build the
 product first, extract when a second consumer proves the shape.
@@ -113,14 +118,28 @@ done-criteria are specified in
 > packages before anything is written; six packages is not a licence to hand-roll six.
 
 **Was blocked on** the technology decision — the only stage that was, which is why it was
-taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settles it: .NET, so the
-package names above stand and the persistence baseline is EF Core. **D3 is unblocked and
-unstarted.**
+taken early. [ADR-002](adr/ADR-002-implementation-technology.md) settled it: .NET, so the
+package names above stand and the persistence baseline is EF Core.
+
+**D3 has shipped.** All nine slices in
+[`d3/30-slices.md`](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/30-slices.md)
+are marked `shipped`, merged between 2026-08-03 and 2026-08-07. The six packages build, pack and
+publish to a private GitHub Packages feed at an explicitly unstable 0.x, and the sample restores
+from that feed rather than from project references.
 
 **Done when** every package's stated done-criteria are met, and — the one that matters most —
 **a product runs on Platform with health, readiness, correlation ids, migrations and
 telemetry configured by nothing but the standard registration call.** A framework whose first
 consumer needs bespoke wiring has not proven anything.
+
+> **That last criterion is met by the sample, and only by the sample.** S9.3 re-runs every S1–S8
+> assertion against the sample built on the restored packages, which proves pack, publish and
+> authenticated restore. But the sample is Platform's own, and a framework proving itself against
+> its own sample has not met the sentence above in the spirit it was written.
+> [#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97) is the live proposal to settle it, with
+> `SubZeroDev.Adventures` — a real product with real players — as the outside consumer that proves
+> the claim. Until something like
+> that lands, **D3 is built but not proven.**
 
 ### D4 — Extraction, on evidence *(ecosystem Phase 5)*
 
@@ -237,14 +256,15 @@ The things that genuinely cannot be reordered:
 |---|---|---|
 | Engine packaging **→** G1 | Nothing can consume the engine until it packs and installs | **Satisfied** — 0.4.0 published |
 | Technology decision **→** D3 | Package identifiers and the module contract depend on it | **Satisfied** — ADR-002, ADR-004 |
-| G1 **→** G2 | The byte-identity proof must exist before persistence can be checked against it | Open |
-| Persistence **→** everything with a tenant | The column ships in the first schema or it is a migration on every table | Open |
-| G2 **→** engine's composition-root question | The second implementation is what makes the question answerable | Open |
+| D3 **→** G1 S7 | The edge's entry point is composed by `AddPlatformWebHost()`, which lives in `Platform.Hosting` | **Satisfied** — Hosting shipped in D3 S1; G1 S7 shipped after it. Recorded late, per [#96](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/96) |
+| G1 **→** G2 | The byte-identity proof must exist before persistence can be checked against it | **Satisfied** — both shipped |
+| Persistence **→** everything with a tenant | The column ships in the first schema or it is a migration on every table | **Satisfied** — the tenant column shipped in D3 S2 |
+| G2 **→** engine's composition-root question | The second implementation is what makes the question answerable | **Satisfied** — G2 shipped. The question is now answerable, and not yet answered |
 
 Everything else is genuinely parallel, including the whole of Track A against Track B.
 
-**Both blocking constraints are now satisfied**, so neither track is externally gated. What gates
-them is §8.
+**Every constraint above is now satisfied**, and neither track is externally gated. What gates them
+is §8 — and, for D3's proving criterion, an outside product rather than the sample.
 
 ---
 
