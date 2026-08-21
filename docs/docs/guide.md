@@ -131,8 +131,12 @@ flowchart TD
     B --> C{"Row present?"}
     C -->|"No"| D["conflict\n(the caller's read is no longer\nauthoritative either way)"]
     C -->|"Yes, different version"| E["conflict\n(someone else's write won)"]
-    C -->|"Yes, same version,\nbut expires_at has passed"| F["expired\n(not a conflict)"]
+    C -->|"Yes, same version,\nbut expires_at has passed"| F["expired"]
     B -->|"re-read itself fails"| D
+    D --> G["SessionPersistenceConflict\n(one brand)"]
+    E --> G
+    F --> G
+    G --> H["concurrent_modification, 409"]
 ```
 
 The `expires_at > now()` half of the guard exists so a write cannot resurrect a session the
@@ -140,12 +144,20 @@ wire has already declared gone: without it, a request that read a live row micro
 its TTL elapsed could extend that session by a full TTL while a concurrent read on another
 instance was already answering `session_expired` for it.
 
-A **conflict** becomes a branded throw that the engine's `writeSession` recognises (this is
-G2's one change inside the engine itself) and turns into `concurrent_modification`, which maps
-to **`409`**. That is a different answer from **`storage_failure`** → **`503`**, which is what
-an ordinary connection failure still produces. Before G2, both arrived at the client as the
-same `503`; this is the first release where a caller can tell "someone else's write won, re-read
-and decide" apart from "the store didn't answer, retry later."
+**`conflict` and `expired` are three-way diagnostic, not a two-way routing decision.** Both
+classifications leave the store as the same branded throw — the engine's `writeSession`
+recognises the brand (this is G2's one change inside the engine itself) and turns it into a
+single reason code, `concurrent_modification`, which maps to **`409`** regardless of which of
+the two the adapter saw. The three-way split exists only so the store's own tests, and a log
+line, can say *why* zero rows were affected — nothing on the wire ever sees it. The cost: a
+caller whose write actually lost to expiry is told "your read is stale, re-read and decide"
+rather than "your session expired" — and learns which it was one round trip later, when the
+re-read comes back as `unknown_session` and the lifecycle probe answers `session_expired`.
+
+That single conflict code is a different answer from **`storage_failure`** → **`503`**, which
+is what an ordinary connection failure still produces. Before G2, both arrived at the client as
+the same `503`; this is the first release where a caller can tell "someone else's write won,
+re-read and decide" apart from "the store didn't answer, retry later."
 
 There is no merging, and nothing retries automatically — not on a conflict, anywhere in the
 stack. The loser's write is discarded in full; a rejected caller re-reads and resubmits as a
@@ -318,6 +330,13 @@ Three kinds of proof back this feature, run in CI from a fresh clone:
   across two real instances sharing one store. Neither alone is sufficient — the single-instance
   case might not even be reachable if the session layer weren't composed per request, and the
   multi-instance case is the shape the original failure actually describes.
+
+  The two "instances" are genuine, separate OS processes, not two compositions sharing one
+  event loop — anything less couldn't establish that the compare-and-swap survives a real
+  process boundary. That has two practical consequences if you're extending this harness:
+  configuration reaches each child only through environment variables (there's no other
+  channel), and shutdown is a byte written to the child's stdin, never a signal — a hard kill
+  would leave the child's pool connections open to race the schema drop that follows it.
 - **Port conformance, against both implementations.** One set of assertions run twice — once over
   a reference target, once over the durable one — covering every port method the wire itself
   never exercises (`saves.delete`, and everything profile-related). The reference target pairs

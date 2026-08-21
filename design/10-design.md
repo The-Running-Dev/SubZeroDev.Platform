@@ -504,17 +504,39 @@ Then, for the durable configuration:
      only correct client action is identical; the retention horizon makes this branch unreachable in
      practice, and it is written down rather than left to a comment.
 
+   **Anything the three branches do not name is conflict**, which in practice is one shape: present,
+   same version, still live — a row the guarded statement should have matched, and did not. It is
+   reachable only through a delete-and-reinsert between the write and the re-read, and answering it
+   `conflict` is the conservative direction, since the caller's read is no longer authoritative
+   either. The three branches are the classification; this is its floor.
+
    **A re-read that itself fails is classified as conflict, never as `storage_failure`.** Zero rows
    affected has already established the one fact a caller acts on — the write did not land — and
    every branch above tells them to re-read and decide. Letting the classifier's own driver error
    escape would convert a known non-outage into a `503` precisely when the store is degraded and
    races are most likely, which is the criterion the brief says cannot otherwise be met, defeated by
    the mechanism added to serve it.
-5. **A conflict is signalled to the engine as a conflict.** The adapter throws a value carrying the
-   engine's documented conflict brand. The engine's `writeSession` — which today catches everything and
-   rethrows `storage_failure`, discarding the cause — recognises the brand and raises the new
-   `SessionStoreError` code instead. **This is G2's single engine deliverable.** Anything else thrown
-   still becomes `storage_failure`, so every existing implementation of the port is unaffected.
+5. **A write that did not land is signalled to the engine as a conflict — both classifications, one
+   brand.** The adapter throws a value carrying the engine's documented conflict brand. The engine's
+   `writeSession` — which today catches everything and rethrows `storage_failure`, discarding the
+   cause — recognises the brand and raises the new `SessionStoreError` code instead. **This is G2's
+   single engine deliverable.** Anything else thrown still becomes `storage_failure`, so every
+   existing implementation of the port is unaffected.
+
+   **`expired` and `conflict` both leave the adapter as that one brand, so both reach the wire as
+   `concurrent_modification` at `409`.** The engine's `catch` discriminates on `name` and on nothing
+   else, so there is exactly one channel out of the port; a second one is a second engine change
+   bought to ease persistence, which the brief names as a non-goal. **The three-way classification is
+   therefore diagnostic, not a routing decision** — it exists so the store can say *why* zero rows
+   were affected, and where that lands is a field on the thrown value, read by this workload's own
+   tests and by nothing on the wire.
+
+   **The cost, stated because the branch was introduced to avoid exactly this flattening:** a caller
+   whose write lost to expiry is told *your read is stale, re-read and decide* rather than *this
+   session expired*. Nothing is lost — the re-read is a read, an expired row is returned as absent,
+   the engine raises `unknown_session`, and Dispatch's lifecycle probe answers `session_expired` at
+   `404`. The caller learns the truth one round trip later than a dedicated code would have told
+   them, on a path that is already the rarest in the system.
 6. **Dispatch translates.** The conflict code travels to the wire verbatim, as every engine reason code
    does, and maps to **409**. `storage_failure` maps to **503**, unchanged. The two are now different
    answers to different questions, which is the criterion the brief says cannot otherwise be met.

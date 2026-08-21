@@ -7,15 +7,15 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough, Writable } from "node:stream";
 
 import { spawnInstances } from "../src/harness.js";
 import type {
   Outcome,
   SchemaName,
-  StartupError,
   TwoInstanceOptions,
-  WorkloadConfiguration,
-  WorkloadProcess,
 } from "../src/types.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { RawSchemaClient, TEST_CONNECTION_STRING, createTestSchema } from "./support/database.js";
@@ -158,56 +158,85 @@ describe("S7.7 — shutdown() on both instances exits cleanly", () => {
  * cannot be asked to refuse to exit, and the bound is a module constant that `TwoInstanceOptions`
  * deliberately does not carry (`20-contract.md` declares three fields and no fourth, so widening
  * it to make this reachable would be signature drift). The only honest way in is to hand
- * `spawnInstances` a process whose `shutdown()` never settles, which is what stubbing
- * `startWorkload` does here — the code under test is still `harness.ts`'s own bound and its own
- * error construction, unmodified.
+ * `spawnInstances` a child process that ignores its shutdown byte, which is what stubbing
+ * `node:child_process`'s `spawn` does here — the code under test is still `harness.ts`'s own
+ * bound, its own `SIGKILL` escalation and its own error construction, unmodified.
+ *
+ * **The stub is at the process boundary, not at composition**, because that is now where the
+ * harness's own seam is: `spawnOne` spawns `harness-entrypoint.ts` as a genuine operating-system
+ * process (`design/90-decisions.md`, 2026-08-21, "The two-instance proof spawns real processes"),
+ * so a `startWorkload` stub would no longer sit anywhere in its path.
  *
  * Which instance hangs is selected by `readWritePauseMs`, because that pair is the only thing
  * `spawnInstances` uses to tell the two apart: instance 0 is sent `readWritePauseMs[0]` and
- * instance 1 `readWritePauseMs[1]`. Keying the stub on the pause therefore proves the reported
- * index is the one that actually hung, not merely that *an* index was reported — a harness that
- * swapped the two would pass an assertion that only counted them.
+ * instance 1 `readWritePauseMs[1]`, each reaching its child as `GAME_SERVICE_READ_WRITE_PAUSE_MS`.
+ * Keying the stub on that variable therefore proves the reported index is the one that actually
+ * hung, not merely that *an* index was reported — a harness that swapped the two would pass an
+ * assertion that only counted them.
  */
 const HANGING_PAUSE_MS = 111;
 const EXITING_PAUSE_MS = 222;
 
-/** Stubs `../src/lifecycle.js`'s `startWorkload` so it resolves to a fake `WorkloadProcess` whose
- *  `shutdown` is `buildShutdown(configuration)` — the one thing each S7.7 case below needs to vary.
- *  `vi.doMock` is deliberate rather than a hoisted `vi.mock`: the criteria above this one need the
- *  real lifecycle, and they share this file so that the README's single documented command (S7.6)
- *  runs the whole of S7. */
-function mockLifecycleShutdown(buildShutdown: (configuration: WorkloadConfiguration) => WorkloadProcess["shutdown"]): void {
+/** A stand-in for `ChildProcessWithoutNullStreams` carrying only what `spawnOne` touches: the
+ *  status line on stdout, a stderr nothing writes to, a stdin whose write is either honoured or
+ *  ignored, and an `exit` event. `kill()` always reaps — a real `SIGKILL` does, and a fake that
+ *  did not would be testing a hang the operating system cannot produce. */
+function fakeChild(honoursShutdown: boolean, exitCode = 0): ChildProcess {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const emitter = new EventEmitter() as ChildProcess & { exitCode: number | null };
+  emitter.exitCode = null;
+
+  const exit = (code: number): void => {
+    if (emitter.exitCode !== null) return;
+    emitter.exitCode = code;
+    emitter.emit("exit", code, null);
+  };
+
+  const stdin = new Writable({
+    write(_chunk, _encoding, done) {
+      if (honoursShutdown) setImmediate(() => exit(exitCode));
+      done();
+    },
+  });
+
+  Object.assign(emitter, {
+    stdout,
+    stderr,
+    stdin,
+    kill: (): boolean => {
+      exit(0);
+      return true;
+    },
+  });
+
+  stdout.write(`${JSON.stringify({ listening: { host: "127.0.0.1", port: 1 } })}\n`);
+  return emitter;
+}
+
+/** Stubs `node:child_process`'s `spawn` so every instance `spawnInstances` starts is a
+ *  `fakeChild`, with `hanging` selecting which of the two ignores its shutdown byte. */
+function mockSpawn(hangingPauseMs: number | null): void {
   vi.resetModules();
-  vi.doMock("../src/lifecycle.js", async () => {
-    const actual = await vi.importActual<typeof import("../src/lifecycle.js")>("../src/lifecycle.js");
+  vi.doMock("node:child_process", async () => {
+    const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
     return {
       ...actual,
-      startWorkload: async (configuration: WorkloadConfiguration): Promise<Outcome<WorkloadProcess, StartupError>> => ({
-        ok: true,
-        value: {
-          listening: { host: "127.0.0.1", port: 1 },
-          probes: {
-            liveness: () => ({ status: "healthy" }),
-            readiness: async () => ({ status: "healthy" }),
-          },
-          shutdown: buildShutdown(configuration),
-        },
-      }),
+      spawn: (_command: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+        const pause = options.env?.["GAME_SERVICE_READ_WRITE_PAUSE_MS"];
+        const hangs = hangingPauseMs !== null && pause === String(hangingPauseMs);
+        return fakeChild(!hangs);
+      },
     };
   });
 }
 
-/** `spawnInstances` re-imported under `mockLifecycleShutdown`'s stub, with `hanging` selecting
- *  which instance's `shutdown()` never settles. */
+/** `spawnInstances` re-imported under `mockSpawn`'s stub, with `hanging` selecting which
+ *  instance's child ignores its shutdown byte. */
 async function spawnWithOneHangingShutdown(
   hanging: 0 | 1,
 ): Promise<Outcome<readonly [WorkloadInstanceUnderTest, WorkloadInstanceUnderTest], unknown>> {
-  mockLifecycleShutdown((configuration) => {
-    const hangs =
-      configuration.storage.kind === "durable" && configuration.storage.store.readWritePauseMs === HANGING_PAUSE_MS;
-    return () =>
-      hangs ? new Promise<never>(() => {}) : Promise.resolve({ ok: true as const, value: undefined as void });
-  });
+  mockSpawn(HANGING_PAUSE_MS);
 
   const { spawnInstances: underTest } = await import("../src/harness.js");
   const pauses: readonly [number, number] =
@@ -222,7 +251,7 @@ type WorkloadInstanceUnderTest = {
 
 describe("S7.7 — an instance that does not exit within its bound fails the harness, naming which one", () => {
   afterEach(() => {
-    vi.doUnmock("../src/lifecycle.js");
+    vi.doUnmock("node:child_process");
     vi.resetModules();
   });
 
@@ -266,11 +295,17 @@ describe("S7.7 — an instance that does not exit within its bound fails the har
     30_000,
   );
 
-  it("reports InstanceShutdownFailed, named the same way, when the underlying shutdown resolves an error", async () => {
-    mockLifecycleShutdown(() => async () => ({
-      ok: false as const,
-      error: { code: "DumpWriteFailed" as const, cause: { code: "DumpWriteFailed" as const, path: "/dev/null" } },
-    }));
+  it("reports InstanceShutdownFailed, named the same way, when the child exits non-zero", async () => {
+    vi.resetModules();
+    vi.doMock("node:child_process", async () => {
+      const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+      return {
+        // Honours the shutdown byte, but reports a failed exit — `harness-entrypoint.ts`'s own
+        // non-zero path, which is what a dump write that failed at shutdown produces.
+        ...actual,
+        spawn: () => fakeChild(true, 1),
+      };
+    });
 
     const { spawnInstances: underTest } = await import("../src/harness.js");
     const spawned = (await underTest(

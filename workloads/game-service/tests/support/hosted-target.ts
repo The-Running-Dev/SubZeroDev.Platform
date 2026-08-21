@@ -1,9 +1,9 @@
 /**
  * S5.7 — a real operating-system process with a bound socket, addressed over that socket. Spawns
- * `hosted-entrypoint.ts` under the replay profile — the same `startWorkload` call `src/main.ts`
+ * `src/harness-entrypoint.ts` under the replay profile — the same `startWorkload` call `src/main.ts`
  * makes, over the same `GAME_SERVICE_*` environment variables, with a bound port reported the same
  * way. Implements `HostedTarget` over it: `shutdown` writes to the child's stdin to trigger the
- * graceful path (see `hosted-entrypoint.ts`'s own note on why that, and not `SIGTERM`, is portable),
+ * graceful path (see `harness-entrypoint.ts`'s own note on why that, and not `SIGTERM`, is portable),
  * and `readDump` reads the file that shutdown wrote — never a value read out of the child's memory.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -18,7 +18,7 @@ import { readDeterminismDumpFile } from "../../src/dump.js";
 import { err, ok } from "../../src/types.js";
 import type { HostedTarget, Outcome, SchemaName, ShutdownError } from "../../src/types.js";
 
-const ENTRYPOINT = fileURLToPath(new URL("./hosted-entrypoint.ts", import.meta.url));
+const ENTRYPOINT = fileURLToPath(new URL("../../src/harness-entrypoint.ts", import.meta.url));
 const TSX_CLI = fileURLToPath(new URL("../../node_modules/tsx/dist/cli.mjs", import.meta.url));
 
 interface Listening {
@@ -65,6 +65,10 @@ export async function spawnHostedWorkload(
   delete env["GAME_SERVICE_CONTRACT"];
   env["GAME_SERVICE_HOST"] = "127.0.0.1";
   env["GAME_SERVICE_PORT"] = "0";
+  // Asked for explicitly: `harness-entrypoint.ts` selects its determinism profile from the
+  // environment rather than hardcoding `replay`, because S7's two contending instances run the
+  // default profile through the same entry point.
+  env["GAME_SERVICE_DETERMINISM"] = "replay";
   // The same fixed instant `runInProcess` uses, so the one clock input the byte-identity proof
   // holds constant is stated once rather than duplicated as a literal that could drift from it.
   env["GAME_SERVICE_FIXED_INSTANT"] = REPLAY_FIXED_INSTANT;
@@ -152,14 +156,14 @@ export async function spawnHostedWorkload(
 
     async shutdown(): Promise<Outcome<void, ShutdownError>> {
       if (!hasExited) {
-        // A byte on stdin, not a signal — `hosted-entrypoint.ts`'s own note explains why a signal
+        // A byte on stdin, not a signal — `harness-entrypoint.ts`'s own note explains why a signal
         // cannot be relied on to reach a Node child process gracefully on every platform.
         child.stdin.write("shutdown\n");
       }
       const code = await exited;
       if (code === 0 && !stdinError) return ok(undefined);
 
-      // The child's own last stderr line is a `ShutdownError` (`hosted-entrypoint.ts` writes
+      // The child's own last stderr line is a `ShutdownError` (`harness-entrypoint.ts` writes
       // `outcome.error` verbatim), not a bare `CompositionError` — parsed and unwrapped here
       // rather than cast wholesale into `cause`, or the reported error nests one layer too deep
       // and its declared fields (e.g. `cause.path`) come back `undefined`.
