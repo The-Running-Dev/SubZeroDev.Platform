@@ -56,6 +56,7 @@ jobs:
             # The reusable landing-page package builds this consumer-owned React
             # site. `check`, not a bare build, remains the last local gate
             # before deployment.
+            # verification: true
             - name: Build and verify the status-page site
               run: |
                   npm --prefix site ci
