@@ -1,44 +1,114 @@
 {
   "gates": [
     {
-      "name": "CI-gated steps (`# verification: true`)",
-      "status": "DidNotRun",
-      "reason": "Zero matches for the `# verification: true` flag across all four workflow files (build.yml, docs-ci.yml, docs-deploy.yml, release.yml), and no .github/workflows/verify.yml exists at all. No step in this repository is currently discoverable as a CI gate by the flag this command relies on. This is the same absence already tracked as issue #131."
+      "name": "Test (build.yml, .NET job)",
+      "status": "Failed",
+      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 265, Passed: 264, Failed: 1. SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else failed on both the full run and re-run in isolation: 'System.Net.Sockets.SocketException : nodename nor servname provided, or not known' at WorkerProbeTests.cs:100, inside BoundOnAnyNonLoopbackAddress -> System.Net.Dns.GetHostAddresses. This is a DNS/hostname resolution failure in this local sandboxed environment (cannot resolve the machine's own hostname to a non-loopback address), not an assertion about the code under test; ubuntu-latest CI runners resolve their own hostname and would not necessarily hit this. Reported as a real failure of this local run, with the caveat that its cause looks environment-specific rather than a defect this PR introduced -- this PR touches only design/ file locations, not networking or hosting code."
     },
     {
-      "name": "Docusaurus production build (docs-template image, covers the changed file)",
+      "name": "Run the sample in both roles (build.yml)",
       "status": "Passed",
-      "detail": "Ran via ghcr.io/the-running-dev/docs-template:latest, /template/scripts/docs-build.ps1 -SourceDocs <clean copy of docs/> -OutputPath <out>, matching how docs-ci.yml's build step invokes it. Server: Compiled successfully in 37.72s / Client: Compiled successfully in 2.06m / [SUCCESS] Generated static files in \"artifacts\". / [DOCS-BUILD] Copying static site to '/out' ... / [DOCS-BUILD] Done. Static site available at '/out'. Exit code 0. No broken-link errors; only pre-existing noise ([WARN] Projects Configuration Missing, Using Defaults; a Node ExperimentalWarning about localStorage)."
+      "detail": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1: 'Both roles served their probes in Production.' / 'The outbox row survived process death and dispatched order f0b544a9-5a64-4079-bc01-58c1126d16ea after restart.' Exit code 0."
     },
     {
-      "name": "build/Test-Documentation.ps1 (repository Markdown link/terminology gate)",
+      "name": "Assert no framework project references a workload (build.yml)",
       "status": "Passed",
-      "detail": "Documentation checks passed across 76 Markdown file(s), with 2 warning(s): design/d3/90-decisions.md:1138:66 and :1141:948, both \"Terminology: Use 'JSON' instead of 'Json'.\" Both warnings are pre-existing in design/d3/90-decisions.md, untouched by this branch. Exit code 0. Note: this gate excludes docs/docs/ content by its own design, so it does not cover the changed file (docs/docs/implementation-plan.md) \u2014 the Docusaurus build above is the gate that does."
+      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: 'No project under src/ or samples/ references workloads/ (25 project file(s) checked).' Exit code 0."
     },
     {
-      "name": "git diff --check",
+      "name": "Typecheck (build.yml, game-service job)",
       "status": "Passed",
-      "detail": "No output; exit code 0. No trailing whitespace or conflict markers in the diff."
+      "detail": "cd workloads/game-service && npm run typecheck (tsc --noEmit): completed with no output and exit code 0."
+    },
+    {
+      "name": "Start the workload and the edge, the documented way (build.yml)",
+      "status": "Passed",
+      "detail": "Reproduced the workflow step's shell block verbatim: started 'GAME_SERVICE_PORT=8080 npm start' in workloads/game-service, then the built GameEdge.dll pointed at it. curl http://127.0.0.1:8080/livez -> {\"status\":\"healthy\"}; /readyz -> {\"status\":\"healthy\"}; edge http://127.0.0.1:5080/health/live -> {\"status\":\"Healthy\",\"checks\":[]}; /health/ready -> {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"}]}. Both processes killed cleanly afterward, exit 0."
+    },
+    {
+      "name": "Run the replay against the workload (build.yml)",
+      "status": "Passed",
+      "detail": "npx vitest run tests/replay.test.ts (workloads/game-service): Test Files 1 passed (1), Tests 11 passed (11). Includes S5.2/S5.3 byte-identity comparisons and S5.7/S5.9. Duration 24.54s."
+    },
+    {
+      "name": "Run the replay against the edge (build.yml)",
+      "status": "Passed",
+      "detail": "GAME_EDGE_DLL=<built GameEdge.dll path> npx vitest run tests/replay-edge.test.ts (workloads/game-service): Test Files 1 passed (1), Tests 2 passed (2) -- S7.8 byte-identity comparisons A and B both passed. Duration 5.71s."
+    },
+    {
+      "name": "Migrate the schema to head, the documented way (build.yml)",
+      "status": "Passed",
+      "detail": "docker compose up -d brought up postgres (reported ready twice consecutively via pg_isready). GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate (tsx scripts/migrate.ts) output: 'migrated ci_documented_migrate to head'. Exit code 0."
+    },
+    {
+      "name": "Start the workload against the durable store, the documented way (build.yml)",
+      "status": "Passed",
+      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start, then curl http://127.0.0.1:8081/readyz -> {\"status\":\"healthy\"}. Workload killed via trap afterward. Exit 0."
+    },
+    {
+      "name": "Run the one-instance contention proof (build.yml)",
+      "status": "Passed",
+      "detail": "npx vitest run tests/contention-one-instance.test.ts (workloads/game-service, against the durable store): Test Files 1 passed (1), Tests 5 passed (5), including S6.1/S6.6 (one 200 + one 409 concurrent_modification) and S6.3/S6.5 perturbations. Duration 3.20s."
+    },
+    {
+      "name": "Run the two-instance contention proof (build.yml)",
+      "status": "Passed",
+      "detail": "npx vitest run tests/contention-two-instances.test.ts (workloads/game-service): Test Files 1 passed (1), Tests 7 passed (7) standalone -- S7.3/S7.4 produced exactly one 200 and one 409 carrying concurrent_modification. Re-verified the previously-reported flakiness (contention-two-instances returning [200,200] instead of [200,409] under the full 25-file parallel suite): ran the full 'npm test' suite 3 times in a row (see the 'Test (build.yml, game-service job)' gate below); this file's S7.3/S7.4 assertion passed cleanly in all 3 full-suite runs as well as standalone. No flakiness reproduced in 4 total runs this session (1 standalone + 3 full-suite) -- differs from the prior partial run's finding, reported honestly as 'not reproduced this session', not as 'fixed'."
+    },
+    {
+      "name": "Run the durable replay (build.yml)",
+      "status": "Passed",
+      "detail": "npx vitest run tests/durable-replay.test.ts (workloads/game-service): Test Files 1 passed (1), Tests 7 passed (7) -- S8.2/S8.4 and S8.3 byte-identity comparisons, and S8.6/S8.9 two-schema replay. Duration 7.01s."
+    },
+    {
+      "name": "Run the port-conformance suite (build.yml)",
+      "status": "Passed",
+      "detail": "npx vitest run tests/conformance.test.ts (workloads/game-service): Test Files 1 passed (1), Tests 7 passed (7). Duration 999ms."
+    },
+    {
+      "name": "Test (build.yml, game-service job, full npm test)",
+      "status": "Passed",
+      "detail": "GAME_EDGE_DLL=<built GameEdge.dll path> npm test (workloads/game-service), run 3 times in a row against the durable postgres store to characterize the previously-reported contention-two-instances flakiness: Run 1: 'Test Files 24 passed | 1 skipped (25); Tests 197 passed | 1 skipped (198)', Duration 37.35s. Run 2: identical counts, Duration 30.54s. Run 3: identical counts, Duration 32.80s. All 3 runs green, including contention-two-instances.test.ts's S7.3/S7.4 concurrent-submission assertion each time. The 1 skipped test is tests/trace-evidence.test.ts (1 test skipped), consistent across all 3 runs and unrelated to this PR."
+    },
+    {
+      "name": "Validate Markdown links, terminology, and generated files (docs-ci.yml)",
+      "status": "Passed",
+      "detail": "pwsh ./build/Test-Documentation.ps1: 'design/d3/90-decisions.md:1138:66 [Warning] Terminology: Use JSON instead of Json.' and one more identical warning at :1141:948. 'Documentation checks passed across 76 Markdown file(s), with 2 warning(s).' Exit code 0. Both warnings are pre-existing in the archived design/d3/90-decisions.md, untouched by this branch's g2-archive move."
+    },
+    {
+      "name": "Validate design/30-slices.md's Status markers (docs-ci.yml)",
+      "status": "Passed",
+      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: 'SKIP: no active slices document at .../design/30-slices.md -- the active effort has no slices yet.' Exit code 0. This is the script's own documented, intended behavior (per its own comment block): 'Between the commit that archives a finished effort's set and the /slices run that writes the next one, the active effort has a brief and no slices -- stage 0 of the pipeline, not a broken repository', and a missing document at the default path passes with a stated skip rather than failing. This branch's own commit message ('Archive G2's design set to design/g2/, leaving the root at stage 0') is exactly this designed state, so the SKIP-as-pass here is the correct, expected outcome of this PR, not a gap."
+    },
+    {
+      "name": "Build and verify the status-page site (docs-ci.yml verify job)",
+      "status": "Failed",
+      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint, and typecheck all passed. The 'test' step (vitest run --config vitest.config.ts) failed: 'FAIL src/roadmap/roadmapData.test.ts [ src/roadmap/roadmapData.test.ts ] Error: ENOENT: no such file or directory, open /Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/30-slices.md' at roadmapData.test.ts:219, in the describe block \"the active design/30-slices.md -- the assertion that survives every future merge\", which does 'const activeRaw = readFileSync(join(..., \"design\", \"30-slices.md\"), \"utf8\")' against the repo root. Test Files: 1 failed | 5 passed (6); Tests: 40 passed (40, since the failing file threw before any of its own tests ran). This exactly confirms the known risk called out for this PR: this test hard-reads the root design/30-slices.md, which this branch moves to design/g2/30-slices.md, so the file no longer exists at that path. npm run check exited 1 overall (test:build and test:merge were not reached because 'test' failed first, per npm's default fail-fast chaining with &&)."
+    },
+    {
+      "name": "Build and verify the status-page site (docs-deploy.yml)",
+      "status": "Failed",
+      "detail": "Identical command to the docs-ci.yml verify job ('npm --prefix site ci && npm --prefix site run check') and identical failure: FAIL src/roadmap/roadmapData.test.ts, Error: ENOENT: no such file or directory, open '/Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/30-slices.md', at roadmapData.test.ts:219's readFileSync of the repo-root design/30-slices.md, which this PR moved to design/g2/30-slices.md. Test Files: 1 failed | 5 passed (6). Since both workflow steps run the byte-identical command against the same working tree, one real execution of 'npm --prefix site run check' stands for both; not re-run a second time as that would just repeat the same deterministic ENOENT."
     },
     {
       "name": "PowerShell parse-check (all *.ps1)",
       "status": "Passed",
-      "detail": "Every *.ps1 file in the repository parsed via [System.Management.Automation.Language.Parser]::ParseFile with zero parse errors. \"All .ps1 files parsed cleanly\". Exit code 0."
-    },
-    {
-      "name": "tools/Test-Companion.ps1 (core/companion split)",
-      "status": "Passed",
-      "detail": "Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid, Findings: {}, CoreCount: 21, CompanionCount: 0, AbsentCount: 21. Exit code 0."
-    },
-    {
-      "name": "tools/Test-DesignState.ps1 (design state vs. tree)",
-      "status": "DidNotRun",
-      "reason": "Exit code 2 (could-not-evaluate, not a failure verdict). CouldNotEvaluate: [ContractListUnreadable] SectionNotFound: /Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/20-contract.md. The checker could not read the contract's glob/section table at all, so it could not evaluate the tree against it. This is a pre-existing condition, unrelated to this branch's one-file docs change; also related to design/state/ absence tracked in issue #151."
+      "detail": "Parsed every *.ps1 file in the repository (excluding node_modules) via [System.Management.Automation.Language.Parser]::ParseFile: 'Checked 35 files, 0 with parse errors.'"
     },
     {
       "name": "Invoke-Pester -Path tools",
       "status": "Failed",
-      "detail": "Tests Passed: 229, Failed: 25, Skipped: 0, Inconclusive: 0, NotRun: 0, Total: 254. Failures are concentrated in Test-DesignState.Tests.ps1 (GlobDisagreement, S4.6, S12.x, S16.x, S17.x, S18.x cases) and Update-DesignProjection.Tests.ps1 (S7.2), consistent with the same design/20-contract.md SectionNotFound condition above, plus one CI-workflow authentication test ('the \"Run Pester tests\" step carries a GH_TOKEN env, the same as \"Check the design state against the tree\"' \u2014 moot while no such step exists, per the first row above). This is the same broken suite already tracked as issue #158 (that issue recorded 32/254 failing; this run shows 25/254 \u2014 the count has drifted since #158 was filed, but the suite is still not green from a fresh clone)."
+      "detail": "Invoke-Pester -Path tools -Output Detailed -PassThru: 'Tests completed in 168.75s. Tests Passed: 229, Failed: 25, Skipped: 0, Inconclusive: 0, NotRun: 0.' TotalCount 254. Failures are concentrated in Test-DesignState.Tests.ps1 (e.g. S12.2/S12.3/S12.5, S16.1/S16.5, S17.2, S18.1/S18.6, GlobDisagreement-style cases, 'reports ContractListUnreadable...') and Update-DesignProjection.Tests.ps1 (S7.2), consistent with design/20-contract.md not existing at the repo root right now (this repo is at 'stage 0' per this branch's own archive commit), plus one CI-workflow assertion test ('the \"Run Pester tests\" step carries a GH_TOKEN env, the same as \"Check the design state against the tree\"') which is moot since no such workflow step exists in this repo's actual .github/workflows/*.yml. This 229/25/254 split matches the previously-tracked issue #158 condition exactly, so it reads as the same pre-existing, not-this-branch's-doing failure rather than a regression."
+    },
+    {
+      "name": "tools/Test-Companion.ps1 (core/companion split)",
+      "status": "Passed",
+      "detail": "pwsh -File tools/Test-Companion.ps1: 'Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion.' State: Valid, Findings: {}, CoreCount: 21, CompanionCount: 0, AbsentCount: 21. Exit code 0."
+    },
+    {
+      "name": "tools/Test-DesignState.ps1 (design state vs. tree)",
+      "status": "DidNotRun",
+      "reason": "Exit code 2 (could-not-evaluate, not a failure verdict, per the script's own documented exit-code contract). CouldNotEvaluate: [ContractListUnreadable] ContractPathMissing: /Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/20-contract.md (reported twice: once directly, once noting UnrecordedArtifact's invariant half is uncomputed as a result). The checker could not read the contract's glob/section table because design/20-contract.md does not currently exist at the repo root -- this repository is at 'stage 0' of the design pipeline right now (per this branch's own commit message archiving G2's design set), the same pre-existing gap tracked in issue #151, not something this PR caused or could fix."
     }
   ]
 }
