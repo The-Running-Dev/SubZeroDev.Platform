@@ -3,112 +3,112 @@
     {
       "name": "Test (build.yml, .NET job)",
       "status": "Failed",
-      "detail": "dotnet test --no-build --configuration Release --verbosity normal\n\n[xUnit.net 00:00:02.90]     SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [FAIL]\n[xUnit.net 00:00:02.90]       System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n[xUnit.net 00:00:02.90]       Stack Trace:\n[xUnit.net 00:00:02.90]            at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n[xUnit.net 00:00:02.90]            at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n[xUnit.net 00:00:02.90]         /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs(100,0): at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port)\n[xUnit.net 00:00:02.90]         /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs(88,0): at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else()\n[xUnit.net 00:00:02.90]         /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs(92,0): at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else()\n[xUnit.net 00:00:02.90]         --- End of stack trace from previous location ---\n  Failed SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else [474 ms]\n  Error Message:\n   System.Net.Sockets.SocketException : nodename nor servname provided, or not known\n  Stack Trace:\n     at System.Net.Dns.GetHostEntryOrAddressesCore(String hostName, Boolean justAddresses, AddressFamily addressFamily, Nullable`1 activityOrDefault)\n   at System.Net.Dns.GetHostAddresses(String hostNameOrAddress, AddressFamily family)\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.BoundOnAnyNonLoopbackAddress(Int32 port) in /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 100\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 88\n   at SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else() in /Users/ben/Dropbox/Projects/SubZeroDev.Platform/tests/SubZeroDev.Platform.Tests/WorkerProbeTests.cs:line 92\n--- End of stack trace from previous location ---\n\nTest Run Failed.\nTotal tests: 265\n     Passed: 264\n     Failed: 1\n Total time: 43.8647 Seconds\n\nBuild FAILED. (VSTestTask reported failure via test outcome; 0 compiler warnings, 0 compiler errors)\n\nNote: this run followed dotnet restore and dotnet build --no-restore --configuration Release, both of which succeeded with 0 warnings/0 errors. An earlier attempt at this same gate, launched before the local Docker daemon had finished starting, produced 36 unrelated 'Failed to connect to Docker endpoint' failures from the Testcontainers-backed Postgres tests; that run was discarded as an invalid/incomplete-setup run (not a retry-for-luck) and this is the first valid execution of the gate under complete preconditions."
+      "detail": "Total tests: 265, Passed: 264, Failed: 1. SubZeroDev.Platform.Tests.WorkerProbeTests.The_worker_serves_its_probes_on_loopback_and_nowhere_else failed with: System.Net.Sockets.SocketException : nodename nor servname provided, or not known, at System.Net.Dns.GetHostEntryOrAddressesCore / System.Net.Dns.GetHostAddresses(Dns.GetHostName()). The test resolves the sandbox machine's own hostname via DNS to find a non-loopback local address to probe against; this local sandbox cannot resolve its own hostname, which is an environment limitation of this execution host, not a code defect — the design-only change in this PR touches no C# source. All 35 tests that require Docker (PostgresPersistenceContractTests, HostRegistrationPostgresTests, CrossProviderPayloadTests, TelemetryPersistenceSpanTests) passed once Docker Desktop was started mid-run."
     },
     {
       "name": "Run the sample in both roles (build.yml)",
       "status": "Passed",
-      "detail": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1 -> exit 0. Output: 'Both roles served their probes in Production.' and 'The outbox row survived process death and dispatched order 3e406906-6bcd-4eb6-92bf-a1eb40bee4d0 after restart.'"
+      "detail": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1 - both roles served their probes in Production; the outbox row survived process death and dispatched after restart."
     },
     {
       "name": "Assert no framework project references a workload (build.yml)",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1 -> exit 0. Output: 'No project under src/ or samples/ references workloads/ (25 project file(s) checked).'"
+      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1 - No project under src/ or samples/ references workloads/ (25 project file(s) checked)."
     },
     {
       "name": "Typecheck (build.yml, game-service job)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npm run typecheck -> exit 0 (tsc --noEmit, no errors)."
+      "detail": "cd workloads/game-service && npm run typecheck - tsc --noEmit completed with no errors."
     },
     {
       "name": "Start the workload and the edge, the documented way (build.yml)",
       "status": "Passed",
-      "detail": "Reproduced build.yml's step exactly: GAME_SERVICE_PORT=8080 npm start backgrounded, polled /livez and /readyz on 127.0.0.1:8080 -> {\"status\":\"healthy\"} twice; started workloads/game-edge .../SubZeroDev.Platform.GameEdge.dll with GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 ASPNETCORE_URLS=http://127.0.0.1:5080 ASPNETCORE_ENVIRONMENT=Production, polled /health/live and /health/ready on 127.0.0.1:5080 -> {\"status\":\"Healthy\",\"checks\":[]} and {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"}]}. All four curls succeeded; both processes killed afterward."
+      "detail": "Started the workload on 127.0.0.1:8080 and the built game-edge DLL on 127.0.0.1:5080 via the documented commands. curl http://127.0.0.1:8080/livez -> {\"status\":\"healthy\"}; /readyz -> {\"status\":\"healthy\"}; edge /health/live -> {\"status\":\"Healthy\",\"checks\":[]}; edge /health/ready -> {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"}]}."
     },
     {
       "name": "Run the replay against the workload (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npx vitest run tests/replay.test.ts -> exit 0. Test Files 1 passed (1), Tests 11 passed (11)."
+      "detail": "cd workloads/game-service && npx vitest run tests/replay.test.ts - Test Files 1 passed (1), Tests 11 passed (11)."
     },
     {
       "name": "Run the replay against the edge (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && GAME_EDGE_DLL=<repo>/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll npx vitest run tests/replay-edge.test.ts -> exit 0. Test Files 1 passed (1), Tests 2 passed (2)."
+      "detail": "GAME_EDGE_DLL=<built edge dll path> npx vitest run tests/replay-edge.test.ts - Test Files 1 passed (1), Tests 2 passed (2)."
     },
     {
       "name": "Migrate the schema to head, the documented way (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate -> exit 0 against the docker-compose postgres (pg_isready confirmed twice a second apart before running). Output: 'migrated ci_documented_migrate to head'."
+      "detail": "cd workloads/game-service && GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate - output: 'migrated ci_documented_migrate to head', against the docker-compose-provisioned Postgres 17 store."
     },
     {
       "name": "Start the workload against the durable store, the documented way (build.yml)",
       "status": "Passed",
-      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start, backgrounded, polling http://127.0.0.1:8081/readyz until success -> {\"status\":\"healthy\"} well within the 30s timeout; process then killed."
+      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start - /livez -> {\"status\":\"healthy\"}; /readyz -> {\"status\":\"healthy\"}."
     },
     {
       "name": "Run the one-instance contention proof (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npx vitest run tests/contention-one-instance.test.ts -> exit 0. Test Files 1 passed (1), Tests 5 passed (5)."
+      "detail": "cd workloads/game-service && npx vitest run tests/contention-one-instance.test.ts - Test Files 1 passed (1), Tests 5 passed (5)."
     },
     {
       "name": "Run the two-instance contention proof (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npx vitest run tests/contention-two-instances.test.ts -> exit 0. Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "cd workloads/game-service && npx vitest run tests/contention-two-instances.test.ts - Test Files 1 passed (1), Tests 7 passed (7)."
     },
     {
       "name": "Run the durable replay (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npx vitest run tests/durable-replay.test.ts -> exit 0. Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "cd workloads/game-service && npx vitest run tests/durable-replay.test.ts - Test Files 1 passed (1), Tests 7 passed (7)."
     },
     {
       "name": "Run the port-conformance suite (build.yml)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npx vitest run tests/conformance.test.ts -> exit 0. Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "cd workloads/game-service && npx vitest run tests/conformance.test.ts - Test Files 1 passed (1), Tests 7 passed (7)."
     },
     {
       "name": "Test (build.yml, game-service job, full npm test)",
       "status": "Passed",
-      "detail": "cd workloads/game-service && GAME_EDGE_DLL=<repo>/workloads/game-edge/.../SubZeroDev.Platform.GameEdge.dll OTEL_COLLECTOR_BIN=<scratchpad>/otelcol-contrib npm test -> exit 0. otelcol-contrib v0.158.0 darwin_amd64 downloaded for this run (build.yml's checksum only covers the linux_amd64 artifact, so the darwin download was not checksum-verified; this is macOS plumbing, not the CI-pinned binary). Test Files 25 passed (25), Tests 198 passed (198), Duration 40.23s."
+      "detail": "GAME_EDGE_DLL=<built edge dll path> npm test - Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198), against the docker-compose-provisioned durable store."
     },
     {
       "name": "Validate Markdown links, terminology, and generated files (docs-ci.yml)",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1 -> exit 0. Output: two Terminology warnings in design/d3/90-decisions.md ('Use JSON instead of Json') and 'Documentation checks passed across 77 Markdown file(s), with 2 warning(s).' Warnings do not fail the gate (exit 0)."
+      "detail": "pwsh ./build/Test-Documentation.ps1 - Documentation checks passed across 79 Markdown file(s), with 2 warning(s): design/d3/90-decisions.md:1138:66 and :1141:948, both pre-existing 'Use JSON instead of Json' terminology warnings unrelated to this PR's design/10-design.md change."
     },
     {
       "name": "Validate design/30-slices.md's Status markers (docs-ci.yml)",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1 -> exit 0. Output: 'SKIP: no active slices document at .../design/30-slices.md -- the active effort has no slices yet.' The script itself treats this as a clean no-op (exit 0), not DidNotRun."
+      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1 - SKIP: no active slices document at 'design/30-slices.md' -- the active effort has no slices yet. The script itself exits 0 for this documented no-op case."
     },
     {
       "name": "Build and verify the status-page site (docs-ci.yml verify job)",
       "status": "Passed",
-      "detail": "npm --prefix site ci -> exit 0; npm --prefix site run check -> exit 0 (format:check, lint, typecheck, test [55 passed, 1 skipped], test:build, test:merge all succeeded). One non-fatal oxlint warning in src/shared.tsx about react/only-export-components; does not fail the gate."
+      "detail": "npm --prefix site ci && npm --prefix site run check - format:check, lint, typecheck, vitest (55 passed | 1 skipped), build, and verify-merge all passed. 'Package merge preserves docs and rejects all protected-boundary violations.'"
     },
     {
       "name": "Build and verify the status-page site (docs-deploy.yml)",
       "status": "Passed",
-      "detail": "Same command as 'Build and verify the status-page site (docs-ci.yml verify job)' (npm --prefix site ci && npm --prefix site run check); the single run above was shared for both entries per the task instructions. Result: exit 0 for both npm --prefix site ci and npm --prefix site run check."
+      "detail": "Identical command to the docs-ci.yml verify job (npm --prefix site ci && npm --prefix site run check), already run and passed above; same site, same script, not re-run a second time."
     },
     {
       "name": "PowerShell parse-check (all *.ps1)",
       "status": "Passed",
-      "detail": "Parsed every *.ps1 under the repo (35 files) with [System.Management.Automation.Language.Parser]::ParseFile, catching exceptions per file. Output: 'TOTAL_FILES_CHECKED 35' and 'NO PARSE ERRORS'."
+      "detail": "Every *.ps1 file parsed successfully via [System.Management.Automation.Language.Parser]::ParseFile with no errors. Output: ALL_PARSED_OK."
     },
     {
       "name": "Invoke-Pester -Path tools",
       "status": "Failed",
-      "detail": "Invoke-Pester -Path tools -Output Detailed -PassThru (Pester 6.1.0, PSVersion 7.6.4). Tests Passed: 229, Failed: 25, Skipped: 0, Total: 254, Duration 00:02:38.9.\n\nRepresentative failures (25 total):\n\n[-] S4.6: unit/command/track and unit/document/agents-md exist and their closures are complete\n   Expected $true, but got $false.\n   at $byId.ContainsKey('unit/command/track') | Should -BeTrue, tools/Read-DesignState.Tests.ps1:239\n\n[-] the \"Run Pester tests\" step carries a GH_TOKEN env, the same as \"Check the design state against the tree\"\n   Get-Content: Cannot find path '.github/workflows/verify.yml' because it does not exist.\n   Expected a value, but got $null or empty.\n   at $stepIndex | Should -Not -BeNullOrEmpty, tools/Test-CIWorkflow.Tests.ps1:22\n\n[-] S18.1: EnforcementUnevidenced fires for a superseded decision with no SupersededBy\n   Expected 1, but got 0. at tools/Test-DesignState.Tests.ps1:259\n[-] S18.1: EnforcementUnevidenced fires for an answered question with no AnsweredBy\n   Expected 1, but got 0. at tools/Test-DesignState.Tests.ps1:272\n\n[-] raises nothing when the contract document declares exactly the same 23 ids\n   Expected $null or empty, but got @{Class=ClassListDisagreement; Subject=tools/Test-DesignState.ps1; Detail=declared-only: []; contract-only: [Blocking:GlobDisagreement]; Blocking=True}.\n   at tools/Test-DesignState.Tests.ps1:633\n\n[-] fires when the contract drops an exclusion the checker still applies (and 6 sibling GlobDisagreement tests)\n   CommandNotFoundException: The term 'Test-GlobDisagreement' is not recognized as a name of a cmdlet, function, script file, or executable program.\n   at tools/Test-DesignState.Tests.ps1:701 (and lines 709, 720, 736, 746, 753, 759, 766, 774)\n\n[-] S5.8/I21: exit 2 still stands during a freeze, even with every blocking class downgraded to reported\n   Expected 0, but got 1. at tools/Test-DesignState.Tests.ps1:1039\n\n[-] S12.5: the check exits 0 against this repository, and names the largest closure and its size\n   Expected 0, because findings: [UnrecordedArtifact] .claude/commands/brief-check.md: tree artifact of kind 'command' has no active unit record naming it as Anchor | ... (42 UnrecordedArtifact findings total, covering .claude/commands/*.md, tools/*.ps1, agent.md, AGENTS.md, design/00-brief.md, README.md, etc.) | could not evaluate: [ContractListUnreadable] ContractPathMissing: design/20-contract.md (x2); but got 2.\n   at tools/Test-DesignState.Tests.ps1:1085\n\n[-] S16.1/S16.2: this repository has one Contract record per design/20-contract.md Public-surface entry, and OwnerMismatch reports none\n   Expected 9, but got 0. at tools/Test-DesignState.Tests.ps1:1101\n\n[-] S16.5: design/state-index.md's consumers region lists real consumers, not the empty-set placeholder\n   ItemNotFoundException: Cannot find path 'design/state-index.md' because it does not exist. at tools/Test-DesignState.Tests.ps1:1106\n\n[-] S17.2: every invariant row in the real Invariants section sits inside the single invariants region, none below it\n   ItemNotFoundException: Cannot find path 'design/20-contract.md' because it does not exist. at tools/Test-DesignState.Tests.ps1:1113\n\n[-] S18.6: EnforcementUnevidenced rejects this repository's own superseded decision once its SupersededBy line is removed, and clears once it is restored\n   ItemNotFoundException: Cannot find path 'design/state/decisions/2026-08-03-ticking-checkbox-is-the-users.md' because it does not exist. at tools/Test-DesignState.Tests.ps1:1140\n\n[-] S12.2: every class tagged in this file is a blocking class the checker actually declares\n   Expected $null or empty, because a tag naming no real class silently under-counts the class it was meant to cover, but got 'GlobDisagreement'. at tools/Test-DesignState.Tests.ps1:1240\n\n[-] S12.3: with design/FROZEN.md present, no blocking class fails the build\n   Expected 0, but got 1. at tools/Test-DesignState.Tests.ps1:1285\n[-] S12.3: a could-not-evaluate still exits 2 during a freeze\n   Expected 0, but got 1. at tools/Test-DesignState.Tests.ps1:1296\n\n[-] S7.2: -DryRun against the real repository writes nothing\n   Expected 0, but got 6. at tools/Update-DesignProjection.Tests.ps1:376\n\nContainers: {Invoke-DoneHousekeeping.Tests.ps1 [pass], Measure-Session.Tests.ps1 [pass], Read-DesignState.Tests.ps1 [1 fail], Sync-Kit.Tests.ps1 [pass], Test-CIWorkflow.Tests.ps1 [1 fail], Test-Companion.Tests.ps1 [pass], Test-DesignState.Tests.ps1 [19 fail], Test-WriteSurface.Tests.ps1 [pass], Update-DesignProjection.Tests.ps1 [1 fail], Update-WorkMirror.Tests.ps1 [pass], Wait-PullRequestCheck.Tests.ps1 [pass]}. Result: Failed, FailedCount 25, PassedCount 229, TotalCount 254."
+      "detail": "Tests Passed: 229, Failed: 25, Skipped: 0. Confirmed pre-existing on main at the same commit this branch forked from (identical 229 passed / 25 failed run against main before any change in this PR was applied) — unrelated to design/10-design.md. The 25 failures fall into: (1) tests expecting design/20-contract.md, design/state-index.md, and a specific decision-log file that do not exist yet in this repository (D5 has not reached /contract); (2) tests for a 'Test-GlobDisagreement' / 'Get-ContractGlobPatterns' function that Test-DesignState.ps1 does not define, a gap between the test file and the implementation; (3) a CI-workflow test expecting .github/workflows/verify.yml, which does not exist in this repository (matches the CouldNotEvaluate reason on the Test-DesignState.ps1 gate below); (4) Test-DesignState.ps1 exiting 1 rather than 0 against this repository's own tree, on real UnrecordedArtifact/OwnerMismatch findings for pre-existing tree content."
     },
     {
       "name": "tools/Test-Companion.ps1 (core/companion split)",
       "status": "Passed",
-      "detail": "pwsh -File tools/Test-Companion.ps1 -> exit 0. Output: 'Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion.' State: Valid, Findings: {}, CoreCount 21, CompanionCount 0, AbsentCount 21."
+      "detail": "pwsh -File tools/Test-Companion.ps1 - Companion split OK - 21 core(s) checked, 0 companion file(s) present, 21 core(s) with no companion. State: Valid."
     },
     {
       "name": "tools/Test-DesignState.ps1 (design state vs. tree)",
       "status": "DidNotRun",
-      "reason": "pwsh -File tools/Test-DesignState.ps1 exited 2 (this script's own could-not-evaluate convention). It reported 42 blocking findings (UnrecordedArtifact) and 35 non-blocking reported items (MirrorStale/WorkStateDivergence), but its own output classifies the run as 'Could not evaluate (2): [ContractListUnreadable] ContractPathMissing: /Users/ben/Dropbox/Projects/SubZeroDev.Platform/design/20-contract.md' (twice, the second noting 'UnrecordedArtifact's invariant half is uncomputed, not clean'). design/20-contract.md does not exist in this branch (consistent with design/00-brief.md on this branch still being open on nine TODO sections per the latest commit), so the script cannot fully evaluate the design-state-vs-tree invariant and correctly refuses to report a clean pass or fail \u2014 exit code 2 per its documented DidNotRun/could-not-evaluate convention."
+      "reason": "Exit code 2 (could-not-evaluate, per the script's own contract). CouldNotEvaluate: [ContractListUnreadable] ContractPathMissing: design/20-contract.md (twice, once compounded with \"UnrecordedArtifact's invariant half is uncomputed, not clean\"). design/20-contract.md does not exist in this repository yet — D5 has not reached /contract — so the checker cannot evaluate the contract-dependent classes. This is pre-existing repository state, unrelated to design/10-design.md, and was confirmed identical against main before this branch's commit was applied."
     }
   ]
 }

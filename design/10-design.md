@@ -108,8 +108,13 @@ runtime denial, because a typo that silently denies is indistinguishable from a 
 permission provider and takes the union. D5 ships exactly two providers, and neither is a
 role-assignment table:
 
-- the **composition provider**, which grants the local operator every permission in the `Local`
-  profile and nothing at all in `Operated`;
+- the **composition provider**, which in the `Local` profile grants every permission to the `System`
+  kind (`system:local`) and nothing at all to `Anonymous`, and which grants nothing at all in
+  `Operated`. The grant is keyed to the principal *kind*, not to the absence of an authentication
+  provider: a `Local` host that exposes an endpoint reachable by an unauthenticated caller produces an
+  `Anonymous` principal for that request exactly as an `Operated` host would, and `Anonymous` earns no
+  blanket grant from either profile — an endpoint meant for public reads authorizes that read through
+  its own registered permission the ordinary way, never through the composition provider's grant;
 - the **Organizations provider**, which derives grants from a membership's role.
 
 The consequence worth stating: **D5 has no role-assignment store**, and the brief does not ask for
@@ -118,9 +123,11 @@ richer organization administration are explicit non-goals. A consumer needing cu
 a third provider; that is the extension point, and it needs no Platform table.
 
 **`AuthorizationDecision`** carries the permission, the resource when the check was resource-scoped,
-the tenant it was evaluated in, the outcome, and **the provider that produced the grant**. The last
-field is not diagnostics. The evaluator takes a union across providers, so a wrong grant is a wrong
-*provider*, and a decision that cannot name its source cannot be traced back to one.
+the tenant it was evaluated in, the outcome, and **the non-empty set of providers that produced the
+grant** — one entry when one provider answered, several when they agreed. This is not diagnostics. The
+evaluator takes a union across providers, so a wrong grant is a wrong *provider*, and a decision that
+names only one source when two contributed would misattribute the other's grant on the next audit or
+diagnostic that reads it.
 
 ### 4. Tenancy — the escape is a scope, not a flag
 
@@ -206,7 +213,8 @@ tier" — puts the branch back into product code under a different name, so **Bi
 contribute to one entitlement seam and neither is queryable directly.**
 
 Contribution is a **union**: any registered contributor granting a feature grants it, and the
-`EntitlementDecision` records which contributor did. Intersection was rejected — installing Licensing
+`EntitlementDecision` records the non-empty set of contributors that did — one when only one granted,
+several when they agreed. Intersection was rejected — installing Licensing
 into an operated SaaS deployment would silently revoke subscription entitlements, which is a failure
 mode nobody would look for. The union's own risk, that one wrong contributor grants everything, is
 bounded by the decision naming its source, by the contributor set being registered explicitly and
@@ -270,9 +278,11 @@ What remains that a caller controls is the action name, the resource type and th
 those pass through the fixed redaction boundary
 ([`src/SubZeroDev.Platform.Observability/Redaction.cs`](../src/SubZeroDev.Platform.Observability/Redaction.cs))
 before storage. That boundary is `internal` today and is consumed by one package; D5 needs it in two
-more, so **it moves to a framework package both can reach and stays non-injectable** — the D3 decision
-that made it fixed rather than configurable is unchanged, and a redaction boundary a consumer could
-replace is not a boundary.
+more — the Audit store module and Mcp — so **it moves to Core, which is the framework package both
+modules already depend on**, and stays non-injectable. Abstractions is not the destination: it exposes
+contracts only and acquires no implementation (*Module boundaries*, § 3), and the redaction boundary is
+implementation. The D3 decision that made it fixed rather than configurable is unchanged, and a
+redaction boundary a consumer could replace is not a boundary.
 
 The audit record is append-only at the contract: no update, no delete. **D5 selects no retention**, per
 the brief's operating assumptions, so the table grows without bound and no pruning job is registered
@@ -307,9 +317,13 @@ checked.
 
 `CompositionProfile` is `Local` or `Operated`, it is configuration, and it joins the settings
 fingerprint. The package graph already decides what is present; the profile is what lets startup say so
-out loud. `Operated` with no authentication provider registered fails startup. `Local` with an
-authentication provider, a billing contributor or an organizations resolver registered fails startup —
-because a local host that has grown a commercial dependency by accident should stop, not degrade.
+out loud. `Operated` with no authentication provider registered fails startup, and **`Operated` with no
+durable audit sink registered — no Audit store module present — fails startup as well**: D5 defines
+durable, queryable audit as part of the commercial-security surface an operated deployment claims, and
+the default log-only sink (*Data model*, § 7) is what makes local mode work with no module installed,
+not a substitute an operated host may fall back to silently. `Local` with an authentication provider, a
+billing contributor or an organizations resolver registered fails startup — because a local host that
+has grown a commercial dependency by accident should stop, not degrade.
 
 The brief's non-goal is explicit that Identity, Organizations, Billing and Licensing are *absent* from
 the local composition, "not registered checks that always pass". The seam defaults in `Local` are
@@ -382,18 +396,18 @@ and leaves three untouched in kind.
   profile. Depends on nothing, as before. Exposes contracts only; it acquires no implementation, which
   is the property that lets a consumer compile against it alone.
 - **Core** gains the provider registries — permission providers, entitlement contributors, tenant
-  resolvers, audit sinks, authentication providers — and the startup validation that checks a
-  registered set against the declared composition profile. Depends on Abstractions. Touches no network,
-  database or filesystem, unchanged.
+  resolvers, audit sinks, authentication providers — the startup validation that checks a registered
+  set against the declared composition profile, and the redaction boundary moved from Observability
+  (*Data model*, § 7). Depends on Abstractions. Touches no network, database or filesystem, unchanged.
 - **Hosting** gains the fixed request order (*Control flow*, path 1): authentication, then tenant
   resolution, then the operation scope, then authorization at the endpoint convention. Depends on Core
   and Abstractions. It knows no product concept, and it knows no capability — it knows the seams.
 - **Persistence** gains the shareable declaration, the widened filter and the shared-read scope, and it
   gains the audit sink's transaction enlistment. Depends on Abstractions. The tenant column, keys and
   implicit constant are unchanged.
-- **Observability** gains nothing except that the redaction boundary moves out of it, to Abstractions,
-  so Audit and Mcp can reach the same one. This is the only change D5 makes to a settled D3 decision,
-  and it changes where the boundary lives, not what it does.
+- **Observability** gains nothing except that the redaction boundary moves out of it, to Core, so Audit
+  and Mcp can reach the same one. This is the only change D5 makes to a settled D3 decision, and it
+  changes where the boundary lives, not what it does.
 - **Testing** gains fakes for the framework seams only: a fake principal of each kind, a fake tenant
   resolver, a fake entitlement contributor, an audit inspector, and the composition profile. It gains
   no fake organization, subscription or licence — those are module knowledge, and a framework package
@@ -483,7 +497,13 @@ capability's semantics are stated relative to it.
    request is in flight does not change the request that already resolved.
 4. **Authorize.** The evaluator asks every permission provider for the named permission, in the resolved
    tenant, against the resource when the check is resource-scoped.
-5. **Check entitlement**, if the endpoint is gated by a feature.
+5. **Check entitlement**, if the endpoint *admits new paid-feature work* — creates, starts or schedules
+   it. An endpoint that only reads, lists or exports data a tenant already has is not gated here, even
+   when that data was produced under the same feature: entitlement is checked once, at the admission
+   that produced the data (*Concurrency and ordering*, "Entitlement is evaluated at admission and
+   carried"), and a lapsed licence or subscription does not re-ask the question access already
+   answered. This is what keeps the brief's "only new paid-feature work is denied after grace" true at
+   the endpoint level and not only at the work-item level.
 6. **Do the work**, inside a transaction when it writes.
 7. **Audit**, per the class rules in *Failure modes* below.
 
@@ -497,12 +517,17 @@ Authorization row requires it — and a decision taken before the tenant is know
 wrong tenant.
 
 **The same path in the local host is the same path.** No step is skipped and no branch is taken. Step 1
-finds no authentication provider and produces the `system:local` `System` principal or `Anonymous`
-depending on how the host exposes the endpoint; step 2 finds no resolver and answers `Implicit`; step 4
-asks the composition provider, which grants; step 5 asks a contributor set that contains only the
-Community baseline. The absence of the four commercial packages is visible in the graph and invisible
-in the flow, which is the property the brief asks for when it refuses "registered checks that always
-pass".
+finds no authentication provider and produces the `system:local` `System` principal for a request the
+host itself originates, or `Anonymous` for a request arriving with no credential — the same two
+outcomes an `Operated` host without a matching provider would produce; step 2 finds no resolver and
+answers `Implicit`; step 4 asks the composition provider, which grants every permission to the
+`System` principal and nothing to `Anonymous` (*Data model*, § 3); step 5 asks a contributor set that
+contains only the Community baseline. A host that wants an endpoint reachable by an anonymous local
+caller registers a permission provider that grants it explicitly; the composition provider is not that
+provider. The absence of the four commercial packages is visible in the graph and invisible in the
+flow, which is the property the brief asks for when it refuses "registered checks that always pass" —
+and it is a property of the *packages present*, not a license for an unauthenticated caller to inherit
+the local operator's trust.
 
 **The shared-resource branch.** A read that needs another tenant's published rows opens the shared-read
 scope for one declared type, which emits one audit event, and closes it. Every read outside that scope,
@@ -517,9 +542,9 @@ graph fails at startup with a named error rather than at first use.
 2. **The provider registries close.** Permission providers, entitlement contributors, tenant resolvers,
    audit sinks and authentication providers are enumerated and frozen.
 3. **The composition profile is validated against them.** `Operated` with no authentication provider
-   fails. `Local` with an authentication provider, an entitlement contributor other than the Community
-   baseline, or a tenant resolver fails. The failure names the profile, the offending registration and
-   which of the two it disagrees with.
+   fails. `Operated` with no durable audit sink registered fails. `Local` with an authentication
+   provider, an entitlement contributor other than the Community baseline, or a tenant resolver fails.
+   The failure names the profile, the offending registration and which of the two it disagrees with.
 4. **Permission names are collected** from every contributing module and checked for duplicates across
    modules — two modules claiming the same name is a composition defect, not a last-writer-wins.
 5. **Tool schemas are validated**, when Mcp is present: a parameter name matching the sensitive marker
@@ -545,12 +570,20 @@ because each describes a deployment that would otherwise run and be wrong quietl
 2. **The tool is looked up in the frozen catalogue.** Unregistered and registered-but-unexposed are the
    same answer: unknown tool. Not "forbidden", which would confirm it exists.
 3. **The tenant resolves** from the connection's principal, by the same resolvers path 1 uses.
-4. **Authorization runs** for the tool's declared permission, before invocation and before any argument
-   is interpreted.
-5. **Entitlement is checked**, when the tool declares a feature.
-6. **The tool is invoked**, inside an operation scope of its own, so a long-lived connection's many calls
+4. **Arguments are parsed against the tool's declared schema.** This is schema validation, not
+   execution: it makes the declared parameters — including a resource id, when the tool's schema names
+   one — available to the next step, and it runs before any producer code sees the call. A tool whose
+   schema names no resource parameter has none to extract, and step 5 authorizes it at the tool level
+   only, exactly as before.
+5. **Authorization runs** for the tool's declared permission, scoped to the parsed resource id when the
+   tool's schema names one, before invocation and before any producer code is reached. Parsing an
+   argument to find the resource it names is not "interpreting" it in the sense the inherited rule
+   means — no producer logic runs, and a credential-shaped argument is still refused at registration
+   (*Data model*, § 8) regardless of what step 4 does with it.
+6. **Entitlement is checked**, when the tool declares a feature.
+7. **The tool is invoked**, inside an operation scope of its own, so a long-lived connection's many calls
    are separately correlated.
-7. **The invocation is audited** — actor, tenant, tool as the action, outcome — with no arguments, which
+8. **The invocation is audited** — actor, tenant, tool as the action, outcome — with no arguments, which
    the audit schema makes structural rather than a rule the Mcp module has to remember.
 
 ---
@@ -709,7 +742,10 @@ that was accepted or scheduled carries the entitlement decision that admitted it
 it while it runs. This is what makes the brief's "after the grace period, new paid-feature work is denied
 while accepted, running and scheduled work continues" a property of the design rather than a behaviour
 to be arranged case by case, and it is why an entitlement decision is a value that can be persisted with
-a work item rather than only a function call.
+a work item rather than only a function call. The same rule settles the endpoint question in *Control
+flow*, path 1, step 5: an endpoint that reads, lists or exports data admitted under a now-lapsed feature
+is reading a unit of work whose entitlement decision already exists and was never re-checked, so it is
+not a second admission and is not gated again.
 
 **The tool catalogue is immutable after startup**, so there is no registration-versus-invocation race to
 resolve, and no lock on the path every MCP call takes.
