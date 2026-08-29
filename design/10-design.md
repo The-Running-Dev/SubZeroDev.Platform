@@ -980,10 +980,25 @@ licence and capabilities from memory is exactly what `AGENTS.md`, *Verification*
 These are the four things this design could not settle from the brief, the tree, or a decision already
 logged. Each carries a recommendation, recommended option first.
 
-### 1. Does `Platform.Mcp` adopt an existing MCP implementation, or implement the transport?
+**Resolved questions keep their number and are struck through rather than removed**, because
+[`20-contract.md`](20-contract.md) cites them by number and renumbering would silently break every
+reference.
 
-This blocks `/contract`, because the answer decides whether the tool registration and invocation
-contracts are Platform's own types or a projection of somebody else's.
+### ~~1. Does `Platform.Mcp` adopt an existing MCP implementation, or implement the transport?~~
+
+**Resolved 2026-08-29, by Ben: adopt the official MCP C# SDK for the transport, the session and the
+filter pipeline, and project to it at the module boundary** — registration, exposure, required
+permission and required feature stay Platform's own types, and no SDK type appears in Platform's public
+surface. The evaluation ran against the sources and met all three criteria below: the licence is
+Apache-2.0 under *"Model Context Protocol a Series of LF Projects, LLC"*, a Linux Foundation series
+project rather than a vendor-owned library; `McpServerTool` is an abstract class exposing
+`ProtocolTool`, so a producer supplies the protocol tool and its schema as data and neither producer is
+privileged; and the SDK already binds a session to the principal established at the transport. The
+reasoning, the alternatives rejected and the one retained objection are in
+[`90-decisions.md`](90-decisions.md); the declarations are in [`20-contract.md`](20-contract.md)
+§ *Types* 10.
+
+The question as originally posed, kept because the criteria are what the answer was measured against:
 
 **Recommendation: evaluate before deciding, and treat the evaluation as a gate on `/contract` rather
 than something this document assumes.** What has to be established is the licence and its durability —

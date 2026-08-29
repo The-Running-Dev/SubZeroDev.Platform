@@ -24,7 +24,7 @@ A slice is **done** when its issue is closed, or when every box under `Done when
 gh issue list --state all --limit 200 --json number,title,state,body
 ```
 
-Match a slice to its issue on a title beginning `S<n> —`, the same way `/track` does.
+Match a slice to its issue on a title beginning `<Effort>-S<n> —`, the same way `/track` does — `D5-S3 —`, not `S3 —`. **The effort tag is not decoration.** A tracker outlives the effort that filled it, and this repository already holds two retired slice sets both numbered from S1; matching on the bare number pairs a live slice with a closed issue from a different effort and reads it as done. The tag is the parenthesised id in the slices document's own title (`# Slices — commercial (D5)`). Where a document carries none, the unqualified `S<n> —` form is still correct.
 
 - Skip a slice whose `Depends on:` names one that is not done, and say which dependency held it back.
 - A slice with some boxes ticked and some not is **in progress, not done**, and it is the next slice. Re-establish which criteria still fail before writing anything. Do not assume the unticked ones are exactly the outstanding work.

@@ -71,6 +71,25 @@ Acceptance:
 - **S1.1** The first criterion holds.
 - **S1.2** The second criterion holds.
 '@
+
+    # The regression the effort tag exists for: a tracker holding a retired effort's closed S1
+    # and a live effort's S1. Matching on the bare prefix pairs them and reports both sets of
+    # criteria as drift - 42 findings in this repository, none of them real. Declared here
+    # rather than in its Context, because Pester runs a Context body at discovery time and a
+    # $script: variable set there is gone by the time an It runs.
+    $script:TaggedDoc = @'
+# Slices — commercial (D5)
+
+## Outstanding
+
+## S1 — A slice
+
+Delivers: something a reader can follow.
+
+Acceptance:
+- **S1.1** The first criterion holds.
+- **S1.2** The second criterion holds.
+'@
 }
 
 AfterAll {
@@ -199,6 +218,71 @@ None.
 
             $r.State | Should -Be 'Drifted'
             $r.Findings.Kind | Should -Contain 'NoIssue'
+        }
+    }
+
+    Context 'effort-qualified titles' {
+
+        It 'matches the tagged title and ignores another effort''s closed issue of the same number' {
+            $path = New-SlicesDoc -Content $script:TaggedDoc
+            Mock Get-TrackerIssue { New-Tracker -Issues @(
+                New-Issue -Number 8 -Title 'S1 — A retired effort''s first slice' -Body "### Done when`n- [x] **S1.7** unrelated"
+                New-Issue -Number 9 -Title 'D5-S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [ ] **S1.2** second"
+            ) }
+
+            $r = Invoke-DriftCheck -SlicesPath $path
+
+            $r.State | Should -Be 'Clean'
+            $r.SlicesCompared | Should -Be 1
+        }
+
+        It 'reports NoIssue rather than pairing with the untagged issue when the tagged one is absent' {
+            $path = New-SlicesDoc -Content $script:TaggedDoc
+            Mock Get-TrackerIssue { New-Tracker -Issues @(
+                New-Issue -Number 8 -Title 'S1 — A retired effort''s first slice' -Body "### Done when`n- [x] **S1.7** unrelated"
+            ) }
+
+            $r = Invoke-DriftCheck -SlicesPath $path
+
+            $r.Findings.Count | Should -Be 1
+            $r.Findings[0].Kind | Should -Be 'NoIssue'
+            $r.SlicesCompared | Should -Be 0
+        }
+
+        It 'an untagged document still matches unqualified titles, the behaviour before this' {
+            $path = New-SlicesDoc -Content $script:TwoCriterionDocBoldIds
+            Mock Get-TrackerIssue { New-Tracker -Issues @(
+                New-Issue -Number 9 -Title 'S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [ ] **S1.2** second"
+            ) }
+
+            $r = Invoke-DriftCheck -SlicesPath $path
+
+            $r.State | Should -Be 'Clean'
+            $r.SlicesCompared | Should -Be 1
+        }
+
+        It 'an explicit -EffortTag overrides the document''s own' {
+            $path = New-SlicesDoc -Content $script:TaggedDoc
+            Mock Get-TrackerIssue { New-Tracker -Issues @(
+                New-Issue -Number 9 -Title 'G1-S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [ ] **S1.2** second"
+            ) }
+
+            $r = Invoke-DriftCheck -SlicesPath $path -EffortTag 'G1'
+
+            $r.State | Should -Be 'Clean'
+            $r.SlicesCompared | Should -Be 1
+        }
+
+        It 'reads the tag from the title only, never from a parenthesis in the body' {
+            $path = New-SlicesDoc -Content @'
+# Slices
+
+## S1 — A slice (D5)
+
+Acceptance:
+- **S1.1** The first criterion holds.
+'@
+            Get-EffortTag -Path $path | Should -BeNullOrEmpty
         }
     }
 

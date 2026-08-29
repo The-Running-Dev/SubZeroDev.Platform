@@ -12,15 +12,146 @@ belongs in `docs/docs/adr/`.
 
 ## Open
 
-- **Audit retention is deferred out of D5 and the table grows without bound.** The brief's operating
-  assumptions exclude retention duration, archival, export formats and external shipping from this
-  effort, so no pruning job is registered even though `Prune` exists. The first party to notice will be
-  an operator, not a reviewer. Someone has to decide what retention means before an operated deployment
-  runs for long.
-- **`Platform.Mcp`'s protocol implementation has not been evaluated against existing packages.**
-  ADR-004 §4 requires the check and requires the reason recorded either way, and it must happen before
-  `/contract` because it decides whether tool registration and invocation are Platform's own contracts
-  or a projection of somebody else's. `10-design.md` § *Open questions* 1 states the criteria.
+_(previously tracked out of this section: issue [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187))_
+
+---
+
+### 2026-08-29 — `Platform.Mcp` adopts the official MCP C# SDK and projects to it at the boundary
+
+Context: `10-design.md` § *Open questions* 1 made the ADR-004 §4 evaluation a gate on `/contract`,
+because the answer decides whether tool registration and invocation are Platform's own contracts or a
+projection of somebody else's. `minimal-platform-packages.md` §3a's finding that three foundational
+.NET libraries changed licence within one year made licence durability a first-class criterion. The
+evaluation was run on 2026-08-29 against the sources, not from memory, per `AGENTS.md`, *Verification*.
+Chosen: **take a dependency on `ModelContextProtocol.Core` and `ModelContextProtocol.AspNetCore` for
+the transport, the session and the filter pipeline, and keep registration, exposure, required
+permission and required feature as Platform's own types, projecting to the SDK's `Tool` and
+`McpServerTool` at the module boundary.** No SDK type appears in Platform's public surface, and no
+package other than `SubZeroDev.Platform.Mcp` references the SDK (`20-contract.md`, I-M9). All three of
+the design's criteria are met: the licence is Apache-2.0 with a documented MIT→Apache-2.0 transition,
+and the copyright holder is *"Model Context Protocol a Series of LF Projects, LLC"* — a Linux
+Foundation series project rather than a vendor-owned library, which is the structure that forecloses
+the unilateral relicensing §3a warns about; transport is separable from tool production, because
+`McpServerTool` is an abstract class exposing `ProtocolTool` and `InvokeAsync`, so a producer can
+supply the protocol tool and its `InputSchema` entirely as data and neither producer is privileged
+(I-M7); and connection-level authentication is not merely expressible but already enforced —
+`StreamableHttpHandler` binds the session to the principal established at the HTTP transport and
+answers a session request carrying a different principal with 403 (I-M5).
+Rejected: **implementing the transport ourselves**, which the design named as the answer if any
+implementation baked in a single tool-definition producer. The SDK does not, so this now buys nothing
+the projection does not, while costing a protocol implementation to write and to keep current with a
+specification this repository does not own. **Exposing the SDK's types directly as Platform's
+surface**, which is less code and gives consumers a documented surface; rejected because the SDK went
+v1.0 (2026-03) to v2.0 (2026-07-28) to v2.2.0 (2026-08-13), so a pass-through makes an SDK major
+version a Platform breaking change and Platform's contract stops being Platform's to keep stable — the
+projection layer is the price of that, and it is the cheaper side. **A third-party .NET MCP library**;
+none was found, so nothing was passed over on merit.
+Known and retained: the SDK's default authorization filter answers an unauthorized call with "Access
+forbidden: This tool requires authorization", which confirms the tool exists and contradicts I-M4.
+Filters are ordered lists, so `Platform.Mcp` installs its own ahead of it and does not use the SDK's
+authorization-metadata path at all (I-M11) — composition rather than a fork, but it is a constraint
+the implementing slice must honour rather than discover.
+Reversibility: cheap, and that is what the projection buys. Dropping the SDK later replaces one
+module's internals and changes no Platform type; the reverse — retracting SDK types from a published
+Platform surface — is the direction that is not available, which is why the projection is taken now
+rather than added when it hurts.
+
+### 2026-08-29 — A tool's exposure is not a field its producer fills in
+
+Context: `10-design.md` § *Data model* 8 describes one `ToolRegistration` carrying the name, the
+producer, the schema, the required permission and whether it is exposed, and requires exposure to be
+configuration, resolved at startup, default closed.
+Chosen: two types. `ToolDefinition` is what a producer supplies and carries no exposure;
+`ToolRegistration` is what the catalogue produces by combining a definition with configuration, and it
+carries the producer and the exposure. `IToolCatalogue` exposes only the exposed set and an
+exposure-respecting lookup — no `All`, no exposure-ignoring `TryGet`.
+Rejected: **the design's single type with an `IsExposed` field**, which is one type rather than two;
+rejected because a producer would then supply a value the catalogue must ignore, and a field that is
+ignored is a trap — it makes default-closed a rule every present and future producer has to remember,
+which is exactly the automatic-exposure-on-install that `second-consumer-packages.md` §4 refuses.
+**A catalogue that can enumerate every registration for diagnostics**; rejected because an enumeration
+of hidden tools is the disclosure I-M4 exists to prevent, and a diagnostic surface is where that leak
+would be least examined.
+Reversibility: cheap. Merging the two types later is additive for a caller that only reads
+`ToolRegistration`.
+
+### 2026-08-29 — Provenance is a named type, and the well-known names are Platform's own public surface
+
+Context: `/contract` for D5. `10-design.md` requires an authorization decision to carry "the non-empty
+set of providers that produced the grant" and an entitlement decision to name its contributors, and it
+requires the publication of a shared row to be "an explicit, permissioned, audited write" and an
+audit-write failure to degrade readiness. None of those is expressible without something to name: the
+design states the requirement and not the handle.
+Chosen: `PermissionProviderName` and `EntitlementContributorName` as opaque name structs on the shape
+`ModuleName` and `HealthCheckName` already establish; `ResourceRef(Type, Id)` as the one type both a
+resource-scoped authorization check and an audit record name a resource with; `AuditAction` as a name
+struct; and three well-known name classes on the `PlatformHealthChecks` precedent —
+`PlatformPermissions` (`Platform.Tenancy.ShareResource`, `Platform.Organizations.Administer`,
+`Platform.Audit.Read`), `PlatformAuditActions`, and `PlatformHealthChecks.AuditSink`
+(`platform.audit.sink`). All are public surface, because a consumer's policy and an operator's probe
+body both refer to them by name.
+Rejected: **bare strings for provider and contributor provenance**, which needs no new type; rejected
+because the union's entire risk control is that a decision names its source, and a raw string is one
+typo away from attributing a grant to a provider that did not make it, with nothing to catch it.
+**Two resource types, one for authorization and one for audit**; rejected because the audit record of
+a denial must name the same resource the check named, and two types is a mapping that can disagree.
+**Leaving the publication permission unnamed for a slice to invent**; rejected because an unnamed
+permission is one each consumer names differently, and I-A3 makes an undeclared name a startup
+failure — so the name has to exist before the first slice, not after it.
+Reversibility: cheap for each name's spelling while packages are 0.x; expensive for the decision that
+provenance is typed at all, since it is what every audit and diagnostic reading a decision depends on.
+
+### 2026-08-29 — The licence tier is an opaque name with a well-known Community baseline
+
+Context: `10-design.md` states that Platform is not a licensor and that accepted keys are supplied by
+the consuming product, while the brief and `tenancy-billing-licensing.md` both name Community, Pro and
+Enterprise and require a fresh installation with no verified claims to continue at Community. The
+design does not say which of those two facts decides the type.
+Chosen: `LicenceTier` is an opaque stable name struct with one well-known value, `Community`, standing
+to the tier vocabulary exactly as `TenantId.Implicit` stands to tenants and `Principal.Anonymous` to
+principals — a real value rather than the absence of one. Entitlement is asked by `FeatureName`, never
+by tier, so the tier is recorded and displayed and never branched on by Platform.
+Rejected: **an enum of Community, Pro and Enterprise**, which is the vocabulary both documents use and
+which makes the well-known baseline free; rejected because that vocabulary is the Automator's licence
+model rather than Platform's, a framework type carrying a product's price tiers is the same mistake as
+a framework type meaning "an organization", and a second consumer with a different ladder would face a
+framework change to sell anything.
+Reversibility: cheap. Narrowing an opaque name to a closed set later is additive for anyone already
+using the three names; widening a shipped enum is not.
+
+### 2026-08-29 — A durable audit sink declares itself, and the audit table is keyed by event id
+
+Context: `10-design.md` makes `Operated` with no durable audit sink a startup failure, but a sink's
+durability is not discoverable by trying it, and the audit record's storage shape is not stated.
+Chosen: `IAuditSink.IsDurable` is declared on the interface, on the precedent
+`IHealthCheck.TouchesExternalDependency` already sets for a property a registry must reject on. The
+audit table is keyed by the event id, which the writer mints, and **is not tenant-prefixed** unlike
+every product table; it is indexed on tenant with instant, on correlation, and on actor subject with
+instant, and on nothing else. The actor is stored as two columns, issuer and subject.
+Rejected: **inferring durability from whether the Audit store module is present**; rejected because it
+makes a framework check depend on knowing a module's identity, which is ADR-006 rule 1 through the back
+door. **A tenant-prefixed audit key**, matching every other table; rejected because an audit row is
+written *about* a tenant rather than owned by one, and the cross-tenant queries an operator actually
+runs would become cross-partition scans. **Storing the rendered `PrincipalId`**; rejected because the
+rendering is not injective over two opaque halves and could not be read back.
+Reversibility: cheap for the index set; expensive for the key, which every stored row carries.
+
+### 2026-08-29 — Module packages are `SubZeroDev.Platform.<Capability>`
+
+Context: `10-design.md` names the six module units — Identity, Organizations, Billing, Licensing, the
+audit store and Mcp — but fixes a package name for only one of them, `Platform.Mcp`, and the contract
+has to name the assembly each declaration lives in.
+Chosen: `SubZeroDev.Platform.Identity`, `.Organizations`, `.Billing`, `.Licensing`, `.Audit` and
+`.Mcp`, extending the convention `Platform.Mcp` already uses and the ecosystem prefix ADR-003 settles.
+The web shell takes no .NET package name, because it has no .NET package.
+Rejected: **a distinguishing prefix or suffix for the module tier**, such as `Platform.Modules.*`;
+rejected because ADR-006's rule is structural and the architecture checks (I-C6, I-C7) enforce it over
+the resolved package graph, so a naming convention adds a second, weaker statement of the same fact
+that can disagree with the first. **`SubZeroDev.Platform.AuditStore`** for the audit store; rejected
+because the module is the only thing named Audit that ships, and the word "store" is the design's
+disambiguator against the framework's audit *contract*, which lives in Abstractions and needs no name
+of its own.
+Reversibility: cheap while every package is 0.x and unpublished.
 
 ---
 
@@ -138,7 +269,7 @@ invented without a consumer to test it is the failure `second-consumer-packages.
 ADR-006 rejects by name.
 Reversibility: cheap. One-to-many is an added table and no framework change.
 
-### 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Abstractions
+### 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Core
 
 Context: `platform-specification.md` lists "changed fields where appropriate" among audit fields. The
 brief requires tests that push representative secrets through every audited input surface and assert
@@ -146,8 +277,10 @@ that neither values nor payloads reach the stored record or the logs.
 Chosen: the audit record carries the brief's seven fields plus the actor kind and the record class. **No
 payload, no changed-field list, no free-form detail string.** The three caller-controlled strings —
 action, resource type, resource id — pass through the fixed redaction boundary before storage, and that
-boundary moves from Observability to Abstractions so Audit and Mcp reach the same one. It stays
-non-injectable; the D3 decision that made it fixed rather than configurable is unchanged.
+boundary moves from Observability to Core — the framework package both modules already depend on, and
+not Abstractions, which exposes contracts only and acquires no implementation — so the Audit store
+module and Mcp reach the same one. It stays non-injectable; the D3 decision that made it fixed rather
+than configurable is unchanged.
 Rejected: **the specification's fuller list including changed fields**, which is what an auditor usually
 asks for and where "we redact it" is the standard answer; rejected because with a payload field the
 brief's test asserts a property of the redaction rules and of every future caller's discipline, while
