@@ -200,13 +200,23 @@ function Get-TrackerIssue {
     $ghArgs = @('issue', 'list', '--state', 'all', '--limit', '200', '--json', 'number,title,state,body')
     if ($Repository) { $ghArgs += @('-R', $Repository) }
 
+    # gh writes UTF-8. PowerShell on Windows decodes a native command's stdout using
+    # [Console]::OutputEncoding, which defaults to the OEM code page - so an em-dash in an
+    # issue title arrives as three mojibake characters and is written back out as those. It
+    # went unnoticed while every tracked title was ASCII, and appeared the moment a slice set
+    # titled `D5-S1 - ...` with a real em-dash landed. Set for the call and restored after,
+    # rather than at script scope, so a dot-sourcing caller's console is left as it was.
+    $priorOutputEncoding = [Console]::OutputEncoding
     try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
         $json = & gh @ghArgs 2>$null
         if ($LASTEXITCODE -ne 0) {
             return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'GhUnavailable' -Detail "gh exited $LASTEXITCODE") }
         }
     } catch {
         return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'GhUnavailable' -Detail $_.Exception.Message) }
+    } finally {
+        [Console]::OutputEncoding = $priorOutputEncoding
     }
 
     if ([string]::IsNullOrWhiteSpace(($json -join ''))) {
