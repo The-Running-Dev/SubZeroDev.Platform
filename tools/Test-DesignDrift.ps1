@@ -32,6 +32,12 @@
 .PARAMETER Repository
     owner/repo. Defaults to the current git remote, via gh's own resolution.
 
+.PARAMETER EffortTag
+    Effort id - `D5`, `G1` - qualifying the issue titles this run matches, so one tracker can
+    carry several efforts whose slice numbering overlaps. Defaults to the parenthesised tag in
+    the slices document's own title (`# Slices - commercial (D5)`), and falls back to matching
+    the unqualified `S<n>` form when the document carries none.
+
 .PARAMETER Quiet
     Suppresses the human-readable report only. The result object is always emitted.
 
@@ -42,6 +48,7 @@
 param(
     [string] $SlicesPath,
     [string] $Repository,
+    [string] $EffortTag,
     [switch] $Quiet
 )
 
@@ -78,6 +85,30 @@ function New-Finding {
 function New-Failure {
     param([string]$Reason, [string]$Detail)
     [pscustomobject]@{ Reason = $Reason; Detail = $Detail }
+}
+
+<#
+    A tracker outlives the effort that filled it. This repository's issues already carry two
+    retired slice sets, G1's and G2's, both numbered from S1 - so matching an issue on the bare
+    `S<n>` prefix pairs a live slice with a closed issue from a different effort and reports
+    every criterion of both as drift. The effort tag keeps the numbering spaces apart, and the
+    slices document already states its own: `# Slices - commercial (D5)`.
+
+    Returns $null when the title carries no tag, which is the unqualified behaviour every
+    single-effort repository had before this and still gets.
+#>
+function Get-EffortTag {
+    param([Parameter(Mandatory)][string] $Path)
+
+    foreach ($line in (Get-Content -LiteralPath $Path)) {
+        # The first level-one heading is the document title. Anything after it is body, so a
+        # parenthesised tag further down is prose and must not be mistaken for the effort.
+        if ($line -match '^#\s') {
+            if ($line -match '\((?<tag>[A-Za-z]+\d+)\)\s*$') { return $Matches['tag'] }
+            return $null
+        }
+    }
+    $null
 }
 
 <#
@@ -212,7 +243,7 @@ function Test-CommitIsAncestor {
 }
 
 function Invoke-DriftCheck {
-    param([string] $SlicesPath, [string] $Repository)
+    param([string] $SlicesPath, [string] $Repository, [string] $EffortTag)
 
     $findings = [System.Collections.Generic.List[object]]::new()
     $failures = [System.Collections.Generic.List[object]]::new()
@@ -230,6 +261,13 @@ function Invoke-DriftCheck {
         $doc.Slices.Remove(-1)
     }
 
+    # An explicit tag wins over the document's own, so a caller can compare one effort's doc
+    # against another's issues deliberately. Neither is a finding: an untagged document simply
+    # matches the unqualified titles it has always matched.
+    $tag = if ($PSBoundParameters.ContainsKey('EffortTag') -and $EffortTag) { $EffortTag }
+           else { Get-EffortTag -Path $SlicesPath }
+    $titlePrefix = if ($tag) { "$tag-S" } else { 'S' }
+
     $tracker = Get-TrackerIssue -Repository $Repository
     if ($tracker.Failure) {
         $failures.Add($tracker.Failure)
@@ -241,7 +279,7 @@ function Invoke-DriftCheck {
 
     foreach ($number in ($doc.Slices.Keys | Sort-Object)) {
         $docIds = @($doc.Slices[$number] | Sort-Object -Unique)
-        $issue  = $tracker.Issues | Where-Object { $_.title -match "^S$number\b" } | Select-Object -First 1
+        $issue  = $tracker.Issues | Where-Object { $_.title -match "^$titlePrefix$number\b" } | Select-Object -First 1
 
         if (-not $issue) {
             $findings.Add((New-Finding -Kind 'NoIssue' -Slice "S$number" -Detail 'slice has no issue; /track opens one' -Issue 0))
@@ -320,7 +358,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     if (-not $SlicesPath) {
         $SlicesPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'design/30-slices.md'
     }
-    $result = Invoke-DriftCheck -SlicesPath $SlicesPath -Repository $Repository
+    $result = Invoke-DriftCheck -SlicesPath $SlicesPath -Repository $Repository -EffortTag $EffortTag
     if (-not $Quiet) { Write-DriftReport -Result $result }
     $result
     exit (Get-DriftExitCode -State $result.State)

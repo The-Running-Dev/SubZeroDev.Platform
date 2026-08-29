@@ -81,7 +81,8 @@ The rules this shape obeys — human-first, agent block is not a copy, never rew
 
 For each `## S<n> — <name>` under `## Outstanding` in `design/30-slices.md`:
 
-- Search existing issues, **open and closed**, for a title beginning `S<n> —`. A closed issue means the slice is done — do not reopen it and do not open a second one.
+- Search existing issues, **open and closed**, for a title beginning `<Effort>-S<n> —`. A closed issue means the slice is done — do not reopen it and do not open a second one.
+- **The title is qualified by the effort's tag** — `D5-S3 — <name>`, taken from the parenthesised id in the slices document's own title (`# Slices — commercial (D5)`). One tracker outlives the effort that filled it, and slice numbering restarts at S1 with each; without the tag a live S3 matches a retired effort's closed S3 and is silently skipped as done. Where a slices document carries no tag, the unqualified `S<n> —` form is correct and is what `Test-DesignDrift.ps1` falls back to.
 - If none exists, open one in the shape above. `Delivers:` becomes the narrative; `Acceptance:` becomes the `Done when` checkboxes, ids included; `Out of scope:` goes in the agent block.
 - **Slices under `## Landed` are not synced.** Their bodies were retired once their issues closed, and the index carries no criteria to compare (`design/30-slices.md`, *How this document is kept*). A landed slice with a closed issue is finished, not drifted — do not reopen it, do not re-derive its criteria from the index, and do not report it as a removal.
 - **Change nothing on a mismatch** — not the issue, not the doc. Which side is wrong is the user's call.
