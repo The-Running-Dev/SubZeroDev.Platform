@@ -12,11 +12,7 @@ belongs in `docs/docs/adr/`.
 
 ## Open
 
-- **Audit retention is deferred out of D5 and the table grows without bound.** The brief's operating
-  assumptions exclude retention duration, archival, export formats and external shipping from this
-  effort, so no pruning job is registered even though `Prune` exists. The first party to notice will be
-  an operator, not a reviewer. Someone has to decide what retention means before an operated deployment
-  runs for long.
+_(previously tracked out of this section: issue [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187))_
 
 ---
 
