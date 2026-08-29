@@ -24,6 +24,86 @@ belongs in `docs/docs/adr/`.
 
 ---
 
+### 2026-08-29 — Provenance is a named type, and the well-known names are Platform's own public surface
+
+Context: `/contract` for D5. `10-design.md` requires an authorization decision to carry "the non-empty
+set of providers that produced the grant" and an entitlement decision to name its contributors, and it
+requires the publication of a shared row to be "an explicit, permissioned, audited write" and an
+audit-write failure to degrade readiness. None of those is expressible without something to name: the
+design states the requirement and not the handle.
+Chosen: `PermissionProviderName` and `EntitlementContributorName` as opaque name structs on the shape
+`ModuleName` and `HealthCheckName` already establish; `ResourceRef(Type, Id)` as the one type both a
+resource-scoped authorization check and an audit record name a resource with; `AuditAction` as a name
+struct; and three well-known name classes on the `PlatformHealthChecks` precedent —
+`PlatformPermissions` (`Platform.Tenancy.ShareResource`, `Platform.Organizations.Administer`,
+`Platform.Audit.Read`), `PlatformAuditActions`, and `PlatformHealthChecks.AuditSink`
+(`platform.audit.sink`). All are public surface, because a consumer's policy and an operator's probe
+body both refer to them by name.
+Rejected: **bare strings for provider and contributor provenance**, which needs no new type; rejected
+because the union's entire risk control is that a decision names its source, and a raw string is one
+typo away from attributing a grant to a provider that did not make it, with nothing to catch it.
+**Two resource types, one for authorization and one for audit**; rejected because the audit record of
+a denial must name the same resource the check named, and two types is a mapping that can disagree.
+**Leaving the publication permission unnamed for a slice to invent**; rejected because an unnamed
+permission is one each consumer names differently, and I-A3 makes an undeclared name a startup
+failure — so the name has to exist before the first slice, not after it.
+Reversibility: cheap for each name's spelling while packages are 0.x; expensive for the decision that
+provenance is typed at all, since it is what every audit and diagnostic reading a decision depends on.
+
+### 2026-08-29 — The licence tier is an opaque name with a well-known Community baseline
+
+Context: `10-design.md` states that Platform is not a licensor and that accepted keys are supplied by
+the consuming product, while the brief and `tenancy-billing-licensing.md` both name Community, Pro and
+Enterprise and require a fresh installation with no verified claims to continue at Community. The
+design does not say which of those two facts decides the type.
+Chosen: `LicenceTier` is an opaque stable name struct with one well-known value, `Community`, standing
+to the tier vocabulary exactly as `TenantId.Implicit` stands to tenants and `Principal.Anonymous` to
+principals — a real value rather than the absence of one. Entitlement is asked by `FeatureName`, never
+by tier, so the tier is recorded and displayed and never branched on by Platform.
+Rejected: **an enum of Community, Pro and Enterprise**, which is the vocabulary both documents use and
+which makes the well-known baseline free; rejected because that vocabulary is the Automator's licence
+model rather than Platform's, a framework type carrying a product's price tiers is the same mistake as
+a framework type meaning "an organization", and a second consumer with a different ladder would face a
+framework change to sell anything.
+Reversibility: cheap. Narrowing an opaque name to a closed set later is additive for anyone already
+using the three names; widening a shipped enum is not.
+
+### 2026-08-29 — A durable audit sink declares itself, and the audit table is keyed by event id
+
+Context: `10-design.md` makes `Operated` with no durable audit sink a startup failure, but a sink's
+durability is not discoverable by trying it, and the audit record's storage shape is not stated.
+Chosen: `IAuditSink.IsDurable` is declared on the interface, on the precedent
+`IHealthCheck.TouchesExternalDependency` already sets for a property a registry must reject on. The
+audit table is keyed by the event id, which the writer mints, and **is not tenant-prefixed** unlike
+every product table; it is indexed on tenant with instant, on correlation, and on actor subject with
+instant, and on nothing else. The actor is stored as two columns, issuer and subject.
+Rejected: **inferring durability from whether the Audit store module is present**; rejected because it
+makes a framework check depend on knowing a module's identity, which is ADR-006 rule 1 through the back
+door. **A tenant-prefixed audit key**, matching every other table; rejected because an audit row is
+written *about* a tenant rather than owned by one, and the cross-tenant queries an operator actually
+runs would become cross-partition scans. **Storing the rendered `PrincipalId`**; rejected because the
+rendering is not injective over two opaque halves and could not be read back.
+Reversibility: cheap for the index set; expensive for the key, which every stored row carries.
+
+### 2026-08-29 — Module packages are `SubZeroDev.Platform.<Capability>`
+
+Context: `10-design.md` names the six module units — Identity, Organizations, Billing, Licensing, the
+audit store and Mcp — but fixes a package name for only one of them, `Platform.Mcp`, and the contract
+has to name the assembly each declaration lives in.
+Chosen: `SubZeroDev.Platform.Identity`, `.Organizations`, `.Billing`, `.Licensing`, `.Audit` and
+`.Mcp`, extending the convention `Platform.Mcp` already uses and the ecosystem prefix ADR-003 settles.
+The web shell takes no .NET package name, because it has no .NET package.
+Rejected: **a distinguishing prefix or suffix for the module tier**, such as `Platform.Modules.*`;
+rejected because ADR-006's rule is structural and the architecture checks (I-C6, I-C7) enforce it over
+the resolved package graph, so a naming convention adds a second, weaker statement of the same fact
+that can disagree with the first. **`SubZeroDev.Platform.AuditStore`** for the audit store; rejected
+because the module is the only thing named Audit that ships, and the word "store" is the design's
+disambiguator against the framework's audit *contract*, which lives in Abstractions and needs no name
+of its own.
+Reversibility: cheap while every package is 0.x and unpublished.
+
+---
+
 ### 2026-08-24 — The framework owns the questions; modules own the answers
 
 Context: `/design` for D5. Nine capabilities that are coupled in use — Authorization must audit, Mcp
