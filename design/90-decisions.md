@@ -17,12 +17,67 @@ belongs in `docs/docs/adr/`.
   effort, so no pruning job is registered even though `Prune` exists. The first party to notice will be
   an operator, not a reviewer. Someone has to decide what retention means before an operated deployment
   runs for long.
-- **`Platform.Mcp`'s protocol implementation has not been evaluated against existing packages.**
-  ADR-004 §4 requires the check and requires the reason recorded either way, and it must happen before
-  `/contract` because it decides whether tool registration and invocation are Platform's own contracts
-  or a projection of somebody else's. `10-design.md` § *Open questions* 1 states the criteria.
 
 ---
+
+### 2026-08-29 — `Platform.Mcp` adopts the official MCP C# SDK and projects to it at the boundary
+
+Context: `10-design.md` § *Open questions* 1 made the ADR-004 §4 evaluation a gate on `/contract`,
+because the answer decides whether tool registration and invocation are Platform's own contracts or a
+projection of somebody else's. `minimal-platform-packages.md` §3a's finding that three foundational
+.NET libraries changed licence within one year made licence durability a first-class criterion. The
+evaluation was run on 2026-08-29 against the sources, not from memory, per `AGENTS.md`, *Verification*.
+Chosen: **take a dependency on `ModelContextProtocol.Core` and `ModelContextProtocol.AspNetCore` for
+the transport, the session and the filter pipeline, and keep registration, exposure, required
+permission and required feature as Platform's own types, projecting to the SDK's `Tool` and
+`McpServerTool` at the module boundary.** No SDK type appears in Platform's public surface, and no
+package other than `SubZeroDev.Platform.Mcp` references the SDK (`20-contract.md`, I-M9). All three of
+the design's criteria are met: the licence is Apache-2.0 with a documented MIT→Apache-2.0 transition,
+and the copyright holder is *"Model Context Protocol a Series of LF Projects, LLC"* — a Linux
+Foundation series project rather than a vendor-owned library, which is the structure that forecloses
+the unilateral relicensing §3a warns about; transport is separable from tool production, because
+`McpServerTool` is an abstract class exposing `ProtocolTool` and `InvokeAsync`, so a producer can
+supply the protocol tool and its `InputSchema` entirely as data and neither producer is privileged
+(I-M7); and connection-level authentication is not merely expressible but already enforced —
+`StreamableHttpHandler` binds the session to the principal established at the HTTP transport and
+answers a session request carrying a different principal with 403 (I-M5).
+Rejected: **implementing the transport ourselves**, which the design named as the answer if any
+implementation baked in a single tool-definition producer. The SDK does not, so this now buys nothing
+the projection does not, while costing a protocol implementation to write and to keep current with a
+specification this repository does not own. **Exposing the SDK's types directly as Platform's
+surface**, which is less code and gives consumers a documented surface; rejected because the SDK went
+v1.0 (2026-03) to v2.0 (2026-07-28) to v2.2.0 (2026-08-13), so a pass-through makes an SDK major
+version a Platform breaking change and Platform's contract stops being Platform's to keep stable — the
+projection layer is the price of that, and it is the cheaper side. **A third-party .NET MCP library**;
+none was found, so nothing was passed over on merit.
+Known and retained: the SDK's default authorization filter answers an unauthorized call with "Access
+forbidden: This tool requires authorization", which confirms the tool exists and contradicts I-M4.
+Filters are ordered lists, so `Platform.Mcp` installs its own ahead of it and does not use the SDK's
+authorization-metadata path at all (I-M11) — composition rather than a fork, but it is a constraint
+the implementing slice must honour rather than discover.
+Reversibility: cheap, and that is what the projection buys. Dropping the SDK later replaces one
+module's internals and changes no Platform type; the reverse — retracting SDK types from a published
+Platform surface — is the direction that is not available, which is why the projection is taken now
+rather than added when it hurts.
+
+### 2026-08-29 — A tool's exposure is not a field its producer fills in
+
+Context: `10-design.md` § *Data model* 8 describes one `ToolRegistration` carrying the name, the
+producer, the schema, the required permission and whether it is exposed, and requires exposure to be
+configuration, resolved at startup, default closed.
+Chosen: two types. `ToolDefinition` is what a producer supplies and carries no exposure;
+`ToolRegistration` is what the catalogue produces by combining a definition with configuration, and it
+carries the producer and the exposure. `IToolCatalogue` exposes only the exposed set and an
+exposure-respecting lookup — no `All`, no exposure-ignoring `TryGet`.
+Rejected: **the design's single type with an `IsExposed` field**, which is one type rather than two;
+rejected because a producer would then supply a value the catalogue must ignore, and a field that is
+ignored is a trap — it makes default-closed a rule every present and future producer has to remember,
+which is exactly the automatic-exposure-on-install that `second-consumer-packages.md` §4 refuses.
+**A catalogue that can enumerate every registration for diagnostics**; rejected because an enumeration
+of hidden tools is the disclosure I-M4 exists to prevent, and a diagnostic surface is where that leak
+would be least examined.
+Reversibility: cheap. Merging the two types later is additive for a caller that only reads
+`ToolRegistration`.
 
 ### 2026-08-29 — Provenance is a named type, and the well-known names are Platform's own public surface
 

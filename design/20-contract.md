@@ -517,14 +517,89 @@ public sealed record LicenceSigningKey(
 
 ### 10. Mcp — `SubZeroDev.Platform.Mcp`
 
-**The declaration shapes are Unresolved.** [`10-design.md`](10-design.md) § *Open questions* 1 states
-that whether `Platform.Mcp` adopts an existing MCP implementation or implements the transport decides
-whether tool registration and invocation are Platform's own types or a projection of somebody else's,
-and that the ADR-004 §4 evaluation is a gate on this document. See `## Unresolved`, item 1.
+`Platform.Mcp` adopts the official MCP C# SDK for the transport, the session and the filter pipeline,
+and **projects to it at the boundary**: no SDK type appears anywhere in Platform's public surface. The
+types below are Platform's own, and the module maps them to the SDK's `Tool` and `McpServerTool` on
+the way out. The evaluation and the alternatives rejected are in
+[`90-decisions.md`](90-decisions.md), 2026-08-29.
 
-**The semantics are determined either way, and they bind whichever shape is taken.** They are stated
-in *Public surface* § 10, *Error semantics* § 8 and I-M1 to I-M8. A projection of an adopted package's
-types satisfies this contract only if it can express all of them.
+```csharp
+/// A tool's name, unique across every producer.
+public readonly record struct ToolName(string Value)
+{
+    public string Value { get; }
+    public override string ToString();
+}
+
+/// Which producer supplied a definition.
+public readonly record struct ToolProducerName(string Value)
+{
+    public string Value { get; }
+    public override string ToString();
+}
+
+/// A tool as its producer supplies it. Carries no exposure: a producer cannot expose itself.
+public sealed record ToolDefinition(
+    ToolName Name,
+    string Description,
+    System.Text.Json.JsonElement ParameterSchema,
+    PermissionName RequiredPermission,
+    FeatureName? RequiredFeature);
+
+/// A definition after configuration has decided its exposure. What the frozen catalogue holds.
+public sealed record ToolRegistration(
+    ToolDefinition Definition,
+    ToolProducerName Producer,
+    bool IsExposed);
+
+/// Supplies definitions at startup. Manifest projection and a product-owned fixed table each
+/// implement this, and neither is privileged.
+public interface IToolProducer
+{
+    ToolProducerName Name { get; }
+
+    ValueTask<IReadOnlyCollection<ToolDefinition>> ProduceAsync(CancellationToken cancellationToken);
+}
+
+/// The catalogue, frozen after startup.
+public interface IToolCatalogue
+{
+    /// Every exposed registration. An unexposed one is not here and is not reachable from here.
+    IReadOnlyCollection<ToolRegistration> Exposed { get; }
+
+    /// Looks up an exposed tool. Unregistered and unexposed both answer false.
+    bool TryGetExposed(ToolName name, out ToolRegistration registration);
+}
+```
+
+**What the declarations cannot say.**
+
+- **The SDK is a dependency of the implementation, never of the contract.** `ModelContextProtocol.Core`
+  and `ModelContextProtocol.AspNetCore` are referenced by `SubZeroDev.Platform.Mcp` and by nothing
+  else, and no Platform type exposes, returns, accepts or derives from an SDK type. The SDK went from
+  v1.0 to v2.0 in four months; the projection is what keeps that churn from being a Platform breaking
+  change, and it is the entire reason the adoption is shaped this way.
+- **`ParameterSchema` is a `JsonElement` because one of the two producers has no .NET method to infer
+  a schema from.** A manifest supplies the schema as data. A shape that could only derive a schema by
+  reflecting over a method signature would privilege the fixed-table producer and defeat `I-M7`, which
+  is the requirement that put Mcp in this brief.
+- **Exposure is not on `ToolDefinition`, and that split is what makes default-closed structural.** A
+  producer supplies a definition and cannot state that it is exposed; the catalogue combines
+  definitions with configuration and produces the registration. A single type with an exposure field a
+  producer fills in makes default-closed a rule every producer has to remember, which is the automatic
+  exposure on install that
+  [`second-consumer-packages.md`](../docs/docs/second-consumer-packages.md) §4 refuses outright.
+- **`IToolCatalogue` exposes no way to reach an unexposed registration**, so "neither listed nor
+  callable" is a property of the interface rather than of its callers. There is no `All`, no
+  `TryGet` that ignores exposure, and none may be added — a diagnostic that can enumerate hidden tools
+  is the disclosure `I-M4` exists to prevent.
+- **`ProduceAsync` runs once, at startup, and nothing calls it again.** A manifest read is I/O, which
+  is why it is asynchronous; the catalogue it feeds is frozen afterwards.
+- **`RequiredPermission` is not optional.** Every tool declares one. An unauthenticated or
+  unauthorized tool is expressed as a permission the composition grants, never as an absent check —
+  the same rule the composition provider follows for an anonymous endpoint (*Public surface*, § 3).
+- **`RequiredFeature` is optional, and null means the tool admits no new paid-feature work**, on the
+  same terms as an endpoint that only reads (*Public surface*, § 11).
 
 ### 11. Shared web UI
 
@@ -633,7 +708,7 @@ in that consumer's own migration.
 
 [`IAuditable`](../src/SubZeroDev.Platform.Persistence/Columns.cs) declares `CreatedBy`, `ModifiedBy`
 and `DeletedBy` as `string?` because D3 had no actor. **Whether the total principal makes `CreatedBy`
-non-null is Unresolved** — `## Unresolved`, item 2. Determined either way:
+non-null is Unresolved** — `## Unresolved`, item 1. Determined either way:
 
 - **The value written is `PrincipalId.ToString()`**, and it is never split to recover the pair.
 - **`ModifiedBy` and `DeletedBy` stay nullable regardless of the answer**, because their null means
@@ -773,7 +848,7 @@ public interface IEntitlementEvaluator
 - **The contributor set is registered explicitly, enumerated at startup, and joins the settings
   fingerprint.** Those three, plus the decision naming its source, are what bound the union's risk of
   one wrong contributor granting everything. How the set reaches the fingerprint input is Unresolved —
-  `## Unresolved`, item 3.
+  `## Unresolved`, item 2.
 
 ### 5. Tenant resolution — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
@@ -927,7 +1002,8 @@ request path.**
 instant range, actor and correlation. **It exposes no update and no delete.**
 
 **Mcp** exposes tool producer registration and exposure configuration, and consumes the principal,
-permission, entitlement and audit seams. Its declaration shapes are Unresolved; its semantics are:
+permission, entitlement and audit seams. It adopts the official MCP C# SDK for the transport and
+projects to it at the boundary (*Types*, § 10); its semantics are:
 
 - **Registration and exposure are two facts.** A tool is registered by a producer and exposed by
   configuration, default closed. Automatic exposure on install is refused outright
@@ -1111,9 +1187,16 @@ The one returned error, `LicensingError`:
 |---|---|---|---|
 | `SupersededByNewerVerification` | the monotonic guard rejected a stale write | no | **treat as success**: a newer verification already stands, which is the intended outcome |
 
-### 8. Mcp — `SubZeroDev.Platform.Mcp`
+### 8. `McpError` — `SubZeroDev.Platform.Mcp`
 
-The variant declarations are Unresolved. The semantics bind whichever shape is taken:
+| Variant | Raised when | Retryable | The caller is expected to |
+|---|---|---|---|
+| `UnknownTool` | the name is unregistered, **or registered and not exposed** | no | return unknown tool for both |
+| `InvalidArguments` | arguments fail the tool's declared schema | no | return the failure; **name no argument value** |
+| `ConnectionUnauthenticated` | a session request presents a principal other than the one the session was established with | no | end the exchange; a new principal means a new connection |
+
+Authorization and entitlement refusals are not `McpError` variants: they are § 2's and § 3's, raised
+by the same evaluators the HTTP path uses, so a denial means the same thing on both surfaces.
 
 | Condition | Answer | Retryable |
 |---|---|---|
@@ -1126,6 +1209,16 @@ The variant declarations are Unresolved. The semantics bind whichever shape is t
 
 **Unregistered and registered-but-unexposed are the same answer and must never be distinguished.**
 "Forbidden" would confirm the tool exists.
+
+**This overrides the adopted SDK's default, which discloses existence.** The SDK's own authorization
+filter answers an unauthorized call with `"Access forbidden: This tool requires authorization"`, which
+confirms the tool is there. `SubZeroDev.Platform.Mcp` installs its own filters ahead of it — the SDK's
+`ListToolsFilters` and `CallToolFilters` are ordered lists, so this is composition rather than a fork
+— and **the SDK's authorization metadata path is not used at all**: Platform's permission evaluator is
+the only authority, so there is one authorization model rather than two that can disagree.
+
+**`InvalidArguments` names no argument value**, for the same reason the audit record has no payload:
+an argument that failed validation is as likely to be a secret as one that passed.
 
 ### 9. Startup — `SubZeroDev.Platform.Core`, surfaced as `HostStartupError`
 
@@ -1213,7 +1306,7 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-C1 | `Operated` with no authentication provider fails startup | Core | **code** |
 | I-C2 | `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback | Core | **code** |
 | I-C3 | `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup | Core | **code** |
-| I-C4 | The composition profile and the contributor set are inside the settings-fingerprint input | Core | **code** — mechanism at `## Unresolved` item 3 |
+| I-C4 | The composition profile and the contributor set are inside the settings-fingerprint input | Core | **code** — mechanism at `## Unresolved` item 2 |
 | I-C5 | The local host has no package or project reference to Identity, Organizations, Billing or Licensing | the sample | **code** — dependency-graph assertion |
 | I-C6 | No framework package references a module | all | **code** — architecture test over the resolved package graph, **which must fail against a deliberately broken graph before it counts** |
 | I-C7 | No module references another module | all | **code** — the same test, second direction |
@@ -1281,6 +1374,9 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-M6 | Authorization runs before any producer code is reached | Mcp | **code** — invocation order |
 | I-M7 | Both producers — manifest projection and a product-owned fixed table — register through the same surface, and neither is privileged | Mcp | **code** — sample scenario |
 | I-M8 | An invocation is audited with no arguments | Mcp | **code** — I-U1 |
+| I-M9 | No SDK type appears in Platform's public surface; `ModelContextProtocol.*` is referenced by `SubZeroDev.Platform.Mcp` and by nothing else | Mcp | **code** — architecture test over the resolved package graph, alongside I-C6 and I-C7 |
+| I-M10 | `IToolCatalogue` offers no route to an unexposed registration — no `All`, no exposure-ignoring lookup | Mcp | **code** — the interface |
+| I-M11 | Platform's permission evaluator is the only authorization authority on this surface; the SDK's authorization-metadata path is not used | Mcp | instruction, and **code** — the sample's unknown-tool scenario |
 
 ### Shared web UI
 
@@ -1302,19 +1398,7 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 
 ## Unresolved
 
-**1. `Platform.Mcp`'s registration and invocation declarations.**
-[`10-design.md`](10-design.md) § *Open questions* 1 makes the ADR-004 §4 evaluation a gate on this
-document: whether `Platform.Mcp` adopts an existing MCP implementation or implements the transport
-decides whether tool registration and invocation are Platform's own types or a projection of somebody
-else's. **No declaration is invented here.** What must be established, per the design: the licence and
-its durability; whether the implementation separates transport from tool *production*, since a package
-that assumes it owns tool definitions cannot serve the two-producer requirement that put Mcp in this
-brief at all (I-M7); and whether connection-level authentication is expressible (I-M5). Taking a
-dependency needs a decision-log entry naming the alternatives rejected, per `AGENTS.md`, *Hard rules*,
-and it is not `/contract`'s to take. The semantics in *Public surface* § 10, *Error semantics* § 8 and
-I-M1 to I-M8 bind whichever answer is taken.
-
-**2. The nullability of `IAuditable.CreatedBy` under a total principal.**
+**1. The nullability of `IAuditable.CreatedBy` under a total principal.**
 [`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs) declares it `string?` because D3 had
 no actor; [`10-design.md`](10-design.md) § *Data model* 2 names that nullability as caused by the same
 absence the total principal removes, but commits only to the **ambient** principal being non-null. Two
@@ -1330,7 +1414,7 @@ Determined either way: the stored value is `PrincipalId.ToString()` and is never
 `ModifiedBy` and `DeletedBy` stay nullable because their null means "not yet modified" and "not
 deleted", which is a different fact from "no actor".
 
-**3. How the registered entitlement-contributor set reaches the settings-fingerprint input.**
+**2. How the registered entitlement-contributor set reaches the settings-fingerprint input.**
 [`10-design.md`](10-design.md) § *Data model* 6 requires the contributor set to join the fingerprint so
 two instances that disagree about who may grant are visible through the existing
 `platform.settings-fingerprint` check rather than by their behaviour diverging (I-C4).
