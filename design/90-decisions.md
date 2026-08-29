@@ -218,7 +218,7 @@ invented without a consumer to test it is the failure `second-consumer-packages.
 ADR-006 rejects by name.
 Reversibility: cheap. One-to-many is an added table and no framework change.
 
-### 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Abstractions
+### 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Core
 
 Context: `platform-specification.md` lists "changed fields where appropriate" among audit fields. The
 brief requires tests that push representative secrets through every audited input surface and assert
@@ -226,8 +226,10 @@ that neither values nor payloads reach the stored record or the logs.
 Chosen: the audit record carries the brief's seven fields plus the actor kind and the record class. **No
 payload, no changed-field list, no free-form detail string.** The three caller-controlled strings —
 action, resource type, resource id — pass through the fixed redaction boundary before storage, and that
-boundary moves from Observability to Abstractions so Audit and Mcp reach the same one. It stays
-non-injectable; the D3 decision that made it fixed rather than configurable is unchanged.
+boundary moves from Observability to Core — the framework package both modules already depend on, and
+not Abstractions, which exposes contracts only and acquires no implementation — so the Audit store
+module and Mcp reach the same one. It stays non-injectable; the D3 decision that made it fixed rather
+than configurable is unchanged.
 Rejected: **the specification's fuller list including changed fields**, which is what an auditor usually
 asks for and where "we redact it" is the standard answer; rejected because with a payload field the
 brief's test asserts a property of the redaction rules and of every future caller's discipline, while
