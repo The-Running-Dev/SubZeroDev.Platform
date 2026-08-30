@@ -19,10 +19,11 @@
     installed target, where design/state/ does not exist by design (INSTALL.md phase 1 never
     ships the kit's own design/).
 
-    Regenerates before comparing, by invoking the projector with -DryRun if it exists. The
-    projector does not exist yet (it is S7's), so every run today reports ProjectorFailed and
-    names ProjectionStale as uncomputed rather than clean (S5.10) - a contracted case, not a
-    gap.
+    Regenerates before comparing, by invoking the projector with -DryRun if it exists.
+    tools/Update-DesignProjection.ps1 (S7) exists and is invoked this way, so ProjectionStale
+    is computed on every run today. Where the projector is absent or exits non-zero, that run
+    instead reports ProjectorFailed and names ProjectionStale as uncomputed rather than clean
+    (S5.10): a contracted case, not a gap.
 
     Writes nothing, ever (I18): not design/, not a record, not an issue, not git.
 
@@ -70,7 +71,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $script:BlockingClasses = @(
     'UnresolvedId', 'AnchorMissing', 'OwnerMismatch', 'UnrecordedArtifact', 'ProjectionStale',
     'RegionMalformed', 'IdCollision', 'DecisionAnchorAmbiguous', 'LogEntryUnrecorded',
-    'EnforcementUnevidenced', 'ClosureOverBudget', 'ClassListDisagreement'
+    'EnforcementUnevidenced', 'ClosureOverBudget', 'ClassListDisagreement', 'GlobDisagreement'
 )
 $script:ReportedClasses = @(
     'MirrorStale', 'WorkStateDivergence', 'PinAncestry', 'SemanticDisagreement'
@@ -155,6 +156,7 @@ function Get-ContractClassIds {
     }
 
     $text = Get-Content -LiteralPath $ContractPath -Raw
+    if ($null -eq $text) { $text = '' }
     $start = $text.IndexOf('### The divergence classes')
     $end = $text.IndexOf('### The freeze')
     if ($start -lt 0 -or $end -lt 0 -or $end -le $start) {
@@ -211,6 +213,7 @@ function Get-ContractInvariantIds {
     }
 
     $text = Get-Content -LiteralPath $ContractPath -Raw
+    if ($null -eq $text) { $text = '' }
     $start = $text.IndexOf("`n## Invariants")
     if ($start -lt 0) {
         return [pscustomobject]@{ Ids = $null; Failure = 'InvariantsSectionNotFound' }
@@ -448,6 +451,167 @@ function Get-ScriptGlobFiles {
     )
 }
 
+<#
+    design/20-contract.md § "Artifacts of a unit kind"'s own glob table, parsed so
+    GlobDisagreement has something to expand and compare against the three Get-*GlobFiles
+    enumerations. The third parsed source this document carries, after the class list and
+    § Invariants; ContractListUnreadable covers all three.
+
+    Both cells carry patterns and nothing else, which is what makes this parse a token scan
+    rather than a prose reader. The invariant row has no pattern in either cell and drops out
+    for that reason, not by being named here.
+#>
+function Get-ContractGlobPatterns {
+    param([Parameter(Mandatory)][string] $ContractPath)
+
+    if (-not (Test-Path -LiteralPath $ContractPath)) {
+        return [pscustomobject]@{ Kinds = $null; Failure = 'ContractPathMissing' }
+    }
+
+    $text = Get-Content -LiteralPath $ContractPath -Raw
+    if ($null -eq $text) { $text = '' }
+    $start = $text.IndexOf('| Kind | Glob | Excluded |')
+    if ($start -lt 0) {
+        return [pscustomobject]@{ Kinds = $null; Failure = 'GlobTableNotFound' }
+    }
+    $rest = $text.Substring($start)
+    $end = $rest.IndexOf("`n`n")
+    $table = if ($end -lt 0) { $rest } else { $rest.Substring(0, $end) }
+
+    $kinds = @{}
+    foreach ($line in ($table -split "`n")) {
+        if ($line -notmatch '^\|\s*([a-z]+)\s*\|(.*)\|(.*)\|\s*$') { continue }
+        $kind = $Matches[1]
+        $globCell = $Matches[2]
+        $excludedCell = $Matches[3]
+        $globs = @([regex]::Matches($globCell, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value })
+        if ($globs.Count -eq 0) { continue }
+        $kinds[$kind] = [pscustomobject]@{
+            Glob     = $globs
+            Excluded = @([regex]::Matches($excludedCell, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value })
+        }
+    }
+
+    if ($kinds.Count -eq 0) {
+        return [pscustomobject]@{ Kinds = $null; Failure = 'GlobTableHasNoPatterns' }
+    }
+    [pscustomobject]@{ Kinds = $kinds; Failure = $null }
+}
+
+<#
+    Expands one parsed pattern against the checkout. A pattern is repository-relative and
+    wildcards only its final segment, so the directory half is literal and the file half is a
+    -Filter. This is deliberately not a general glob engine: the table's own rule is the whole
+    grammar, and anything outside it should fail to resolve rather than be guessed at.
+#>
+function Expand-ContractGlobPattern {
+    param(
+        [Parameter(Mandatory)][string] $RepoPath,
+        [Parameter(Mandatory)][string] $Pattern
+    )
+
+    $normalised = $Pattern -replace '\\', '/'
+    $dir = [IO.Path]::GetDirectoryName($normalised) -replace '\\', '/'
+    $leaf = [IO.Path]::GetFileName($normalised)
+    $searchRoot = if ([string]::IsNullOrEmpty($dir)) { $RepoPath } else { Join-Path $RepoPath $dir }
+    if (-not (Test-Path -LiteralPath $searchRoot)) { return ,@() }
+
+    if ($leaf -notmatch '[*?]') {
+        $full = Join-Path $searchRoot $leaf
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return ,@() }
+        return ,@($normalised)
+    }
+
+    ,@(
+        Get-ChildItem -LiteralPath $searchRoot -Filter $leaf -File -ErrorAction SilentlyContinue |
+            ForEach-Object { ([IO.Path]::GetRelativePath($RepoPath, $_.FullName)) -replace '\\', '/' }
+    )
+}
+
+<#
+    GlobDisagreement. design/20-contract.md § "The divergence classes" - the file set the
+    contract's patterns resolve to, against the set the checker's own enumeration returns, per
+    globbed kind and in both directions.
+
+    File sets, never pattern text: an exclusion applied at the wrong level or a directory quietly
+    skipped diverges semantically while the tokens still match, and that is the case this class
+    exists for. The parsed patterns only ever compare - UnrecordedArtifact keeps reading the
+    Get-*GlobFiles enumerations - so a mis-parse can report a disagreement or report
+    ContractListUnreadable, and can never narrow the world being checked.
+#>
+function Test-GlobDisagreement {
+    param(
+        [Parameter(Mandatory)][string] $RepoPath,
+        [Parameter(Mandatory)][string] $ContractPath
+    )
+
+    $parsed = Get-ContractGlobPatterns -ContractPath $ContractPath
+    if ($parsed.Failure) {
+        return [pscustomobject]@{
+            CouldNotEvaluate = (New-CouldNotEvaluate -Reason 'ContractListUnreadable' -Detail "$($parsed.Failure): $ContractPath; GlobDisagreement is uncomputed, not clean")
+            Findings         = @()
+        }
+    }
+
+    $enumerators = @{
+        command  = { Get-CommandGlobFiles  -RepoPath $RepoPath }
+        script   = { Get-ScriptGlobFiles   -RepoPath $RepoPath }
+        document = { Get-DocumentGlobFiles -RepoPath $RepoPath }
+    }
+
+    $findings = [System.Collections.Generic.List[object]]::new()
+    foreach ($kind in @($enumerators.Keys | Sort-Object)) {
+        if (-not $parsed.Kinds.ContainsKey($kind)) {
+            $findings.Add((New-DesignFinding -Class 'GlobDisagreement' -Subject $kind `
+                -Detail "the checker enumerates the $kind kind and design/20-contract.md § Artifacts of a unit kind carries no patterns for it" -Blocking $true))
+            continue
+        }
+        $spec = $parsed.Kinds[$kind]
+
+        $resolved = [System.Collections.Generic.SortedSet[string]]::new()
+        foreach ($pattern in $spec.Glob) {
+            # Expand-ContractGlobPattern and the Get-*GlobFiles enumerations all emit `,@(...)`,
+            # a single object that *is* an array. Both sides are cast flat before comparing;
+            # without it the set difference compares arrays and reports every path as divergent.
+            [string[]] $hits = Expand-ContractGlobPattern -RepoPath $RepoPath -Pattern $pattern
+            foreach ($hit in $hits) { [void]$resolved.Add($hit) }
+        }
+        # An exclusion carrying a wildcard is matched against the basename; one without is a
+        # repository-relative path. That is the table's own stated grammar, and matching it
+        # exactly is the point - a matcher looser than the enumeration would report a
+        # disagreement of its own making rather than the one in the tree.
+        $contractSide = @($resolved | Where-Object {
+            $path = $_
+            $leaf = [IO.Path]::GetFileName($path)
+            -not (@($spec.Excluded) | Where-Object {
+                if ($_ -match '[*?]') { $leaf -like $_ } else { $path -eq $_ }
+            })
+        })
+
+        [string[]] $checkerSide = & $enumerators[$kind]
+
+        [string[]] $onlyContract = @($contractSide | Where-Object { $_ -notin $checkerSide })
+        [string[]] $onlyChecker  = @($checkerSide  | Where-Object { $_ -notin $contractSide })
+        if ($onlyContract.Count -gt 0) {
+            $findings.Add((New-DesignFinding -Class 'GlobDisagreement' -Subject $kind `
+                -Detail "the contract's patterns reach $($onlyContract.Count) path(s) the checker does not enumerate: $($onlyContract -join ', ')" -Blocking $true))
+        }
+        if ($onlyChecker.Count -gt 0) {
+            $findings.Add((New-DesignFinding -Class 'GlobDisagreement' -Subject $kind `
+                -Detail "the checker enumerates $($onlyChecker.Count) path(s) the contract's patterns do not reach: $($onlyChecker -join ', ')" -Blocking $true))
+        }
+    }
+
+    foreach ($kind in @($parsed.Kinds.Keys | Sort-Object)) {
+        if (-not $enumerators.ContainsKey($kind)) {
+            $findings.Add((New-DesignFinding -Class 'GlobDisagreement' -Subject $kind `
+                -Detail "design/20-contract.md § Artifacts of a unit kind carries patterns for the $kind kind and the checker enumerates no such kind" -Blocking $true))
+        }
+    }
+
+    [pscustomobject]@{ CouldNotEvaluate = $null; Findings = @($findings) }
+}
+
 function Test-UnrecordedArtifact {
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records,
@@ -597,10 +761,7 @@ function Test-RecordIdCollision {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
 
     $findings = [System.Collections.Generic.List[object]]::new()
-    # Ids are taken literally (S4.7) - a default @{} is case-insensitive for string keys and
-    # would bucket 'unit/tools/Foo' with 'unit/tools/foo' as the same id. Ordinal comparison
-    # keeps case-distinct ids distinct here.
-    $byId = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+    $byId = @{}
     foreach ($record in $Records) {
         if (-not $byId.ContainsKey($record.Id)) { $byId[$record.Id] = [System.Collections.Generic.List[object]]::new() }
         $byId[$record.Id].Add($record)
@@ -615,7 +776,7 @@ function Test-RecordIdCollision {
     foreach ($record in $Records) {
         $info = Get-DesignPathInfo -RelativeToState ($record.Path -replace '^design/state/', '')
         if (-not $info) { continue }
-        if ($info.PathId -cne $record.Id) {
+        if ($info.PathId -ne $record.Id) {
             $findings.Add((New-DesignFinding -Class 'IdCollision' -Subject $record.Id -Detail "record's own id disagrees with the id implied by its file path '$($record.Path)' (path implies '$($info.PathId)')" -Blocking $true))
         }
     }
@@ -657,7 +818,10 @@ function Test-DecisionAnchors {
 }
 
 # ---------------------------------------------------------------------------------------------
-# EnforcementUnevidenced: an Invariant record with Enforcement 'code' and no Evidence.
+# EnforcementUnevidenced: a conditionally-required field absent on a record whose own Status or
+# Enforcement requires it - an Invariant with Enforcement 'code' and no Evidence, a Decision with
+# Status 'superseded' and no SupersededBy, or a Question with Status 'answered' and no AnsweredBy
+# (design/20-contract.md § "The divergence classes"; design/90-decisions.md, 2026-08-19).
 # ---------------------------------------------------------------------------------------------
 function Test-EnforcementUnevidenced {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
@@ -667,7 +831,19 @@ function Test-EnforcementUnevidenced {
         if ($record.Scalars['Enforcement'] -ne 'code') { continue }
         $evidence = @(if ($record.Lists.ContainsKey('Evidence')) { @($record.Lists['Evidence'] | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) } else { @() })
         if ($evidence.Count -eq 0) {
-            $findings.Add((New-DesignFinding -Class 'EnforcementUnevidenced' -Subject $record.Id -Detail 'Enforcement is code but Evidence is empty' -Blocking $true))
+            $findings.Add((New-DesignFinding -Class 'EnforcementUnevidenced' -Subject $record.Id -Detail "field 'Evidence' is required because Enforcement is 'code', and is absent" -Blocking $true))
+        }
+    }
+    foreach ($record in @($Records | Where-Object { $_.Kind -eq 'Decision' })) {
+        if ($record.Scalars['Status'] -ne 'superseded') { continue }
+        if ([string]::IsNullOrWhiteSpace($record.Scalars['SupersededBy'])) {
+            $findings.Add((New-DesignFinding -Class 'EnforcementUnevidenced' -Subject $record.Id -Detail "field 'SupersededBy' is required because Status is 'superseded', and is absent" -Blocking $true))
+        }
+    }
+    foreach ($record in @($Records | Where-Object { $_.Kind -eq 'Question' })) {
+        if ($record.Scalars['Status'] -ne 'answered') { continue }
+        if ([string]::IsNullOrWhiteSpace($record.Scalars['AnsweredBy'])) {
+            $findings.Add((New-DesignFinding -Class 'EnforcementUnevidenced' -Subject $record.Id -Detail "field 'AnsweredBy' is required because Status is 'answered', and is absent" -Blocking $true))
         }
     }
     ,@($findings)
@@ -770,28 +946,42 @@ function Invoke-Projector {
     if (-not (Test-Path -LiteralPath $projectorPath)) {
         return [pscustomobject]@{ Ran = $false; Detail = 'tools/Update-DesignProjection.ps1 does not exist'; Regions = @() }
     }
-    $exitCode = 0
+    <#
+        A nested pwsh's stdout is native-command output too, decoded via
+        [Console]::OutputEncoding the same as gh's - the OEM code page on this host, not the
+        UTF-8 the child actually writes. A projected region carrying a non-ASCII byte (the em
+        dashes throughout 20-contract.md, or a mirrored issue title) came back corrupted, so
+        every comparison against the tree's real UTF-8 copy mismatched and ProjectionStale
+        fired on content that was never actually stale. Same fix as Invoke-GhRaw: an explicit
+        UTF-8 StandardOutputEncoding via ProcessStartInfo, sidestepping the console.
+    #>
+    $raw = $null
     try {
-        $raw = & pwsh -NoProfile -File $projectorPath -Path $RepoPath -DryRun 2>$null
-        $exitCode = $LASTEXITCODE
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = (Get-Process -Id $PID).Path
+        foreach ($a in @('-NoProfile', '-File', $projectorPath, '-Path', $RepoPath, '-DryRun')) { $psi.ArgumentList.Add($a) }
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $raw = $proc.StandardOutput.ReadToEnd()
+        $proc.StandardError.ReadToEnd() | Out-Null
+        $proc.WaitForExit()
+        if ($proc.ExitCode -ne 0) {
+            return [pscustomobject]@{ Ran = $false; Detail = "exited $($proc.ExitCode)"; Regions = @() }
+        }
     } catch {
         return [pscustomobject]@{ Ran = $false; Detail = $_.Exception.Message; Regions = @() }
     }
 
     $regions = @()
-    if ($raw) {
-        try {
-            $regions = @(($raw -join "`n") | ConvertFrom-Json)
-        } catch {
-            return [pscustomobject]@{ Ran = $false; Detail = "unparseable projector output: $($_.Exception.Message)"; Regions = @() }
+    try {
+        if ($raw) {
+            $regions = @($raw | ConvertFrom-Json)
         }
-    }
-
-    # Exit 1 with regions already recovered means "some regions were refused" (-DryRun still
-    # renders and prints every region that isn't) - those rendered regions remain usable for
-    # ProjectionStale. Only a nonzero exit with nothing recovered is a real failure.
-    if ($exitCode -ne 0 -and $regions.Count -eq 0) {
-        return [pscustomobject]@{ Ran = $false; Detail = "exited $exitCode with no usable output"; Regions = @() }
+    } catch {
+        return [pscustomobject]@{ Ran = $false; Detail = "unparseable projector output: $($_.Exception.Message)"; Regions = @() }
     }
 
     [pscustomobject]@{ Ran = $true; Detail = $null; Regions = $regions }
@@ -880,13 +1070,39 @@ function Test-CommitIsAncestor {
     }
 }
 
+function Invoke-GhRaw {
+    <#
+        gh writes UTF-8. PowerShell's native-command capture (`& gh @args`) decodes that
+        stdout using [Console]::OutputEncoding, which on a Windows host defaults to the OEM
+        code page (ibm437) rather than UTF-8 - the same class of bug Sync-Kit.ps1's
+        Invoke-GitRaw fixed for git's output (#20), never applied to gh. A non-ASCII byte in
+        an issue title then decodes to the wrong character and WorkStateDivergence misfires
+        comparing a correctly-mirrored title against a corrupted live read. Routing through
+        ProcessStartInfo with an explicit UTF-8 StandardOutputEncoding sidesteps the console
+        entirely.
+    #>
+    param([string[]] $GhArgs)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'gh'
+    foreach ($a in $GhArgs) { $psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $proc.StandardError.ReadToEnd() | Out-Null
+    $proc.WaitForExit()
+    [pscustomobject]@{ Output = $stdout; ExitCode = $proc.ExitCode }
+}
+
 function Test-TrackerAvailable {
     param([string] $Repository)
     $ghArgs = @('issue', 'list', '--state', 'all', '--limit', '1', '--json', 'number')
     if ($Repository) { $ghArgs += @('-R', $Repository) }
     try {
-        & gh @ghArgs 2>$null | Out-Null
-        return ($LASTEXITCODE -eq 0)
+        $result = Invoke-GhRaw -GhArgs $ghArgs
+        return ($result.ExitCode -eq 0)
     } catch {
         return $false
     }
@@ -915,15 +1131,13 @@ function Test-TrackerClasses {
         foreach ($ref in $workRefs) {
             $number = $ref.Scalars['Issue']
             if ([string]::IsNullOrWhiteSpace($number)) { continue }
-            $viewArgs = @('issue', 'view', $number, '--json', 'title,state')
-            if ($Repository) { $viewArgs += @('-R', $Repository) }
-            $json = & gh @viewArgs 2>$null
-            if ($LASTEXITCODE -ne 0 -or -not $json) {
+            $issueResult = Invoke-GhRaw -GhArgs @('issue', 'view', $number, '--json', 'title,state')
+            if ($issueResult.ExitCode -ne 0 -or -not $issueResult.Output) {
                 $couldNotEvaluate.Add((New-CouldNotEvaluate -Reason 'TrackerUnavailable' -Detail "could not read issue #$number for $($ref.Id)"))
                 continue
             }
             try {
-                $issue = ($json -join "`n") | ConvertFrom-Json
+                $issue = $issueResult.Output | ConvertFrom-Json
             } catch {
                 $couldNotEvaluate.Add((New-CouldNotEvaluate -Reason 'TrackerUnavailable' -Detail "unparseable gh output for issue #$number"))
                 continue
@@ -1002,18 +1216,16 @@ function Invoke-DesignStateCheck {
         $couldNotEvaluate.Add((New-CouldNotEvaluate -Reason 'RecordUnparseable' -Detail "$($f.Path):$($f.Line): $($f.Text)"))
     }
 
-    if ($graph.Root -eq '' -or $graph.Records.Count -eq 0) {
-        $couldNotEvaluate.Add((New-CouldNotEvaluate -Reason 'StateSetAbsent' -Detail 'design/state/ is missing or holds zero records'))
+    # WorkRef is mirrored into every target on every /track run regardless of adoption (#113),
+    # so it never counts toward "the state set is present" - only the other five kinds do.
+    $adoptedRecordCount = @($graph.Records | Where-Object { $_.Kind -ne 'WorkRef' }).Count
+    if ($graph.Root -eq '' -or $adoptedRecordCount -eq 0) {
+        $couldNotEvaluate.Add((New-CouldNotEvaluate -Reason 'StateSetAbsent' -Detail 'design/state/ is missing or holds no records other than WorkRef mirrors'))
         return New-DesignStateResult -Findings @() -Reported @() -CouldNotEvaluate @($couldNotEvaluate) -ExitCode 2 -LargestClosure $null -ReportLines @('StateSetAbsent: nothing to check.')
     }
 
     $records = @($graph.Records)
-    # Ids are taken literally (S4.7); a default @{} is case-insensitive for string keys, which
-    # would resolve a mis-cased reference against a differently-cased record instead of
-    # flagging it. Ordinal comparison keeps case-distinct ids distinct. Still a [hashtable] -
-    # Test-UnresolvedId/Get-DesignClosure/Test-ClosureBudget all type their $ById parameter
-    # that way.
-    $byId = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
+    $byId = @{}
     foreach ($r in $records) {
         if (-not $byId.ContainsKey($r.Id)) { $byId[$r.Id] = $r }
     }
@@ -1027,6 +1239,10 @@ function Invoke-DesignStateCheck {
     $blockingFindings.AddRange((Test-RecordIdCollision -Records $records))
     $blockingFindings.AddRange((Test-DecisionAnchors -Records $records -LogPath (Join-Path $RepoPath 'design/90-decisions.md')))
     $blockingFindings.AddRange((Test-EnforcementUnevidenced -Records $records))
+
+    $globResult = Test-GlobDisagreement -RepoPath $RepoPath -ContractPath $contractPath
+    if ($globResult.CouldNotEvaluate) { $couldNotEvaluate.Add($globResult.CouldNotEvaluate) }
+    $blockingFindings.AddRange($globResult.Findings)
 
     $regionFiles = @((Get-DocumentGlobFiles -RepoPath $RepoPath) + (Get-CommandGlobFiles -RepoPath $RepoPath) | Sort-Object -Unique)
     $regionResult = Get-MarkedRegions -RepoPath $RepoPath -Files $regionFiles
@@ -1058,16 +1274,8 @@ function Invoke-DesignStateCheck {
 
     if ($freeze) {
         foreach ($f in $blockingFindings) {
-            # ClassListDisagreement is the checker's own vocabulary disagreeing with the
-            # contract document - not design/state/ content the freeze exists to let ride. A
-            # freeze that silenced this too could hide the tool's own correctness failing for
-            # the entire frozen window, exactly when nobody is reading design/ closely.
-            if ($f.Class -eq 'ClassListDisagreement') {
-                $finalFindings.Add($f)
-            } else {
-                $finalReported.Add($f)
-                $downgraded++
-            }
+            $finalReported.Add($f)
+            $downgraded++
         }
     } else {
         foreach ($f in $blockingFindings) { $finalFindings.Add($f) }
