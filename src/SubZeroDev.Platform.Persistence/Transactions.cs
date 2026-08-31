@@ -97,6 +97,12 @@ internal sealed record AmbientTransaction(
     /// on commit" means, and what gives a failed insert the same <c>TransactionError</c> handling as
     /// any other participant's write rather than a bare exception escaping a synchronous call.</summary>
     internal List<OutboxMessage> PendingOutboxMessages { get; } = [];
+
+    /// <summary>Audit writes <see cref="TransactionalAuditWriter"/> enlisted for a successful,
+    /// state-writing action. <see cref="UnitOfWork"/> dispatches them right before commit, on the
+    /// same terms as <see cref="PendingOutboxMessages"/>: a rollback leaves none dispatched, and a
+    /// commit dispatches each exactly once.</summary>
+    internal List<(AuditEvent Event, AuditClass Class)> PendingAuditEvents { get; } = [];
 }
 
 /// <summary>Chooses the capability the configured provider calls for. A capability holds no
@@ -113,7 +119,11 @@ internal static class ProviderCapabilityFactory
 }
 
 /// <inheritdoc cref="IUnitOfWork"/>
-internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransactionState ambient, IOutboxStore outboxStore)
+internal sealed class UnitOfWork(
+    IProviderCapability capability,
+    AmbientTransactionState ambient,
+    IOutboxStore outboxStore,
+    AuditSinkDispatcher auditDispatcher)
     : IUnitOfWork
 {
     // A bare System.Diagnostics.ActivitySource, never an OpenTelemetry package reference — see
@@ -199,6 +209,29 @@ internal sealed class UnitOfWork(IProviderCapability capability, AmbientTransact
                     }
 
                     return Result<T, TransactionError>.Failure(inserted.Error);
+                }
+            }
+
+            // Dispatched right before commit, on the same terms as the outbox flush above: nothing
+            // was dispatched to a sink while work ran, so a rollback here leaves none dispatched and
+            // a commit dispatches each exactly once — I-U3.
+            foreach (var (auditEvent, auditClass) in transaction.PendingAuditEvents)
+            {
+                var dispatched = await auditDispatcher.DispatchAsync(auditEvent, auditClass, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!dispatched.IsSuccess)
+                {
+                    try
+                    {
+                        await transaction.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Best-effort: the connection may already be gone.
+                    }
+
+                    return Result<T, TransactionError>.Failure(
+                        dispatched.Error.IsRetryable ? TransactionError.Unavailable() : TransactionError.Faulted());
                 }
             }
 

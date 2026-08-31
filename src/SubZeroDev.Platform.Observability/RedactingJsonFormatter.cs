@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Serilog.Events;
 using Serilog.Formatting;
+using SubZeroDev.Platform.Core;
 
 namespace SubZeroDev.Platform.Observability;
 

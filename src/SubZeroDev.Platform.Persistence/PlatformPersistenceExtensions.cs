@@ -57,6 +57,12 @@ public static class PlatformPersistenceExtensions
         services.TryAddSingleton<IUnitOfWork, UnitOfWork>();
         services.TryAddSingleton<IMigrationRunner, MigrationRunner>();
 
+        // Replaces Core's default, transaction-agnostic writer: Persistence is the only package that
+        // knows about the ambient transaction, so the enlistment this decorator adds — deferring a
+        // successful write's audit dispatch to just before commit — has to live here rather than in
+        // Core, which TryAddSingleton<IAuditWriter, AuditWriter>() already registered.
+        services.Replace(ServiceDescriptor.Singleton<IAuditWriter, TransactionalAuditWriter>());
+
         // Fingerprinting is a Core concept usable without Persistence, and Hosting's own defaults
         // register it too — TryAdd here means whichever registers first wins, and either is the
         // same implementation, so Persistence does not silently depend on Hosting's call order.

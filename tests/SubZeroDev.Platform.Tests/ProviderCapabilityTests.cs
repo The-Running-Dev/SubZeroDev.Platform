@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Microsoft.Extensions.Logging.Abstractions;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
@@ -136,7 +137,10 @@ public sealed class ProviderCapabilityTests
                 Provider = PersistenceProvider.Sqlite,
                 ConnectionString = "Data Source=:memory:;Pooling=False",
             }));
-        var unitOfWork = new UnitOfWork(capability, new AmbientTransactionState(), new FakeOutboxStore());
+        var auditDispatcher = new AuditSinkDispatcher(
+            new AuditSinkRegistry(), new AuditSinkHealthState(), NullLogger<AuditSinkDispatcher>.Instance);
+        var unitOfWork = new UnitOfWork(
+            capability, new AmbientTransactionState(), new FakeOutboxStore(), auditDispatcher);
 
         var result = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,

@@ -43,6 +43,21 @@ public interface IBackgroundWorkRegistry
     void Freeze();
 }
 
+/// <summary>Collects audit sink registrations.</summary>
+public interface IAuditSinkRegistry
+{
+    /// <summary>Registers one sink.</summary>
+    /// <param name="sink">The sink.</param>
+    /// <returns>Success, or why the registration was rejected.</returns>
+    Result<AuditSinkRegistrationError> Register(IAuditSink sink);
+
+    /// <summary>Everything registered, in registration order.</summary>
+    IReadOnlyList<IAuditSink> Registered { get; }
+
+    /// <summary>Closes the registry. One-way: registration after this is a defect, not a condition.</summary>
+    void Freeze();
+}
+
 /// <summary>Collects health check registrations.</summary>
 public interface IHealthCheckRegistry
 {
@@ -218,6 +233,53 @@ internal sealed class BackgroundWorkRegistry : IBackgroundWorkRegistry
     {
         var declared = role == HostRole.Web ? HostRoles.Web : HostRoles.Worker;
         return _registered.Where(work => work.Roles.HasFlag(declared)).ToList();
+    }
+
+    /// <inheritdoc/>
+    public void Freeze()
+    {
+        lock (_gate)
+        {
+            _frozen = true;
+        }
+    }
+}
+
+/// <inheritdoc cref="IAuditSinkRegistry"/>
+internal sealed class AuditSinkRegistry : IAuditSinkRegistry
+{
+    private readonly List<IAuditSink> _registered = [];
+    private readonly Lock _gate = new();
+    private bool _frozen;
+
+    /// <inheritdoc/>
+    public IReadOnlyList<IAuditSink> Registered => _registered;
+
+    /// <inheritdoc/>
+    public Result<AuditSinkRegistrationError> Register(IAuditSink sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+
+        lock (_gate)
+        {
+            if (_frozen)
+            {
+                return Result<AuditSinkRegistrationError>.Failure(
+                    AuditSinkRegistrationError.RegistryFrozen(sink.Name));
+            }
+
+            var existing = _registered.FirstOrDefault(
+                registered => string.Equals(registered.Name, sink.Name, StringComparison.Ordinal));
+            if (existing is not null)
+            {
+                return Result<AuditSinkRegistrationError>.Failure(
+                    AuditSinkRegistrationError.DuplicateProviderName(
+                        sink.Name, existing.GetType().Name, sink.GetType().Name));
+            }
+
+            _registered.Add(sink);
+            return Result<AuditSinkRegistrationError>.Success();
+        }
     }
 
     /// <inheritdoc/>

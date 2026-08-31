@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog.Events;
 using Serilog.Parsing;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Observability;
 
 namespace SubZeroDev.Platform.Tests;

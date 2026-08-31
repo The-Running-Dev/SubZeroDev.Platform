@@ -74,13 +74,8 @@ public readonly record struct PermissionProviderName(string Value)
     public override string ToString();
 }
 
-/// The resource a check or an audit record names. Both halves are caller-controlled text and pass
-/// through the redaction boundary before storage.
-public readonly record struct ResourceRef(string Type, string Id)
-{
-    public string Type { get; }
-    public string Id { get; }
-}
+// ResourceRef is declared in the tree, materialised by S3 because AuditEvent needs it ahead of the
+// rest of this section: ../src/SubZeroDev.Platform.Abstractions/Audit.cs.
 
 public enum AuthorizationOutcome
 {
@@ -173,58 +168,11 @@ public sealed record EntitlementDecision(
 
 ### 4. Audit — `SubZeroDev.Platform.Abstractions`
 
-```csharp
-public readonly record struct AuditEventId(Guid Value)
-{
-    public override string ToString();
-}
-
-/// The audited action's stable name. Caller-controlled; passes through the redaction boundary.
-public readonly record struct AuditAction(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-public enum AuditOutcome
-{
-    Allowed,
-    Denied,
-    Failed,
-}
-
-/// What happens when the audit write itself fails.
-public enum AuditClass
-{
-    /// The response becomes a retryable failure and readiness degrades.
-    Required,
-
-    /// Logged, readiness degrades, the response is unaffected.
-    Recorded,
-}
-
-public sealed record AuditEvent(
-    AuditEventId Id,
-    DateTimeOffset OccurredAt,
-    PrincipalId Actor,
-    PrincipalKind ActorKind,
-    TenantId Tenant,
-    AuditAction Action,
-    ResourceRef? Resource,
-    AuditOutcome Outcome,
-    CorrelationId Correlation,
-    AuditClass Class);
-
-/// Platform's own audited action names. Public surface: they appear in the record an auditor reads.
-public static class PlatformAuditActions
-{
-    public static AuditAction AuthorizationDenied { get; }   // platform.authorization.denied
-    public static AuditAction SharedReadScopeOpened { get; } // platform.tenancy.shared-read
-    public static AuditAction ResourceShared { get; }        // platform.tenancy.resource-shared
-    public static AuditAction LicenceStateChanged { get; }   // platform.licensing.state-changed
-    public static AuditAction EntitlementChanged { get; }    // platform.billing.entitlement-changed
-}
-```
+`AuditEventId`, `AuditAction`, `AuditOutcome`, `AuditClass`, `AuditEvent`, `PlatformAuditActions`,
+`IAuditWriter`, `IAuditSink` and `AuditError` are declared in the tree:
+[`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs). `ResourceRef` (*Types*, § 2) is
+declared in the same file, materialised ahead of the rest of Authorization because `AuditEvent`
+needs it.
 
 **What the declarations cannot say.**
 
@@ -837,32 +785,13 @@ public interface ITenantResolver
 
 ### 6. Audit — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
-```csharp
-/// Writes an audit record. Framework packages, modules and product code all write through this.
-public interface IAuditWriter
-{
-    /// Mints the id, stamps the instant from IClock and the actor, tenant and correlation from the
-    /// ambient scope, redacts the three caller-controlled strings, and dispatches to every sink.
-    Task<Result<AuditError>> WriteAsync(
-        AuditAction action,
-        ResourceRef? resource,
-        AuditOutcome outcome,
-        AuditClass auditClass,
-        CancellationToken cancellationToken);
-}
-
-/// A destination for audit records.
-public interface IAuditSink
-{
-    string Name { get; }
-
-    /// Whether records survive process restart. Declared rather than inferred, so startup can reject
-    /// an Operated composition that has no durable sink.
-    bool IsDurable { get; }
-
-    Task<Result<AuditError>> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken);
-}
-```
+`IAuditWriter` and `IAuditSink` are declared in the tree:
+[`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs). The default writer, the default log
+sink, the sink registry and the redaction boundary are declared in
+[`Audit.cs`](../src/SubZeroDev.Platform.Core/Audit.cs) and
+[`Redaction.cs`](../src/SubZeroDev.Platform.Core/Redaction.cs); the transaction-aware writer
+Persistence installs in place of Core's default is
+[`AuditEnlistment.cs`](../src/SubZeroDev.Platform.Persistence/AuditEnlistment.cs).
 
 - **`WriteAsync` on the writer takes no actor, no tenant and no correlation.** All three come from the
   ambient scope. A parameter for any of them is a way to write a record about somebody else.
@@ -914,10 +843,10 @@ public interface ISharedReadScopeFactory
   [`Registries.cs`](../src/SubZeroDev.Platform.Core/Registries.cs) already establishes — `Register`
   returning a `Result`, `Registered` in registration order, a one-way `Freeze`: permission providers,
   entitlement contributors, tenant resolvers, audit sinks, authentication providers.
-- **The redaction boundary moves from
-  [`SubZeroDev.Platform.Observability`](../src/SubZeroDev.Platform.Observability/Redaction.cs) to
-  `SubZeroDev.Platform.Core` and becomes public**, because the Audit store module and Mcp both need
-  the same one and neither may reference Observability or the other. **It stays non-injectable**: the
+- **The redaction boundary moved from `SubZeroDev.Platform.Observability` to
+  [`SubZeroDev.Platform.Core`](../src/SubZeroDev.Platform.Core/Redaction.cs) and became public**,
+  because the Audit store module and Mcp both need the same one and neither may reference
+  Observability or the other. **It stays non-injectable**: the
   D3 decision that made it fixed rather than configurable is unchanged, and a redaction boundary a
   consumer could replace is not a boundary. Abstractions is not the destination — it exposes contracts
   only and acquires no implementation.

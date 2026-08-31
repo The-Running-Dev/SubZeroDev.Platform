@@ -12,8 +12,10 @@ namespace SubZeroDev.Platform.Hosting;
 internal sealed class PlatformRegistryStartup(
     IEnumerable<IHealthCheck> checks,
     IEnumerable<IBackgroundWork> work,
+    IEnumerable<IAuditSink> sinks,
     IHealthCheckRegistry healthChecks,
-    IBackgroundWorkRegistry backgroundWork) : IHostedLifecycleService
+    IBackgroundWorkRegistry backgroundWork,
+    IAuditSinkRegistry auditSinks) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
     {
@@ -39,10 +41,22 @@ internal sealed class PlatformRegistryStartup(
             }
         }
 
+        foreach (var sink in sinks)
+        {
+            var registered = auditSinks.Register(sink);
+            if (!registered.IsSuccess)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(
+                    registered.Error,
+                    registered.Error.Detail));
+            }
+        }
+
         // One-way. Registration after this returns a failure rather than mutating a structure
         // concurrent probe readers are walking, which is what makes lock-free probing correct.
         healthChecks.Freeze();
         backgroundWork.Freeze();
+        auditSinks.Freeze();
 
         return Task.CompletedTask;
     }
