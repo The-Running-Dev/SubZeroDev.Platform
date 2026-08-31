@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Core;
@@ -30,8 +29,10 @@ internal sealed class OperationScopeAccessor(AmbientOperationScope ambient) : IO
 internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITraceContextCodec codec)
     : IOperationScopeFactory
 {
-    public IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal, CultureTag culture = default)
+    public IOperationScope Begin(TenantId tenant, Principal principal, CultureTag culture = default)
     {
+        ArgumentNullException.ThrowIfNull(principal);
+
         // Origination. The scope that calls this is the origin, so the root's trace-id is the
         // correlation — the same claim an inbound request with no traceparent makes.
         var handle = codec.StartRoot("platform.operation");
@@ -51,9 +52,12 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
         TraceContext established,
         CorrelationId correlation,
         TenantId tenant,
-        ClaimsPrincipal? principal,
-        CultureTag culture = default) =>
-        new Scope(ambient, established, correlation, tenant, principal, culture, ownedTrace: null);
+        Principal principal,
+        CultureTag culture = default)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        return new Scope(ambient, established, correlation, tenant, principal, culture, ownedTrace: null);
+    }
 
     private sealed class Scope : IOperationScope
     {
@@ -67,7 +71,7 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
             TraceContext trace,
             CorrelationId correlation,
             TenantId tenant,
-            ClaimsPrincipal? principal,
+            Principal principal,
             CultureTag culture,
             ITraceHandle? ownedTrace)
         {
@@ -88,7 +92,7 @@ internal sealed class OperationScopeFactory(AmbientOperationScope ambient, ITrac
 
         public TenantId Tenant { get; }
 
-        public ClaimsPrincipal? Principal { get; }
+        public Principal Principal { get; }
 
         public TraceContext Trace { get; }
 
@@ -115,7 +119,7 @@ internal sealed class CurrentTenant(IOperationScopeAccessor accessor) : ICurrent
 
 internal sealed class CurrentPrincipal(IOperationScopeAccessor accessor) : ICurrentPrincipal
 {
-    public ClaimsPrincipal? Current => AmbientScope.Require(accessor).Principal;
+    public Principal Current => AmbientScope.Require(accessor).Principal;
 }
 
 internal sealed class CurrentCorrelation(IOperationScopeAccessor accessor) : ICurrentCorrelation

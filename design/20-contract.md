@@ -27,40 +27,8 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 
 ### 1. Identity — `SubZeroDev.Platform.Abstractions`
 
-```csharp
-/// The pair that identifies a principal. Both halves opaque, compared ordinally, never parsed,
-/// normalised or case-folded by Platform.
-public readonly record struct PrincipalId(string Issuer, string Subject)
-{
-    public string Issuer { get; }
-    public string Subject { get; }
-
-    public static PrincipalId Anonymous { get; }
-    public static PrincipalId LocalSystem { get; }
-
-    public override string ToString();
-}
-
-/// What established the principal, and therefore whether the actor is resolvable afterwards.
-public enum PrincipalKind
-{
-    Anonymous,
-    Account,
-    Delegated,
-    System,
-}
-
-/// The ambient actor. Derived per request, never persisted; only PrincipalId reaches storage.
-public sealed record Principal(
-    PrincipalId Id,
-    PrincipalKind Kind,
-    string? DisplayName,
-    System.Security.Claims.ClaimsPrincipal? Claims)
-{
-    public static Principal Anonymous { get; }
-    public static Principal LocalSystem { get; }
-}
-```
+`PrincipalId`, `PrincipalKind` and `Principal` are declared in the tree:
+[`Principal.cs`](../src/SubZeroDev.Platform.Abstractions/Principal.cs).
 
 **What the declarations cannot say.**
 
@@ -699,13 +667,16 @@ in that consumer's own migration.
 
 ### 6. The existing audit columns — `SubZeroDev.Platform.Persistence`
 
-[`IAuditable`](../src/SubZeroDev.Platform.Persistence/Columns.cs) declares `CreatedBy`, `ModifiedBy`
-and `DeletedBy` as `string?` because D3 had no actor. **Whether the total principal makes `CreatedBy`
-non-null is Unresolved** — `## Unresolved`, item 1. Determined either way:
+[`IAuditable`](../src/SubZeroDev.Platform.Persistence/Columns.cs) declared `CreatedBy`, `ModifiedBy`
+and `DeletedBy` as `string?` in D3, because D3 had no actor. S2 resolved Unresolved item 1:
+**`CreatedBy` becomes non-null (`string`)**, matching the ambient principal being total and making
+"every row names an actor" a property of the type rather than of the writer — no consumer runs on
+Platform today, so the migration cost was zero at the time this was decided
+([`90-decisions.md`](90-decisions.md), 2026-08-31).
 
 - **The value written is `PrincipalId.ToString()`**, and it is never split to recover the pair.
-- **`ModifiedBy` and `DeletedBy` stay nullable regardless of the answer**, because their null means
-  "not yet modified" and "not deleted", which is a different fact from "no actor".
+- **`ModifiedBy` and `DeletedBy` stay nullable**, because their null means "not yet modified" and
+  "not deleted", which is a different fact from "no actor".
 
 ---
 
@@ -1391,23 +1362,11 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 
 ## Unresolved
 
-**1. The nullability of `IAuditable.CreatedBy` under a total principal.**
-[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs) declares it `string?` because D3 had
-no actor; [`10-design.md`](10-design.md) § *Data model* 2 names that nullability as caused by the same
-absence the total principal removes, but commits only to the **ambient** principal being non-null. Two
-readings are both defensible and produce different declarations, so neither is chosen here:
+Item 1 (the nullability of `IAuditable.CreatedBy` under a total principal) was resolved for S2 —
+**`CreatedBy` becomes non-null** — and is recorded under *Persisted schemas*, § 6 and
+[`90-decisions.md`](90-decisions.md), 2026-08-31.
 
-- **`CreatedBy` becomes non-null**, matching the ambient principal and making "every row names an
-  actor" a property of the type rather than of the writer. No consumer runs on Platform today, so the
-  migration cost is zero — which will not be true later.
-- **`CreatedBy` stays `string?`**, because the column's null also means "written before D5" for any row
-  an existing consumer already holds, and Platform does not know whether one exists.
-
-Determined either way: the stored value is `PrincipalId.ToString()` and is never split (I-I3), and
-`ModifiedBy` and `DeletedBy` stay nullable because their null means "not yet modified" and "not
-deleted", which is a different fact from "no actor".
-
-**2. How the registered entitlement-contributor set reaches the settings-fingerprint input.**
+**1. How the registered entitlement-contributor set reaches the settings-fingerprint input.**
 [`10-design.md`](10-design.md) § *Data model* 6 requires the contributor set to join the fingerprint so
 two instances that disagree about who may grant are visible through the existing
 `platform.settings-fingerprint` check rather than by their behaviour diverging (I-C4).

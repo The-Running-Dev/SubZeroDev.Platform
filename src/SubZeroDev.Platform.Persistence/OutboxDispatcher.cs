@@ -106,7 +106,7 @@ internal sealed class OutboxDispatcher(
         using var dependencyScope = serviceScopes.CreateScope();
         using var trace = traces.StartLinked(message.TraceContext, "platform.outbox.dispatch");
         using var operation = operationScopes.Begin(
-            trace.Context, message.Correlation, message.Tenant, principal: null, message.Culture);
+            trace.Context, message.Correlation, message.Tenant, Principal.LocalSystem, message.Culture);
 
         var handler = dependencyScope.ServiceProvider.GetRequiredService(registration.HandlerType);
         var unitOfWork = dependencyScope.ServiceProvider.GetRequiredService<IUnitOfWork>();

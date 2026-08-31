@@ -10,16 +10,16 @@ public interface ITenantOwned
     TenantId Tenant { get; }
 }
 
-/// <summary>The four audit columns. Times come from <see cref="IClock"/>, actors from the ambient
-/// principal, and both are null-tolerant because identity is D5 and there is frequently no
-/// principal.</summary>
+/// <summary>The four audit columns. Times come from <see cref="IClock"/>; actors from the ambient
+/// principal, which is total — every row names an actor.</summary>
 public interface IAuditable
 {
     /// <summary>When the row was created.</summary>
     DateTimeOffset CreatedAt { get; }
 
-    /// <summary>Who created the row. Null when there was no principal.</summary>
-    string? CreatedBy { get; }
+    /// <summary>Who created the row: the acting principal's <c>PrincipalId.ToString()</c>. Never
+    /// split to recover the pair.</summary>
+    string CreatedBy { get; }
 
     /// <summary>When the row was last modified.</summary>
     DateTimeOffset? ModifiedAt { get; }

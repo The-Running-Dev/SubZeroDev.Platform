@@ -24,11 +24,11 @@ public sealed class OperationScopeTests
         await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
         var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
 
-        using var scope = factory.Begin(TenantId.Implicit, null);
+        using var scope = factory.Begin(TenantId.Implicit, Principal.Anonymous);
 
         Assert.Equal(scope.Trace.TraceId, scope.Correlation.TraceId);
         Assert.Equal(TenantId.Implicit, scope.Tenant);
-        Assert.Null(scope.Principal);
+        Assert.Equal(Principal.Anonymous, scope.Principal);
     }
 
     [Fact]
@@ -37,11 +37,11 @@ public sealed class OperationScopeTests
         await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
         var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
 
-        using var scope = factory.Begin(TenantId.Implicit, null);
+        using var scope = factory.Begin(TenantId.Implicit, Principal.Anonymous);
 
         Assert.Equal(scope.Correlation, host.Services.GetRequiredService<ICurrentCorrelation>().Current);
         Assert.Equal(TenantId.Implicit, host.Services.GetRequiredService<ICurrentTenant>().Current);
-        Assert.Null(host.Services.GetRequiredService<ICurrentPrincipal>().Current);
+        Assert.Equal(Principal.Anonymous, host.Services.GetRequiredService<ICurrentPrincipal>().Current);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class OperationScopeTests
         var trace = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", null);
         var origin = new CorrelationId("3333333333333333333333333333bbbb");
 
-        using var scope = factory.Begin(trace, origin, TenantId.Implicit, null);
+        using var scope = factory.Begin(trace, origin, TenantId.Implicit, Principal.Anonymous);
 
         // The one boundary where the two are permitted to differ. Dispatch relies on it.
         Assert.Equal(origin, scope.Correlation);
@@ -67,10 +67,10 @@ public sealed class OperationScopeTests
         var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
         var correlation = host.Services.GetRequiredService<ICurrentCorrelation>();
 
-        using var outer = factory.Begin(TenantId.Implicit, null);
+        using var outer = factory.Begin(TenantId.Implicit, Principal.Anonymous);
         var outerCorrelation = correlation.Current;
 
-        using (factory.Begin(TenantId.Implicit, null))
+        using (factory.Begin(TenantId.Implicit, Principal.Anonymous))
         {
             Assert.NotEqual(outerCorrelation, correlation.Current);
         }
@@ -100,7 +100,7 @@ public sealed class OperationScopeTests
         await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
         var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
 
-        using var scope = factory.Begin(TenantId.Implicit, null, new CultureTag("bg"));
+        using var scope = factory.Begin(TenantId.Implicit, Principal.Anonymous, new CultureTag("bg"));
 
         Assert.Equal(new CultureTag("bg"), scope.Culture);
         Assert.Equal(new CultureTag("bg"), host.Services.GetRequiredService<ICurrentCulture>().Current);
@@ -112,12 +112,12 @@ public sealed class OperationScopeTests
         await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
         var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
 
-        using var originated = factory.Begin(TenantId.Implicit, null);
+        using var originated = factory.Begin(TenantId.Implicit, Principal.Anonymous);
         Assert.Equal(CultureTag.Invariant, originated.Culture);
 
         var trace = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", null);
         var origin = new CorrelationId("3333333333333333333333333333bbbb");
-        using var established = factory.Begin(trace, origin, TenantId.Implicit, null);
+        using var established = factory.Begin(trace, origin, TenantId.Implicit, Principal.Anonymous);
         Assert.Equal(CultureTag.Invariant, established.Culture);
 
         // default(CultureTag) is Invariant, not merely equivalent to it — the whole point of making
