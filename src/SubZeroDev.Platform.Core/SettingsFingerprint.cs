@@ -27,8 +27,9 @@ public interface ISettingsFingerprint
 internal sealed class SettingsFingerprint : ISettingsFingerprint
 {
     /// <summary>The format version, inside the hashed input so a future encoding change is a
-    /// visible break rather than a silent one.</summary>
-    private static readonly byte[] FormatVersion = "szdfp1"u8.ToArray();
+    /// visible break rather than a silent one. Bumped in D5-S1 when <c>CompositionProfile</c>
+    /// joined the fingerprinted set.</summary>
+    private static readonly byte[] FormatVersion = "szdfp2"u8.ToArray();
 
     public string Compute(PlatformOptions options)
     {

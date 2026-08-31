@@ -115,6 +115,7 @@ internal static class Settings
 {
     internal static Dictionary<string, string?> Required() => new()
     {
+        ["Platform:CompositionProfile"] = "Operated",
         ["Platform:Persistence:Provider"] = "Sqlite",
         ["Platform:Persistence:ConnectionString"] = "Data Source=:memory:",
         ["Platform:Outbox:ProcessedRetention"] = "1.00:00:00",

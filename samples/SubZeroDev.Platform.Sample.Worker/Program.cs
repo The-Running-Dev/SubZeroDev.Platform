@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
@@ -26,6 +28,11 @@ builder.Services.AddPlatformPersistence();
 builder.Services.AddPlatformEventHandler<OrderPlaced, OrderPlacedHandler>(SampleEventTypes.OrderPlaced);
 
 var app = builder.Build();
+
+// D5-S1.1: an adopter must be able to see, from the log alone, which shape this host claims to be.
+app.Logger.LogInformation(
+    "Composition profile: {CompositionProfile}",
+    app.Services.GetRequiredService<PlatformOptions>().CompositionProfile);
 
 app.Run();
 

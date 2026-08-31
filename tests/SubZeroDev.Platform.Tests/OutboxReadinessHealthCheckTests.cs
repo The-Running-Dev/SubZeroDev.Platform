@@ -68,6 +68,7 @@ public sealed class OutboxBacklogAgeHealthCheckTests
 
     internal static PlatformOptions Options(long pendingCountThreshold = 100_000) => new()
     {
+        CompositionProfile = CompositionProfile.Operated,
         Persistence = new PersistenceOptions { Provider = PersistenceProvider.Sqlite, ConnectionString = "Data Source=:memory:" },
         Outbox = new OutboxOptions { ProcessedRetention = TimeSpan.FromDays(1), PoisonedRetention = TimeSpan.FromDays(7) },
         Health = new HealthOptions { BacklogAgeThreshold = TimeSpan.FromMinutes(5), PendingCountThreshold = pendingCountThreshold },

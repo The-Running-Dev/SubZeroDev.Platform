@@ -219,6 +219,7 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
     /// is requested.</summary>
     private Dictionary<string, string?> Defaults() => new()
     {
+        ["Platform:CompositionProfile"] = nameof(CompositionProfile.Operated),
         ["Platform:Persistence:Provider"] = nameof(PersistenceProvider.Sqlite),
         ["Platform:Persistence:ConnectionString"] = $"Data Source={_sqliteFile}",
         ["Platform:Outbox:ProcessedRetention"] = "1.00:00:00",

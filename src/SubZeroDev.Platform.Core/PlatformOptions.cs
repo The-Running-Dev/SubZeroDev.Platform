@@ -31,6 +31,13 @@ public sealed record PlatformOptions
     /// <summary>Fixed by which form of the registration call the host made, and not bindable.</summary>
     public HostRole Role { get; internal init; }
 
+    /// <summary>Which shape this host claims to be. Two hosts that disagree only here compute
+    /// different settings fingerprints, which is what lets a live disagreement surface as
+    /// <c>platform.settings-fingerprint</c> failing rather than the two behaving differently in
+    /// silence.</summary>
+    [Fingerprinted]
+    public required CompositionProfile CompositionProfile { get; init; }
+
     /// <summary>Provider selection and connection.</summary>
     public required PersistenceOptions Persistence { get; init; }
 

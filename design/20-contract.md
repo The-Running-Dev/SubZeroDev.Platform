@@ -17,9 +17,9 @@ every section below is written as though its scaffolds were already gone.
 `ContractViolation`, `PlatformContractViolationException`, `IPlatformModule`, `IModuleRegistry`,
 `ModuleGraphError`, `ConfigurationError`, `HostStartupError`, `PlatformStartupException`,
 `ErrorEnvelope`, `IHealthCheck`, `ITenantOwned`, `IAuditable`, `ISoftDeletable`, `IUnitOfWork`,
-`IAmbientTransaction`, `IAmbientTransactionAccessor`, `ISettingsFingerprint` and
-`FingerprintedAttribute` are declared in the tree and are cited, never re-specified. Where D5 changes
-one, the change is stated against the file that declares it.
+`IAmbientTransaction`, `IAmbientTransactionAccessor`, `ISettingsFingerprint`,
+`FingerprintedAttribute` and `CompositionProfile` are declared in the tree and are cited, never
+re-specified. Where D5 changes one, the change is stated against the file that declares it.
 
 ---
 
@@ -282,17 +282,10 @@ public static class PlatformAuditActions
 
 ### 5. Composition — `SubZeroDev.Platform.Abstractions`
 
-```csharp
-/// Which shape the host claims to be. Configuration, and fingerprinted.
-public enum CompositionProfile
-{
-    /// Identity-free, billing-free, licence-free. No commercial package is present.
-    Local,
-
-    /// Authenticated at the transport, with a durable audit sink.
-    Operated,
-}
-```
+`CompositionProfile` is declared in the tree:
+[`Composition.cs`](../src/SubZeroDev.Platform.Abstractions/Composition.cs). `PlatformOptions.CompositionProfile`,
+`[Fingerprinted]`, is declared beside the rest of `PlatformOptions`:
+[`PlatformOptions.cs`](../src/SubZeroDev.Platform.Core/PlatformOptions.cs).
 
 **What the declaration cannot say.**
 

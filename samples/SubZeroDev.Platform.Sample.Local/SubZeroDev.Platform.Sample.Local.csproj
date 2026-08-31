@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- D5-S1.6: this host has no package or project reference to Identity, Organizations, Billing
+       or Licensing, by name — the local composition profile is identity-free, billing-free and
+       licence-free. It references Hosting alone: Persistence is optional, and this sample proves
+       the smallest deployment shape rather than the round-trip one Sample.Web/Worker exercise.
+       See SubZeroDev.Platform.Sample.Web.csproj for what UsePlatformPackages/PlatformPackageVersion
+       switch. -->
+  <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
+    <PackageReference Include="SubZeroDev.Platform.Hosting" Version="$(PlatformPackageVersion)" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>
