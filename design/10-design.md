@@ -276,9 +276,9 @@ type. This is the one place where deleting a specified capability is the design 
 
 What remains that a caller controls is the action name, the resource type and the resource id, and
 those pass through the fixed redaction boundary
-([`src/SubZeroDev.Platform.Observability/Redaction.cs`](../src/SubZeroDev.Platform.Observability/Redaction.cs))
-before storage. That boundary is `internal` today and is consumed by one package; D5 needs it in two
-more — the Audit store module and Mcp — so **it moves to Core, which is the framework package both
+([`src/SubZeroDev.Platform.Core/Redaction.cs`](../src/SubZeroDev.Platform.Core/Redaction.cs))
+before storage. That boundary was `internal` and consumed by one package before D5 needed it in two
+more — the Audit store module and Mcp — so **it moved to Core, which is the framework package both
 modules already depend on**, and stays non-injectable. Abstractions is not the destination: it exposes
 contracts only and acquires no implementation (*Module boundaries*, § 3), and the redaction boundary is
 implementation. The D3 decision that made it fixed rather than configurable is unchanged, and a

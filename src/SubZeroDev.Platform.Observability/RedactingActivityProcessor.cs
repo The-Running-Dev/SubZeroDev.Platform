@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using OpenTelemetry;
+using SubZeroDev.Platform.Core;
 
 namespace SubZeroDev.Platform.Observability;
 

@@ -1,5 +1,6 @@
 using OpenTelemetry;
 using OpenTelemetry.Logs;
+using SubZeroDev.Platform.Core;
 
 namespace SubZeroDev.Platform.Observability;
 

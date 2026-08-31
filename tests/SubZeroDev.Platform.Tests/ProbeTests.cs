@@ -27,7 +27,10 @@ public sealed class ProbeTests
         var readiness = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
         var liveness = await host.ProbeAsync(HealthCheckKind.Liveness, CancellationToken.None);
 
-        Assert.Equal(["ready-one", "ready-two"], readiness.Entries.Select(entry => entry.Name.Value));
+        // platform.audit.sink is a Core default present on every host — see AuditSinkHealthCheck.
+        Assert.Equal(
+            ["ready-one", "ready-two", "platform.audit.sink"],
+            readiness.Entries.Select(entry => entry.Name.Value));
         Assert.Equal(["live-one"], liveness.Entries.Select(entry => entry.Name.Value));
     }
 
@@ -77,7 +80,8 @@ public sealed class ProbeTests
 
         var report = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
 
-        var entry = Assert.Single(report.Entries);
+        // platform.audit.sink is a Core default present on every host — see AuditSinkHealthCheck.
+        var entry = Assert.Single(report.Entries, candidate => candidate.Name.Value == "throwing");
         Assert.Equal(HealthStatus.Unhealthy, entry.Status);
         Assert.DoesNotContain("secret", entry.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
@@ -89,7 +93,9 @@ public sealed class ProbeTests
 
         var report = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
 
-        Assert.Equal(HealthStatus.Unhealthy, Assert.Single(report.Entries).Status);
+        // platform.audit.sink is a Core default present on every host — see AuditSinkHealthCheck.
+        var entry = Assert.Single(report.Entries, candidate => candidate.Name.Value == "hanging");
+        Assert.Equal(HealthStatus.Unhealthy, entry.Status);
     }
 
     private static Task<IPlatformTestHost> StartWithChecks(params IHealthCheck[] checks) =>
@@ -132,8 +138,10 @@ public sealed class ProbeTests
 
         var report = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
 
-        Assert.Equal(["slow-one", "slow-two"], report.Entries.Select(entry => entry.Name.Value));
-        Assert.All(report.Entries, entry => Assert.Equal(HealthStatus.Unhealthy, entry.Status));
+        // platform.audit.sink is a Core default present on every host — see AuditSinkHealthCheck.
+        var slow = report.Entries.Where(entry => entry.Name.Value != "platform.audit.sink").ToList();
+        Assert.Equal(["slow-one", "slow-two"], slow.Select(entry => entry.Name.Value));
+        Assert.All(slow, entry => Assert.Equal(HealthStatus.Unhealthy, entry.Status));
     }
 
     [Fact]

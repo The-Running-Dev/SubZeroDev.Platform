@@ -80,6 +80,39 @@ public sealed record ConfigurationError : PlatformError
             $"SQLite file '{path}' is in journal mode '{actualMode}'; it must be 'wal'.");
 }
 
+/// <summary>A rejected audit sink registration. The <c>DuplicateProviderName</c> variant's code
+/// matches the vocabulary <c>design/20-contract.md</c>'s Startup section fixes for every registry
+/// D5 adds — permission providers, entitlement contributors and tenant resolvers raise the same code
+/// from their own registries when their own slices land.</summary>
+public sealed record AuditSinkRegistrationError : PlatformError
+{
+    private AuditSinkRegistrationError(string code, string detail)
+        : base(code) => Detail = detail;
+
+    /// <summary>Names the sinks involved.</summary>
+    public string Detail { get; }
+
+    /// <inheritdoc/>
+    public override bool IsRetryable => false;
+
+    /// <summary>Two sinks share a name — a decision naming its source would be worthless if two
+    /// sources shared one.</summary>
+    /// <param name="name">The duplicated name.</param>
+    /// <param name="first">The sink already registered under that name.</param>
+    /// <param name="second">The sink that tried to register alongside it.</param>
+    /// <returns>The error.</returns>
+    public static AuditSinkRegistrationError DuplicateProviderName(string name, string first, string second) =>
+        new(
+            nameof(DuplicateProviderName),
+            $"Two audit sinks are registered under the name '{name}': '{first}' and '{second}'.");
+
+    /// <summary>Registration was attempted after the host was built.</summary>
+    /// <param name="name">The sink that arrived late.</param>
+    /// <returns>The error.</returns>
+    public static AuditSinkRegistrationError RegistryFrozen(string name) =>
+        new(nameof(RegistryFrozen), $"The audit sink registry is frozen; '{name}' cannot be registered.");
+}
+
 /// <summary>A rejected health check registration.</summary>
 public sealed record HealthCheckRegistrationError : PlatformError
 {

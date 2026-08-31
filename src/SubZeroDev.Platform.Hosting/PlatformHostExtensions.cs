@@ -142,6 +142,16 @@ public static class PlatformHostExtensions
         services.TryAddSingleton<IHealthCheckRegistry, HealthCheckRegistry>();
         services.TryAddSingleton<IBackgroundWorkRegistry, BackgroundWorkRegistry>();
         services.TryAddSingleton<ISettingsFingerprint, SettingsFingerprint>();
+
+        services.TryAddSingleton<AuditSinkHealthState>();
+        services.TryAddSingleton<AuditEventFactory>();
+        services.TryAddSingleton<AuditSinkDispatcher>();
+        services.TryAddSingleton<IAuditSinkRegistry, AuditSinkRegistry>();
+        services.TryAddSingleton<IAuditWriter>(provider => new AuditWriter(
+            provider.GetRequiredService<AuditEventFactory>(),
+            provider.GetRequiredService<AuditSinkDispatcher>()));
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink, LogAuditSink>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, AuditSinkHealthCheck>());
     }
 
     /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex

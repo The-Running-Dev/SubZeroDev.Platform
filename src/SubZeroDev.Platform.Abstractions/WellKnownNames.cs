@@ -51,4 +51,7 @@ public static class PlatformHealthChecks
 
     /// <summary>Whether this host's registered migrations match the applied ones.</summary>
     public static HealthCheckName PendingMigrations { get; } = new("platform.pending-migrations");
+
+    /// <summary>Whether every registered audit sink accepted its most recent write.</summary>
+    public static HealthCheckName AuditSink { get; } = new("platform.audit.sink");
 }

@@ -32,6 +32,42 @@ internal sealed class StubHealthCheck(
             new Dictionary<string, string> { ["stub"] = "data" }));
 }
 
+/// <summary>Records every event handed to it, and answers a test-chosen result. Threadsafe: a
+/// transactional flush and a direct dispatch could both reach it.</summary>
+internal sealed class RecordingAuditSink(string name = "recording", bool isDurable = false) : IAuditSink
+{
+    private readonly List<AuditEvent> _received = [];
+    private readonly Lock _gate = new();
+    private Func<AuditEvent, Result<AuditError>>? _answer;
+
+    public string Name => name;
+
+    public bool IsDurable => isDurable;
+
+    internal IReadOnlyList<AuditEvent> Received
+    {
+        get { lock (_gate) { return _received.ToList(); } }
+    }
+
+    /// <summary>Every call after this one answers with <paramref name="result"/> instead of success.</summary>
+    internal void FailNextWith(Func<AuditEvent, Result<AuditError>> result)
+    {
+        lock (_gate)
+        {
+            _answer = result;
+        }
+    }
+
+    public Task<Result<AuditError>> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            _received.Add(auditEvent);
+            return Task.FromResult(_answer?.Invoke(auditEvent) ?? Result<AuditError>.Success());
+        }
+    }
+}
+
 /// <summary>Counts its own ticks, so a test can assert how many ran.</summary>
 internal sealed class CountingBackgroundWork(string name, HostRoles roles) : IBackgroundWork
 {
