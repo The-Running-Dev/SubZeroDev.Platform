@@ -160,7 +160,8 @@ Touches:
 - **`SubZeroDev.Platform.Core`** — the audit-sink registry on
   [`Registries.cs`](../src/SubZeroDev.Platform.Core/Registries.cs)'s shape, the writer, the default log
   sink, and the redaction boundary moved in from
-  [`Redaction.cs`](../src/SubZeroDev.Platform.Observability/Redaction.cs) and made public
+  `SubZeroDev.Platform.Observability`'s [`Redaction.cs`](../src/SubZeroDev.Platform.Core/Redaction.cs)
+  and made public
 - **[`WellKnownNames.cs`](../src/SubZeroDev.Platform.Abstractions/WellKnownNames.cs)** —
   `platform.audit.sink`
 - **`SubZeroDev.Platform.Persistence`** — the sink's enlistment in the ambient transaction
