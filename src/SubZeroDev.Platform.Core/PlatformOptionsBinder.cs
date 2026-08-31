@@ -27,6 +27,8 @@ internal static class PlatformOptionsBinder
         var section = configuration.GetSection(SectionName);
         var reader = new Reader(section);
 
+        var compositionProfile = reader.RequiredEnum<CompositionProfile>("CompositionProfile");
+
         var provider = reader.RequiredEnum<PersistenceProvider>("Persistence:Provider");
         var connectionString = reader.RequiredString("Persistence:ConnectionString");
         var busyWait = reader.TimeSpan("Persistence:SqliteBusyWaitBound", TimeSpan.FromSeconds(5), Positive);
@@ -106,6 +108,7 @@ internal static class PlatformOptionsBinder
             ServiceVersion = reader.OptionalString("ServiceVersion"),
             Environment = environment,
             Role = role,
+            CompositionProfile = compositionProfile,
             Persistence = new PersistenceOptions
             {
                 Provider = provider,

@@ -166,6 +166,7 @@ public sealed class PeerHostHealthCheckTests
     {
         Environment = environment,
         Role = role,
+        CompositionProfile = CompositionProfile.Operated,
         Persistence = new PersistenceOptions { Provider = PersistenceProvider.Sqlite, ConnectionString = "Data Source=:memory:" },
         Outbox = new OutboxOptions
         {

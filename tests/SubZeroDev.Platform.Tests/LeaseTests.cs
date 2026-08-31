@@ -114,6 +114,7 @@ public sealed class LeaseManagerTests
 
     private static PlatformOptions Options() => new()
     {
+        CompositionProfile = CompositionProfile.Operated,
         Persistence = new PersistenceOptions { Provider = PersistenceProvider.Sqlite, ConnectionString = "Data Source=:memory:" },
         Outbox = new OutboxOptions { ProcessedRetention = TimeSpan.FromDays(1), PoisonedRetention = TimeSpan.FromDays(7) },
         Lease = new LeaseOptions { Duration = TimeSpan.FromMinutes(5) },

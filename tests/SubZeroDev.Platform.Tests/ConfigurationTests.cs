@@ -20,6 +20,24 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
+    public void A_missing_composition_profile_aborts_startup()
+    {
+        var error = AbortOf(settings => settings.Remove("Platform:CompositionProfile"));
+
+        Assert.Equal("MissingRequiredSetting", error.Inner?.Code);
+        Assert.Contains("Platform:CompositionProfile", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_unrecognised_composition_profile_names_the_allowed_values()
+    {
+        var error = AbortOf(settings => settings["Platform:CompositionProfile"] = "Hybrid");
+
+        Assert.Equal("InvalidSetting", error.Inner?.Code);
+        Assert.Contains("Platform:CompositionProfile", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_missing_connection_string_aborts_startup()
     {
         var error = AbortOf(settings => settings.Remove("Platform:Persistence:ConnectionString"));

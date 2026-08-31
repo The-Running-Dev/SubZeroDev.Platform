@@ -23,12 +23,23 @@ public sealed class SettingsFingerprintTests
     [Fact]
     public void Matches_the_byte_exact_specification_against_a_hand_computed_vector()
     {
-        // Computed independently in PowerShell against System.Security.Cryptography.SHA256 over
-        // the exact byte layout design/d3/20-contract.md specifies: "szdfp1", then each of the nine
-        // currently-[Fingerprinted] entries, path-sorted ordinally, length-prefixed.
+        // Computed independently against System.Security.Cryptography.SHA256 over the exact byte
+        // layout design/20-contract.md specifies: "szdfp2", then each of the ten
+        // currently-[Fingerprinted] entries (D5-S1 adds CompositionProfile), path-sorted
+        // ordinally, length-prefixed.
         var fingerprint = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline());
 
-        Assert.Equal("1934034ec1574bdaa67759cac02935ce61104d952e7e0b25fe36ed6ed89fb15a", fingerprint);
+        Assert.Equal("249099a6c8c838b79c2696cf506f444de43b2a24874f114ba2c0b5a52fdb42dd", fingerprint);
+    }
+
+    [Fact]
+    public void Two_hosts_differing_only_in_composition_profile_fingerprint_differently()
+    {
+        var operated = Baseline() with { CompositionProfile = CompositionProfile.Operated };
+        var local = Baseline() with { CompositionProfile = CompositionProfile.Local };
+        var fingerprint = new SettingsFingerprint();
+
+        Assert.NotEqual(fingerprint.Compute(operated), fingerprint.Compute(local));
     }
 
     [Fact]
@@ -124,6 +135,7 @@ public sealed class SettingsFingerprintTests
     {
         ServiceName = "settings-fingerprint-tests",
         ServiceVersion = "1.0.0",
+        CompositionProfile = CompositionProfile.Operated,
         Persistence = new PersistenceOptions
         {
             Provider = PersistenceProvider.Sqlite,
