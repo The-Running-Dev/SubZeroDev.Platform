@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Testing;
@@ -34,11 +33,37 @@ public sealed class FakeCurrentTenant : ICurrentTenant
     public TenantId Current { get; set; } = TenantId.Implicit;
 }
 
-/// <summary>A principal a test sets. Null is the ordinary value: identity is D5.</summary>
+/// <summary>A principal a test sets. <see cref="Abstractions.Principal.Anonymous"/> is the ordinary
+/// value — the total principal is never null.</summary>
 public sealed class FakeCurrentPrincipal : ICurrentPrincipal
 {
     /// <summary>The principal every read returns.</summary>
-    public ClaimsPrincipal? Current { get; set; }
+    public Principal Current { get; set; } = Principal.Anonymous;
+}
+
+/// <summary>A principal of each kind, for a test that needs one it did not have to authenticate.
+/// Framework-only: no fake account, membership or user directory of any kind, which is a module's
+/// own knowledge and never a framework fake's.</summary>
+public static class FakePrincipals
+{
+    /// <summary>No credential was presented.</summary>
+    public static Principal Anonymous => Principal.Anonymous;
+
+    /// <summary>Platform itself, acting on its own behalf.</summary>
+    public static Principal System => Principal.LocalSystem;
+
+    /// <summary>A principal Identity authenticated from a credential.</summary>
+    /// <param name="issuer">The asserting boundary.</param>
+    /// <param name="subject">The subject within that boundary.</param>
+    public static Principal Account(string issuer = "test-issuer", string subject = "test-subject") =>
+        new(new PrincipalId(issuer, subject), PrincipalKind.Account, subject, null);
+
+    /// <summary>A principal established from an upstream-proxy assertion, with no account behind
+    /// it.</summary>
+    /// <param name="issuer">The asserting boundary.</param>
+    /// <param name="subject">The subject within that boundary.</param>
+    public static Principal Delegated(string issuer = "test-issuer", string subject = "test-subject") =>
+        new(new PrincipalId(issuer, subject), PrincipalKind.Delegated, subject, null);
 }
 
 /// <summary>A culture a test sets. <see cref="CultureTag.Invariant"/> is the ordinary value: nothing

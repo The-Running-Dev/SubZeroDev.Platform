@@ -36,9 +36,10 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
         var traceParent = context.Request.Headers.TraceParent.ToString();
         var traceState = context.Request.Headers["tracestate"].ToString();
 
-        // Identity is D5. An unauthenticated request has no principal, and a fabricated anonymous
-        // one would be worse than none.
-        var principal = context.User.Identity?.IsAuthenticated == true ? context.User : null;
+        // No authentication provider exists yet — Identity lands in S9 and the fixed authenticate
+        // step in S8. Every inbound request observes Anonymous until then; establishing System or
+        // Account from a credential is that later step's, not this one's.
+        var principal = Principal.Anonymous;
 
         // A malformed inbound header is not the caller's fault: it is ignored and fresh context is
         // minted, which is origination rather than fabrication.

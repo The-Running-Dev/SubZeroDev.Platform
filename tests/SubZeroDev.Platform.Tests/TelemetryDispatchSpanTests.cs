@@ -35,7 +35,7 @@ public sealed class TelemetryDispatchSpanTests
         var writer = host.Services.GetRequiredService<IOutboxWriter>();
 
         TraceContext origin;
-        using (var scope = scopes.Begin(TenantId.Implicit, null))
+        using (var scope = scopes.Begin(TenantId.Implicit, Principal.Anonymous))
         {
             origin = scope.Trace;
             var committed = await unitOfWork.ExecuteAsync(

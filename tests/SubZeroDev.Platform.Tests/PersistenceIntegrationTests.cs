@@ -400,6 +400,56 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         Assert.Null(createdBy);
     }
 
+    /// <summary>S2.5: a row written through Persistence carries <c>CreatedBy</c> equal to the acting
+    /// principal's <c>PrincipalId.ToString()</c>, and a row written by the local host carries
+    /// <c>system:local</c>.</summary>
+    [Fact]
+    public async Task A_row_written_by_the_local_system_principal_carries_system_local_as_created_by()
+    {
+        var catalogue = new TestMigrationSource(
+            "Catalogue",
+            TestMigration.Sql(
+                "0001_create",
+                "CREATE TABLE t_audited (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NULL);"));
+
+        await using var host = await StartAsync(sources: [catalogue]);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var currentPrincipal = host.Services.GetRequiredService<ICurrentPrincipal>();
+
+        var id = Guid.NewGuid().ToString();
+
+        using (scopeFactory.Begin(TenantId.Implicit, Principal.LocalSystem))
+        {
+            var written = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                async token =>
+                {
+                    var current = ambient.Current!;
+                    await using var insert = current.Connection.CreateCommand();
+                    insert.Transaction = current.Transaction;
+                    insert.CommandText =
+                        "INSERT INTO t_audited (id, tenant, created_at, created_by) VALUES (@id, @tenant, @createdAt, @createdBy);";
+                    AddParameter(insert, "@id", id);
+                    AddParameter(insert, "@tenant", TenantId.Implicit.ToString());
+                    AddParameter(insert, "@createdAt", capability.FormatInstant(host.Clock.UtcNow));
+                    AddParameter(insert, "@createdBy", currentPrincipal.Current.Id.ToString());
+                    await insert.ExecuteNonQueryAsync(token);
+                },
+                CancellationToken.None);
+
+            Assert.True(written.IsSuccess);
+        }
+
+        var (_, _, createdBy) = await ReadAuditRowAsync(_connectionString, id);
+        Assert.Equal("system:local", createdBy);
+        Assert.Equal(PrincipalId.LocalSystem.ToString(), createdBy);
+    }
+
     [Fact]
     public async Task Enqueue_commits_with_the_domain_write_and_neither_survives_a_rollback()
     {
@@ -416,7 +466,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         var committedProductId = Guid.NewGuid().ToString();
         OutboxMessageId committedOutboxId;
 
-        using (scopeFactory.Begin(TenantId.Implicit, null))
+        using (scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous))
         {
             var committed = await unitOfWork.ExecuteAsync(
                 TransactionIntent.Write,
@@ -436,7 +486,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
 
         var rolledBackProductId = Guid.NewGuid().ToString();
 
-        using (scopeFactory.Begin(TenantId.Implicit, null))
+        using (scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous))
         {
             var rolledBack = await unitOfWork.ExecuteAsync(
                 TransactionIntent.Write,
@@ -467,7 +517,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
 
         OutboxMessageId returnedId = default;
 
-        using (scopeFactory.Begin(TenantId.Implicit, null))
+        using (scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous))
         {
             var committed = await unitOfWork.ExecuteAsync(
                 TransactionIntent.Write,
@@ -501,7 +551,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
         using var caller = new CancellationTokenSource();
 
-        using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+        using var scope = scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
@@ -522,7 +572,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         var outbox = host.Services.GetRequiredService<IOutboxWriter>();
         var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
 
-        using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+        using var scope = scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous);
 
         var thrown = Assert.Throws<PlatformContractViolationException>(() => outbox.Enqueue(new TestEvent()));
         Assert.Equal("NoAmbientTransaction", thrown.Error.Code);
@@ -569,7 +619,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         var outbox = host.Services.GetRequiredService<IOutboxWriter>();
         var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
 
-        using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+        using var scope = scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous);
 
         var thrown = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
@@ -600,7 +650,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
 
         OutboxMessageId id = default;
 
-        using (scopeFactory.Begin(trace, correlation, TenantId.Implicit, null, new CultureTag("bg")))
+        using (scopeFactory.Begin(trace, correlation, TenantId.Implicit, Principal.Anonymous, new CultureTag("bg")))
         {
             var committed = await unitOfWork.ExecuteAsync(
                 TransactionIntent.Write,
@@ -642,7 +692,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
 
         OutboxMessageId id = default;
 
-        using (scopeFactory.Begin(TenantId.Implicit, null))
+        using (scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous))
         {
             await unitOfWork.ExecuteAsync(
                 TransactionIntent.Write,
@@ -757,7 +807,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
 
         async Task<OutboxMessageId> EnqueueOneAsync()
         {
-            using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+            using var scope = scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous);
             var id = default(OutboxMessageId);
 
             var committed = await unitOfWork.ExecuteAsync(
@@ -1124,7 +1174,7 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
         var outbox = host.Services.GetRequiredService<IOutboxWriter>();
         var scopes = host.Services.GetRequiredService<IOperationScopeFactory>();
-        using var scope = scopes.Begin(TenantId.Implicit, null);
+        using var scope = scopes.Begin(TenantId.Implicit, Principal.Anonymous);
         var id = default(OutboxMessageId);
         var committed = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
@@ -1264,7 +1314,7 @@ public sealed class CrossProviderPayloadTests(PostgresContainerFixture fixture) 
 
             var sqliteWriter = sqliteHost.Services.GetRequiredService<IOutboxWriter>();
             var sqliteScopes = sqliteHost.Services.GetRequiredService<IOperationScopeFactory>();
-            using var sqliteScope = sqliteScopes.Begin(TenantId.Implicit, null);
+            using var sqliteScope = sqliteScopes.Begin(TenantId.Implicit, Principal.Anonymous);
 
             var writtenId = default(OutboxMessageId);
             var sqliteCommitted = await sqliteHost.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(

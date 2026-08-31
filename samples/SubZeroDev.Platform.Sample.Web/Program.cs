@@ -71,7 +71,7 @@ app.MapPost("/orders", async (
             var current = ambient.Current!;
             var now = capability.FormatInstant(clock.UtcNow);
             var tenantValue = tenant.Current.ToString();
-            var createdBy = principal.Current?.Identity?.Name;
+            var createdBy = principal.Current.Id.ToString();
 
             var itemId = Guid.NewGuid().ToString();
             await using (var insertItem = current.Connection.CreateCommand())

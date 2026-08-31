@@ -21,7 +21,7 @@ internal sealed class AmbientScopeEnricher(IOperationScopeAccessor? accessor) : 
         logEvent.AddPropertyIfAbsent(propertyFactory.CreateProperty("tenant", scope.Tenant.Value));
         logEvent.AddPropertyIfAbsent(propertyFactory.CreateProperty("culture", scope.Culture.Value));
 
-        var actor = scope.Principal?.Identity?.Name;
+        var actor = scope.Principal.DisplayName;
         if (!string.IsNullOrEmpty(actor))
         {
             logEvent.AddPropertyIfAbsent(propertyFactory.CreateProperty("actor", actor));

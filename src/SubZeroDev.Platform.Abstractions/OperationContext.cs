@@ -1,5 +1,3 @@
-using System.Security.Claims;
-
 namespace SubZeroDev.Platform.Abstractions;
 
 /// <summary>The clock every persisted instant originates from, so a fake clock controls every
@@ -20,8 +18,9 @@ public interface IOperationScope : IDisposable
     /// <summary>The tenant, always present.</summary>
     TenantId Tenant { get; }
 
-    /// <summary>The principal, frequently absent — identity is D5.</summary>
-    ClaimsPrincipal? Principal { get; }
+    /// <summary>The principal. Total: <see cref="PrincipalKind.Anonymous"/> is a kind of principal,
+    /// never its absence.</summary>
+    Principal Principal { get; }
 
     /// <summary>The trace context this scope established.</summary>
     TraceContext Trace { get; }
@@ -38,24 +37,28 @@ public interface IOperationScopeFactory
     /// <summary>Origination: starts a real root trace and takes the correlation from it. The scope
     /// that calls this <em>is</em> the origin.</summary>
     /// <param name="tenant">The tenant for the scope.</param>
-    /// <param name="principal">The principal, or <see langword="null"/>.</param>
+    /// <param name="principal">The principal. Never defaulted — a call site that means to pass an
+    /// authenticated principal and passes nothing must not silently downgrade the actor on every row
+    /// it writes.</param>
     /// <param name="culture">The originating culture. Defaults to <see cref="CultureTag.Invariant"/>.</param>
     /// <returns>The scope, which restores the previous ambient context when disposed.</returns>
-    IOperationScope Begin(TenantId tenant, ClaimsPrincipal? principal, CultureTag culture = default);
+    IOperationScope Begin(TenantId tenant, Principal principal, CultureTag culture = default);
 
     /// <summary>Establishment from values the caller already holds — an adopted request context, or
     /// a dispatched message's new linked trace with the origin's correlation.</summary>
     /// <param name="established">The trace context the scope runs under.</param>
     /// <param name="correlation">The originating trace-id.</param>
     /// <param name="tenant">The tenant for the scope.</param>
-    /// <param name="principal">The principal, or <see langword="null"/>.</param>
+    /// <param name="principal">The principal. Never defaulted — a call site that means to pass an
+    /// authenticated principal and passes nothing must not silently downgrade the actor on every row
+    /// it writes.</param>
     /// <param name="culture">The originating culture. Defaults to <see cref="CultureTag.Invariant"/>.</param>
     /// <returns>The scope, which restores the previous ambient context when disposed.</returns>
     IOperationScope Begin(
         TraceContext established,
         CorrelationId correlation,
         TenantId tenant,
-        ClaimsPrincipal? principal,
+        Principal principal,
         CultureTag culture = default);
 }
 
@@ -76,12 +79,13 @@ public interface ICurrentTenant
     TenantId Current { get; }
 }
 
-/// <summary>The ambient principal, which is frequently absent.</summary>
+/// <summary>The ambient principal. Total, never null.</summary>
 public interface ICurrentPrincipal
 {
-    /// <summary>The ambient principal, or <see langword="null"/>.</summary>
-    /// <exception cref="PlatformContractViolationException">No operation scope is open.</exception>
-    ClaimsPrincipal? Current { get; }
+    /// <summary>The ambient principal.</summary>
+    /// <exception cref="PlatformContractViolationException">No operation scope is open. The only
+    /// condition under which this member fails.</exception>
+    Principal Current { get; }
 }
 
 /// <summary>The ambient correlation. This is the value that does not change across outbox dispatch,

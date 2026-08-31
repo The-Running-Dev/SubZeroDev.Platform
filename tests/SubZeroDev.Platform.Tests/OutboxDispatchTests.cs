@@ -222,7 +222,7 @@ public sealed class OutboxDispatchTests
             var origin = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", null);
             var correlation = new CorrelationId("3333333333333333333333333333bbbb");
             using (host.Services.GetRequiredService<IOperationScopeFactory>().Begin(
-                origin, correlation, TenantId.Implicit, null, new CultureTag("bg")))
+                origin, correlation, TenantId.Implicit, Principal.Anonymous, new CultureTag("bg")))
             {
                 var writer = host.Services.GetRequiredService<IOutboxWriter>();
                 var committed = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
@@ -276,7 +276,7 @@ public sealed class OutboxDispatchTests
         var origin = new TraceContext("00-1111111111111111111111111111aaaa-2222222222222222-01", "vendor=value");
         var correlation = new CorrelationId("3333333333333333333333333333bbbb");
         var scopes = fixture.Host.Services.GetRequiredService<IOperationScopeFactory>();
-        using (scopes.Begin(origin, correlation, TenantId.Implicit, null, new CultureTag("bg")))
+        using (scopes.Begin(origin, correlation, TenantId.Implicit, Principal.Anonymous, new CultureTag("bg")))
         {
             await EnqueueOneAsync(fixture.Host);
         }
@@ -288,7 +288,7 @@ public sealed class OutboxDispatchTests
         Assert.Equal(new CultureTag("bg"), observed.Culture);
         Assert.NotEqual(origin.TraceId, observed.Trace.TraceId);
         Assert.True(observed.Trace.Sampled);
-        Assert.Null(observed.Principal);
+        Assert.Equal(Principal.LocalSystem, observed.Principal);
     }
 
     [Fact]
@@ -379,7 +379,7 @@ public sealed class OutboxDispatchTests
 
         for (var index = 0; index < count; index++)
         {
-            using var scope = scopeFactory.Begin(TenantId.Implicit, null);
+            using var scope = scopeFactory.Begin(TenantId.Implicit, Principal.Anonymous);
             var enqueued = await unitOfWork.ExecuteAsync(
                 TransactionIntent.Write,
                 _ =>
@@ -409,7 +409,7 @@ public sealed class OutboxDispatchTests
         var id = default(OutboxMessageId);
         if (host.Services.GetRequiredService<IOperationScopeAccessor>().Current is null)
         {
-            using var scope = scopes.Begin(TenantId.Implicit, null);
+            using var scope = scopes.Begin(TenantId.Implicit, Principal.Anonymous);
             await CommitAsync();
         }
         else
