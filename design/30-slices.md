@@ -16,7 +16,7 @@ capability — it is the single idea every capability is generated from:
 [ADR-006](../docs/docs/adr/ADR-006-application-modules.md) rules 1 and 2 held **structurally**, so that
 the framework can own nine questions while six modules own the answers and no module can reach another.
 If that cannot be enforced by the build, the shape is wrong and everything downstream rests on a
-preference. [S1](#s1--the-two-hosts-and-the-enforced-package-boundary) therefore builds the enforcement
+preference. S1 therefore builds the enforcement
 before there is anything to enforce it against, and proves it bites by failing it against a
 deliberately broken graph — the standard
 [`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §2 sets. S2 takes the one
@@ -60,142 +60,22 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Landed
 
-Nothing yet. D5 has shipped no slice.
+- **S1 — The two hosts and the enforced package boundary** — shipped:
+  [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via
+  [#195](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/195).
+- **S2 — The total principal** — shipped:
+  [#170](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/170) via
+  [#196](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/196).
+- **S3 — Audit: the contract, the writer and the log sink** — shipped:
+  [#171](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/171) via
+  [#197](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/197).
 
 ---
 
 ## Outstanding
 
-## S1 — The two hosts and the enforced package boundary
-**Status:** in progress
-
-Delivers: someone adopting Platform can see from the build alone that the identity-free deployment
-really is identity-free. The line between what Platform always carries and what a deployment opts into
-is checked automatically, so a change that crosses it fails before anyone reviews it, rather than being
-discovered later by whoever is running the thing.
-
-Touches:
-- **`samples/`** — two hosts: the operated sample and a separate identity-free local sample
-- **`SubZeroDev.Platform.Abstractions`** — `CompositionProfile`
-- **`SubZeroDev.Platform.Core`** — `PlatformOptions` gains the profile, marked `[Fingerprinted]`;
-  [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs)'s format version
-- **`tests/SubZeroDev.Platform.Tests`** — the architecture tests over the resolved package graph, and
-  the deliberately broken graph fixture they are proved against
-
-Depends on: none.
-
-Acceptance:
-- **S1.1** Both hosts build and start. Each logs its composition profile at startup, and the values are
-  `Operated` and `Local` respectively.
-- **S1.2** Two hosts differing only in their composition profile compute different settings
-  fingerprints, and the format version inside `SettingsFingerprint` has changed in the same commit.
-- **S1.3** An architecture test over the resolved package graph fails the build when any of
-  `Abstractions`, `Core`, `Hosting`, `Persistence`, `Observability` or `Testing` references a
-  `SubZeroDev.Platform.*` package outside that set of six (I-C6).
-- **S1.4** The same test, second direction: it fails the build when one module package references
-  another module package (I-C7). With no module package present it passes, and S1.5 is what proves the
-  pass is not vacuous.
-- **S1.5** Both directions **fail against a deliberately broken graph fixture** checked into the test
-  project, and that failure is itself asserted rather than observed by hand.
-- **S1.6** An assertion over the local sample's resolved dependency graph reports zero references to
-  `SubZeroDev.Platform.Identity`, `.Organizations`, `.Billing` and `.Licensing` **by name** (I-C5). It
-  passes today because none of the four exists; the S1.5 fixture proves it bites when one does.
-
-Out of scope: every composition-profile startup rule — I-C1, I-C2 and I-C3 land with the registries they
-name, in S8. The `SubscriptionState` architecture check (I-C8) lands with Billing in S11 and the
-SDK-containment check (I-M9) with Mcp in S14; this slice builds the mechanism all three reuse, not those
-three checks.
-
-## S2 — The total principal
-**Status:** queued
-
-Delivers: every action Platform records now names who took it, including actions nobody signed in for.
-Someone reading the record can tell "the local system did this" from "nobody was ever worked out", which
-until now were the same blank.
-
-Touches:
-- **`SubZeroDev.Platform.Abstractions`** — `PrincipalId`, `PrincipalKind`, `Principal`
-- **[`OperationContext.cs`](../src/SubZeroDev.Platform.Abstractions/OperationContext.cs)** —
-  `IOperationScope.Principal`, `ICurrentPrincipal.Current` and both `IOperationScopeFactory.Begin`
-  overloads, all breaking changes against the published 0.x surface
-- **[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs)** — `IAuditable`, per the decision
-  taken for Contract Unresolved 1
-- **[`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs)** — `FakeCurrentPrincipal`
-- **Both sample hosts** — they compile and run against the changed surface
-
-Depends on: S1.
-
-Acceptance:
-- **S2.1** With no authentication anywhere in the composition, a request the local host originates
-  observes a principal whose kind is `System` and whose id renders `system:local`.
-- **S2.2** A request arriving with no credential observes a principal whose kind is `Anonymous`, and that
-  value is distinct from S2.1's.
-- **S2.3** Reading the ambient principal with no operation scope open throws
-  `PlatformContractViolationException` carrying `ContractViolation.NoAmbientOperationScope`, and that is
-  the only condition under which the member fails.
-- **S2.4** Neither `IOperationScopeFactory.Begin` overload declares a default for its principal
-  parameter — asserted by reflection over the parameter's `HasDefaultValue`.
-- **S2.5** A row written through Persistence carries `CreatedBy` equal to the acting principal's
-  `PrincipalId.ToString()`; a row written by the local host carries `system:local`.
-- **S2.6** `ModifiedBy` and `DeletedBy` remain nullable, and a row that has never been modified carries
-  null in `ModifiedBy`.
-- **S2.7** Two principals whose subjects are equal and whose issuers differ compare as unequal, and
-  neither half is trimmed, lower-cased or otherwise normalised across a round trip.
-- **S2.8** `Testing` produces a fake principal of each of the four kinds, and its current-principal fake
-  is non-null.
-
-Out of scope: establishing a principal from a credential — no authentication seam and no provider exist
-yet (S8 and S9). No audit record is written here; the audit contract is S3.
-
-## S3 — Audit: the contract, the writer and the log sink
-**Status:** queued
-
-Delivers: anything Platform does can be recorded as a fact worth keeping — who, in which tenant, on what,
-and how it turned out. A deployment that installs no audit package still gets those facts in its log
-instead of silence, and no value a caller supplies can smuggle a secret into either.
-
-Touches:
-- **`SubZeroDev.Platform.Abstractions`** — `AuditEventId`, `AuditAction`, `AuditOutcome`, `AuditClass`,
-  `AuditEvent`, `PlatformAuditActions`, `IAuditWriter`, `IAuditSink`, `AuditError`
-- **`SubZeroDev.Platform.Core`** — the audit-sink registry on
-  [`Registries.cs`](../src/SubZeroDev.Platform.Core/Registries.cs)'s shape, the writer, the default log
-  sink, and the redaction boundary moved in from
-  `SubZeroDev.Platform.Observability`'s [`Redaction.cs`](../src/SubZeroDev.Platform.Core/Redaction.cs)
-  and made public
-- **[`WellKnownNames.cs`](../src/SubZeroDev.Platform.Abstractions/WellKnownNames.cs)** —
-  `platform.audit.sink`
-- **`SubZeroDev.Platform.Persistence`** — the sink's enlistment in the ambient transaction
-
-Depends on: S2.
-
-Acceptance:
-- **S3.1** The writer's `WriteAsync` declares no parameter for actor, actor kind, tenant or correlation;
-  all four are taken from the ambient scope and appear on the written record.
-- **S3.2** `AuditEvent` declares no payload, changed-field or free-form detail member — asserted by
-  reflection over its members against the contract's fixed list.
-- **S3.3** A representative secret supplied as the action name, as the resource type and as the resource
-  id reaches neither a stored record nor any log line: each is replaced by the redaction boundary's
-  marker, asserted once per input surface.
-- **S3.4** The redaction boundary is public in `SubZeroDev.Platform.Core`, absent from
-  `SubZeroDev.Platform.Observability`, and registered in no container — a consumer cannot replace it.
-- **S3.5** With only the default sink composed, a record reaches the log and that sink reports
-  `IsDurable == false`.
-- **S3.6** A successful action that wrote state commits its audit row in the same transaction: rolling
-  the action back leaves no audit row, and committing leaves exactly one.
-- **S3.7** A denial or a failure that wrote nothing writes its audit row in its own transaction after the
-  outcome is known, and that row survives the action's rollback.
-- **S3.8** A sink returning `AuditError.SinkUnavailable` for a `Required` write turns the response into a
-  retryable failure and degrades `platform.audit.sink`. The same failure for a `Recorded` write leaves
-  the response unchanged and still degrades `platform.audit.sink`.
-- **S3.9** Two sinks registered under the same name fail startup with
-  `HostStartupError.DuplicateProviderName`, naming both.
-
-Out of scope: the durable store, its query surface and its table (S13). The
-`Operated`-requires-a-durable-sink rule (I-C2) lands with the profile rules in S8 — this slice makes
-`IsDurable` declarable, not enforceable.
-
 ## S4 — Authorization: names, providers and the evaluator
-**Status:** queued
+**Status:** in progress
 
 Delivers: a product can name an action, have Platform decide whether this caller may take it, and find
 the refusal in the record afterwards — without Platform ever holding a table of who has which role.
