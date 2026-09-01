@@ -16,7 +16,7 @@ capability — it is the single idea every capability is generated from:
 [ADR-006](../docs/docs/adr/ADR-006-application-modules.md) rules 1 and 2 held **structurally**, so that
 the framework can own nine questions while six modules own the answers and no module can reach another.
 If that cannot be enforced by the build, the shape is wrong and everything downstream rests on a
-preference. [S1](#s1--the-two-hosts-and-the-enforced-package-boundary) therefore builds the enforcement
+preference. S1 therefore builds the enforcement
 before there is anything to enforce it against, and proves it bites by failing it against a
 deliberately broken graph — the standard
 [`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §2 sets. S2 takes the one
