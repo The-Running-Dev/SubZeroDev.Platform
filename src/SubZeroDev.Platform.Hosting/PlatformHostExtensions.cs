@@ -152,6 +152,12 @@ public static class PlatformHostExtensions
             provider.GetRequiredService<AuditSinkDispatcher>()));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink, LogAuditSink>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, AuditSinkHealthCheck>());
+
+        services.TryAddSingleton<IPermissionProviderRegistry, PermissionProviderRegistry>();
+        services.TryAddSingleton<IPermissionCatalogRegistry, PermissionCatalogRegistry>();
+        services.TryAddSingleton<IAuthorizationEvaluator, AuthorizationEvaluator>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionCatalog, PlatformPermissionCatalog>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionProvider, CompositionPermissionProvider>());
     }
 
     /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex

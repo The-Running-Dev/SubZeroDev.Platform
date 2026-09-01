@@ -59,45 +59,11 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 
 ### 2. Authorization — `SubZeroDev.Platform.Abstractions`
 
-```csharp
-/// A stable permission id in the Product.Area.Action form platform-specification.md fixes.
-public readonly record struct PermissionName(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-/// A registered grant contributor's name, so a decision can name which one granted.
-public readonly record struct PermissionProviderName(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-// ResourceRef is declared in the tree, materialised by S3 because AuditEvent needs it ahead of the
-// rest of this section: ../src/SubZeroDev.Platform.Abstractions/Audit.cs.
-
-public enum AuthorizationOutcome
-{
-    Allowed,
-    Denied,
-}
-
-public sealed record AuthorizationDecision(
-    PermissionName Permission,
-    ResourceRef? Resource,
-    TenantId Tenant,
-    AuthorizationOutcome Outcome,
-    IReadOnlyCollection<PermissionProviderName> Sources);
-
-/// Platform's own permission names. Public surface: a consumer's policy refers to them by name.
-public static class PlatformPermissions
-{
-    public static PermissionName ShareResource { get; }          // Platform.Tenancy.ShareResource
-    public static PermissionName AdministerOrganization { get; } // Platform.Organizations.Administer
-    public static PermissionName ReadAudit { get; }              // Platform.Audit.Read
-}
-```
+`PermissionName`, `PermissionProviderName`, `AuthorizationOutcome`, `AuthorizationDecision` and
+`PlatformPermissions` are declared in the tree (S4):
+[`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs). `ResourceRef` is
+declared in the same project, materialised by S3 because `AuditEvent` needs it ahead of the rest of
+this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 
 **What the declarations cannot say.**
 
@@ -680,34 +646,11 @@ public interface IAuthenticationProvider
 
 ### 3. Authorization — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
-```csharp
-/// Contributes grants. The evaluator asks every registered provider and takes the union.
-public interface IPermissionProvider
-{
-    PermissionProviderName Name { get; }
-
-    Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
-        Principal principal,
-        TenantId tenant,
-        ResourceRef? resource,
-        CancellationToken cancellationToken);
-}
-
-/// Declares the permission names a module contributes. Collected and frozen at startup.
-public interface IPermissionCatalog
-{
-    IReadOnlyCollection<PermissionName> Declares { get; }
-}
-
-/// The single evaluator. Framework packages, modules and product code all ask through it.
-public interface IAuthorizationEvaluator
-{
-    Task<AuthorizationDecision> EvaluateAsync(
-        PermissionName permission,
-        ResourceRef? resource,
-        CancellationToken cancellationToken);
-}
-```
+`IPermissionProvider`, `IPermissionCatalog` and `IAuthorizationEvaluator` are declared in the tree
+(S4): [`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs). The
+permission-provider registry, the permission-catalog registry, the evaluator and the composition
+provider are declared in
+[`Authorization.cs`](../src/SubZeroDev.Platform.Core/Authorization.cs).
 
 - **`EvaluateAsync` takes no principal and no tenant.** Both come from the ambient operation scope,
   which fixed them for the request's lifetime. A parameter for either would let a call site evaluate

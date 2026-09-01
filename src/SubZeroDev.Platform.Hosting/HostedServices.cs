@@ -13,9 +13,13 @@ internal sealed class PlatformRegistryStartup(
     IEnumerable<IHealthCheck> checks,
     IEnumerable<IBackgroundWork> work,
     IEnumerable<IAuditSink> sinks,
+    IEnumerable<IPermissionCatalog> permissionCatalogs,
+    IEnumerable<IPermissionProvider> permissionProviders,
     IHealthCheckRegistry healthChecks,
     IBackgroundWorkRegistry backgroundWork,
-    IAuditSinkRegistry auditSinks) : IHostedLifecycleService
+    IAuditSinkRegistry auditSinks,
+    IPermissionCatalogRegistry permissionCatalogRegistry,
+    IPermissionProviderRegistry permissionProviderRegistry) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
     {
@@ -52,11 +56,37 @@ internal sealed class PlatformRegistryStartup(
             }
         }
 
+        // Permission names are collected from every contributing module and checked for duplicates
+        // across modules — two modules claiming the same name is a composition defect, not a
+        // last-writer-wins.
+        foreach (var catalog in permissionCatalogs)
+        {
+            var registered = permissionCatalogRegistry.Register(catalog);
+            if (!registered.IsSuccess)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(
+                    registered.Error,
+                    registered.Error.Detail));
+            }
+        }
+
+        foreach (var provider in permissionProviders)
+        {
+            var registered = permissionProviderRegistry.Register(provider);
+            if (!registered.IsSuccess)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(
+                    registered.Error,
+                    registered.Error.Detail));
+            }
+        }
+
         // One-way. Registration after this returns a failure rather than mutating a structure
         // concurrent probe readers are walking, which is what makes lock-free probing correct.
         healthChecks.Freeze();
         backgroundWork.Freeze();
         auditSinks.Freeze();
+        permissionProviderRegistry.Freeze();
 
         return Task.CompletedTask;
     }
