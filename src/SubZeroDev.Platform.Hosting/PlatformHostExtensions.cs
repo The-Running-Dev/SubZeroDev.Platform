@@ -158,6 +158,9 @@ public static class PlatformHostExtensions
         services.TryAddSingleton<IAuthorizationEvaluator, AuthorizationEvaluator>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionCatalog, PlatformPermissionCatalog>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionProvider, CompositionPermissionProvider>());
+
+        services.TryAddSingleton<ITenantResolverRegistry, TenantResolverRegistry>();
+        services.TryAddSingleton<TenantResolutionChain>();
     }
 
     /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex
