@@ -140,7 +140,7 @@ public sealed class ProviderCapabilityTests
         var auditDispatcher = new AuditSinkDispatcher(
             new AuditSinkRegistry(), new AuditSinkHealthState(), NullLogger<AuditSinkDispatcher>.Instance);
         var unitOfWork = new UnitOfWork(
-            capability, new AmbientTransactionState(), new FakeOutboxStore(), auditDispatcher);
+            capability, new AmbientTransactionState(), new FakeOutboxStore(), auditDispatcher, new SharedReadScopeState());
 
         var result = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,

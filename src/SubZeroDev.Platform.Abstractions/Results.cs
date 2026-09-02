@@ -146,4 +146,10 @@ public sealed record ContractViolation(string Code) : PlatformError(Code)
     /// There is nothing to stamp on the row without the name.</summary>
     /// <returns>The violation.</returns>
     public static ContractViolation UnregisteredEventType() => new(nameof(UnregisteredEventType));
+
+    /// <summary>A write-intent unit of work was opened while a shared-read scope was open. Isolation
+    /// is asymmetric on purpose (I-T1): reads have one modelled, audited escape; writes have none —
+    /// fix the call site, not the scope.</summary>
+    /// <returns>The violation.</returns>
+    public static ContractViolation WriteInsideSharedReadScope() => new(nameof(WriteInsideSharedReadScope));
 }

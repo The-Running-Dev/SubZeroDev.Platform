@@ -12,11 +12,12 @@ namespace SubZeroDev.Platform.Persistence;
 /// it.</summary>
 public static class PlatformPersistenceExtensions
 {
-    /// <summary>Registers the unit of work, the ambient transaction accessor, the migration runner,
-    /// the outbox writer and store, the event handler registry, host registration and its heartbeat,
-    /// the lease store and manager, the prune background work, and the <c>Database</c>,
-    /// <c>PendingMigrations</c>, <c>PeerHost</c>, <c>SettingsFingerprint</c>, <c>OutboxBacklogAge</c>,
-    /// <c>OutboxPendingCount</c> and <c>OutboxPoisonCount</c> readiness checks.</summary>
+    /// <summary>Registers the unit of work, the ambient transaction accessor, the shared-read scope
+    /// factory, the migration runner, the outbox writer and store, the event handler registry, host
+    /// registration and its heartbeat, the lease store and manager, the prune background work, and
+    /// the <c>Database</c>, <c>PendingMigrations</c>, <c>PeerHost</c>, <c>SettingsFingerprint</c>,
+    /// <c>OutboxBacklogAge</c>, <c>OutboxPendingCount</c> and <c>OutboxPoisonCount</c> readiness
+    /// checks.</summary>
     /// <param name="services">The host's service collection.</param>
     /// <returns>The same collection, so calls chain.</returns>
     public static IServiceCollection AddPlatformPersistence(this IServiceCollection services)
@@ -25,6 +26,9 @@ public static class PlatformPersistenceExtensions
 
         services.TryAddSingleton<AmbientTransactionState>();
         services.TryAddSingleton<IAmbientTransactionAccessor, AmbientTransactionAccessor>();
+
+        services.TryAddSingleton<SharedReadScopeState>();
+        services.TryAddSingleton<ISharedReadScopeFactory, SharedReadScopeFactory>();
 
         // One instance serves everything: a capability holds no per-transaction state, since
         // BeginAsync hands the connection and transaction back to its caller. Product code resolves

@@ -758,11 +758,20 @@ public interface ISharedReadScopeFactory
     /// Widens the query filter to "mine, or shared" for TEntity only, for the scope's lifetime.
     /// Emits one audit record when the scope opens.
     IDisposable Open<TEntity>() where TEntity : class, IShareable;
+
+    /// Whether a shared-read scope is currently open for TEntity. Persistence imposes no
+    /// repository or ORM (`design/d3/90-decisions.md`, 2026-08-03), so this is the seam a
+    /// consumer's own query code — EF's `HasQueryFilter`, Dapper, raw ADO — consults to decide
+    /// whether to widen its own filter, on the same terms `IAmbientTransactionAccessor.Current`
+    /// already exposes the ambient transaction to a consumer's own data-access code.
+    bool IsOpenFor<TEntity>() where TEntity : class, IShareable;
 }
 ```
 
 - **The scope names one type and widens the filter for that type only.** Every other query on the
-  request, shareable type or not, stays `tenant equals current`.
+  request, shareable type or not, stays `tenant equals current`. `IsOpenFor<TEntity>()` is what a
+  consumer's own query code checks to apply that widening — Platform does not build the query, it
+  only exposes what the scope's state is (I-T2).
 - **A write attempted inside the scope throws `PlatformContractViolationException`** carrying a new
   `ContractViolation` variant, rather than returning an error: it is a defect in the caller, not a
   runtime condition — the distinction
@@ -1124,7 +1133,7 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | # | Invariant | Owner | Enforced by |
 |---|---|---|---|
 | I-T1 | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none | Persistence | **code** — the scope is read-only and a write inside it throws |
-| I-T2 | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike | Persistence | **code** — model-build filter |
+| I-T2 | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike | Persistence | **code** — the consumer's own query code, consulting `ISharedReadScopeFactory.IsOpenFor<TEntity>()` at model build |
 | I-T3 | A shared-read scope widens the filter for the one declared type only | Persistence | **code** — the generic parameter |
 | I-T4 | Opening a shared-read scope emits exactly one audit record, never one per row | Persistence | **code** — scope construction |
 | I-T5 | `SharedAt` is written only by a permissioned, audited, tenant-scoped write by the owning tenant | Persistence | instruction, and **code** for the permission check |
