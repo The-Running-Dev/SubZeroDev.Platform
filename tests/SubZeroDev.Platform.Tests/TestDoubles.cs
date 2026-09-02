@@ -90,6 +90,25 @@ internal sealed class CountingBackgroundWork(string name, HostRoles roles) : IBa
     }
 }
 
+/// <summary>A permission provider whose answer a test chooses.</summary>
+internal sealed class StubPermissionProvider(
+    string name,
+    Func<Principal, TenantId, ResourceRef?, Result<IReadOnlySet<PermissionName>, AuthorizationError>> answer)
+    : IPermissionProvider
+{
+    public PermissionProviderName Name { get; } = new(name);
+
+    public Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
+        Principal principal, TenantId tenant, ResourceRef? resource, CancellationToken cancellationToken) =>
+        Task.FromResult(answer(principal, tenant, resource));
+}
+
+/// <summary>A permission catalog declaring a fixed set of names.</summary>
+internal sealed class StubPermissionCatalog(params PermissionName[] declares) : IPermissionCatalog
+{
+    public IReadOnlyCollection<PermissionName> Declares { get; } = declares;
+}
+
 /// <summary>A module a test names and gives dependencies to.</summary>
 internal sealed class StubModule(string name, params string[] dependsOn) : IPlatformModule
 {
