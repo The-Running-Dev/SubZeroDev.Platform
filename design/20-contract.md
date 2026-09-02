@@ -707,17 +707,14 @@ public interface IEntitlementEvaluator
 
 ### 5. Tenant resolution — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
-```csharp
-/// Resolves the request's tenant. With none registered the answer is TenantId.Implicit, which is what
-/// makes local mode identical to today rather than a special case.
-public interface ITenantResolver
-{
-    string Name { get; }
+`ITenantResolver` is declared in the tree:
+[`TenantResolution.cs`](../src/SubZeroDev.Platform.Abstractions/TenantResolution.cs). The registry and
+the resolution chain are declared in
+[`TenantResolution.cs`](../src/SubZeroDev.Platform.Core/TenantResolution.cs); resolution at the request
+boundary, before the scope opens, is in
+[`Pipeline.cs`](../src/SubZeroDev.Platform.Hosting/Pipeline.cs).
 
-    /// The tenant, or null to defer to the next resolver.
-    Task<TenantId?> ResolveAsync(CancellationToken cancellationToken);
-}
-```
+**What the declaration cannot say.**
 
 - **Resolvers run in registration order and the first that answers wins.** Order is registration
   order, not priority: a priority number is a second ordering that will disagree with the first.

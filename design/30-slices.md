@@ -69,54 +69,16 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S3 — Audit: the contract, the writer and the log sink** — shipped:
   [#171](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/171) via
   [#197](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/197).
+- **S4 — Authorization: names, providers and the evaluator** — shipped:
+  [#172](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/172) via
+  [#199](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/199).
 
 ---
 
 ## Outstanding
 
-## S4 — Authorization: names, providers and the evaluator
-**Status:** in progress
-
-Delivers: a product can name an action, have Platform decide whether this caller may take it, and find
-the refusal in the record afterwards — without Platform ever holding a table of who has which role.
-
-Touches:
-- **`SubZeroDev.Platform.Abstractions`** — `PermissionName`, `PermissionProviderName`, `ResourceRef`,
-  `AuthorizationOutcome`, `AuthorizationDecision`, `PlatformPermissions`, `IPermissionProvider`,
-  `IPermissionCatalog`, `IAuthorizationEvaluator`, `AuthorizationError`
-- **`SubZeroDev.Platform.Core`** — the permission-provider registry, the evaluator, the composition
-  provider, and the startup validation for undeclared and duplicated names
-- **[`StartupFailure.cs`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs)** — the `HostStartupError`
-  variants this slice raises
-
-Depends on: S3.
-
-Acceptance:
-- **S4.1** The evaluator's `EvaluateAsync` declares no principal and no tenant parameter; both come from
-  the ambient scope, and the decision names the tenant that scope carried.
-- **S4.2** Two providers granting the same permission produce one `Allowed` decision naming both sources;
-  one provider granting produces one source.
-- **S4.3** A `Denied` decision carries an empty source set, and an `Allowed` decision never does.
-- **S4.4** A provider returning `AuthorizationError.ProviderUnavailable` produces a denial for this
-  request, the caller's resulting failure is retryable, and the evaluator still returns a decision rather
-  than a failure result.
-- **S4.5** A permission name no catalog declares fails startup with
-  `HostStartupError.UnregisteredPermission` and never reaches the evaluator as a runtime denial.
-- **S4.6** Two catalogs declaring the same permission name fail startup with
-  `HostStartupError.DuplicatePermissionName`, naming both modules.
-- **S4.7** In the `Local` profile the composition provider grants every declared permission to a `System`
-  principal and nothing to an `Anonymous` one. In `Operated` it grants nothing to either.
-- **S4.8** A denial writes exactly one audit record, with action `platform.authorization.denied` and
-  class `Required`, and no permission provider writes an audit record of its own.
-- **S4.9** A denial on a resource the principal can see answers `AuthorizationError.PermissionDenied` and
-  surfaces as forbidden; a denial on a resource in another tenant answers
-  `AuthorizationError.ResourceNotVisible` and surfaces as not found.
-
-Out of scope: the Organizations permission provider (S10). Role assignment of any kind — this slice adds
-no table, no API and no storage for a grant.
-
 ## S5 — Tenant resolution at the request boundary
-**Status:** queued
+**Status:** in progress
 
 Delivers: a request can now say which tenant it belongs to, and a deployment that never says so keeps
 behaving exactly as it did before. The single-tenant case needs no configuration to keep working.

@@ -15,11 +15,13 @@ internal sealed class PlatformRegistryStartup(
     IEnumerable<IAuditSink> sinks,
     IEnumerable<IPermissionCatalog> permissionCatalogs,
     IEnumerable<IPermissionProvider> permissionProviders,
+    IEnumerable<ITenantResolver> tenantResolvers,
     IHealthCheckRegistry healthChecks,
     IBackgroundWorkRegistry backgroundWork,
     IAuditSinkRegistry auditSinks,
     IPermissionCatalogRegistry permissionCatalogRegistry,
-    IPermissionProviderRegistry permissionProviderRegistry) : IHostedLifecycleService
+    IPermissionProviderRegistry permissionProviderRegistry,
+    ITenantResolverRegistry tenantResolverRegistry) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
     {
@@ -81,12 +83,26 @@ internal sealed class PlatformRegistryStartup(
             }
         }
 
+        // Resolvers run in registration order, so registration failure aborts startup exactly like
+        // every other registry rather than silently reordering by discovery order.
+        foreach (var resolver in tenantResolvers)
+        {
+            var registered = tenantResolverRegistry.Register(resolver);
+            if (!registered.IsSuccess)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(
+                    registered.Error,
+                    registered.Error.Detail));
+            }
+        }
+
         // One-way. Registration after this returns a failure rather than mutating a structure
         // concurrent probe readers are walking, which is what makes lock-free probing correct.
         healthChecks.Freeze();
         backgroundWork.Freeze();
         auditSinks.Freeze();
         permissionProviderRegistry.Freeze();
+        tenantResolverRegistry.Freeze();
 
         return Task.CompletedTask;
     }

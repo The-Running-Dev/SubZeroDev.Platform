@@ -31,7 +31,8 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
     public async Task InvokeAsync(
         HttpContext context,
         IOperationScopeFactory factory,
-        ITraceContextCodec codec)
+        ITraceContextCodec codec,
+        TenantResolutionChain tenantResolution)
     {
         var traceParent = context.Request.Headers.TraceParent.ToString();
         var traceState = context.Request.Headers["tracestate"].ToString();
@@ -40,6 +41,10 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
         // step in S8. Every inbound request observes Anonymous until then; establishing System or
         // Account from a credential is that later step's, not this one's.
         var principal = Principal.Anonymous;
+
+        // Resolved once, before the scope opens, so the tenant is fixed for the request's lifetime
+        // regardless of what a resolver would answer if asked again mid-request.
+        var tenant = await tenantResolution.ResolveAsync(context.RequestAborted).ConfigureAwait(false);
 
         // A malformed inbound header is not the caller's fault: it is ignored and fresh context is
         // minted, which is origination rather than fabrication.
@@ -52,8 +57,8 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
             traceParent,
             string.IsNullOrEmpty(traceState) ? null : traceState,
             out var established)
-            ? factory.Begin(codec.CurrentHop(established), new CorrelationId(established.TraceId), TenantId.Implicit, principal)
-            : factory.Begin(TenantId.Implicit, principal);
+            ? factory.Begin(codec.CurrentHop(established), new CorrelationId(established.TraceId), tenant, principal)
+            : factory.Begin(tenant, principal);
 
         await next(context).ConfigureAwait(false);
     }

@@ -109,6 +109,20 @@ internal sealed class StubPermissionCatalog(params PermissionName[] declares) : 
     public IReadOnlyCollection<PermissionName> Declares { get; } = declares;
 }
 
+/// <summary>A tenant resolver whose answer a test chooses, and whether it was consulted.</summary>
+internal sealed class StubTenantResolver(string name, Func<TenantId?> answer) : ITenantResolver
+{
+    public string Name { get; } = name;
+
+    internal int CallCount { get; private set; }
+
+    public Task<TenantId?> ResolveAsync(CancellationToken cancellationToken)
+    {
+        CallCount++;
+        return Task.FromResult(answer());
+    }
+}
+
 /// <summary>A module a test names and gives dependencies to.</summary>
 internal sealed class StubModule(string name, params string[] dependsOn) : IPlatformModule
 {
