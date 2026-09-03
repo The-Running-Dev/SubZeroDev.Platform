@@ -161,17 +161,8 @@ needs it.
 `TenantId`, `ITenantOwned` and the implicit constant are settled and untouched:
 [`Identity.cs`](../src/SubZeroDev.Platform.Abstractions/Identity.cs),
 [`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs). D5 adds the shareable declaration
-and nothing else to the storage shape.
-
-```csharp
-/// An entity type that may publish rows for reading by other tenants. Declared on the type at model
-/// build; there is no per-row opt-in on an ordinary type.
-public interface IShareable : ITenantOwned
-{
-    /// When the owning tenant published the row, or null while it is private.
-    DateTimeOffset? SharedAt { get; }
-}
-```
+and nothing else to the storage shape — `IShareable` is declared in
+[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs).
 
 **What the declaration cannot say.**
 
@@ -709,22 +700,10 @@ Persistence installs in place of Core's default is
 
 ### 7. Shared-read scope — `SubZeroDev.Platform.Persistence`
 
-```csharp
-/// Opens the one modelled cross-tenant read. Read-only, one declared type, audited once per scope.
-public interface ISharedReadScopeFactory
-{
-    /// Widens the query filter to "mine, or shared" for TEntity only, for the scope's lifetime.
-    /// Emits one audit record when the scope opens.
-    IDisposable Open<TEntity>() where TEntity : class, IShareable;
-
-    /// Whether a shared-read scope is currently open for TEntity. Persistence imposes no
-    /// repository or ORM (`design/d3/90-decisions.md`, 2026-08-03), so this is the seam a
-    /// consumer's own query code — EF's `HasQueryFilter`, Dapper, raw ADO — consults to decide
-    /// whether to widen its own filter, on the same terms `IAmbientTransactionAccessor.Current`
-    /// already exposes the ambient transaction to a consumer's own data-access code.
-    bool IsOpenFor<TEntity>() where TEntity : class, IShareable;
-}
-```
+`ISharedReadScopeFactory` is declared in
+[`SharedRead.cs`](../src/SubZeroDev.Platform.Persistence/SharedRead.cs). It is a seam a consumer's own
+query code consults rather than a query Platform builds, because Persistence imposes no repository or
+ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
 
 - **The scope names one type and widens the filter for that type only.** Every other query on the
   request, shareable type or not, stays `tenant equals current`. `IsOpenFor<TEntity>()` is what a
