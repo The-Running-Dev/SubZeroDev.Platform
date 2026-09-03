@@ -109,6 +109,18 @@ internal sealed class StubPermissionCatalog(params PermissionName[] declares) : 
     public IReadOnlyCollection<PermissionName> Declares { get; } = declares;
 }
 
+/// <summary>An entitlement contributor whose answer a test chooses.</summary>
+internal sealed class StubEntitlementContributor(
+    string name,
+    Func<FeatureName, TenantId, Result<bool, EntitlementError>> answer) : IEntitlementContributor
+{
+    public EntitlementContributorName Name { get; } = new(name);
+
+    public Task<Result<bool, EntitlementError>> GrantsAsync(
+        FeatureName feature, TenantId tenant, CancellationToken cancellationToken) =>
+        Task.FromResult(answer(feature, tenant));
+}
+
 /// <summary>A tenant resolver whose answer a test chooses, and whether it was consulted.</summary>
 internal sealed class StubTenantResolver(string name, Func<TenantId?> answer) : ITenantResolver
 {

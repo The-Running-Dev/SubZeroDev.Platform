@@ -88,30 +88,8 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 
 ### 3. Entitlement — `SubZeroDev.Platform.Abstractions`
 
-```csharp
-/// The only entitlement question product code asks. It never asks about a subscription or a licence.
-public readonly record struct FeatureName(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-/// A registered entitlement contributor's name, so a decision can name which one granted.
-public readonly record struct EntitlementContributorName(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-/// The admission decision. A value rather than a call result, because a unit of work carries the
-/// decision that admitted it and nothing re-evaluates it while it runs.
-public sealed record EntitlementDecision(
-    FeatureName Feature,
-    TenantId Tenant,
-    bool Granted,
-    DateTimeOffset DecidedAt,
-    IReadOnlyCollection<EntitlementContributorName> Sources);
-```
+`FeatureName`, `EntitlementContributorName` and `EntitlementDecision` are declared in the tree (S7):
+[`Entitlement.cs`](../src/SubZeroDev.Platform.Abstractions/Entitlement.cs).
 
 **What the declarations cannot say.**
 
@@ -673,25 +651,10 @@ provider are declared in
 
 ### 4. Entitlement — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
-```csharp
-/// Contributes entitlement. Billing and Licensing each register one; a Local host registers only the
-/// Community baseline.
-public interface IEntitlementContributor
-{
-    EntitlementContributorName Name { get; }
-
-    Task<Result<bool, EntitlementError>> GrantsAsync(
-        FeatureName feature,
-        TenantId tenant,
-        CancellationToken cancellationToken);
-}
-
-/// The single entitlement question.
-public interface IEntitlementEvaluator
-{
-    Task<EntitlementDecision> EvaluateAsync(FeatureName feature, CancellationToken cancellationToken);
-}
-```
+`IEntitlementContributor` and `IEntitlementEvaluator` are declared in the tree (S7):
+[`Entitlement.cs`](../src/SubZeroDev.Platform.Abstractions/Entitlement.cs). The contributor registry,
+the evaluator and the Community baseline contributor are declared in
+[`Entitlement.cs`](../src/SubZeroDev.Platform.Core/Entitlement.cs).
 
 - **No caller may reach a contributor directly.** Billing and Licensing are not queryable; the
   evaluator is the only surface. This is what keeps the commercial model out of product code.
