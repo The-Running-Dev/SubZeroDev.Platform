@@ -75,55 +75,16 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S5 — Tenant resolution at the request boundary** — shipped:
   [#173](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/173) via
   [#200](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/200).
+- **S6 — The shareable type and the audited cross-tenant read** — shipped:
+  [#174](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/174) via
+  [#201](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/201).
 
 ---
 
 ## Outstanding
 
-## S6 — The shareable type and the audited cross-tenant read
-**Status:** in progress
-
-Delivers: a tenant can publish one of its own records for other tenants to read, and every crossing of
-that line is written down. Nothing a tenant did not publish is reachable from outside it, and nothing
-another tenant does can write into it at all.
-
-Touches:
-- **`SubZeroDev.Platform.Persistence`** — `IShareable`, the model-build query filter,
-  `ISharedReadScopeFactory`
-- **[`Results.cs`](../src/SubZeroDev.Platform.Abstractions/Results.cs)** —
-  `ContractViolation.WriteInsideSharedReadScope`
-- **`PlatformPermissions.ShareResource`**, **`PlatformAuditActions.SharedReadScopeOpened`** and
-  **`PlatformAuditActions.ResourceShared`**
-
-Depends on: S5.
-
-Acceptance:
-- **S6.1** Two tenants create rows carrying the same logical id on the same entity type without
-  collision, and each reads only its own.
-- **S6.2** Outside a shared-read scope, a query over a shareable type returns only rows whose tenant
-  equals the current tenant — whether or not those rows are published.
-- **S6.3** Inside a shared-read scope opened for one entity type, a query over that type returns the
-  current tenant's rows plus other tenants' published rows, while a query over any other type in the same
-  scope still returns only the current tenant's rows.
-- **S6.4** Opening the scope writes exactly one audit record, action `platform.tenancy.shared-read`,
-  class `Required` — a scope whose queries return four hundred rows still writes one.
-- **S6.5** A write attempted while a shared-read scope is open throws
-  `PlatformContractViolationException` carrying `ContractViolation.WriteInsideSharedReadScope`, and no
-  row is changed.
-- **S6.6** Publishing a row requires `PlatformPermissions.ShareResource`, is an ordinary tenant-scoped
-  write by the owning tenant, and writes an audit record with action `platform.tenancy.resource-shared`.
-- **S6.7** A scope the caller failed to dispose does not survive the request: the next request over the
-  same entity type reads only its own tenant's rows.
-- **S6.8** The scope-opening member declares no tenant parameter — the caller states that it is crossing,
-  never whose rows it wants.
-- **S6.9** No write path reaches another tenant's row: every write entry point on the persistence surface
-  takes or derives the current tenant and no other.
-
-Out of scope: unpublishing — a published row never returns to private through a Platform path. Any
-cross-tenant write, which has no path at all and gains none here.
-
 ## S7 — The entitlement seam and the Community baseline
-**Status:** queued
+**Status:** in progress
 
 Delivers: a product can gate a feature by name and never learn why it was allowed. Whether the deployment
 pays a subscription or holds a licence stops being something the calling code can find out, so the same
