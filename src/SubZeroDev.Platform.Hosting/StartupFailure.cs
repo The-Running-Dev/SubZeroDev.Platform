@@ -47,6 +47,33 @@ public sealed record HostStartupError : PlatformError
     public static HostStartupError Registration(PlatformError? inner, string detail) =>
         new(nameof(Registration), detail, inner);
 
+    /// <summary>The host declared <see cref="CompositionProfile.Operated"/>, which is authenticated
+    /// at the transport, and registered no <see cref="IAuthenticationProvider"/> — I-C1. The host
+    /// fails rather than serving unauthenticated: every guarantee in the design is stated relative
+    /// to a composition, and a host that cannot state its own should not serve.</summary>
+    /// <param name="detail">The profile and the missing registration.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError AuthenticationProviderRequired(string detail) =>
+        new(nameof(AuthenticationProviderRequired), detail, null);
+
+    /// <summary>The host declared <see cref="CompositionProfile.Operated"/> and registered no
+    /// <see cref="IAuditSink"/> declaring <see cref="IAuditSink.IsDurable"/> — I-C2. The default log
+    /// sink declares <see langword="false"/> and is never an <c>Operated</c> fallback: an operated
+    /// deployment whose audit trail does not survive a restart has no audit trail.</summary>
+    /// <param name="detail">The profile and what was registered instead.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError DurableAuditSinkRequired(string detail) =>
+        new(nameof(DurableAuditSinkRequired), detail, null);
+
+    /// <summary>The host declared <see cref="CompositionProfile.Local"/> and registered something
+    /// that profile forbids: an <see cref="IAuthenticationProvider"/>, an <see cref="ITenantResolver"/>,
+    /// or an <see cref="IEntitlementContributor"/> other than the Community baseline — I-C3.</summary>
+    /// <param name="detail">The profile, the offending registration, and which of the two it
+    /// disagrees with.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError RegistrationForbiddenByProfile(string detail) =>
+        new(nameof(RegistrationForbiddenByProfile), detail, null);
+
     /// <summary>The worker probe port could not be bound. Names the setting, because a silent
     /// fallback port would make the probe surface unfindable on a box running two installations.</summary>
     /// <param name="settingKey">The configuration key that decides the port.</param>

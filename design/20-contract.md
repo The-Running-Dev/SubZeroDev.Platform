@@ -597,19 +597,12 @@ a consumer ships costs the consumer.**
 
 ### 2. Authentication seam — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
-```csharp
-/// Establishes a principal at the transport boundary. Registered by the Identity module; absent in
-/// the Local profile.
-public interface IAuthenticationProvider
-{
-    /// The provider's name, unique within the registry.
-    string Name { get; }
+`IAuthenticationProvider`, `IAuthenticationRequest` and `AuthenticationError` are declared in the tree
+(S8): [`Authentication.cs`](../src/SubZeroDev.Platform.Abstractions/Authentication.cs). The provider
+registry and the chain that runs registered providers in registration order are declared in
+[`Authentication.cs`](../src/SubZeroDev.Platform.Core/Authentication.cs).
 
-    Task<Result<Principal, AuthenticationError>> AuthenticateAsync(
-        IAuthenticationRequest request,
-        CancellationToken cancellationToken);
-}
-```
+**What the declaration cannot say.**
 
 - **`AuthenticateAsync` distinguishes "no credential presented" from "a credential was presented and
   failed to validate".** No credential is success carrying `Principal.Anonymous`; a bad credential is
@@ -665,8 +658,10 @@ the evaluator and the Community baseline contributor are declared in
   and holds in memory, so it is unaffected by the store being down.
 - **The contributor set is registered explicitly, enumerated at startup, and joins the settings
   fingerprint.** Those three, plus the decision naming its source, are what bound the union's risk of
-  one wrong contributor granting everything. How the set reaches the fingerprint input is Unresolved —
-  `## Unresolved`, item 2.
+  one wrong contributor granting everything. The set reaches the fingerprint input as a second
+  parameter on [`ISettingsFingerprint.Compute`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs),
+  settled in S8 — a registration is not a setting, and projecting it onto `PlatformOptions` would have
+  made an operator-facing options object carry a value no operator configured.
 
 ### 5. Tenant resolution — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
@@ -754,7 +749,10 @@ public interface ISharedReadScopeFactory
 - **Five registries close at startup**, on the shape
   [`Registries.cs`](../src/SubZeroDev.Platform.Core/Registries.cs) already establishes — `Register`
   returning a `Result`, `Registered` in registration order, a one-way `Freeze`: permission providers,
-  entitlement contributors, tenant resolvers, audit sinks, authentication providers.
+  entitlement contributors, tenant resolvers, audit sinks, authentication providers. All five close in
+  [`HostedServices.cs`](../src/SubZeroDev.Platform.Hosting/HostedServices.cs), and the profile is
+  validated only after they do — a rule about what is registered cannot be checked while registration
+  is still open.
 - **The redaction boundary moved from `SubZeroDev.Platform.Observability` to
   [`SubZeroDev.Platform.Core`](../src/SubZeroDev.Platform.Core/Redaction.cs) and became public**,
   because the Audit store module and Mcp both need the same one and neither may reference
@@ -1111,7 +1109,7 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-C1 | `Operated` with no authentication provider fails startup | Core | **code** |
 | I-C2 | `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback | Core | **code** |
 | I-C3 | `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup | Core | **code** |
-| I-C4 | The composition profile and the contributor set are inside the settings-fingerprint input | Core | **code** — mechanism at `## Unresolved` item 2 |
+| I-C4 | The composition profile and the contributor set are inside the settings-fingerprint input | Core | **code** — [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) |
 | I-C5 | The local host has no package or project reference to Identity, Organizations, Billing or Licensing | the sample | **code** — dependency-graph assertion |
 | I-C6 | No framework package references a module | all | **code** — architecture test over the resolved package graph, **which must fail against a deliberately broken graph before it counts** |
 | I-C7 | No module references another module | all | **code** — the same test, second direction |
@@ -1207,19 +1205,11 @@ Item 1 (the nullability of `IAuditable.CreatedBy` under a total principal) was r
 **`CreatedBy` becomes non-null** — and is recorded under *Persisted schemas*, § 6 and
 [`90-decisions.md`](90-decisions.md), 2026-08-31.
 
-**1. How the registered entitlement-contributor set reaches the settings-fingerprint input.**
-[`10-design.md`](10-design.md) § *Data model* 6 requires the contributor set to join the fingerprint so
-two instances that disagree about who may grant are visible through the existing
-`platform.settings-fingerprint` check rather than by their behaviour diverging (I-C4).
-[`ISettingsFingerprint.Compute`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) takes
-`PlatformOptions` alone and hashes `[Fingerprinted]`-marked properties, and the contributor set is a
-*registration* rather than a setting. The two shapes change different public declarations:
+Item 1 (how the registered entitlement-contributor set reaches the settings-fingerprint input) was
+resolved for S8 — **`Compute` gains a second parameter** carrying the frozen contributor names,
+rather than projecting them onto a `[Fingerprinted]` property of `PlatformOptions` — and is recorded
+at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) and
+[`90-decisions.md`](90-decisions.md), 2026-09-03. The format version inside `SettingsFingerprint`
+changed in the same commit, per what the item determined either way.
 
-- **`Compute` gains a second parameter** carrying the frozen contributor names. Honest about what the
-  input is; changes a published signature.
-- **The frozen set is projected onto a `[Fingerprinted]` property of `PlatformOptions` at startup.** No
-  signature change; makes an options object carry something no operator configured.
-
-Determined either way: the contributor names are inside the hashed input, and **the format version
-inside `SettingsFingerprint` changes**, because an encoding change that is not versioned is the silent
-break that field exists to prevent.
+**Nothing is unresolved.**

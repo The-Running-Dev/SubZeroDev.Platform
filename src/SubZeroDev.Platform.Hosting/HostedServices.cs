@@ -18,13 +18,16 @@ internal sealed class PlatformRegistryStartup(
     IEnumerable<IPermissionProvider> permissionProviders,
     IEnumerable<ITenantResolver> tenantResolvers,
     [FromKeyedServices(EntitlementContributorRegistration.ServiceKey)] IEnumerable<IEntitlementContributor> entitlementContributors,
+    IEnumerable<IAuthenticationProvider> authenticationProviders,
     IHealthCheckRegistry healthChecks,
     IBackgroundWorkRegistry backgroundWork,
     IAuditSinkRegistry auditSinks,
     IPermissionCatalogRegistry permissionCatalogRegistry,
     IPermissionProviderRegistry permissionProviderRegistry,
     ITenantResolverRegistry tenantResolverRegistry,
-    IEntitlementContributorRegistry entitlementContributorRegistry) : IHostedLifecycleService
+    IEntitlementContributorRegistry entitlementContributorRegistry,
+    IAuthenticationProviderRegistry authenticationProviderRegistry,
+    PlatformOptions options) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
     {
@@ -113,6 +116,19 @@ internal sealed class PlatformRegistryStartup(
             }
         }
 
+        // The fifth registry. Absent in Local by rule rather than by accident, which is what the
+        // profile validation below turns from a convention into a checked fact.
+        foreach (var provider in authenticationProviders)
+        {
+            var registered = authenticationProviderRegistry.Register(provider);
+            if (!registered.IsSuccess)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(
+                    registered.Error,
+                    registered.Error.Detail));
+            }
+        }
+
         // One-way. Registration after this returns a failure rather than mutating a structure
         // concurrent probe readers are walking, which is what makes lock-free probing correct.
         healthChecks.Freeze();
@@ -121,6 +137,29 @@ internal sealed class PlatformRegistryStartup(
         permissionProviderRegistry.Freeze();
         tenantResolverRegistry.Freeze();
         entitlementContributorRegistry.Freeze();
+        authenticationProviderRegistry.Freeze();
+
+        // Validated only once every registry is closed: a rule about what is registered cannot be
+        // checked while registration is still open. Every finding aborts startup — none degrades the
+        // host into serving a composition nobody declared (I-C9).
+        var violation = CompositionValidator.Validate(
+            options.CompositionProfile,
+            authenticationProviderRegistry.Registered,
+            auditSinks.Registered,
+            tenantResolverRegistry.Registered,
+            entitlementContributorRegistry.Registered);
+
+        if (violation is not null)
+        {
+            throw new PlatformStartupException(violation.Finding switch
+            {
+                CompositionFinding.AuthenticationProviderRequired =>
+                    HostStartupError.AuthenticationProviderRequired(violation.Detail),
+                CompositionFinding.DurableAuditSinkRequired =>
+                    HostStartupError.DurableAuditSinkRequired(violation.Detail),
+                _ => HostStartupError.RegistrationForbiddenByProfile(violation.Detail),
+            });
+        }
 
         return Task.CompletedTask;
     }

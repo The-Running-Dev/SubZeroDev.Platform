@@ -74,6 +74,7 @@ public sealed class WorkerProbeTests
         });
 
         builder.Configuration.AddInMemoryCollection(settings);
+        Settings.ComposeOperated(builder.Services);
         builder.AddPlatformWorkerHost();
 
         var app = builder.Build();

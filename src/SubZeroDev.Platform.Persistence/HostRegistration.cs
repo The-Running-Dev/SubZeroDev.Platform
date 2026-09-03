@@ -6,6 +6,18 @@ using SubZeroDev.Platform.Core;
 
 namespace SubZeroDev.Platform.Persistence;
 
+/// <summary>The frozen entitlement contributor set, as the settings fingerprint takes it.</summary>
+/// <remarks>The registry is read rather than the contributors resolved from the container: nothing
+/// outside the evaluator may reach a contributor's answer (S7.7), and a name is not an answer. Both
+/// call sites go through this so a host's own row and the peer comparison it is checked against can
+/// never be computed from different inputs.</remarks>
+internal static class FingerprintedContributors
+{
+    internal static IReadOnlyCollection<EntitlementContributorName> Of(
+        IEntitlementContributorRegistry registry) =>
+        registry.Registered.Select(contributor => contributor.Name).ToList();
+}
+
 /// <summary>One host's row in the store it is actually using. Never read by the host that wrote
 /// it — its only consumer is the other role's readiness check, so a host writing to the wrong
 /// database registers itself <em>there</em>, and its absence from the right one is what makes that
@@ -216,6 +228,7 @@ internal sealed class PlatformMigrationSource : IModuleMigrationSource
 internal sealed class HostRegistrationHeartbeat(
     IHostRegistrationStore store,
     ISettingsFingerprint fingerprint,
+    IEntitlementContributorRegistry entitlementContributors,
     PlatformOptions options,
     InstanceId instance,
     IClock clock,
@@ -242,7 +255,7 @@ internal sealed class HostRegistrationHeartbeat(
             Instance = instance,
             StartedAt = _startedAt,
             HeartbeatAt = clock.UtcNow,
-            SettingsFingerprint = fingerprint.Compute(options),
+            SettingsFingerprint = fingerprint.Compute(options, FingerprintedContributors.Of(entitlementContributors)),
         };
 
         // An unreachable or not-yet-migrated store is the ordinary state before migrate mode runs
@@ -344,6 +357,7 @@ internal sealed class PeerHostHealthCheck(
 internal sealed class SettingsFingerprintHealthCheck(
     IHostRegistrationStore store,
     ISettingsFingerprint fingerprint,
+    IEntitlementContributorRegistry entitlementContributors,
     PlatformOptions options,
     IClock clock) : IHealthCheck
 {
@@ -366,7 +380,7 @@ internal sealed class SettingsFingerprintHealthCheck(
             return new HealthCheckResult(HealthStatus.Degraded, listed.Error.Detail, new Dictionary<string, string>());
         }
 
-        var mine = fingerprint.Compute(options);
+        var mine = fingerprint.Compute(options, FingerprintedContributors.Of(entitlementContributors));
 
         // A host's own row always matches its own fingerprint, so comparing against every live row
         // — this host's included — excludes it without a separate identity check.

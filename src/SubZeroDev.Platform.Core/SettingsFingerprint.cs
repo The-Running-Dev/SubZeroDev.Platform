@@ -12,10 +12,19 @@ namespace SubZeroDev.Platform.Core;
 public interface ISettingsFingerprint
 {
     /// <summary>Computes the fingerprint over every <see cref="FingerprintedAttribute"/>-marked
-    /// property reachable from <paramref name="options"/>.</summary>
+    /// property reachable from <paramref name="options"/>, and over the frozen entitlement
+    /// contributor set.</summary>
     /// <param name="options">The options to fingerprint.</param>
+    /// <param name="entitlementContributors">The names of the frozen entitlement contributors. A
+    /// registration rather than a setting, which is why it is a parameter here rather than a
+    /// <see cref="FingerprintedAttribute"/>-marked property projected onto
+    /// <see cref="PlatformOptions"/>: an options object carrying a value no operator configured is
+    /// an options object that lies about what it is. The cost is a changed published signature,
+    /// which the brief's explicitly-unstable 0.x packages are the right place to pay.</param>
     /// <returns>64 lowercase hexadecimal characters.</returns>
-    string Compute(PlatformOptions options);
+    string Compute(
+        PlatformOptions options,
+        IReadOnlyCollection<EntitlementContributorName> entitlementContributors);
 }
 
 /// <inheritdoc cref="ISettingsFingerprint"/>
@@ -28,15 +37,19 @@ internal sealed class SettingsFingerprint : ISettingsFingerprint
 {
     /// <summary>The format version, inside the hashed input so a future encoding change is a
     /// visible break rather than a silent one. Bumped in D5-S1 when <c>CompositionProfile</c>
-    /// joined the fingerprinted set.</summary>
-    private static readonly byte[] FormatVersion = "szdfp2"u8.ToArray();
+    /// joined the fingerprinted set, and again in D5-S8 when the entitlement contributor set did.</summary>
+    private static readonly byte[] FormatVersion = "szdfp3"u8.ToArray();
 
-    public string Compute(PlatformOptions options)
+    public string Compute(
+        PlatformOptions options,
+        IReadOnlyCollection<EntitlementContributorName> entitlementContributors)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(entitlementContributors);
 
         var entries = new List<(string Path, string? Value)>();
         Walk(options, string.Empty, entries);
+        AddContributors(entitlementContributors, entries);
         entries.Sort((left, right) => string.CompareOrdinal(left.Path, right.Path));
 
         using var buffer = new MemoryStream();
@@ -58,6 +71,27 @@ internal sealed class SettingsFingerprint : ISettingsFingerprint
         }
 
         return Convert.ToHexStringLower(SHA256.HashData(buffer.ToArray()));
+    }
+
+    /// <summary>Adds the frozen contributor set as one entry per contributor, each a separate
+    /// length-prefixed value so no separator character has to be reserved out of a name.</summary>
+    /// <remarks>Sorted by name before the index is assigned, so two hosts that registered the same
+    /// contributors in different orders agree: the fingerprint answers <i>who may grant</i>, and the
+    /// union the evaluator takes is order-independent. The bracketed path cannot collide with a
+    /// walked property path, which is always <c>:</c>-separated.</remarks>
+    private static void AddContributors(
+        IReadOnlyCollection<EntitlementContributorName> contributors,
+        List<(string Path, string? Value)> entries)
+    {
+        var sorted = contributors
+            .Select(contributor => contributor.Value)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        for (var index = 0; index < sorted.Count; index++)
+        {
+            entries.Add(($"EntitlementContributors[{index:D4}]", sorted[index]));
+        }
     }
 
     /// <summary>Walks every property reachable from <paramref name="instance"/>, recursing one

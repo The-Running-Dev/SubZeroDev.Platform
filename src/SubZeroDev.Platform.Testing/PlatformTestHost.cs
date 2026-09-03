@@ -195,6 +195,18 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
             }
         }
 
+        // The Operated profile requires an authentication provider (I-C1) and a sink declaring
+        // IsDurable (I-C2), and the test host defaults to Operated. TryAddEnumerable rather than
+        // Add, so a test registering its own of either kind composes with one rather than two —
+        // and a test that declared Local registers neither, which is what leaves I-C3 checkable.
+        if (Profile() == CompositionProfile.Operated)
+        {
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAuthenticationProvider, FakeAuthenticationProvider>());
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAuditSink, FakeDurableAuditSink>());
+        }
+
         if (_role == HostRole.Web)
         {
             builder.AddPlatformWebHost();
@@ -217,6 +229,14 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
     /// host — WAL requires a real file, and a brand new one starts in <c>delete</c> mode until
     /// something sets it, which <see cref="EnsureWalModeFile"/> does before startup when persistence
     /// is requested.</summary>
+    /// <summary>The profile this host will actually declare, honouring a test's own override the
+    /// same way configuration precedence does.</summary>
+    private CompositionProfile Profile() =>
+        _settings.TryGetValue("Platform:CompositionProfile", out var raw)
+        && Enum.TryParse<CompositionProfile>(raw, out var parsed)
+            ? parsed
+            : CompositionProfile.Operated;
+
     private Dictionary<string, string?> Defaults() => new()
     {
         ["Platform:CompositionProfile"] = nameof(CompositionProfile.Operated),

@@ -130,7 +130,13 @@ public sealed class AuditTests
         Assert.True(written.IsSuccess);
         Assert.Contains(messages, message => message.Contains(auditEvent.Id.ToString(), StringComparison.Ordinal));
 
-        await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
+        // The Local profile is where "no audit package installed" is the whole composition: an
+        // Operated host is required to register a durable sink (I-C2, S8), so asking it what it
+        // falls back to would be asking about a shape that no longer starts.
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithSetting("CompositionProfile", nameof(CompositionProfile.Local))
+            .StartAsync(CancellationToken.None);
+
         var registry = host.Services.GetRequiredService<IAuditSinkRegistry>();
         var only = Assert.Single(registry.Registered);
         Assert.False(only.IsDurable);

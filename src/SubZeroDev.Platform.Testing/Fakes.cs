@@ -66,6 +66,58 @@ public static class FakePrincipals
         new(new PrincipalId(issuer, subject), PrincipalKind.Delegated, subject, null);
 }
 
+/// <summary>An authentication provider that presents no credential, so every request observes
+/// <see cref="Abstractions.Principal.Anonymous"/>. Its purpose is to exist: an
+/// <see cref="CompositionProfile.Operated"/> host with no provider registered refuses to start
+/// (I-C1), and a test host is still a host. A test that wants an authenticated principal sets
+/// <see cref="FakeCurrentPrincipal"/> rather than authenticating through this.</summary>
+public sealed class FakeAuthenticationProvider : IAuthenticationProvider
+{
+    /// <inheritdoc/>
+    public string Name => "Platform.Testing.Authentication";
+
+    /// <inheritdoc/>
+    public Task<Result<Principal, AuthenticationError>> AuthenticateAsync(
+        IAuthenticationRequest request, CancellationToken cancellationToken) =>
+        Task.FromResult(Result<Principal, AuthenticationError>.Success(Principal.Anonymous));
+}
+
+/// <summary>An audit sink that declares durability and keeps what it was given in memory, so an
+/// <see cref="CompositionProfile.Operated"/> test host satisfies I-C2 without the audit store module
+/// being present. Declaring <see cref="IsDurable"/> is a statement about the sink, and this one is
+/// honest for the lifetime of the process it runs in — which is the whole lifetime a test has.</summary>
+/// <remarks>Reads only. There is deliberately no clear and no write beyond the sink's own contract:
+/// a test helper that can delete an audit row is a test helper that can be used to prove the wrong
+/// thing.</remarks>
+public sealed class FakeDurableAuditSink : IAuditSink
+{
+    private readonly List<AuditEvent> _written = [];
+    private readonly Lock _gate = new();
+
+    /// <inheritdoc/>
+    public string Name => "Platform.Testing.DurableAudit";
+
+    /// <inheritdoc/>
+    public bool IsDurable => true;
+
+    /// <summary>Everything written, in the order it arrived.</summary>
+    public IReadOnlyList<AuditEvent> Written
+    {
+        get { lock (_gate) { return _written.ToList(); } }
+    }
+
+    /// <inheritdoc/>
+    public Task<Result<AuditError>> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            _written.Add(auditEvent);
+        }
+
+        return Task.FromResult(Result<AuditError>.Success());
+    }
+}
+
 /// <summary>A culture a test sets. <see cref="CultureTag.Invariant"/> is the ordinary value: nothing
 /// resolves one in D3.</summary>
 public sealed class FakeCurrentCulture : ICurrentCulture
