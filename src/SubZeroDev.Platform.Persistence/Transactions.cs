@@ -123,7 +123,8 @@ internal sealed class UnitOfWork(
     IProviderCapability capability,
     AmbientTransactionState ambient,
     IOutboxStore outboxStore,
-    AuditSinkDispatcher auditDispatcher)
+    AuditSinkDispatcher auditDispatcher,
+    SharedReadScopeState sharedReadScope)
     : IUnitOfWork
 {
     // A bare System.Diagnostics.ActivitySource, never an OpenTelemetry package reference — see
@@ -158,6 +159,15 @@ internal sealed class UnitOfWork(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
+
+        // I-T1: there is no code path by which a write reaches another tenant's row. Isolation is
+        // asymmetric on purpose — reads have one modelled, audited escape (ISharedReadScopeFactory);
+        // writes have none. Checked before anything opens, so no row is ever changed by a write
+        // attempted while a shared-read scope is open (S6.5).
+        if (intent == TransactionIntent.Write && sharedReadScope.OpenFor is not null)
+        {
+            throw new PlatformContractViolationException(ContractViolation.WriteInsideSharedReadScope());
+        }
 
         // Started before the transaction opens and stopped in the finally below, so the span covers
         // connect failures too, not just a successful transaction. No SQL text, parameter value or

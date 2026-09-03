@@ -72,44 +72,16 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S4 — Authorization: names, providers and the evaluator** — shipped:
   [#172](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/172) via
   [#199](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/199).
+- **S5 — Tenant resolution at the request boundary** — shipped:
+  [#173](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/173) via
+  [#200](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/200).
 
 ---
 
 ## Outstanding
 
-## S5 — Tenant resolution at the request boundary
-**Status:** in progress
-
-Delivers: a request can now say which tenant it belongs to, and a deployment that never says so keeps
-behaving exactly as it did before. The single-tenant case needs no configuration to keep working.
-
-Touches:
-- **`SubZeroDev.Platform.Abstractions`** — `ITenantResolver`
-- **`SubZeroDev.Platform.Core`** — the tenant-resolver registry and the resolution chain
-- **`SubZeroDev.Platform.Hosting`** — resolution at the request boundary, before the scope opens
-
-Depends on: S4.
-
-Acceptance:
-- **S5.1** With no resolver registered, the ambient tenant is `TenantId.Implicit` for every request, and
-  no host configuration is required to obtain that.
-- **S5.2** Resolvers run in registration order and the first non-null answer wins; a later resolver that
-  would have answered differently is not consulted.
-- **S5.3** Every resolver deferring leaves the request in `TenantId.Implicit` rather than failing it.
-- **S5.4** `ITenantResolver` carries no decision or denial type — asserted against its return type, which
-  admits only an answer or a deferral.
-- **S5.5** The scope's tenant is fixed for the request's lifetime: a resolver whose answer changes after
-  the scope opens does not change the tenant that request carries.
-- **S5.6** Two resolvers registered under the same name fail startup with
-  `HostStartupError.DuplicateProviderName`.
-- **S5.7** The tenant column, the primary keys and the implicit-tenant representation are unchanged from
-  D3 and G2 — asserted by the existing migrations being unmodified.
-
-Out of scope: the Organizations resolver (S10). The `Local`-forbids-a-resolver rule (I-C3), which lands
-with the profile rules in S8.
-
 ## S6 — The shareable type and the audited cross-tenant read
-**Status:** queued
+**Status:** in progress
 
 Delivers: a tenant can publish one of its own records for other tenants to read, and every crossing of
 that line is written down. Nothing a tenant did not publish is reachable from outside it, and nothing

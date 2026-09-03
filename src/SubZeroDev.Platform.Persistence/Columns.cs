@@ -41,3 +41,16 @@ public interface ISoftDeletable
     /// <summary>Who soft-deleted the row.</summary>
     string? DeletedBy { get; }
 }
+
+/// <summary>An entity type that may publish rows for reading by other tenants. Declared on the type
+/// at model build; there is no per-row opt-in on an ordinary type. Not a Platform table — a
+/// consumer's entity type declaring this acquires a <see cref="SharedAt"/> column in that consumer's
+/// own migration, added nullable with no backfill (every existing row is private, which is the
+/// correct starting state).</summary>
+public interface IShareable : ITenantOwned
+{
+    /// <summary>When the owning tenant published the row, or null while it is private. The only
+    /// representation of "private" — there is no separate boolean, because two columns that can
+    /// disagree about the same fact will.</summary>
+    DateTimeOffset? SharedAt { get; }
+}
