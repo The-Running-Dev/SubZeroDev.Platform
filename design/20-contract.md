@@ -837,6 +837,28 @@ because every capability's semantics are stated relative to it**: authenticate a
 resolve the tenant, open the operation scope, authorize, check entitlement if the endpoint admits new
 paid-feature work, do the work inside a transaction when it writes, audit.
 
+**How an endpoint declares its permission and its feature** — resolved for S8, `## Unresolved` item
+3 — mirrors `ToolDefinition` (*Types*, § 10)'s split between a mandatory grant and an optional gate,
+attached as endpoint metadata rather than as a constructor argument because Hosting composes over
+`Microsoft.AspNetCore.Routing.IEndpointConventionBuilder`, not over a registration list Platform owns:
+
+```csharp
+namespace SubZeroDev.Platform.Hosting;
+
+public sealed record EndpointRequirement(
+    PermissionName RequiredPermission,
+    FeatureName? RequiredFeature);
+
+public static class EndpointRequirementExtensions
+{
+    public static TBuilder RequiresPermission<TBuilder>(
+        this TBuilder builder,
+        PermissionName permission,
+        FeatureName? admitsFeature = null)
+        where TBuilder : IEndpointConventionBuilder;
+}
+```
+
 - **Authorization precedes entitlement, and both precede any side effect.** A principal who may not
   perform an action must not learn from the response whether the deployment is entitled to the
   feature, and entitlement resolution may read the store while an authorization denial must not.
@@ -847,10 +869,19 @@ paid-feature work, do the work inside a transaction when it writes, audit.
   while a request is in flight does not change the request that already resolved.
 - **The local host takes the same path, with no step skipped and no branch taken.** The absence of the
   four commercial packages is visible in the package graph and invisible in the flow.
-- **Only an endpoint that admits new paid-feature work is entitlement-gated.** An endpoint that reads,
-  lists or exports data a tenant already has is not, even when that data was produced under the same
-  feature — entitlement was checked at the admission that produced it, and a lapsed licence does not
-  re-ask a question access already answered.
+- **Only an endpoint that admits new paid-feature work is entitlement-gated**, decided by
+  `RequiredFeature is not null`, never by the handler. An endpoint that reads, lists or exports data a
+  tenant already has is not, even when that data was produced under the same feature — entitlement was
+  checked at the admission that produced it, and a lapsed licence does not re-ask a question access
+  already answered.
+- **`RequiresPermission` is the one way an endpoint attaches this**, on the same terms
+  `ToolDefinition.RequiredPermission` is the one way a tool does. An endpoint the pipeline routes with
+  no `EndpointRequirement` attached is a startup-detectable defect, never a request the pipeline lets
+  through unauthorized — `HostStartupError.EndpointRequirementMissing` (*Error semantics*, § 9).
+- **`RequiresPermission` is called at startup, on the route, not per request.** The pipeline reads the
+  attached metadata off `HttpContext.GetEndpoint()`; it does not call a handler-supplied delegate,
+  which is what keeps step 4 and step 5 something the pipeline runs rather than something a correctly
+  written handler happens to have called in order.
 
 ---
 
@@ -1039,6 +1070,7 @@ retryable — a misconfigured installation does not resolve itself.**
 | `DuplicateProviderName` | two providers, contributors, resolvers or sinks share a name |
 | `UnregisteredPermission` | a tool, or any registration, requires a `PermissionName` no catalog declares |
 | `SensitiveToolParameter` | a registered tool's schema names a parameter matching the redaction marker set |
+| `EndpointRequirementMissing` | an endpoint the pipeline routes carries no `EndpointRequirement` |
 
 **Each names the profile, the offending registration and which of the two it disagrees with**, on the
 `Detail` convention `ModuleGraphError` and `ConfigurationError` already follow. Each describes a
@@ -1195,7 +1227,8 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-R2 | Tenant resolution precedes authorization | Hosting, Mcp | **code** |
 | I-R3 | The scope's tenant and principal do not change for the request's lifetime | Core | **code** — the scope |
 | I-R4 | The local host takes the same path with no step skipped and no branch taken | Hosting | **code** — sample scenario |
-| I-R5 | Only an endpoint admitting new paid-feature work is entitlement-gated | consumers | instruction |
+| I-R5 | Only an endpoint admitting new paid-feature work is entitlement-gated | Hosting | **code** — `EndpointRequirement.RequiredFeature is null` |
+| I-R6 | Every endpoint the pipeline routes carries an `EndpointRequirement`; one that doesn't fails **startup**, never a request | Hosting | **code** — startup validation, on I-A3's and I-M2's terms |
 
 ---
 
@@ -1205,11 +1238,16 @@ Item 1 (the nullability of `IAuditable.CreatedBy` under a total principal) was r
 **`CreatedBy` becomes non-null** — and is recorded under *Persisted schemas*, § 6 and
 [`90-decisions.md`](90-decisions.md), 2026-08-31.
 
-Item 1 (how the registered entitlement-contributor set reaches the settings-fingerprint input) was
+Item 2 (how the registered entitlement-contributor set reaches the settings-fingerprint input) was
 resolved for S8 — **`Compute` gains a second parameter** carrying the frozen contributor names,
 rather than projecting them onto a `[Fingerprinted]` property of `PlatformOptions` — and is recorded
 at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) and
 [`90-decisions.md`](90-decisions.md), 2026-09-03. The format version inside `SettingsFingerprint`
 changed in the same commit, per what the item determined either way.
 
-**Nothing is unresolved.**
+Item 3 (how an endpoint declares its required permission, and whether it admits new paid-feature work)
+was resolved for S8 — **a declared metadata surface**, `EndpointRequirement` attached through
+`RequiresPermission`, mirroring `ToolDefinition` — and is recorded under *Public surface*, § 11 and
+[`90-decisions.md`](90-decisions.md), 2026-09-03. I-R5's `Enforced by` and `Owner` changed in the same
+edit, and a new invariant (I-R6) and a new `HostStartupError` variant
+(`EndpointRequirementMissing`) were added, per what the item determined.

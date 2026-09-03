@@ -16,6 +16,32 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-03 — An endpoint declares its permission and its feature as attached metadata, not an in-handler call
+
+Context: `20-contract.md` § *Unresolved* item 3, raised by the S8 (part) commit — Hosting's fixed request
+order (*Control flow*, Path 1, steps 4–5) authorizes against "the named permission" and gates entitlement
+"if the endpoint admits new paid-feature work", but neither `10-design.md` nor the contract said how an
+endpoint attaches either fact, and I-R1 already claimed the order was `code`-enforced without a
+structural way to know, per endpoint, which permission applies. S8.1–S8.4 cannot land without an answer.
+Chosen: **`EndpointRequirement(PermissionName RequiredPermission, FeatureName? RequiredFeature)`**,
+attached through `RequiresPermission<TBuilder>(this TBuilder, PermissionName, FeatureName? = null) where
+TBuilder : IEndpointConventionBuilder` and read by Hosting's pipeline off the routed endpoint's metadata
+— mirroring `ToolDefinition`'s split between a mandatory grant and an optional gate for Mcp. An endpoint
+the pipeline routes with no requirement attached fails **startup**
+(`HostStartupError.EndpointRequirementMissing`), on the same terms I-A3 and I-M2 already refuse an
+unregistered or undeclared permission. I-R5 moves from `instruction`/`consumers` to `code`/`Hosting`,
+decided by `RequiredFeature is not null`.
+Rejected: **an explicit call inside the handler** — the handler itself asks the permission and, only when
+its own feature admits new paid work, the entitlement evaluator, in order; no new public type. Rejected
+because it leaves "no step skipped" true only where the handler happened to be written correctly, which
+sits under I-R1 already being stated as `code`-enforced pipeline order rather than convention — choosing
+this reading would have meant weakening I-R1 to match it, not the other way round. It would also have
+left the two request paths answering "which permission, which feature" two different ways: `Mcp`'s a
+declared `ToolDefinition`, Hosting's a per-handler habit.
+Reversibility: cheap in mechanism — the attachment point can move from metadata to a different
+declaration later without changing what a permission or a feature *is*. Expensive in adoption once
+endpoints across the sample and any consumer are wired to `RequiresPermission`.
+
 ### 2026-09-03 — The frozen contributor set reaches the fingerprint as a parameter, not as a projected option
 
 Context: `20-contract.md` § *Unresolved* item 1 (numbered 2 in `30-slices.md`) left two defensible
