@@ -121,6 +121,39 @@ internal sealed class StubEntitlementContributor(
         Task.FromResult(answer(feature, tenant));
 }
 
+/// <summary>An authentication request carrying headers a test chooses, and nothing else — which is
+/// the whole of the interface.</summary>
+internal sealed class StubAuthenticationRequest(params (string Name, string Value)[] headers)
+    : IAuthenticationRequest
+{
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Headers { get; } =
+        headers.ToDictionary(
+            header => header.Name,
+            header => (IReadOnlyList<string>)[header.Value],
+            StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>An authentication provider whose answer a test chooses, and whether it was consulted.
+/// Defers by default — answering <see cref="Principal.Anonymous"/> is how a provider says "no
+/// credential of my kind was presented".</summary>
+internal sealed class StubAuthenticationProvider(
+    string name,
+    Func<IAuthenticationRequest, Result<Principal, AuthenticationError>>? answer = null)
+    : IAuthenticationProvider
+{
+    public string Name => name;
+
+    internal int CallCount { get; private set; }
+
+    public Task<Result<Principal, AuthenticationError>> AuthenticateAsync(
+        IAuthenticationRequest request, CancellationToken cancellationToken)
+    {
+        CallCount++;
+        return Task.FromResult(
+            answer?.Invoke(request) ?? Result<Principal, AuthenticationError>.Success(Principal.Anonymous));
+    }
+}
+
 /// <summary>A tenant resolver whose answer a test chooses, and whether it was consulted.</summary>
 internal sealed class StubTenantResolver(string name, Func<TenantId?> answer) : ITenantResolver
 {
@@ -152,10 +185,21 @@ internal sealed class StubModule(string name, params string[] dependsOn) : IPlat
 /// HTTP — status codes, body narrowing, the envelope — go over HTTP rather than around it.</summary>
 internal static class WebHostUnderTest
 {
+    /// <summary>Starts a host on an ephemeral loopback port.</summary>
+    /// <param name="services">Extra registrations, applied before the platform composes.</param>
+    /// <param name="settings">Settings layered over <see cref="Settings.Required"/>.</param>
+    /// <param name="environment">The host environment name.</param>
+    /// <param name="composeOperatedDefaults">Whether to register the authentication provider and
+    /// durable audit sink the <see cref="CompositionProfile.Operated"/> profile requires (I-C1,
+    /// I-C2). True for every test that is not about composition: the default profile is
+    /// <c>Operated</c>, and without these the host correctly refuses to start. A test asserting a
+    /// startup refusal, or running <see cref="CompositionProfile.Local"/>, passes
+    /// <see langword="false"/> and registers what it means to.</param>
     internal static async Task<(WebApplication App, HttpClient Client)> StartAsync(
         Action<IServiceCollection>? services = null,
         IDictionary<string, string?>? settings = null,
-        string environment = "Production")
+        string environment = "Production",
+        bool composeOperatedDefaults = true)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
@@ -167,6 +211,14 @@ internal static class WebHostUnderTest
         if (settings is not null)
         {
             builder.Configuration.AddInMemoryCollection(settings);
+        }
+
+        if (composeOperatedDefaults)
+        {
+            // The provider defers, so every request still observes Anonymous exactly as it did
+            // before the seam existed; its presence is what satisfies I-C1 rather than what it
+            // answers. The sink declares IsDurable so I-C2 holds — the default log sink never does.
+            Settings.ComposeOperated(builder.Services);
         }
 
         services?.Invoke(builder.Services);
@@ -194,6 +246,17 @@ internal static class WebHostUnderTest
 /// does not have to restate them.</summary>
 internal static class Settings
 {
+    /// <summary>Registers what <see cref="CompositionProfile.Operated"/> requires of any host —
+    /// an authentication provider (I-C1) and a sink declaring <c>IsDurable</c> (I-C2). Every test
+    /// that builds its own host from <see cref="Required"/> and then <em>starts</em> it needs this,
+    /// because the profile validation runs at start; one that only builds does not.</summary>
+    /// <param name="services">The host's service collection.</param>
+    internal static void ComposeOperated(IServiceCollection services)
+    {
+        services.AddSingleton<IAuthenticationProvider>(new StubAuthenticationProvider("test-operated-default"));
+        services.AddSingleton<IAuditSink>(new RecordingAuditSink("test-durable-default", isDurable: true));
+    }
+
     internal static Dictionary<string, string?> Required() => new()
     {
         ["Platform:CompositionProfile"] = "Operated",

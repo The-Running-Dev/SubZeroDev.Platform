@@ -48,6 +48,7 @@ public sealed class BackgroundWorkTests
 
         builder.Configuration.AddInMemoryCollection(Settings.Required());
         builder.Services.AddSingleton<IBackgroundWork>(work);
+        Settings.ComposeOperated(builder.Services);
         builder.AddPlatformWebHost();
 
         using var host = builder.Build();

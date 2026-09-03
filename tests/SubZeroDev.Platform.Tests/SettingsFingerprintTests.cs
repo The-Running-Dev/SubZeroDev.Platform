@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 
@@ -14,8 +15,8 @@ public sealed class SettingsFingerprintTests
     {
         // The practical equivalent of "two separate processes" — two fresh implementation
         // instances, over two independently constructed but equal option trees, sharing no state.
-        var first = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline());
-        var second = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline());
+        var first = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline(), []);
+        var second = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline(), []);
 
         Assert.Equal(first, second);
     }
@@ -24,12 +25,14 @@ public sealed class SettingsFingerprintTests
     public void Matches_the_byte_exact_specification_against_a_hand_computed_vector()
     {
         // Computed independently against System.Security.Cryptography.SHA256 over the exact byte
-        // layout design/20-contract.md specifies: "szdfp2", then each of the ten
+        // layout design/20-contract.md specifies: "szdfp3", then each of the ten
         // currently-[Fingerprinted] entries (D5-S1 adds CompositionProfile), path-sorted
-        // ordinally, length-prefixed.
-        var fingerprint = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline());
+        // ordinally, length-prefixed. D5-S8 bumped the version when the entitlement contributor set
+        // joined the input; with no contributor registered it contributes no entry, so this vector
+        // differs from the szdfp2 one in the six version bytes and nothing else.
+        var fingerprint = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline(), []);
 
-        Assert.Equal("249099a6c8c838b79c2696cf506f444de43b2a24874f114ba2c0b5a52fdb42dd", fingerprint);
+        Assert.Equal("82d01318ad2ded8fb954090f8876bc8a99c221b6928b8d565af403da03425dbe", fingerprint);
     }
 
     [Fact]
@@ -39,14 +42,65 @@ public sealed class SettingsFingerprintTests
         var local = Baseline() with { CompositionProfile = CompositionProfile.Local };
         var fingerprint = new SettingsFingerprint();
 
-        Assert.NotEqual(fingerprint.Compute(operated), fingerprint.Compute(local));
+        Assert.NotEqual(fingerprint.Compute(operated, []), fingerprint.Compute(local, []));
+    }
+
+    /// <summary>S8.8 — two hosts differing only in their frozen entitlement contributor set compute
+    /// different fingerprints. The contributor set is what bounds the union's risk of one wrong
+    /// contributor granting everything, so two instances that disagree about who may grant must be
+    /// visible through <c>platform.settings-fingerprint</c> rather than by behaving differently in
+    /// silence.</summary>
+    [Fact]
+    public void Two_hosts_differing_only_in_their_contributor_set_fingerprint_differently()
+    {
+        ISettingsFingerprint fingerprint = new SettingsFingerprint();
+        var baseline = new EntitlementContributorName("Platform.Entitlement.CommunityBaseline");
+        var licensing = new EntitlementContributorName("Platform.Licensing");
+
+        var withBaselineOnly = fingerprint.Compute(Baseline(), [baseline]);
+        var withLicensing = fingerprint.Compute(Baseline(), [baseline, licensing]);
+        var withNone = fingerprint.Compute(Baseline(), []);
+
+        Assert.NotEqual(withBaselineOnly, withLicensing);
+        Assert.NotEqual(withBaselineOnly, withNone);
+        Assert.NotEqual(withLicensing, withNone);
+    }
+
+    /// <summary>S8.8, the other half of "differing only in" — registration <em>order</em> is not a
+    /// disagreement. The evaluator takes a union, which is order-independent, so two hosts that
+    /// registered the same contributors in different orders agree about who may grant and must not
+    /// be reported as disagreeing. A permanent false mismatch trains an operator to ignore the one
+    /// check that would have caught a real one.</summary>
+    [Fact]
+    public void The_contributor_set_is_a_set__registration_order_is_not_a_disagreement()
+    {
+        ISettingsFingerprint fingerprint = new SettingsFingerprint();
+        var first = new EntitlementContributorName("Platform.Billing");
+        var second = new EntitlementContributorName("Platform.Licensing");
+
+        Assert.Equal(
+            fingerprint.Compute(Baseline(), [first, second]),
+            fingerprint.Compute(Baseline(), [second, first]));
+    }
+
+    /// <summary>S8.8 — the format version changes in the same commit the encoding does. An encoding
+    /// change that is not versioned is the silent break the field exists to prevent, so this asserts
+    /// the version is inside the hashed input rather than beside it.</summary>
+    [Fact]
+    public void The_format_version_is_inside_the_hashed_input_and_is_the_D5_S8_one()
+    {
+        var version = typeof(SettingsFingerprint)
+            .GetField("FormatVersion", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null);
+
+        Assert.Equal("szdfp3", Encoding.UTF8.GetString((byte[])version!));
     }
 
     [Fact]
     public void Every_Fingerprinted_property_changes_the_hash_and_every_other_property_does_not()
     {
         ISettingsFingerprint fingerprint = new SettingsFingerprint();
-        var baselineHash = fingerprint.Compute(Baseline());
+        var baselineHash = fingerprint.Compute(Baseline(), []);
 
         var leaves = Leaves().ToList();
         Assert.NotEmpty(leaves);
@@ -58,7 +112,7 @@ public sealed class SettingsFingerprintTests
             var original = property.GetValue(target);
             property.SetValue(target, Perturb(original, property.PropertyType));
 
-            var perturbedHash = fingerprint.Compute(options);
+            var perturbedHash = fingerprint.Compute(options, []);
             var isFingerprinted = property.GetCustomAttribute<FingerprintedAttribute>() is not null;
             var changed = perturbedHash != baselineHash;
 

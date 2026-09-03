@@ -170,6 +170,12 @@ public static class PlatformHostExtensions
             EntitlementContributorRegistration.ServiceKey);
         services.TryAddSingleton<IEntitlementContributorRegistry, EntitlementContributorRegistry>();
         services.TryAddSingleton<IEntitlementEvaluator, EntitlementEvaluator>();
+
+        // The fifth registry and its chain. Nothing registers a provider in the framework — Identity
+        // does, in S9 — so a Local host reaches the profile validation with an empty registry by
+        // construction rather than by a check that always passes.
+        services.TryAddSingleton<IAuthenticationProviderRegistry, AuthenticationProviderRegistry>();
+        services.TryAddSingleton<AuthenticationChain>();
     }
 
     /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex

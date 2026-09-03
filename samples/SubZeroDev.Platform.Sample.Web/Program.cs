@@ -21,6 +21,14 @@ if (args is ["migrate"])
     return await builder.RunPlatformMigrateModeAsync(CancellationToken.None);
 }
 
+// What declaring Operated now costs a consumer (D5-S8): an authentication provider (I-C1) and a
+// sink declaring IsDurable (I-C2), or the host refuses to start. See Composition.cs — S9 and S13
+// replace both with the real modules.
+builder.Services.AddSingleton<IAuthenticationProvider,
+    OperatedComposition.NoCredentialAuthenticationProvider>();
+builder.Services.AddSingleton<IAuditSink>(
+    new OperatedComposition.FileAuditSink("sample-audit.log"));
+
 // The only mandatory Platform call. Health, readiness and correlation come with it.
 builder.AddPlatformWebHost();
 

@@ -15,6 +15,14 @@ if (args is ["migrate"])
     return await builder.RunPlatformMigrateModeAsync(CancellationToken.None);
 }
 
+// Both roles of one installation declare the same profile, so both owe it the same two
+// registrations (D5-S8, I-C1 and I-C2) — a worker that composed differently from its web peer would
+// be the divergence the settings fingerprint exists to catch, arrived at deliberately.
+builder.Services.AddSingleton<IAuthenticationProvider,
+    OperatedComposition.NoCredentialAuthenticationProvider>();
+builder.Services.AddSingleton<IAuditSink>(
+    new OperatedComposition.FileAuditSink("sample-audit.log"));
+
 // The worker is the same bootstrap with the product HTTP surface omitted. It maps no endpoints;
 // the listener exists for its probes and nothing else.
 builder.AddPlatformWorkerHost();

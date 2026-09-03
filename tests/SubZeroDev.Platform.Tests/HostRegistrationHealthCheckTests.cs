@@ -192,7 +192,7 @@ public sealed class SettingsFingerprintHealthCheckTests
         var clock = new FakeClock();
         var options = PeerHostHealthCheckTests.Options();
         var fingerprint = new SettingsFingerprint();
-        var mine = fingerprint.Compute(options);
+        var mine = fingerprint.Compute(options, []);
 
         var store = new FakeHostRegistrationStore();
         store.Seed(new HostRegistration
@@ -204,7 +204,7 @@ public sealed class SettingsFingerprintHealthCheckTests
             SettingsFingerprint = mine,
         });
 
-        var check = new SettingsFingerprintHealthCheck(store, fingerprint, options, clock);
+        var check = new SettingsFingerprintHealthCheck(store, fingerprint, new EntitlementContributorRegistry(), options, clock);
 
         Assert.Equal(HealthStatus.Healthy, (await check.CheckAsync(CancellationToken.None)).Status);
     }
@@ -227,7 +227,7 @@ public sealed class SettingsFingerprintHealthCheckTests
             SettingsFingerprint = "not-a-real-fingerprint",
         });
 
-        var check = new SettingsFingerprintHealthCheck(store, fingerprint, options, clock);
+        var check = new SettingsFingerprintHealthCheck(store, fingerprint, new EntitlementContributorRegistry(), options, clock);
         var result = await check.CheckAsync(CancellationToken.None);
 
         Assert.Equal(HealthStatus.Degraded, result.Status);
@@ -251,7 +251,7 @@ public sealed class SettingsFingerprintHealthCheckTests
             SettingsFingerprint = "not-a-real-fingerprint",
         });
 
-        var check = new SettingsFingerprintHealthCheck(store, fingerprint, options, clock);
+        var check = new SettingsFingerprintHealthCheck(store, fingerprint, new EntitlementContributorRegistry(), options, clock);
 
         Assert.Equal(HealthStatus.Healthy, (await check.CheckAsync(CancellationToken.None)).Status);
     }
@@ -262,6 +262,7 @@ public sealed class SettingsFingerprintHealthCheckTests
         var check = new SettingsFingerprintHealthCheck(
             new FakeHostRegistrationStore { Unavailable = true },
             new SettingsFingerprint(),
+            new EntitlementContributorRegistry(),
             PeerHostHealthCheckTests.Options(),
             new FakeClock());
 
@@ -282,7 +283,7 @@ public sealed class HostRegistrationHeartbeatTests
         var instance = new InstanceId("this-host/1");
         var store = new FakeHostRegistrationStore();
 
-        var heartbeat = new HostRegistrationHeartbeat(store, fingerprint, options, instance, clock, NullLogger<HostRegistrationHeartbeat>.Instance);
+        var heartbeat = new HostRegistrationHeartbeat(store, fingerprint, new EntitlementContributorRegistry(), options, instance, clock, NullLogger<HostRegistrationHeartbeat>.Instance);
         await heartbeat.TickAsync(CancellationToken.None);
 
         var written = Assert.Single(store.Upserted);
@@ -290,7 +291,7 @@ public sealed class HostRegistrationHeartbeatTests
         Assert.Equal(instance, written.Instance);
         Assert.Equal(clock.UtcNow, written.StartedAt);
         Assert.Equal(clock.UtcNow, written.HeartbeatAt);
-        Assert.Equal(fingerprint.Compute(options), written.SettingsFingerprint);
+        Assert.Equal(fingerprint.Compute(options, []), written.SettingsFingerprint);
     }
 
     [Fact]
@@ -301,6 +302,7 @@ public sealed class HostRegistrationHeartbeatTests
         var heartbeat = new HostRegistrationHeartbeat(
             store,
             new SettingsFingerprint(),
+            new EntitlementContributorRegistry(),
             PeerHostHealthCheckTests.Options(),
             new InstanceId("host/1"),
             clock,
@@ -324,7 +326,7 @@ public sealed class HostRegistrationHeartbeatTests
         var store = new FakeHostRegistrationStore { Unavailable = true };
         var logger = new CapturingLogger<HostRegistrationHeartbeat>();
         var heartbeat = new HostRegistrationHeartbeat(
-            store, new SettingsFingerprint(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock(), logger);
+            store, new SettingsFingerprint(), new EntitlementContributorRegistry(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock(), logger);
 
         var exception = await Record.ExceptionAsync(() => heartbeat.TickAsync(CancellationToken.None));
 
@@ -339,7 +341,7 @@ public sealed class HostRegistrationHeartbeatTests
         var store = new FakeHostRegistrationStore { UpsertFailure = TransactionError.Faulted() };
         var logger = new CapturingLogger<HostRegistrationHeartbeat>();
         var heartbeat = new HostRegistrationHeartbeat(
-            store, new SettingsFingerprint(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock(), logger);
+            store, new SettingsFingerprint(), new EntitlementContributorRegistry(), PeerHostHealthCheckTests.Options(), new InstanceId("host/1"), new FakeClock(), logger);
 
         await heartbeat.TickAsync(CancellationToken.None);
 
