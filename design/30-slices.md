@@ -78,49 +78,16 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S6 — The shareable type and the audited cross-tenant read** — shipped:
   [#174](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/174) via
   [#201](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/201).
+- **S7 — The entitlement seam and the Community baseline** — shipped:
+  [#175](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/175) via
+  [#203](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/203).
 
 ---
 
 ## Outstanding
 
-## S7 — The entitlement seam and the Community baseline
-**Status:** in progress
-
-Delivers: a product can gate a feature by name and never learn why it was allowed. Whether the deployment
-pays a subscription or holds a licence stops being something the calling code can find out, so the same
-feature check works in both shapes.
-
-Touches:
-- **`SubZeroDev.Platform.Abstractions`** — `FeatureName`, `EntitlementContributorName`,
-  `EntitlementDecision`, `IEntitlementContributor`, `IEntitlementEvaluator`, `EntitlementError`
-- **`SubZeroDev.Platform.Core`** — the entitlement-contributor registry, the evaluator, and the Community
-  baseline contributor
-
-Depends on: S5.
-
-Acceptance:
-- **S7.1** The evaluator's `EvaluateAsync` declares no tenant parameter; the tenant comes from the
-  ambient scope and appears on the decision.
-- **S7.2** Two contributors granting the same feature produce one granted decision naming both sources; a
-  decision that is not granted carries an empty source set.
-- **S7.3** One contributor granting and another declining produces a granted decision — the union admits
-  no veto.
-- **S7.4** A contributor returning `EntitlementError.ContributorUnavailable` contributes nothing and does
-  not fail the evaluation: another contributor's grant still produces a granted decision.
-- **S7.5** A decision round-trips through storage beside a work item and reads back carrying the instant
-  it was decided at; no framework package declares an entitlement table.
-- **S7.6** With only the Community baseline registered, a feature the baseline names is granted and one it
-  does not name is not, and neither answer is an error.
-- **S7.7** No caller can resolve a contributor: attempting to obtain one from the container fails, and the
-  evaluator is the only public entry.
-- **S7.8** Refusing an operation on a decision that was not granted names no contributor to the caller.
-
-Out of scope: Billing's and Licensing's contributors (S11, S12). The
-`Local`-forbids-a-non-baseline-contributor rule (I-C3) and the fingerprint input (I-C4), which land in
-S8.
-
 ## S8 — The fixed request order and the composition profile's startup rules
-**Status:** queued
+**Status:** in progress
 
 Delivers: both deployment shapes run the same steps in the same order, so a rule proved in one holds in
 the other. A host whose installed packages and declared shape disagree refuses to start, instead of

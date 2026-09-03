@@ -3,12 +3,12 @@
     {
       "name": "Test",
       "status": "Passed",
-      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 333, Passed: 333, Failed: 0."
+      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 363, Passed: 363, Failed: 0. Test Run Successful."
     },
     {
       "name": "Run the sample in both roles",
       "status": "DidNotRun",
-      "reason": "build/Test-SampleRoundTrip.ps1 is Linux-only (it signals processes and reads the store with sqlite3, and CI runs it on ubuntu-latest). This session's worktree is Windows (MINGW64_NT). The corresponding check on PR #202 in CI is where the answer comes from."
+      "reason": "build/Test-SampleRoundTrip.ps1 is documented and written as Linux-only (SIGTERM via P/Invoke to libc's kill(2), sqlite3 CLI). This worktree is Windows (MINGW64_NT-10.0-26200); the corresponding CI check on the pull request is where the answer will come from."
     },
     {
       "name": "Assert no framework project references a workload",
@@ -18,72 +18,72 @@
     {
       "name": "Typecheck",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npm run typecheck: tsc --noEmit completed with no errors."
+      "detail": "cd workloads/game-service && npm run typecheck -> tsc --noEmit completed with no errors and no output."
     },
     {
       "name": "Start the workload and the edge, the documented way",
       "status": "Passed",
-      "detail": "Workload started on 127.0.0.1:8080: /livez -> {\"status\":\"healthy\"}, /readyz -> {\"status\":\"healthy\"}. GameEdge started on 127.0.0.1:5080: /health/live -> Healthy, /health/ready -> Healthy (checks: game-workload, platform.audit.sink). Both processes killed after."
+      "detail": "Started game-service on 127.0.0.1:8080 (npm start) and GameEdge on 127.0.0.1:5080 fronting it. curl http://127.0.0.1:8080/livez -> {\"status\":\"healthy\"}; /readyz -> {\"status\":\"healthy\"}; curl http://127.0.0.1:5080/health/live -> {\"status\":\"Healthy\",\"checks\":[]}; /health/ready -> {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
     },
     {
       "name": "Run the replay against the workload",
       "status": "Passed",
-      "detail": "npx vitest run tests/replay.test.ts: 11/11 tests passed."
+      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11). Includes S5.2/S5.3 byte-identity proof and S5.7/S5.9 assertions."
     },
     {
       "name": "Run the replay against the edge",
       "status": "Passed",
-      "detail": "GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: 2/2 tests passed."
+      "detail": "GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: Test Files 1 passed (1), Tests 2 passed (2). S7.8 byte-identity proof through the edge."
     },
     {
       "name": "Migrate the schema to head, the documented way",
       "status": "Passed",
-      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate: output 'migrated ci_documented_migrate to head'."
+      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate (against a locally provisioned postgres:17 container standing in for docker-compose.yml's postgres on an alternate host port, 5433, because 5432 was already bound by an unrelated running container from another repository -- see reason on the below three gates for detail): tsx scripts/migrate.ts -> 'migrated ci_documented_migrate to head'."
     },
     {
       "name": "Start the workload against the durable store, the documented way",
       "status": "Passed",
-      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable npm start against postgres via docker compose: /readyz on port 8081 -> {\"status\":\"healthy\"}. Process killed after."
+      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start (against the same alternate-port postgres) then curl http://127.0.0.1:8081/readyz -> {\"status\":\"healthy\"}."
     },
     {
       "name": "Run the one-instance contention proof",
       "status": "Passed",
-      "detail": "npx vitest run tests/contention-one-instance.test.ts: 5/5 tests passed."
+      "detail": "npx vitest run tests/contention-one-instance.test.ts (GAME_SERVICE_TEST_DATABASE_URL pointed at the alternate-port postgres): Test Files 1 passed (1), Tests 5 passed (5)."
     },
     {
       "name": "Run the two-instance contention proof",
       "status": "Passed",
-      "detail": "npx vitest run tests/contention-two-instances.test.ts: 7/7 tests passed."
+      "detail": "npx vitest run tests/contention-two-instances.test.ts (alternate-port postgres): Test Files 1 passed (1), Tests 7 passed (7)."
     },
     {
       "name": "Run the durable replay",
       "status": "Passed",
-      "detail": "npx vitest run tests/durable-replay.test.ts: 7/7 tests passed."
+      "detail": "npx vitest run tests/durable-replay.test.ts (alternate-port postgres): Test Files 1 passed (1), Tests 7 passed (7). S8.2/S8.3/S8.4/S8.6/S8.9 byte-identity and schema-isolation proofs."
     },
     {
       "name": "Run the port-conformance suite",
       "status": "Passed",
-      "detail": "npx vitest run tests/conformance.test.ts: 7/7 tests passed."
+      "detail": "npx vitest run tests/conformance.test.ts (alternate-port postgres): Test Files 1 passed (1), Tests 7 passed (7)."
     },
     {
       "name": "Test (game-service)",
       "status": "Passed",
-      "detail": "GAME_EDGE_DLL=<built edge dll> npm test (OTEL_COLLECTOR_BIN unset, otelcol-contrib unavailable locally): 197 passed, 1 skipped across 24/25 files. The single skip is tests/trace-evidence.test.ts, gated by describe.skipIf(!process.env[\"OTEL_COLLECTOR_BIN\"]) -- a graceful, expected skip rather than a failure."
+      "detail": "GAME_EDGE_DLL=<built edge dll> npm test (OTEL_COLLECTOR_BIN not set; alternate-port postgres): Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198). The skipped file is tests/trace-evidence.test.ts, which gracefully skips without an OpenTelemetry Collector binary available."
     },
     {
       "name": "Validate Markdown links, terminology, and generated files",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1: Documentation checks passed across 127 Markdown file(s), with 2 pre-existing warning(s) in design/d3/90-decisions.md (Terminology: Use 'JSON' instead of 'Json'), unrelated to this PR's changes."
+      "detail": "pwsh ./build/Test-Documentation.ps1: Documentation checks passed across 127 Markdown file(s), with 2 warning(s) (Terminology: 'Json' vs 'JSON' in design/d3/90-decisions.md, pre-existing and not treated as an error since -TreatWarningsAsErrors is not passed by CI). Exit code 0."
     },
     {
       "name": "Validate design/30-slices.md's Status markers",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: Slice status markers consistent across 12 slice(s)."
+      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: Slice status markers consistent across 11 slice(s) in design/30-slices.md. Exit code 0."
     },
     {
       "name": "Build and verify the status-page site",
       "status": "Passed",
-      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint (1 pre-existing fast-refresh warning in src/shared.tsx, non-blocking), typecheck, test (6 files / 57 tests passed), test:build, and test:merge all succeeded."
+      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint (1 pre-existing non-blocking warning in src/shared.tsx), typecheck, test (Test Files 6 passed (6), Tests 57 passed (57)), test:build (vite build succeeded, both HTML entry points contain required static metadata), and test:merge (Package merge preserves docs and rejects all protected-boundary violations) all completed successfully."
     }
   ]
 }
