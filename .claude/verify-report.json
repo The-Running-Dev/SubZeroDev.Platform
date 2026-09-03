@@ -2,88 +2,88 @@
   "gates": [
     {
       "name": "Test",
-      "status": "Failed",
-      "detail": "dotnet test --no-build --configuration Release --verbosity normal: 279 Passed, 36 Failed, 315 Total. Every failure is PostgresContainerFixture's constructor throwing DockerUnavailableException, e.g.: 'Class fixture type SubZeroDev.Platform.Tests.PostgresContainerFixture threw in its constructor ---- DotNet.Testcontainers.Builders.DockerUnavailableException : Docker is either not running or misconfigured. ... Failed to connect to Docker endpoint at unix:///var/run/docker.sock. ... System.Net.Sockets.SocketException : Cannot assign requested address'. No Docker daemon is running in this sandbox (`docker ps` reports no unix socket). Every non-Postgres test passes, including all 20 new S4 AuthorizationTests. GitHub Actions provisions a Docker daemon natively, which is what #195-#198 merged clean against."
+      "status": "Passed",
+      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 333, Passed: 333, Failed: 0."
     },
     {
       "name": "Run the sample in both roles",
-      "status": "Passed",
-      "detail": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1 against a Release build: 'Both roles served their probes in Production.' and 'The outbox row survived process death and dispatched order ... after restart.'"
+      "status": "DidNotRun",
+      "reason": "build/Test-SampleRoundTrip.ps1 is Linux-only (it signals processes and reads the store with sqlite3, and CI runs it on ubuntu-latest). This session's worktree is Windows (MINGW64_NT). The corresponding check on PR #202 in CI is where the answer comes from."
     },
     {
       "name": "Assert no framework project references a workload",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: 'No project under src/ or samples/ references workloads/ (28 project file(s) checked).'"
+      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: No project under src/ or samples/ references workloads/ (28 project file(s) checked)."
+    },
+    {
+      "name": "Typecheck",
+      "status": "Passed",
+      "detail": "cd workloads/game-service && npm run typecheck: tsc --noEmit completed with no errors."
+    },
+    {
+      "name": "Start the workload and the edge, the documented way",
+      "status": "Passed",
+      "detail": "Workload started on 127.0.0.1:8080: /livez -> {\"status\":\"healthy\"}, /readyz -> {\"status\":\"healthy\"}. GameEdge started on 127.0.0.1:5080: /health/live -> Healthy, /health/ready -> Healthy (checks: game-workload, platform.audit.sink). Both processes killed after."
+    },
+    {
+      "name": "Run the replay against the workload",
+      "status": "Passed",
+      "detail": "npx vitest run tests/replay.test.ts: 11/11 tests passed."
+    },
+    {
+      "name": "Run the replay against the edge",
+      "status": "Passed",
+      "detail": "GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: 2/2 tests passed."
+    },
+    {
+      "name": "Migrate the schema to head, the documented way",
+      "status": "Passed",
+      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate: output 'migrated ci_documented_migrate to head'."
+    },
+    {
+      "name": "Start the workload against the durable store, the documented way",
+      "status": "Passed",
+      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable npm start against postgres via docker compose: /readyz on port 8081 -> {\"status\":\"healthy\"}. Process killed after."
+    },
+    {
+      "name": "Run the one-instance contention proof",
+      "status": "Passed",
+      "detail": "npx vitest run tests/contention-one-instance.test.ts: 5/5 tests passed."
+    },
+    {
+      "name": "Run the two-instance contention proof",
+      "status": "Passed",
+      "detail": "npx vitest run tests/contention-two-instances.test.ts: 7/7 tests passed."
+    },
+    {
+      "name": "Run the durable replay",
+      "status": "Passed",
+      "detail": "npx vitest run tests/durable-replay.test.ts: 7/7 tests passed."
+    },
+    {
+      "name": "Run the port-conformance suite",
+      "status": "Passed",
+      "detail": "npx vitest run tests/conformance.test.ts: 7/7 tests passed."
+    },
+    {
+      "name": "Test (game-service)",
+      "status": "Passed",
+      "detail": "GAME_EDGE_DLL=<built edge dll> npm test (OTEL_COLLECTOR_BIN unset, otelcol-contrib unavailable locally): 197 passed, 1 skipped across 24/25 files. The single skip is tests/trace-evidence.test.ts, gated by describe.skipIf(!process.env[\"OTEL_COLLECTOR_BIN\"]) -- a graceful, expected skip rather than a failure."
     },
     {
       "name": "Validate Markdown links, terminology, and generated files",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1: 'Documentation checks passed across 101 Markdown file(s), with 2 warning(s).' Both warnings are pre-existing Json/JSON terminology notes in design/d3/90-decisions.md, untouched by this PR."
+      "detail": "pwsh ./build/Test-Documentation.ps1: Documentation checks passed across 127 Markdown file(s), with 2 pre-existing warning(s) in design/d3/90-decisions.md (Terminology: Use 'JSON' instead of 'Json'), unrelated to this PR's changes."
     },
     {
       "name": "Validate design/30-slices.md's Status markers",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: 'Slice status markers consistent across 15 slice(s) in .../design/30-slices.md.'"
+      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: Slice status markers consistent across 12 slice(s)."
     },
     {
       "name": "Build and verify the status-page site",
       "status": "Passed",
-      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, oxlint (1 pre-existing warning in src/shared.tsx), tsc -b, vitest (57/57 passed across 6 files), build (tsc -b + landing-page build, verify-build.mjs passed), verify-merge.mjs: 'Package merge preserves docs and rejects all protected-boundary violations.'"
-    },
-    {
-      "name": "Typecheck",
-      "status": "DidNotRun",
-      "reason": "workloads/game-service requires Node >=24 (package.json engines); this sandbox has Node v22.22.2 via /opt/node22, so npm reported EBADENGINE for every dependency and a typecheck run would not be a trustworthy signal. game-service is untouched by this PR's diff (S4 is Platform.Abstractions/Core/Hosting/Tests only)."
-    },
-    {
-      "name": "Start the workload and the edge, the documented way",
-      "status": "DidNotRun",
-      "reason": "Requires a live PostgreSQL (docker compose up) and spawning the workload/edge processes together; no Docker daemon is running in this sandbox (docker ps reports no unix socket). Untouched by this PR's diff."
-    },
-    {
-      "name": "Run the replay against the workload",
-      "status": "DidNotRun",
-      "reason": "Requires the workload started above (Docker-backed Postgres unavailable in this sandbox). Untouched by this PR's diff."
-    },
-    {
-      "name": "Run the replay against the edge",
-      "status": "DidNotRun",
-      "reason": "Requires the edge started above (Docker-backed Postgres unavailable in this sandbox). Untouched by this PR's diff."
-    },
-    {
-      "name": "Migrate the schema to head, the documented way",
-      "status": "DidNotRun",
-      "reason": "npm run migrate needs a live PostgreSQL (docker compose up); no Docker daemon is running in this sandbox. Untouched by this PR's diff."
-    },
-    {
-      "name": "Start the workload against the durable store, the documented way",
-      "status": "DidNotRun",
-      "reason": "Needs the durable Postgres store (docker compose up); no Docker daemon is running in this sandbox. Untouched by this PR's diff."
-    },
-    {
-      "name": "Run the one-instance contention proof",
-      "status": "DidNotRun",
-      "reason": "Needs the durable Postgres store (docker compose up); no Docker daemon is running in this sandbox. Untouched by this PR's diff."
-    },
-    {
-      "name": "Run the two-instance contention proof",
-      "status": "DidNotRun",
-      "reason": "Needs the durable Postgres store (docker compose up); no Docker daemon is running in this sandbox. Untouched by this PR's diff."
-    },
-    {
-      "name": "Run the durable replay",
-      "status": "DidNotRun",
-      "reason": "Needs the durable Postgres store (docker compose up); no Docker daemon is running in this sandbox. Untouched by this PR's diff."
-    },
-    {
-      "name": "Run the port-conformance suite",
-      "status": "DidNotRun",
-      "reason": "Needs the durable Postgres store and the started workload/edge; no Docker daemon is running in this sandbox. Untouched by this PR's diff."
-    },
-    {
-      "name": "Test (game-service)",
-      "status": "DidNotRun",
-      "reason": "npm test spans the whole workload suite, including the Docker-backed Postgres cases above; no Docker daemon is running in this sandbox, and the workload also requires Node >=24 (this sandbox has v22). Untouched by this PR's diff."
+      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint (1 pre-existing fast-refresh warning in src/shared.tsx, non-blocking), typecheck, test (6 files / 57 tests passed), test:build, and test:merge all succeeded."
     }
   ]
 }
