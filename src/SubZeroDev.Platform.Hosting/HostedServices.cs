@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
@@ -16,12 +17,14 @@ internal sealed class PlatformRegistryStartup(
     IEnumerable<IPermissionCatalog> permissionCatalogs,
     IEnumerable<IPermissionProvider> permissionProviders,
     IEnumerable<ITenantResolver> tenantResolvers,
+    [FromKeyedServices(EntitlementContributorRegistration.ServiceKey)] IEnumerable<IEntitlementContributor> entitlementContributors,
     IHealthCheckRegistry healthChecks,
     IBackgroundWorkRegistry backgroundWork,
     IAuditSinkRegistry auditSinks,
     IPermissionCatalogRegistry permissionCatalogRegistry,
     IPermissionProviderRegistry permissionProviderRegistry,
-    ITenantResolverRegistry tenantResolverRegistry) : IHostedLifecycleService
+    ITenantResolverRegistry tenantResolverRegistry,
+    IEntitlementContributorRegistry entitlementContributorRegistry) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
     {
@@ -96,6 +99,20 @@ internal sealed class PlatformRegistryStartup(
             }
         }
 
+        // Collected from the keyed slot, never from the plain IEntitlementContributor service type —
+        // nothing in the container resolves a contributor by ordinary means, so IEntitlementEvaluator
+        // stays the only public entry (S7.7).
+        foreach (var contributor in entitlementContributors)
+        {
+            var registered = entitlementContributorRegistry.Register(contributor);
+            if (!registered.IsSuccess)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(
+                    registered.Error,
+                    registered.Error.Detail));
+            }
+        }
+
         // One-way. Registration after this returns a failure rather than mutating a structure
         // concurrent probe readers are walking, which is what makes lock-free probing correct.
         healthChecks.Freeze();
@@ -103,6 +120,7 @@ internal sealed class PlatformRegistryStartup(
         auditSinks.Freeze();
         permissionProviderRegistry.Freeze();
         tenantResolverRegistry.Freeze();
+        entitlementContributorRegistry.Freeze();
 
         return Task.CompletedTask;
     }

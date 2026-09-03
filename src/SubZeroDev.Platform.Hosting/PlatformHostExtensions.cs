@@ -161,6 +161,15 @@ public static class PlatformHostExtensions
 
         services.TryAddSingleton<ITenantResolverRegistry, TenantResolverRegistry>();
         services.TryAddSingleton<TenantResolutionChain>();
+
+        // Registered under a keyed slot, never under the plain IEntitlementContributor service type —
+        // ordinary unkeyed resolution finds nothing, so IEntitlementEvaluator stays the only public
+        // entry (S7.7). PlatformRegistryStartup collects this key's registrations at startup.
+        services.TryAddSingleton(typeof(CommunityBaselineOptions), _ => CommunityBaselineOptions.Empty);
+        services.AddKeyedSingleton<IEntitlementContributor, CommunityEntitlementContributor>(
+            EntitlementContributorRegistration.ServiceKey);
+        services.TryAddSingleton<IEntitlementContributorRegistry, EntitlementContributorRegistry>();
+        services.TryAddSingleton<IEntitlementEvaluator, EntitlementEvaluator>();
     }
 
     /// <summary>Derives an <see cref="InstanceId"/>: the machine name, a slash, and eight hex
