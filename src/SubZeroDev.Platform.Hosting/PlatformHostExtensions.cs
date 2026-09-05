@@ -48,8 +48,19 @@ public static class PlatformHostExtensions
         var mapping = endpoints.ServiceProvider.GetRequiredService<ProbeMapping>();
         mapping.MappedExplicitly = true;
 
-        endpoints.MapGet(ProbeBody.LivenessPath, (HttpContext context) => Probe(context, HealthCheckKind.Liveness));
-        endpoints.MapGet(ProbeBody.ReadinessPath, (HttpContext context) => Probe(context, HealthCheckKind.Readiness));
+        // The probes are exempt, and they are the only thing in Platform that is (20-contract.md
+        // § Public surface 11): they must answer before a principal can be granted anything, and
+        // the composition provider grants nothing at all in Operated.
+        endpoints
+            .MapGet(ProbeBody.LivenessPath, (HttpContext context) => Probe(context, HealthCheckKind.Liveness))
+            .ExemptFromPlatformAuthorization(
+                "Liveness must answer before a principal can be granted anything; Operated's composition "
+                + "provider grants nothing at all, so a gated probe would fail the deployment it exists to keep alive.");
+        endpoints
+            .MapGet(ProbeBody.ReadinessPath, (HttpContext context) => Probe(context, HealthCheckKind.Readiness))
+            .ExemptFromPlatformAuthorization(
+                "Readiness must answer before a principal can be granted anything; Operated's composition "
+                + "provider grants nothing at all, so a gated probe would fail the deployment it exists to keep alive.");
 
         return endpoints;
 

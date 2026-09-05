@@ -84,6 +84,18 @@ public sealed record HostStartupError : PlatformError
             nameof(ProbeBindFailed),
             $"The worker probe port {port} could not be bound. Set '{settingKey}' to a free port.",
             null);
+
+    /// <summary>A mapped endpoint carries neither an <see cref="EndpointRequirement"/> nor an
+    /// <see cref="EndpointRequirementExemption"/> — I-R6. Code cannot know whether an endpoint
+    /// admits new paid-feature work, but it can refuse to serve one that never said.</summary>
+    /// <param name="route">The route that carries neither declaration.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError UndeclaredEndpointRequirement(string route) =>
+        new(
+            nameof(UndeclaredEndpointRequirement),
+            $"Endpoint '{route}' carries neither a platform authorization requirement nor a named "
+            + "exemption. Call RequiresPlatformAuthorization or ExemptFromPlatformAuthorization on it.",
+            null);
 }
 
 /// <summary>A fatal condition at host build or start. Distinct from
