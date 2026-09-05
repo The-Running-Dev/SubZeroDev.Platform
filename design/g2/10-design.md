@@ -248,8 +248,10 @@ of the replay.
 ### Inherited unchanged
 
 The operation table, the generated schema set, the contract package, the replay fixture and the golden
-transcript — all G1's, all still authoritative. The fixture gains no rows: the same ten operations are
-replayed, against a different store.
+transcript — all G1's, all still authoritative. As of this slice's own completion, the fixture gains no
+rows: the same ten operations are replayed, against a different store. (A later engine/contract bump —
+outside G2's scope — added three more `SessionStore` operations and grew the fixture to fourteen steps
+over thirteen operations; that growth is upstream-driven, not a reopening of this design.)
 
 ### Not modelled
 

@@ -649,9 +649,12 @@ column shapes** — `profile.format_version` above is the same two-step.
 
 G1's five — the contract package, the authored row set, the replay fixture, the golden transcript and
 the determinism dump — are unchanged, and [`../g1/20-contract.md`](../g1/20-contract.md) stays their home.
-**The fixture and the golden transcript gain no rows**: the same ten operations are replayed against
-a different store, and adding a profile-carrying step would have given the byte-identity proof a
-second job.
+**As of this slice's own completion, the fixture and the golden transcript gain no rows**: the same ten
+operations are replayed against a different store, and adding a profile-carrying step would have given
+the byte-identity proof a second job. (A later engine/contract bump, outside G2's scope, added three more
+`SessionStore` operations — list-saves, delete-save, branch-session — and grew the fixture to fourteen
+steps over thirteen operations. That growth tracks an upstream dependency bump, not a change to what G2
+decided here.)
 
 Two are added:
 
