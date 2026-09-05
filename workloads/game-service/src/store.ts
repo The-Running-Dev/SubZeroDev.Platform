@@ -32,6 +32,7 @@ import type {
   Outcome,
   ProfileAchievementRow,
   ProfileRow,
+  ProfileTerminalRow,
   ProjectionAudience,
   ReadVersionMap,
   SaveRow,
@@ -70,7 +71,10 @@ const CONFLICT_BRAND = "SessionPersistenceConflict" as const;
  *  shape failure, and the one `compose.ts`'s `unavailableProfiles()` returns while no durable store
  *  has connected yet — exported so both sites construct it from one definition. */
 export function corruptProfileResult(profileId: string): ProfileLoadResult {
-  return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
+  return {
+    profile: { formatVersion: 2, profileId, achievements: [], terminals: [] },
+    warnings: [{ code: "profile_corrupt", profileId }],
+  };
 }
 
 /** Same reasoning as `corruptProfileResult` above, for a write failure. */
@@ -146,6 +150,16 @@ function conflictError(outcome: "conflict" | "expired"): DurableWriteConflict {
   Object.defineProperty(error, "name", { value: CONFLICT_BRAND, enumerable: false });
   Object.defineProperty(error, "outcome", { value: outcome, enumerable: false });
   return error as unknown as DurableWriteConflict;
+}
+
+/** `saves.delete`'s own brand (engine `04-core.md` §7.4: "signals it the way §7.2 already
+ *  established — by branding `SessionPersistenceConflict`"). No `outcome` member —
+ *  `deleteSave`'s only two adapter-level outcomes are "removed" and "removed nothing", and the
+ *  engine's own `isPersistenceConflict` inspects `name` alone. */
+function saveDeleteConflictError(): SessionPersistenceConflict {
+  const error = new Error("durable save delete: savedAt mismatch");
+  Object.defineProperty(error, "name", { value: CONFLICT_BRAND, enumerable: false });
+  return error as unknown as SessionPersistenceConflict;
 }
 
 // ---------------------------------------------------------------------------- statement builders
@@ -249,10 +263,22 @@ export function sessionReclassifyStatement(tenantId: TenantId, sessionId: string
 export function saveSelectStatement(tenantId: TenantId, saveId: string): Statement {
   return {
     text:
-      "select tenant_id, save_id, campaign_id, blob, saved_at_seq, audience, profile_id, " +
+      "select tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
       "engine_version, row_created_at, expires_at " +
       "from save where tenant_id = $1 and save_id = $2 and expires_at > now()",
     values: [tenantId, saveId],
+  };
+}
+
+/** §7.4. Every record `saves.listByProfile` holds for one profile — the store (never the
+ *  adapter) sorts by `savedAt` descending then `saveId` ascending, so this carries no `order by`. */
+export function saveListByProfileStatement(tenantId: TenantId, profileId: string): Statement {
+  return {
+    text:
+      "select tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
+      "engine_version, row_created_at, expires_at " +
+      "from save where tenant_id = $1 and profile_id = $2 and expires_at > now()",
+    values: [tenantId, profileId],
   };
 }
 
@@ -260,6 +286,7 @@ export interface SaveRowInput {
   readonly saveId: string;
   readonly campaignId: string;
   readonly blob: string;
+  readonly savedAt: EngineInstant;
   readonly savedAtSeq: number;
   readonly audience: ProjectionAudience;
   readonly profileId: string | null;
@@ -276,18 +303,19 @@ export function saveUpsertStatement(
 ): Statement {
   return {
     text:
-      "insert into save (tenant_id, save_id, campaign_id, blob, saved_at_seq, audience, profile_id, " +
+      "insert into save (tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
       "engine_version, expires_at) " +
-      "values ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(secs => $9)) " +
+      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(secs => $10)) " +
       "on conflict (tenant_id, save_id) do update set " +
-      "campaign_id = excluded.campaign_id, blob = excluded.blob, saved_at_seq = excluded.saved_at_seq, " +
-      "audience = excluded.audience, profile_id = excluded.profile_id, " +
+      "campaign_id = excluded.campaign_id, blob = excluded.blob, saved_at = excluded.saved_at, " +
+      "saved_at_seq = excluded.saved_at_seq, audience = excluded.audience, profile_id = excluded.profile_id, " +
       "engine_version = excluded.engine_version, expires_at = excluded.expires_at",
     values: [
       tenantId,
       row.saveId,
       row.campaignId,
       row.blob,
+      row.savedAt,
       row.savedAtSeq,
       row.audience,
       row.profileId,
@@ -297,8 +325,22 @@ export function saveUpsertStatement(
   };
 }
 
-export function saveDeleteStatement(tenantId: TenantId, saveId: string): Statement {
-  return { text: "delete from save where tenant_id = $1 and save_id = $2", values: [tenantId, saveId] };
+/** Conditional (engine `04-core.md` §7.4): removes `saveId` only while its stored `saved_at`
+ *  still equals `expectedSavedAt`. Carries no `expires_at` predicate, the same as the
+ *  unconditional delete this replaces — an expired-but-not-yet-swept row is still a real row a
+ *  caller who observed its `savedAt` may delete. */
+export function saveDeleteStatement(tenantId: TenantId, saveId: string, expectedSavedAt: EngineInstant): Statement {
+  return {
+    text: "delete from save where tenant_id = $1 and save_id = $2 and saved_at = $3",
+    values: [tenantId, saveId, expectedSavedAt],
+  };
+}
+
+/** Existence only, deliberately not a `saved_at` re-check — see `saves.delete`'s own comment for
+ *  why zero rows affected by the conditional delete above always means "still exists but the
+ *  precondition failed" whenever this reports one. */
+export function saveExistsStatement(tenantId: TenantId, saveId: string): Statement {
+  return { text: "select 1 from save where tenant_id = $1 and save_id = $2", values: [tenantId, saveId] };
 }
 
 export function sessionLifecycleStatement(tenantId: TenantId, sessionId: string): Statement {
@@ -390,6 +432,7 @@ function firstInvalidSaveColumn(raw: Record<string, unknown>): string | null {
   if (typeof raw["save_id"] !== "string") return "save_id";
   if (typeof raw["campaign_id"] !== "string") return "campaign_id";
   if (typeof raw["blob"] !== "string") return "blob";
+  if (typeof raw["saved_at"] !== "string") return "saved_at";
   if (typeof raw["saved_at_seq"] !== "number") return "saved_at_seq";
   if (typeof raw["audience"] !== "string") return "audience";
   if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
@@ -438,6 +481,7 @@ interface RawSaveRow {
   readonly save_id: string;
   readonly campaign_id: string;
   readonly blob: string;
+  readonly saved_at: string;
   readonly saved_at_seq: number;
   readonly audience: string;
   readonly profile_id: string | null;
@@ -456,6 +500,7 @@ function toSaveRow(raw: RawSaveRow): SaveRow {
     saveId: raw.save_id,
     campaignId: raw.campaign_id,
     blob: raw.blob,
+    savedAt: raw.saved_at as EngineInstant,
     savedAtSeq: raw.saved_at_seq,
     audience: raw.audience as ProjectionAudience,
     profileId: raw.profile_id,
@@ -465,23 +510,21 @@ function toSaveRow(raw: RawSaveRow): SaveRow {
   };
 }
 
-/** One row of `profiles.load`'s left join: the `profile` columns, repeated per achievement, and the
- *  `profile_achievement` columns, `null` throughout when the profile has none. `row_created_at`
- *  appears on both tables, so the achievement's is aliased rather than shadowing the profile's. */
-interface RawProfileJoinRow {
+/** `profiles.load`'s own `profile` row — the achievement and terminal halves are separate queries
+ *  (see `RawProfileAchievementRow`/`RawProfileTerminalRow` below), not a joined one: a single query
+ *  joining `profile_achievement` and `profile_terminal` would cross-product one profile's
+ *  achievements with its terminals, which is not what either mirror means. */
+interface RawProfileRow {
   readonly tenant_id: string;
   readonly profile_id: string;
   readonly format_version: number;
   readonly row_created_at: Date;
   readonly row_updated_at: Date;
-  readonly campaign_id: string | null;
-  readonly achievement_id: string | null;
-  readonly achievement_row_created_at: Date | null;
 }
 
-/** The `profile` half of the join. Same reasoning as `firstInvalidSessionColumn`, and the same
- *  caveat: `tenant_id` and `profile_id` are the statement's own predicates, so those two lines are
- *  a backstop against a later statement that drops one, not a branch any current query can take. */
+/** Same reasoning as `firstInvalidSessionColumn`, and the same caveat: `tenant_id` and `profile_id`
+ *  are the statement's own predicates, so those two lines are a backstop against a later statement
+ *  that drops one, not a branch any current query can take. */
 function firstInvalidProfileColumn(raw: Record<string, unknown>): string | null {
   if (typeof raw["tenant_id"] !== "string") return "tenant_id";
   if (typeof raw["profile_id"] !== "string") return "profile_id";
@@ -491,18 +534,41 @@ function firstInvalidProfileColumn(raw: Record<string, unknown>): string | null 
   return null;
 }
 
-/** The `profile_achievement` half. All three are `null` together on a profile with no achievements
- *  — that is the left join's own shape, not a malformed row — so each is checked only when present. */
+interface RawProfileAchievementRow {
+  readonly tenant_id: string;
+  readonly profile_id: string;
+  readonly campaign_id: string;
+  readonly achievement_id: string;
+  readonly row_created_at: Date;
+}
+
+/** Every column `profile_achievement`'s own select returns — a dedicated query now, with no left
+ *  join to leave `null` when a profile has none, so every field here is checked unconditionally. */
 function firstInvalidProfileAchievementColumn(raw: Record<string, unknown>): string | null {
-  if (raw["campaign_id"] !== null && typeof raw["campaign_id"] !== "string") return "campaign_id";
-  if (raw["achievement_id"] !== null && typeof raw["achievement_id"] !== "string") return "achievement_id";
-  if (raw["achievement_row_created_at"] !== null && !(raw["achievement_row_created_at"] instanceof Date)) {
-    return "row_created_at";
-  }
+  if (typeof raw["campaign_id"] !== "string") return "campaign_id";
+  if (typeof raw["achievement_id"] !== "string") return "achievement_id";
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
   return null;
 }
 
-function toProfileRow(raw: RawProfileJoinRow): ProfileRow {
+interface RawProfileTerminalRow {
+  readonly tenant_id: string;
+  readonly profile_id: string;
+  readonly campaign_id: string;
+  readonly terminal_id: string;
+  readonly row_created_at: Date;
+}
+
+/** `profile_terminal`'s own select — same shape and same reasoning as
+ *  `firstInvalidProfileAchievementColumn` above. */
+function firstInvalidProfileTerminalColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["campaign_id"] !== "string") return "campaign_id";
+  if (typeof raw["terminal_id"] !== "string") return "terminal_id";
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
+  return null;
+}
+
+function toProfileRow(raw: RawProfileRow): ProfileRow {
   return {
     tenantId: raw.tenant_id as TenantId,
     profileId: raw.profile_id,
@@ -512,15 +578,23 @@ function toProfileRow(raw: RawProfileJoinRow): ProfileRow {
   };
 }
 
-/** Called only for a row whose achievement columns are non-null — the `filter` at the call site is
- *  what establishes that, and it is why the three casts here are not widened to accept `null`. */
-function toProfileAchievementRow(raw: RawProfileJoinRow): ProfileAchievementRow {
+function toProfileAchievementRow(raw: RawProfileAchievementRow): ProfileAchievementRow {
   return {
     tenantId: raw.tenant_id as TenantId,
     profileId: raw.profile_id,
-    campaignId: raw.campaign_id as string,
-    achievementId: raw.achievement_id as string,
-    rowCreatedAt: raw.achievement_row_created_at as DatabaseInstant,
+    campaignId: raw.campaign_id,
+    achievementId: raw.achievement_id,
+    rowCreatedAt: raw.row_created_at as DatabaseInstant,
+  };
+}
+
+function toProfileTerminalRow(raw: RawProfileTerminalRow): ProfileTerminalRow {
+  return {
+    tenantId: raw.tenant_id as TenantId,
+    profileId: raw.profile_id,
+    campaignId: raw.campaign_id,
+    terminalId: raw.terminal_id,
+    rowCreatedAt: raw.row_created_at as DatabaseInstant,
   };
 }
 
@@ -532,6 +606,7 @@ function toStoredSaveRecord(row: SaveRow): StoredSaveRecord {
     saveId: row.saveId,
     campaignId: row.campaignId,
     blob: row.blob,
+    savedAt: row.savedAt,
     savedAtSeq: row.savedAtSeq,
     audience: row.audience,
     ...(row.profileId !== null ? { profileId: row.profileId } : {}),
@@ -727,6 +802,7 @@ export async function openDurableStore(
             saveId: record.saveId,
             campaignId: record.campaignId,
             blob: record.blob,
+            savedAt: record.savedAt as EngineInstant,
             savedAtSeq: record.savedAtSeq,
             audience: record.audience,
             profileId: record.profileId ?? null,
@@ -738,13 +814,51 @@ export async function openDurableStore(
             throw new Error("durable save write failed", { cause: classifyStoreError(error, "other") });
           }
         },
-        delete: async (saveId: string): Promise<void> => {
-          const statement = saveDeleteStatement(tenantId, saveId);
+        listByProfile: async (profileId: string): Promise<readonly StoredSaveRecord[]> => {
+          const statement = saveListByProfileStatement(tenantId, profileId);
+          let result;
           try {
-            await pool.query(statement.text, statement.values as unknown[]);
+            result = await pool.query(statement.text, statement.values as unknown[]);
+          } catch (error) {
+            throw new Error("durable save list failed", { cause: classifyStoreError(error, "other") });
+          }
+          return result.rows.map((rawRow) => {
+            const invalidColumn = firstInvalidSaveColumn(rawRow as Record<string, unknown>);
+            if (invalidColumn !== null) {
+              throw new Error("durable save list failed", { cause: { code: "RowUndeserializable", column: invalidColumn } });
+            }
+            return toStoredSaveRecord(toSaveRow(rawRow as unknown as RawSaveRow));
+          });
+        },
+        // Conditional (engine `04-core.md` §7.4): `saveDeleteStatement`'s own `saved_at = $3`
+        // predicate is the compare-and-delete. Zero rows affected is never assumed to be a
+        // mismatch — the id may simply never have existed, which `checkSavesDelete` (S13.6)
+        // requires stay a no-op — so a zero-rows result is reclassified by existence, the same
+        // shape `writeSessionRow`'s own zero-rows re-read takes: still there (so the predicate
+        // failed to match) throws the conflict brand; gone (or never was) returns normally.
+        delete: async (saveId: string, expectedSavedAt: string): Promise<void> => {
+          const statement = saveDeleteStatement(tenantId, saveId, expectedSavedAt as EngineInstant);
+          let affected: number;
+          try {
+            const result = await pool.query(statement.text, statement.values as unknown[]);
+            affected = result.rowCount ?? 0;
           } catch (error) {
             throw new Error("durable save delete failed", { cause: classifyStoreError(error, "other") });
           }
+          if (affected > 0) return;
+
+          // A re-read that itself fails is classified the same way `writeSessionRow`'s own
+          // zero-rows re-read is (S3.6): the conflict brand, never a `StoreError` — the delete's
+          // zero rows has already established the one fact a caller acts on (something about the
+          // precondition no longer held), and a broken re-read cannot un-establish it.
+          try {
+            const exists = saveExistsStatement(tenantId, saveId);
+            const { rows } = await pool.query(exists.text, exists.values as unknown[]);
+            if (rows.length === 0) return;
+          } catch {
+            throw saveDeleteConflictError();
+          }
+          throw saveDeleteConflictError();
         },
       },
     };
@@ -752,69 +866,93 @@ export async function openDurableStore(
 
   const profiles: ProfileStore = {
     async load(profileId: string) {
-      // A single left join, not two round trips: `format_version` and each achievement row travel
-      // together, and a profile with zero achievements comes back as one row with null achievement
-      // columns rather than a second query. Every error on this read — including a connectivity
-      // failure, which the port gives no channel to distinguish from a shape problem — folds into
-      // `profile_corrupt`, per `20-contract.md`'s three-warning vocabulary for `load`.
-      let rows;
+      // The `profile` row alone — not joined with either mirror below, so a profile with zero
+      // achievements or zero terminals is zero rows from those queries, never a row of nulls to
+      // filter back out. Every error on this read — including a connectivity failure, which the
+      // port gives no channel to distinguish from a shape problem — folds into `profile_corrupt`,
+      // per `20-contract.md`'s three-warning vocabulary for `load`.
+      let profileRows;
       try {
-        // Every column `ProfileRow` and `ProfileAchievementRow` declare, not only the three the
-        // `PlayerProfile` needs: those two types are the store's internal shape for these tables
-        // (`20-contract.md`, "Workload — the durable rows"), and a type nothing selects the columns
-        // for is a declaration with no producer rather than a shape. The host columns stop at the
-        // row types — none reaches the `PlayerProfile` below.
-        rows = await pool.query<RawProfileJoinRow>(
-          "select p.tenant_id, p.profile_id, p.format_version, p.row_created_at, p.row_updated_at, " +
-            "pa.campaign_id, pa.achievement_id, pa.row_created_at as achievement_row_created_at from profile p " +
-            "left join profile_achievement pa on pa.tenant_id = p.tenant_id and pa.profile_id = p.profile_id " +
-            "where p.tenant_id = $1 and p.profile_id = $2",
+        profileRows = await pool.query<RawProfileRow>(
+          "select tenant_id, profile_id, format_version, row_created_at, row_updated_at " +
+            "from profile where tenant_id = $1 and profile_id = $2",
           [tenantId, profileId],
         );
       } catch {
         return corruptProfileResult(profileId);
       }
-      if (rows.rows.length === 0) {
-        return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_missing", profileId }] };
+      if (profileRows.rows.length === 0) {
+        return {
+          profile: { formatVersion: 2, profileId, achievements: [], terminals: [] },
+          warnings: [{ code: "profile_missing", profileId }],
+        };
       }
       // S13.3: `ProfileStore.load` has no error channel, so a column widened to hold a value its
       // declared type cannot is folded into `profile_corrupt` here rather than thrown as
       // `StoreError.RowUndeserializable` — that variant exists for ports (`sessions.get`,
-      // `saves.get`) that do have one. Checked before either mapping below, so every cast in
-      // `toProfileRow`/`toProfileAchievementRow` is an assertion about a validated row.
-      const firstRow = rows.rows[0];
+      // `saves.get`) that do have one. Checked before the mapping below, so every cast in
+      // `toProfileRow` is an assertion about a validated row.
+      const firstRow = profileRows.rows[0];
       if (firstRow === undefined || firstInvalidProfileColumn(firstRow as unknown as Record<string, unknown>) !== null) {
-        return corruptProfileResult(profileId);
-      }
-      if (rows.rows.some((row) => firstInvalidProfileAchievementColumn(row as unknown as Record<string, unknown>) !== null)) {
         return corruptProfileResult(profileId);
       }
 
       const profileRow = toProfileRow(firstRow);
-      // The one host column the engine's `PlayerProfile` does carry, and the reason `profile_corrupt`
-      // stays a reachable outcome against a normalised store — a format this release cannot read is
-      // a corrupt profile to it, not a partial one.
-      if (profileRow.formatVersion !== 1) {
+      // `formatVersion` migrates 1 → 2, and the migration is total (engine `04-core.md` §7.1: "no
+      // field is renamed, removed or re-typed"): a version-1 profile never had a `profile_terminal`
+      // row to begin with, so reading it back as `formatVersion: 2` with whatever `terminals` the
+      // query below returns (empty, for that profile) *is* the migration — nothing to transform.
+      // Any other stored value is a format this release cannot read, and stays `profile_corrupt`.
+      if (profileRow.formatVersion !== 1 && profileRow.formatVersion !== 2) {
         return corruptProfileResult(profileId);
       }
 
-      const achievements = rows.rows
-        .filter((row) => row.campaign_id !== null && row.achievement_id !== null)
+      // Two more queries, not one joined with either — see `RawProfileRow`'s own comment: a query
+      // joining `profile_achievement` and `profile_terminal` would cross-product one profile's
+      // achievements with its terminals. Run together since neither depends on the other.
+      let achievementRows, terminalRows;
+      try {
+        [achievementRows, terminalRows] = await Promise.all([
+          pool.query<RawProfileAchievementRow>(
+            "select tenant_id, profile_id, campaign_id, achievement_id, row_created_at " +
+              "from profile_achievement where tenant_id = $1 and profile_id = $2",
+            [tenantId, profileId],
+          ),
+          pool.query<RawProfileTerminalRow>(
+            "select tenant_id, profile_id, campaign_id, terminal_id, row_created_at " +
+              "from profile_terminal where tenant_id = $1 and profile_id = $2",
+            [tenantId, profileId],
+          ),
+        ]);
+      } catch {
+        return corruptProfileResult(profileId);
+      }
+      if (achievementRows.rows.some((row) => firstInvalidProfileAchievementColumn(row as unknown as Record<string, unknown>) !== null)) {
+        return corruptProfileResult(profileId);
+      }
+      if (terminalRows.rows.some((row) => firstInvalidProfileTerminalColumn(row as unknown as Record<string, unknown>) !== null)) {
+        return corruptProfileResult(profileId);
+      }
+
+      const achievements = achievementRows.rows
         .map(toProfileAchievementRow)
         .map((row) => ({ campaignId: row.campaignId, achievementId: row.achievementId }));
+      const terminals = terminalRows.rows
+        .map(toProfileTerminalRow)
+        .map((row) => ({ campaignId: row.campaignId, terminalId: row.terminalId }));
       return {
-        profile: { formatVersion: 1, profileId, achievements },
+        profile: { formatVersion: 2, profileId, achievements, terminals },
         warnings: [],
       };
     },
     async save(profile) {
       try {
         await pool.query(
-          "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 1, now()) " +
-            "on conflict (tenant_id, profile_id) do update set format_version = 1, row_updated_at = now()",
+          "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 2, now()) " +
+            "on conflict (tenant_id, profile_id) do update set format_version = 2, row_updated_at = now()",
           [tenantId, profile.profileId],
         );
-        // One batched insert via `unnest`, not one round trip per achievement.
+        // One batched insert via `unnest` per mirror, not one round trip per record.
         if (profile.achievements.length > 0) {
           await pool.query(
             "insert into profile_achievement (tenant_id, profile_id, campaign_id, achievement_id) " +
@@ -826,6 +964,20 @@ export async function openDurableStore(
               profile.profileId,
               profile.achievements.map((achievement) => achievement.campaignId),
               profile.achievements.map((achievement) => achievement.achievementId),
+            ],
+          );
+        }
+        if (profile.terminals.length > 0) {
+          await pool.query(
+            "insert into profile_terminal (tenant_id, profile_id, campaign_id, terminal_id) " +
+              "select $1, $2, campaign_id, terminal_id " +
+              "from unnest($3::text[], $4::text[]) as terminal(campaign_id, terminal_id) " +
+              "on conflict do nothing",
+            [
+              tenantId,
+              profile.profileId,
+              profile.terminals.map((terminal) => terminal.campaignId),
+              profile.terminals.map((terminal) => terminal.terminalId),
             ],
           );
         }

@@ -29,13 +29,21 @@ import { RawSchemaClient, TEST_CONNECTION_STRING, configurationFor } from "./sup
 const GOLDEN_PATH = fileURLToPath(new URL("./fixtures/golden-transcript.json", import.meta.url));
 const contract = loadPublishedContract();
 
-// REPLAY_FIXTURE mints two sessions and one save. `create-session` mints the first; every step
-// through `resume-session` addresses that same id rather than minting another (`resumeSession`
-// only reads the record, it never writes one). `load-game`, the final step, mints the second: the
-// engine's `loadGame` (game-engine's session store) always opens a fresh session id and persists it
-// to hold the loaded state, even though the fixture never addresses that second id afterward.
-const EXPECTED_SESSIONS = 2;
-const EXPECTED_SAVES = 1;
+// REPLAY_FIXTURE mints three sessions and nets zero saves. `create-session` mints the first;
+// every step through `submit-action` addresses that same id rather than minting another
+// (`resumeSession` only reads the record, it never writes one). `branch-session` mints the
+// second — a fresh id for the branched game, on the identical `RecordIdSource` seam. `load-game`
+// mints the third: the engine's `loadGame` (game-engine's session store) always opens a fresh
+// session id and persists it to hold the loaded state, even though the fixture never addresses
+// that third id afterward. `save-game` mints the one save this run ever holds, and `delete-save`
+// — the fixture's own last step, deliberately: it is what proves `delete-save` a real,
+// contract-driven store operation rather than a row with no consumer — removes it again, so the
+// durable schema ends the run with zero saves. `assertNonEmpty`'s own doc comment already covers
+// this: "not empty" is satisfied by an exact expected count, zero included, not only by a nonzero
+// one — the sessions count alone is what still guards against a dump that silently read the wrong
+// schema.
+const EXPECTED_SESSIONS = 3;
+const EXPECTED_SAVES = 0;
 
 function goldenTranscript(): Transcript {
   return JSON.parse(readFileSync(GOLDEN_PATH, "utf8")) as Transcript;
@@ -162,8 +170,9 @@ describe("S8.5 — assertNonEmpty fails before comparison A, naming expected ver
       sessions: [
         { id: "s0", blob: "{}" },
         { id: "s1", blob: "{}" },
+        { id: "s2", blob: "{}" },
       ],
-      saves: [{ id: "sv", blob: "{}" }],
+      saves: [],
     };
     const result = assertNonEmpty(snapshot, EXPECTED_SESSIONS, EXPECTED_SAVES);
     expect(result.matched).toBe(true);

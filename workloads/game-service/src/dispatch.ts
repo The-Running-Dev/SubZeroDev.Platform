@@ -132,7 +132,13 @@ export function createDispatcher(
 
       try {
         const returned = await invocation.apply(store, positional);
-        return { kind: "result", value: project(returned as JsonValue, row) };
+        // `deleteSave` (`04-core.md` §7.4) is this contract's first `void`-returning store
+        // method — every other row's `storeMethod` resolves a value. `undefined` is not a
+        // `JsonValue` (`canonical.ts` rejects it at the top level, `UnsupportedValue`), while the
+        // response schema a void method's own row carries is `{"type": "null"}` — so `undefined`
+        // is coerced to the `null` its own schema already promises, once, here, rather than by
+        // widening every store method to return one.
+        return { kind: "result", value: project((returned === undefined ? null : returned) as JsonValue, row) };
       } catch (thrown) {
         // The engine's own `SessionStoreError` is the single exception that crosses a boundary as
         // a throw, because no `SessionStore` signature has an error channel. It is converted here

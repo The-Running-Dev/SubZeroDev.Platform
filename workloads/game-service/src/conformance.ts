@@ -15,6 +15,7 @@ import {
   createEngine,
   createInMemoryProfileStore,
   createSessionLayer,
+  SESSION_PERSISTENCE_CONFLICT,
   storyGraphKind,
 } from "@the-running-dev/game-engine";
 import { buildCampaign, buildStoryGraphCampaign } from "@the-running-dev/game-engine/authoring";
@@ -101,6 +102,7 @@ async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome
     saveId,
     campaignId: FIXTURE_CAMPAIGN_ID,
     blob: saveBlob,
+    savedAt: "2026-01-01T00:00:00.000Z",
     savedAtSeq: 1,
     audience: "player",
   };
@@ -115,36 +117,124 @@ async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome
 
 // ---------------------------------------------------------------------------- S13.6: saves.delete, the seventh method
 
+/** `SaveRecordStore.delete`'s brand (engine `04-core.md` §7.4) — recognised by `name` alone, the
+ *  same way the engine's own `isPersistenceConflict` reads it. */
+function isConflictError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && (error as { name: unknown }).name === SESSION_PERSISTENCE_CONFLICT;
+}
+
 async function checkSavesDelete(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
   const saveId = freshId("conformance-delete-save");
+  const savedAt = "2026-01-01T00:00:00.000Z";
   const saveRecord: StoredSaveRecord = {
     saveId,
     campaignId: FIXTURE_CAMPAIGN_ID,
     blob: JSON.stringify({ marker: freshId("delete-blob") }),
+    savedAt,
     savedAtSeq: 1,
     audience: "player",
   };
   await target.persistence.saves.put(saveRecord);
-  await target.persistence.saves.delete(saveId);
+
+  // A delete whose `expectedSavedAt` does not match the stored value removes nothing and raises
+  // the conflict brand (04 §7.4, D2) — checked before the matching delete below, so this can
+  // still find the record.
+  let mismatchThrew = false;
+  try {
+    await target.persistence.saves.delete(saveId, "2026-01-01T00:00:00.001Z");
+  } catch (error) {
+    mismatchThrew = isConflictError(error);
+  }
+  if (!mismatchThrew) {
+    return err({
+      code: "MethodDiverged",
+      method: "saves.delete",
+      target: target.label,
+      detail: "deleting with a stale expectedSavedAt did not raise the SessionPersistenceConflict brand",
+    });
+  }
+  const stillThere = await target.persistence.saves.get(saveId);
+  if (stillThere === undefined) {
+    return err({
+      code: "MethodDiverged",
+      method: "saves.delete",
+      target: target.label,
+      detail: "a delete refused for a stale expectedSavedAt removed the record anyway",
+    });
+  }
+
+  await target.persistence.saves.delete(saveId, savedAt);
   const afterDelete = await target.persistence.saves.get(saveId);
   if (afterDelete !== undefined) {
     return err({
       code: "MethodDiverged",
       method: "saves.delete",
       target: target.label,
-      detail: "a save put and then deleted was still returned by saves.get",
+      detail: "a save put and then deleted with the matching savedAt was still returned by saves.get",
     });
   }
 
   // Deleting an absent id is a no-op that fails neither.
   try {
-    await target.persistence.saves.delete(freshId("conformance-never-existed-save"));
+    await target.persistence.saves.delete(freshId("conformance-never-existed-save"), savedAt);
   } catch {
     return err({
       code: "MethodDiverged",
       method: "saves.delete",
       target: target.label,
       detail: "deleting an absent save id failed instead of being a no-op",
+    });
+  }
+  return ok(undefined);
+}
+
+// ---------------------------------------------------------------------------- S13.7: saves.listByProfile
+
+async function checkSavesListByProfile(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+  const profileId = freshId("conformance-list-profile");
+  const otherProfileId = freshId("conformance-list-other-profile");
+  const ownedIds = [freshId("conformance-list-save-a"), freshId("conformance-list-save-b")];
+  for (const saveId of ownedIds) {
+    await target.persistence.saves.put({
+      saveId,
+      campaignId: FIXTURE_CAMPAIGN_ID,
+      blob: "{}",
+      savedAt: "2026-01-01T00:00:00.000Z",
+      savedAtSeq: 1,
+      audience: "player",
+      profileId,
+    });
+  }
+  const otherSaveId = freshId("conformance-list-save-other");
+  await target.persistence.saves.put({
+    saveId: otherSaveId,
+    campaignId: FIXTURE_CAMPAIGN_ID,
+    blob: "{}",
+    savedAt: "2026-01-01T00:00:00.000Z",
+    savedAtSeq: 1,
+    audience: "player",
+    profileId: otherProfileId,
+  });
+  const anonymousSaveId = freshId("conformance-list-save-anonymous");
+  await target.persistence.saves.put({
+    saveId: anonymousSaveId,
+    campaignId: FIXTURE_CAMPAIGN_ID,
+    blob: "{}",
+    savedAt: "2026-01-01T00:00:00.000Z",
+    savedAtSeq: 1,
+    audience: "player",
+  });
+
+  const listed = await target.persistence.saves.listByProfile(profileId);
+  const listedIds = new Set(listed.map((record) => record.saveId));
+  const hasBothOwned = ownedIds.every((saveId) => listedIds.has(saveId));
+  const leaksOther = listedIds.has(otherSaveId) || listedIds.has(anonymousSaveId);
+  if (!hasBothOwned || leaksOther) {
+    return err({
+      code: "MethodDiverged",
+      method: "saves.listByProfile",
+      target: target.label,
+      detail: `listByProfile did not return exactly the owning profile's own records (got: ${JSON.stringify([...listedIds])})`,
     });
   }
   return ok(undefined);
@@ -224,9 +314,10 @@ async function checkProfileWriteFailure(target: ConformanceTarget): Promise<Outc
   await target.persistence.sessions.put(sessionRecord);
 
   const saveResult = await target.profiles.save({
-    formatVersion: 1,
+    formatVersion: 2,
     profileId,
     achievements: [{ campaignId: FIXTURE_CAMPAIGN_ID, achievementId: "unreachable" }],
+    terminals: [],
   });
   const failedAsExpected = !saveResult.ok && saveResult.warnings.some((warning) => warning.code === "profile_write_failed");
   if (!failedAsExpected) {
@@ -263,7 +354,7 @@ async function upsertOneAchievement(store: ProfileStore, profileId: string, achi
   const { profile } = await store.load(profileId);
   const already = profile.achievements.some((achievement) => achievement.achievementId === achievementId && achievement.campaignId === FIXTURE_CAMPAIGN_ID);
   const achievements = already ? profile.achievements : [...profile.achievements, { campaignId: FIXTURE_CAMPAIGN_ID, achievementId }];
-  const result = await store.save({ formatVersion: 1, profileId, achievements });
+  const result = await store.save({ formatVersion: 2, profileId, achievements, terminals: [] });
   return result.ok;
 }
 
@@ -271,7 +362,7 @@ async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome
   const profileId = freshId("conformance-union-profile");
   // A baseline row to upsert against — the durable store's `save` is an upsert either way, but
   // this keeps the two targets on the same footing before the racing/sequential calls below.
-  const baseline = await target.profiles.save({ formatVersion: 1, profileId, achievements: [] });
+  const baseline = await target.profiles.save({ formatVersion: 2, profileId, achievements: [], terminals: [] });
   if (!baseline.ok) {
     return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "seeding the achievement-union baseline failed" });
   }
@@ -318,9 +409,10 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
   const retainedId = "durable-keeps-me-in-memory-drops-me";
 
   const seeded = await target.profiles.save({
-    formatVersion: 1,
+    formatVersion: 2,
     profileId,
     achievements: [{ campaignId: FIXTURE_CAMPAIGN_ID, achievementId: retainedId }],
+    terminals: [],
   });
   if (!seeded.ok) {
     return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "seeding the merge-divergence baseline achievement failed" });
@@ -329,7 +421,7 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
   // The raw `profiles.save` call, deliberately omitting the achievement just seeded — this is
   // the store's own merge behaviour under test, not a caller's calling convention (S9.5's
   // `upsertOneAchievement` is the latter).
-  const omitting = await target.profiles.save({ formatVersion: 1, profileId, achievements: [] });
+  const omitting = await target.profiles.save({ formatVersion: 2, profileId, achievements: [], terminals: [] });
   if (!omitting.ok) {
     return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "the achievement-omitting save itself failed" });
   }
@@ -521,6 +613,7 @@ export async function runPortConformance(target: ConformanceTarget): Promise<Out
   const steps: readonly (() => Promise<Outcome<void, ConformanceError>>)[] = [
     () => checkSessionsAndSaves(target),
     () => checkSavesDelete(target),
+    () => checkSavesListByProfile(target),
     () => checkProfileMissing(target),
     () => checkProfileCorrupt(target),
     () => checkProfileWriteFailure(target),
@@ -557,7 +650,15 @@ function inMemoryReferencePersistence(): SessionPersistence {
       put: async (record) => {
         saves.set(record.saveId, record);
       },
-      delete: async (saveId) => {
+      listByProfile: async (profileId) => [...saves.values()].filter((record) => record.profileId === profileId),
+      delete: async (saveId, expectedSavedAt) => {
+        const record = saves.get(saveId);
+        if (record === undefined) return;
+        if (record.savedAt !== expectedSavedAt) {
+          const error = new Error("in-memory save delete: savedAt mismatch");
+          Object.defineProperty(error, "name", { value: SESSION_PERSISTENCE_CONFLICT, enumerable: false });
+          throw error;
+        }
         saves.delete(saveId);
       },
     },
@@ -605,9 +706,11 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
     persistence: inMemoryReferencePersistence(),
     profiles,
     async seedCorruptProfile(profileId: string): Promise<void> {
-      // `formatVersion` 2 — the same malformation the durable target seeds as `format_version = 2`,
-      // and one the engine rejects on `isValidPlayerProfile`'s own `formatVersion !== 1` branch.
-      raw.set(profileId, { formatVersion: 2, profileId, achievements: [] });
+      // `formatVersion` 99 — a format neither `isValidPlayerProfile` (2) nor
+      // `isValidPlayerProfileV1` (1) accepts, the same malformation the durable target seeds as
+      // `format_version = 99`. `2` itself stopped being a malformation once `PlayerProfile`
+      // gained `terminals` — it is this build's own current format, not a corrupt one.
+      raw.set(profileId, { formatVersion: 99, profileId, achievements: [] });
       store = createInMemoryProfileStore({ raw, onSave });
     },
     async seedProfileWriteFailure(profileId: string): Promise<void> {
@@ -697,9 +800,11 @@ export async function openDurableConformanceTarget(
     persistence,
     profiles: store.profiles,
     async seedCorruptProfile(profileId: string): Promise<void> {
+      // `format_version = 99` — same reasoning as the in-memory target's own sentinel above:
+      // neither `1` nor `2` is a malformation any longer.
       await seedPool.query(
-        "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 2, now()) " +
-          "on conflict (tenant_id, profile_id) do update set format_version = 2, row_updated_at = now()",
+        "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 99, now()) " +
+          "on conflict (tenant_id, profile_id) do update set format_version = 99, row_updated_at = now()",
         [tenantId, profileId],
       );
     },
