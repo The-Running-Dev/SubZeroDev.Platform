@@ -32,15 +32,36 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
         HttpContext context,
         IOperationScopeFactory factory,
         ITraceContextCodec codec,
-        TenantResolutionChain tenantResolution)
+        TenantResolutionChain tenantResolution,
+        AuthenticationChain authentication)
     {
         var traceParent = context.Request.Headers.TraceParent.ToString();
         var traceState = context.Request.Headers["tracestate"].ToString();
+        var parsed = codec.TryParse(
+            traceParent,
+            string.IsNullOrEmpty(traceState) ? null : traceState,
+            out var established);
 
-        // No authentication provider exists yet — Identity lands in S9 and the fixed authenticate
-        // step in S8. Every inbound request observes Anonymous until then; establishing System or
-        // Account from a credential is that later step's, not this one's.
-        var principal = Principal.Anonymous;
+        // Authenticate at the transport — the fixed order's first step. A rejected or unverifiable
+        // credential is refused here, before a tenant is resolved or a scope opens: nothing later
+        // in the pipeline runs for a request that never established a principal.
+        var authenticated = await authentication
+            .AuthenticateAsync(new HttpAuthenticationRequest(context.Request.Headers), context.RequestAborted)
+            .ConfigureAwait(false);
+
+        if (!authenticated.IsSuccess)
+        {
+            var correlation = parsed ? new CorrelationId(established.TraceId) : MintCorrelation(codec);
+            await ProbeBody
+                .WriteAsync(
+                    context,
+                    new ErrorEnvelope(authenticated.Error.Code, correlation),
+                    StatusCodes.Status401Unauthorized)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var principal = authenticated.Value;
 
         // Resolved once, before the scope opens, so the tenant is fixed for the request's lifetime
         // regardless of what a resolver would answer if asked again mid-request.
@@ -53,15 +74,40 @@ internal sealed class OperationScopeMiddleware(RequestDelegate next)
         // this request's own span (ASP.NET Core's own instrumentation, ambient by the time any
         // middleware runs) rather than the caller's, so a downstream forward names this hop as the
         // parent instead of skipping over it — the relationship S8.2 asserts.
-        using var scope = codec.TryParse(
-            traceParent,
-            string.IsNullOrEmpty(traceState) ? null : traceState,
-            out var established)
+        using var scope = parsed
             ? factory.Begin(codec.CurrentHop(established), new CorrelationId(established.TraceId), tenant, principal)
             : factory.Begin(tenant, principal);
 
         await next(context).ConfigureAwait(false);
     }
+
+    /// <summary>Mints a correlation for a request refused before a scope opens, on the same
+    /// origination terms a scope would mint one under: the caller is the origin, not a fabricator.</summary>
+    private static CorrelationId MintCorrelation(ITraceContextCodec codec)
+    {
+        using var handle = codec.StartRoot("platform.operation");
+        return new CorrelationId(handle.Context.TraceId);
+    }
+}
+
+/// <summary>Adapts ASP.NET Core's request headers to the transport's credential surface. Headers,
+/// and nothing else: there is no member here that could reach a request body.</summary>
+internal sealed class HttpAuthenticationRequest : IAuthenticationRequest
+{
+    public HttpAuthenticationRequest(IHeaderDictionary headers)
+    {
+        ArgumentNullException.ThrowIfNull(headers);
+
+        Headers = headers.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<string>)pair.Value
+                .Where(value => value is not null)
+                .Select(value => value!)
+                .ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Headers { get; }
 }
 
 /// <summary>Turns an unhandled failure into an envelope carrying the correlation, and nothing else.</summary>

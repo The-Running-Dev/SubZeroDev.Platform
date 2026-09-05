@@ -1,4 +1,6 @@
+using System.Net;
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 
@@ -141,6 +143,87 @@ public sealed class AuthenticationTests
         Assert.Equal(
             nameof(AuthenticationProviderRegistrationError.DuplicateProviderName),
             duplicate.Error.Code);
+    }
+
+    /// <summary>S8.10, first half now wired end to end — <c>KeyMaterialUnavailable</c> surfaces at
+    /// the transport as an unauthenticated response, never a server error. The rest of S8.10 — that
+    /// a real provider issues no outbound call on the request path — is a property of a concrete
+    /// provider (S9) and of the offline CI run (S17.3), so this alone does not satisfy the
+    /// criterion.</summary>
+    [Fact]
+    public async Task No_cached_key_material_surfaces_as_unauthenticated_not_a_server_error()
+    {
+        var (app, client) = await WebHostUnderTest.StartAsync(services => services.AddSingleton<IAuthenticationProvider>(
+            new StubAuthenticationProvider(
+                "under-test",
+                request => request.Headers.ContainsKey("Authorization")
+                    ? Result<Principal, AuthenticationError>.Failure(
+                        AuthenticationError.KeyMaterialUnavailable("under-test"))
+                    : Result<Principal, AuthenticationError>.Success(Principal.Anonymous))));
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/");
+            request.Headers.Add("Authorization", "Bearer some-token");
+
+            using var response = await client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains(nameof(AuthenticationError.KeyMaterialUnavailable), body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    /// <summary>A rejected credential is refused at the transport as unauthorized, and the request
+    /// never reaches the endpoint.</summary>
+    [Fact]
+    public async Task A_rejected_credential_is_refused_at_the_transport_and_never_reaches_the_endpoint()
+    {
+        var (app, client) = await WebHostUnderTest.StartAsync(services => services.AddSingleton<IAuthenticationProvider>(
+            new StubAuthenticationProvider(
+                "under-test",
+                request => request.Headers.ContainsKey("Authorization")
+                    ? Result<Principal, AuthenticationError>.Failure(
+                        AuthenticationError.CredentialRejected("under-test"))
+                    : Result<Principal, AuthenticationError>.Success(Principal.Anonymous))));
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/");
+            request.Headers.Add("Authorization", "Bearer forged");
+
+            using var response = await client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains(nameof(AuthenticationError.CredentialRejected), body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    /// <summary>No credential presented still succeeds through the real pipeline, unaffected by the
+    /// authenticate step now running in front of every request.</summary>
+    [Fact]
+    public async Task No_credential_presented_still_succeeds_through_the_pipeline()
+    {
+        var (app, client) = await WebHostUnderTest.StartAsync();
+
+        try
+        {
+            using var response = await client.GetAsync("/");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
     }
 
     private static AuthenticationChain Chain(params IAuthenticationProvider[] providers)
