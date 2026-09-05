@@ -21,6 +21,7 @@ import {
   createInMemoryProfileStore,
   createSessionLayer,
   ENGINE_VERSION,
+  SESSION_PERSISTENCE_CONFLICT,
   simulationKind,
   storyGraphKind,
   worldGraphKind,
@@ -67,6 +68,16 @@ function byId(a: { readonly id: string }, b: { readonly id: string }): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
+/** `SaveRecordStore.delete`'s own brand (engine `04-core.md` §7.4), on the identical footing as
+ *  the durable adapter's `saveDeleteConflictError` (`store.ts`) — the in-memory configuration's
+ *  conditional delete must raise it the same way, or `deleteSave`'s own `concurrent_modification`
+ *  detection could never fire against this storage profile. */
+function saveDeleteConflictError(): Error {
+  const error = new Error("in-memory save delete: savedAt mismatch");
+  Object.defineProperty(error, "name", { value: SESSION_PERSISTENCE_CONFLICT, enumerable: false });
+  return error;
+}
+
 /** `KindRegistry` is a plain record keyed by kind id; kinds are engine-owned and are not ports. */
 function kinds(): KindRegistry {
   return {
@@ -101,7 +112,11 @@ function inMemoryPersistence(): {
         put: async (record) => {
           saves.set(record.saveId, record);
         },
-        delete: async (saveId) => {
+        listByProfile: async (profileId) => [...saves.values()].filter((record) => record.profileId === profileId),
+        delete: async (saveId, expectedSavedAt) => {
+          const record = saves.get(saveId);
+          if (record === undefined) return;
+          if (record.savedAt !== expectedSavedAt) throw saveDeleteConflictError();
           saves.delete(saveId);
         },
       },
@@ -120,7 +135,7 @@ function unavailablePersistence(): SessionPersistence {
   };
   return {
     sessions: { get: async () => fail(), put: async () => fail() },
-    saves: { get: async () => fail(), put: async () => fail(), delete: async () => fail() },
+    saves: { get: async () => fail(), put: async () => fail(), listByProfile: async () => fail(), delete: async () => fail() },
   };
 }
 

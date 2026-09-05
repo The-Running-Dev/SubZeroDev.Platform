@@ -168,11 +168,11 @@ describe("S12.4 — two composed instances starting concurrently against one nev
           "select table_name from information_schema.tables where table_schema = current_schema() and table_type = 'BASE TABLE'",
         );
         expect(tables.rows.map((row) => row.table_name).sort()).toEqual(
-          ["pgmigrations", "profile", "profile_achievement", "save", "session"].sort(),
+          ["pgmigrations", "profile", "profile_achievement", "profile_terminal", "save", "session"].sort(),
         );
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(1);
+        expect(migrationRows.rows).toHaveLength(2);
       } finally {
         await raw.close();
       }

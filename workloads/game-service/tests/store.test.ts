@@ -14,6 +14,7 @@ import {
   openDurableStore,
   saveDeleteStatement,
   saveLifecycleStatement,
+  saveListByProfileStatement,
   saveSelectStatement,
   saveUpsertStatement,
   sessionGuardedUpdateStatement,
@@ -64,6 +65,7 @@ function saveRecord(id: string, overrides: Partial<StoredSaveRecord> = {}): Stor
     saveId: id,
     campaignId: "campaign-a",
     blob: "{}",
+    savedAt: "2026-01-01T00:00:00.000Z",
     savedAtSeq: 0,
     audience: "player",
     ...overrides,
@@ -356,6 +358,7 @@ describe("S3.9 — tenant_id in every statement", () => {
       saveId: "sv1",
       campaignId: "c1",
       blob: "{}",
+      savedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
       savedAtSeq: 0,
       audience: "player" as const,
       profileId: null,
@@ -367,8 +370,9 @@ describe("S3.9 — tenant_id in every statement", () => {
       sessionGuardedUpdateStatement(tenantId, sessionInput, ENGINE_VERSION_A, 10, 1n as SessionRowVersion),
       sessionReclassifyStatement(tenantId, "s1"),
       saveSelectStatement(tenantId, "sv1"),
+      saveListByProfileStatement(tenantId, "p1"),
       saveUpsertStatement(tenantId, saveInput, ENGINE_VERSION_A, 10),
-      saveDeleteStatement(tenantId, "sv1"),
+      saveDeleteStatement(tenantId, "sv1", "2026-01-01T00:00:00.000Z" as EngineInstant),
       sessionLifecycleStatement(tenantId, "s1"),
       saveLifecycleStatement(tenantId, "sv1"),
       sweeps.sessions,
@@ -532,10 +536,10 @@ describe("S3.16 — migrateToHead is idempotent and safe under concurrent caller
           "select table_name from information_schema.tables where table_schema = current_schema() and table_type = 'BASE TABLE'",
         );
         const names = tables.rows.map((row) => row.table_name).sort();
-        expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "save", "session"].sort());
+        expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "profile_terminal", "save", "session"].sort());
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(1);
+        expect(migrationRows.rows).toHaveLength(2);
       } finally {
         await raw.close();
       }

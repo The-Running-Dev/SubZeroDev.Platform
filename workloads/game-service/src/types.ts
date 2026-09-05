@@ -173,6 +173,7 @@ export interface SaveRow {
   readonly saveId: string;
   readonly campaignId: string;
   readonly blob: string;
+  readonly savedAt: EngineInstant;
   readonly savedAtSeq: number;
   readonly audience: ProjectionAudience;
   readonly profileId: string | null;
@@ -194,6 +195,18 @@ export interface ProfileAchievementRow {
   readonly profileId: string;
   readonly campaignId: string;
   readonly achievementId: string;
+  readonly rowCreatedAt: DatabaseInstant;
+}
+
+/** `profile_terminal`'s own row — the cross-session half of campaign progress (04 §7.1, §7.3),
+ *  stored the same way `profile_achievement` is and for the same reason: the store's own mirror
+ *  of `PlayerProfile.terminals`, never crossed with the achievement rows in one query (join
+ *  explosion — see `store.ts`'s `profiles.load`). */
+export interface ProfileTerminalRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly campaignId: string;
+  readonly terminalId: string;
   readonly rowCreatedAt: DatabaseInstant;
 }
 

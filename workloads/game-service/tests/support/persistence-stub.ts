@@ -70,10 +70,12 @@ export function controlledPersistence(): ControlledPersistence {
         put: async (record: StoredSaveRecord) => {
           saves.set(record.saveId, record);
         },
-        // `SaveRecordStore` declares `delete` and `compose.ts`'s in-memory persistence implements
-        // it; omitting it here would leave an engine path that deletes a save throwing a
-        // `TypeError` — not a `SessionStoreError`, so Dispatch would not catch it and the request
-        // would answer `internal_failure` instead of the code under test.
+        // `SaveRecordStore` declares `listByProfile`/`delete` and `compose.ts`'s in-memory
+        // persistence implements both; omitting either here would leave an engine path that lists
+        // or deletes a save throwing a `TypeError` — not a `SessionStoreError`, so Dispatch would
+        // not catch it and the request would answer `internal_failure` instead of the code under
+        // test.
+        listByProfile: async (profileId: string) => [...saves.values()].filter((record) => record.profileId === profileId),
         delete: async (saveId: string) => {
           saves.delete(saveId);
         },
