@@ -1,14 +1,15 @@
 {
+  "generated": "2026-09-05",
   "gates": [
     {
       "name": "Test",
       "status": "Passed",
-      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 363, Passed: 363, Failed: 0. Test Run Successful."
+      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 366, Passed: 366, Failed: 0. Test Run Successful, 41.67s."
     },
     {
       "name": "Run the sample in both roles",
       "status": "DidNotRun",
-      "reason": "build/Test-SampleRoundTrip.ps1 is documented and written as Linux-only (SIGTERM via P/Invoke to libc's kill(2), sqlite3 CLI). This worktree is Windows (MINGW64_NT-10.0-26200); the corresponding CI check on the pull request is where the answer will come from."
+      "reason": "build/Test-SampleRoundTrip.ps1 is documented Linux-only: it P/Invokes libc's kill(2) to distinguish SIGTERM from SIGKILL, which has no Windows equivalent, and it shells out to sqlite3 for a read the script itself relies on. This session ran on a Windows host. The corresponding CI check on the pull request is where the answer comes from."
     },
     {
       "name": "Assert no framework project references a workload",
@@ -18,72 +19,72 @@
     {
       "name": "Typecheck",
       "status": "Passed",
-      "detail": "cd workloads/game-service && npm run typecheck -> tsc --noEmit completed with no errors and no output."
+      "detail": "cd workloads/game-service && npm run typecheck: tsc --noEmit completed with no output and exit 0."
     },
     {
       "name": "Start the workload and the edge, the documented way",
       "status": "Passed",
-      "detail": "Started game-service on 127.0.0.1:8080 (npm start) and GameEdge on 127.0.0.1:5080 fronting it. curl http://127.0.0.1:8080/livez -> {\"status\":\"healthy\"}; /readyz -> {\"status\":\"healthy\"}; curl http://127.0.0.1:5080/health/live -> {\"status\":\"Healthy\",\"checks\":[]}; /health/ready -> {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
+      "detail": "GAME_SERVICE_PORT=8080 npm start reached http://127.0.0.1:8080/livez and /readyz both {\"status\":\"healthy\"}. GameEdge run from workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0 with GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 reached http://127.0.0.1:5080/health/live {\"status\":\"Healthy\",\"checks\":[]} and /health/ready {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
     },
     {
       "name": "Run the replay against the workload",
       "status": "Passed",
-      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11). Includes S5.2/S5.3 byte-identity proof and S5.7/S5.9 assertions."
+      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11), 4.80s."
     },
     {
       "name": "Run the replay against the edge",
       "status": "Passed",
-      "detail": "GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: Test Files 1 passed (1), Tests 2 passed (2). S7.8 byte-identity proof through the edge."
+      "detail": "GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: Test Files 1 passed (1), Tests 2 passed (2), 4.05s."
     },
     {
       "name": "Migrate the schema to head, the documented way",
       "status": "Passed",
-      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate (against a locally provisioned postgres:17 container standing in for docker-compose.yml's postgres on an alternate host port, 5433, because 5432 was already bound by an unrelated running container from another repository -- see reason on the below three gates for detail): tsx scripts/migrate.ts -> 'migrated ci_documented_migrate to head'."
+      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate: 'migrated ci_documented_migrate to head', exit 0."
     },
     {
       "name": "Start the workload against the durable store, the documented way",
       "status": "Passed",
-      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start (against the same alternate-port postgres) then curl http://127.0.0.1:8081/readyz -> {\"status\":\"healthy\"}."
+      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start reached http://127.0.0.1:8081/readyz {\"status\":\"healthy\"} against a PostgreSQL container that reported ready twice in a row via docker compose exec postgres pg_isready."
     },
     {
       "name": "Run the one-instance contention proof",
       "status": "Passed",
-      "detail": "npx vitest run tests/contention-one-instance.test.ts (GAME_SERVICE_TEST_DATABASE_URL pointed at the alternate-port postgres): Test Files 1 passed (1), Tests 5 passed (5)."
+      "detail": "npx vitest run tests/contention-one-instance.test.ts: Test Files 1 passed (1), Tests 5 passed (5), 1.96s. The 'startup migration attempt failed { code: Unreachable }' stderr line is the S6.5 perturbation scenario's own expected output, not a test failure."
     },
     {
       "name": "Run the two-instance contention proof",
       "status": "Passed",
-      "detail": "npx vitest run tests/contention-two-instances.test.ts (alternate-port postgres): Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "npx vitest run tests/contention-two-instances.test.ts: Test Files 1 passed (1), Tests 7 passed (7), 15.50s."
     },
     {
       "name": "Run the durable replay",
       "status": "Passed",
-      "detail": "npx vitest run tests/durable-replay.test.ts (alternate-port postgres): Test Files 1 passed (1), Tests 7 passed (7). S8.2/S8.3/S8.4/S8.6/S8.9 byte-identity and schema-isolation proofs."
+      "detail": "npx vitest run tests/durable-replay.test.ts: Test Files 1 passed (1), Tests 7 passed (7), 4.89s."
     },
     {
       "name": "Run the port-conformance suite",
       "status": "Passed",
-      "detail": "npx vitest run tests/conformance.test.ts (alternate-port postgres): Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "npx vitest run tests/conformance.test.ts: Test Files 1 passed (1), Tests 7 passed (7), 0.76s."
     },
     {
       "name": "Test (game-service)",
       "status": "Passed",
-      "detail": "GAME_EDGE_DLL=<built edge dll> npm test (OTEL_COLLECTOR_BIN not set; alternate-port postgres): Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198). The skipped file is tests/trace-evidence.test.ts, which gracefully skips without an OpenTelemetry Collector binary available."
+      "detail": "GAME_EDGE_DLL=<built edge dll> npm test: Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198), 30.99s. The one skip is tests/trace-evidence.test.ts self-skipping on an unset OTEL_COLLECTOR_BIN by design (otel-collector.ts: 'a test that needs this skips itself when the variable is unset, so a local npm test with no collector installed still runs everything else') — OTEL_COLLECTOR_BIN is populated in CI by a download step this local run did not reproduce."
     },
     {
       "name": "Validate Markdown links, terminology, and generated files",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1: Documentation checks passed across 127 Markdown file(s), with 2 warning(s) (Terminology: 'Json' vs 'JSON' in design/d3/90-decisions.md, pre-existing and not treated as an error since -TreatWarningsAsErrors is not passed by CI). Exit code 0."
+      "detail": "pwsh ./build/Test-Documentation.ps1: 'Documentation checks passed across 127 Markdown file(s), with 2 warning(s).' Both warnings are pre-existing terminology notes ('JSON' vs 'Json') in design/d3/90-decisions.md, a completed prior effort's decision log untouched by this branch. Exit 0."
     },
     {
       "name": "Validate design/30-slices.md's Status markers",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: Slice status markers consistent across 11 slice(s) in design/30-slices.md. Exit code 0."
+      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: 'Slice status markers consistent across 11 slice(s) in design/30-slices.md.'"
     },
     {
       "name": "Build and verify the status-page site",
       "status": "Passed",
-      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint (1 pre-existing non-blocking warning in src/shared.tsx), typecheck, test (Test Files 6 passed (6), Tests 57 passed (57)), test:build (vite build succeeded, both HTML entry points contain required static metadata), and test:merge (Package merge preserves docs and rejects all protected-boundary violations) all completed successfully."
+      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint, typecheck, test (6 files, 57 tests passed), test:build, and test:merge all completed, exit 0. Pre-existing lint warning in site/src/shared.tsx:12:14 (react(only-export-components), fast-refresh) — unrelated to this branch, matches a warning recorded in prior-session memory from before this PR's changes."
     }
   ]
 }
