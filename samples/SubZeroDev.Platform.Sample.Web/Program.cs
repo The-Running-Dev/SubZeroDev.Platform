@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Identity;
 using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
 
@@ -22,10 +23,12 @@ if (args is ["migrate"])
 }
 
 // What declaring Operated now costs a consumer (D5-S8): an authentication provider (I-C1) and a
-// sink declaring IsDurable (I-C2), or the host refuses to start. See Composition.cs — S9 and S13
-// replace both with the real modules.
-builder.Services.AddSingleton<IAuthenticationProvider,
-    OperatedComposition.NoCredentialAuthenticationProvider>();
+// sink declaring IsDurable (I-C2), or the host refuses to start. D5-S9 registers the Identity
+// module and a test issuer for the first; S13 still owes the second, so Composition.cs's file
+// sink stays until then.
+builder.Services.AddSingleton<IPlatformModule, IdentityModule>();
+builder.Services.AddSingleton<IAuthenticationProvider>(new JwtBearerAuthenticationProvider(
+    "Sample.TestIssuer", OperatedComposition.TestIssuer, OperatedComposition.TestIssuerSigningKey));
 builder.Services.AddSingleton<IAuditSink>(
     new OperatedComposition.FileAuditSink("sample-audit.log"));
 
