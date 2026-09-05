@@ -826,10 +826,74 @@ paid-feature work, do the work inside a transaction when it writes, audit.
   while a request is in flight does not change the request that already resolved.
 - **The local host takes the same path, with no step skipped and no branch taken.** The absence of the
   four commercial packages is visible in the package graph and invisible in the flow.
-- **Only an endpoint that admits new paid-feature work is entitlement-gated.** An endpoint that reads,
-  lists or exports data a tenant already has is not, even when that data was produced under the same
-  feature — entitlement was checked at the admission that produced it, and a lapsed licence does not
-  re-ask a question access already answered.
+- **Only an endpoint that admits new paid-feature work is entitlement-gated, and the endpoint says so
+  by declaring no feature.** An endpoint that reads, lists or exports data a tenant already has
+  declares none, even when that data was produced under the same feature — entitlement was checked at
+  the admission that produced it, and a lapsed licence does not re-ask a question access already
+  answered.
+
+**The endpoint's declaration.** Steps 4 and 5 need to know which permission an endpoint requires and
+whether it admits new paid-feature work, and the pipeline is where the order is enforced, so the
+declaration is metadata Hosting reads rather than a call the handler makes. Nothing in the tree
+carries it yet, so the shape is a scaffold:
+
+```csharp
+/// What an endpoint requires of the fixed order's authorize and entitlement steps.
+public sealed record EndpointRequirement(PermissionName RequiredPermission, FeatureName? RequiredFeature);
+
+/// Why an endpoint stands outside steps 4 and 5.
+public sealed record EndpointRequirementExemption(string Reason);
+
+public static class PlatformEndpointConventions
+{
+    public static TBuilder RequiresPlatformAuthorization<TBuilder>(
+        this TBuilder builder,
+        PermissionName permission,
+        FeatureName? feature)
+        where TBuilder : IEndpointConventionBuilder;
+
+    public static TBuilder ExemptFromPlatformAuthorization<TBuilder>(
+        this TBuilder builder,
+        string reason)
+        where TBuilder : IEndpointConventionBuilder;
+}
+```
+
+**What the declarations cannot say.**
+
+- **`RequiredPermission` is not optional, and an endpoint reachable by an unauthenticated caller
+  declares one too** — a permission the composition provider grants, never an absent check. This is
+  the endpoint half of the rule *Types*, § 10 states for a tool and § 3 states for the composition
+  provider, and it is why `Anonymous` earns no blanket grant from either profile.
+- **`RequiredFeature` is optional and must not acquire a default.** Null means the endpoint admits no
+  new paid-feature work, on the same terms as a tool that declares no feature. A default would make
+  "not gated" the outcome of an omission, and the whole point of the null is that it was written down
+  by somebody who decided.
+- **Every endpoint reachable through the pipeline carries one or the other, checked at startup.**
+  Hosting enumerates the mapped endpoints once routing is configured and fails the host with
+  `HostStartupError.UndeclaredEndpointRequirement`, naming the route, when an endpoint carries neither
+  a requirement nor an exemption. **This is what makes I-R5's premise checkable**: code cannot know
+  whether an endpoint admits new paid-feature work, but it can refuse to serve one that never said.
+  The cost is that an endpoint Platform did not map — a third-party middleware's, a documentation
+  UI's, the probes' own two — needs annotating, and the ones whose mapping returns no convention
+  builder cannot be annotated at all and must be exempted where they are added to the route table.
+- **An exemption states a reason, and the reason is not optional.** An exemption list nobody can read
+  is an ungated surface with an extra step, and the reason is what makes it reviewable — the same
+  argument that makes a decision name its source rather than merely being a decision.
+- **The probes are exempt, and they are the only thing in Platform that is.** They must answer before
+  a principal can be granted anything: the composition provider grants nothing at all in `Operated`,
+  so a probe declaring a permission is a probe denied in every operated host, which fails the
+  deployment the probes exist to keep alive.
+- **The pipeline's authorization check is never resource-scoped.** It passes no `ResourceRef`, and an
+  endpoint whose authorization is genuinely per-resource makes a second, explicit `EvaluateAsync` call
+  in its handler with the reference it constructed. Mcp can scope its check because the SDK parsed the
+  arguments against a declared schema before any producer code ran; HTTP has no equivalent at the
+  convention, and a Hosting that read a route value to mint an identifier would be Hosting knowing
+  something about the shape of a product's URLs. **The cost, stated: such an endpoint is authorized
+  twice, and only the coarse check is enforced by code** — I-R7.
+- **The declaration is read by Hosting and by nothing else.** It is not a second surface a handler
+  consults to discover what it requires; a handler that branches on its own endpoint's metadata has
+  reintroduced the per-handler ordering the fixed order exists to remove.
 
 ---
 
@@ -1016,8 +1080,9 @@ retryable — a misconfigured installation does not resolve itself.**
 | `RegistrationForbiddenByProfile` | `Local` with an authentication provider, a tenant resolver, or an entitlement contributor other than the Community baseline |
 | `DuplicatePermissionName` | two modules declare the same `PermissionName` |
 | `DuplicateProviderName` | two providers, contributors, resolvers or sinks share a name |
-| `UnregisteredPermission` | a tool, or any registration, requires a `PermissionName` no catalog declares |
+| `UnregisteredPermission` | a tool, an endpoint, or any registration requires a `PermissionName` no catalog declares |
 | `SensitiveToolParameter` | a registered tool's schema names a parameter matching the redaction marker set |
+| `UndeclaredEndpointRequirement` | a mapped endpoint carries neither a requirement nor an exemption |
 
 **Each names the profile, the offending registration and which of the two it disagrees with**, on the
 `Detail` convention `ModuleGraphError` and `ConfigurationError` already follow. Each describes a
@@ -1175,6 +1240,8 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-R3 | The scope's tenant and principal do not change for the request's lifetime | Core | **code** — the scope |
 | I-R4 | The local host takes the same path with no step skipped and no branch taken | Hosting | **code** — sample scenario |
 | I-R5 | Only an endpoint admitting new paid-feature work is entitlement-gated | consumers | instruction |
+| I-R6 | Every mapped endpoint carries a requirement declaration or a named exemption | Hosting | **code** — startup check over the endpoint data source |
+| I-R7 | The pipeline's authorization check is never resource-scoped; a per-resource check is the handler's own second call | Hosting, consumers | instruction |
 
 ---
 

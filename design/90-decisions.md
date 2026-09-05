@@ -16,6 +16,62 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-05 — An endpoint declares its permission and its feature, and a mapped endpoint declaring neither fails startup
+
+Context: `20-contract.md` § *Public surface* 11 fixed the order — authorize at step 4, check
+entitlement at step 5 when the endpoint admits new paid-feature work — without saying how either step
+learns what the endpoint requires. I-R1 claims the order is enforced by **code, pipeline order**, which
+is only true if the pipeline knows what to check; and I-R5's premise, that some endpoints are
+deliberately not entitlement-gated, was carried by nothing but this document.
+Chosen: **an `EndpointRequirement` carried as endpoint metadata, and a startup check over the mapped
+endpoints** that fails the host with `HostStartupError.UndeclaredEndpointRequirement` when an endpoint
+carries neither a requirement nor a reasoned `EndpointRequirementExemption`. `RequiredPermission` is
+not optional, on the rule *Types* § 10 already states for a tool: an endpoint reachable by an
+unauthenticated caller declares a permission the composition provider grants, never an absent check.
+`RequiredFeature` is optional and takes no default, so "not entitlement-gated" is something somebody
+wrote down rather than something nobody typed. The probes are the only exemption Platform itself
+takes, because the composition provider grants nothing at all in `Operated` and a probe declaring a
+permission is a probe denied in every operated host.
+Rejected: **refusing an undeclared endpoint at request time instead**, which needs no endpoint
+enumeration and no exemption list; rejected because a forgotten declaration would then surface on first
+reach in production, which is the failure mode I-A3 already refuses for an unregistered
+`PermissionName` — a typo that denies is indistinguishable from a policy that denies, and the same
+argument applies to a declaration that was never written. Also rejected: **leaving the declaration
+optional, absence meaning ungated**, which changes no invariant and is what I-R5's `instruction` row
+describes today; rejected because a forgotten `RequiresPlatformAuthorization` then serves an
+unauthorized endpoint silently, which is exactly the automatic-on-install default-open that
+[`second-consumer-packages.md`](../docs/docs/second-consumer-packages.md) §4 refuses on the Mcp side,
+and a rule cannot be default-closed for tools and default-open for endpoints without one of the two
+being wrong. The cost of the chosen option is stated in § 11 and is real: an endpoint Platform did not
+map needs annotating, and one whose mapping returns no convention builder must be exempted where it
+joins the route table.
+Reversibility: cheap, and only in one direction. Relaxing the startup check later breaks no consumer;
+adding it after consumers have mapped endpoints turns every unannotated one into a startup failure,
+which is why it is taken now rather than when the first endpoint needs it.
+
+### 2026-09-05 — The pipeline's authorization check is never resource-scoped
+
+Context: `IAuthorizationEvaluator.EvaluateAsync` takes a `ResourceRef?`, and the fixed order's step 4
+has to pass something. Mcp scopes its check to the parsed resource because the SDK parsed arguments
+against a declared schema before any producer code ran; an HTTP endpoint convention has no equivalent —
+the identifier is in a route value or a body at the moment the declaration is written.
+Chosen: **the pipeline passes no resource**, and an endpoint whose authorization is genuinely
+per-resource makes a second, explicit `EvaluateAsync` call in its handler with the reference it
+constructed. Recorded as I-R7, enforced by instruction.
+Rejected: **the declaration naming a resource type and the route parameter that supplies the id**, so
+Hosting could build the `ResourceRef` from matched route values. Both strings are opaque to Platform,
+so this is no more product knowledge than carrying a `PermissionName`, and it was the option that made
+I-R7 unnecessary. Rejected because it buys less than it looks: an identifier carried in a request body
+cannot be expressed at all, so those endpoints re-check in the handler regardless — the second check
+returns for a subset rather than being eliminated — and the resulting `ResourceRef` is only ever as
+good as the route template, which makes a renamed route parameter a silent widening of a check rather
+than a compile error. It also puts Hosting in the business of reading a route value to mint an
+identifier, against *Module boundaries* § 3's "it knows no product concept".
+Reversibility: cheap. An overload of `RequiresPlatformAuthorization` taking the two strings adds the
+rejected shape later without breaking a call site, and I-R7 becomes narrower rather than false.
+
+---
+
 ### 2026-09-03 — The frozen contributor set reaches the fingerprint as a parameter, not as a projected option
 
 Context: `20-contract.md` § *Unresolved* item 1 (numbered 2 in `30-slices.md`) left two defensible
