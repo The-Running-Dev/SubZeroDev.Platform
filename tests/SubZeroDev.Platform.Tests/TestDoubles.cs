@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
 
 namespace SubZeroDev.Platform.Tests;
@@ -168,6 +170,103 @@ internal sealed class StubTenantResolver(string name, Func<TenantId?> answer) : 
     }
 }
 
+/// <summary>Wraps the real <see cref="IOperationScopeFactory"/> and appends one entry to a shared
+/// trace before delegating — the only way a test observes "open scope" as a discrete step, since
+/// nothing else in the public surface signals it happening.</summary>
+internal sealed class TracingOperationScopeFactory(IOperationScopeFactory inner, List<string> trace)
+    : IOperationScopeFactory
+{
+    public IOperationScope Begin(TenantId tenant, Principal principal, CultureTag culture = default)
+    {
+        lock (trace)
+        {
+            trace.Add("open-scope");
+        }
+
+        return inner.Begin(tenant, principal, culture);
+    }
+
+    public IOperationScope Begin(
+        TraceContext established, CorrelationId correlation, TenantId tenant, Principal principal, CultureTag culture = default)
+    {
+        lock (trace)
+        {
+            trace.Add("open-scope");
+        }
+
+        return inner.Begin(established, correlation, tenant, principal, culture);
+    }
+}
+
+/// <summary>Wraps the real <see cref="IAuthenticationProviderRegistry"/> and appends one trace
+/// entry every time <see cref="Registered"/> is read — the only per-request signal that step 1 ran,
+/// usable even where the registry is empty (Local, I-C3 forbids a registered provider there).</summary>
+internal sealed class TracingAuthenticationProviderRegistry(IAuthenticationProviderRegistry inner, List<string> trace)
+    : IAuthenticationProviderRegistry
+{
+    public Result<AuthenticationProviderRegistrationError> Register(IAuthenticationProvider provider) =>
+        inner.Register(provider);
+
+    public IReadOnlyList<IAuthenticationProvider> Registered
+    {
+        get
+        {
+            lock (trace)
+            {
+                trace.Add("authenticate");
+            }
+
+            return inner.Registered;
+        }
+    }
+
+    public void Freeze() => inner.Freeze();
+}
+
+/// <summary>Wraps the real <see cref="ITenantResolverRegistry"/> and appends one trace entry
+/// every time <see cref="Registered"/> is read — the only per-request signal that step 2 ran,
+/// usable even where the registry is empty (Local, I-C3 forbids a registered resolver there).</summary>
+internal sealed class TracingTenantResolverRegistry(ITenantResolverRegistry inner, List<string> trace)
+    : ITenantResolverRegistry
+{
+    public Result<TenantResolverRegistrationError> Register(ITenantResolver resolver) =>
+        inner.Register(resolver);
+
+    public IReadOnlyList<ITenantResolver> Registered
+    {
+        get
+        {
+            lock (trace)
+            {
+                trace.Add("resolve-tenant");
+            }
+
+            return inner.Registered;
+        }
+    }
+
+    public void Freeze() => inner.Freeze();
+}
+
+/// <summary>Wraps the real <see cref="IEntitlementEvaluator"/> and appends one trace entry every
+/// time <see cref="EvaluateAsync"/> is called, before delegating. Used where the contributor itself
+/// cannot be decorated without changing its type — the composition validator compares a Local
+/// host's registered contributors by type (I-C3), so a wrapped one would be mistaken for a second,
+/// forbidden registration.</summary>
+internal sealed class TracingEntitlementEvaluator(IEntitlementEvaluator inner, List<string> trace)
+    : IEntitlementEvaluator
+{
+    public Task<EntitlementDecision> EvaluateAsync(FeatureName feature, CancellationToken cancellationToken)
+    {
+        lock (trace)
+        {
+            trace.Add("check-entitlement");
+        }
+
+        return inner.EvaluateAsync(feature, cancellationToken);
+    }
+}
+
 /// <summary>A module a test names and gives dependencies to.</summary>
 internal sealed class StubModule(string name, params string[] dependsOn) : IPlatformModule
 {
@@ -195,11 +294,19 @@ internal static class WebHostUnderTest
     /// <c>Operated</c>, and without these the host correctly refuses to start. A test asserting a
     /// startup refusal, or running <see cref="CompositionProfile.Local"/>, passes
     /// <see langword="false"/> and registers what it means to.</param>
+    /// <param name="postCompose">Extra registrations applied after <c>AddPlatformWebHost</c> has
+    /// run — the only point at which a test can splice a decorator over a service the platform
+    /// itself registered, on the same terms <c>PlatformTestHost</c> already uses for the outbox
+    /// writer.</param>
+    /// <param name="mapEndpoints">Extra endpoints, mapped after the fixed ones below and before the
+    /// host starts.</param>
     internal static async Task<(WebApplication App, HttpClient Client)> StartAsync(
         Action<IServiceCollection>? services = null,
         IDictionary<string, string?>? settings = null,
         string environment = "Production",
-        bool composeOperatedDefaults = true)
+        bool composeOperatedDefaults = true,
+        Action<IServiceCollection>? postCompose = null,
+        Action<WebApplication>? mapEndpoints = null)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
@@ -225,6 +332,7 @@ internal static class WebHostUnderTest
 
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.AddPlatformWebHost();
+        postCompose?.Invoke(builder.Services);
 
         var app = builder.Build();
         app.MapGet("/", (ICurrentCorrelation correlation, ICurrentTenant tenant, ICurrentCulture culture) => new
@@ -232,8 +340,14 @@ internal static class WebHostUnderTest
             correlation = correlation.Current.TraceId,
             tenant = tenant.Current.Value,
             culture = culture.Current.Value,
-        });
-        app.MapGet("/boom", void () => throw new InvalidOperationException("secret detail that must not reach the wire"));
+        }).ExemptFromPlatformAuthorization(
+            "Generic test-harness root endpoint, shared by tests that are not about authorization "
+            + "(D5-S8 I-R6 requires a declaration on every mapped endpoint).");
+        app.MapGet("/boom", void () => throw new InvalidOperationException("secret detail that must not reach the wire"))
+            .ExemptFromPlatformAuthorization(
+                "Test-harness diagnostic endpoint proving the unhandled-failure envelope; not part of any "
+                + "product's permission surface.");
+        mapEndpoints?.Invoke(app);
 
         await app.StartAsync();
 

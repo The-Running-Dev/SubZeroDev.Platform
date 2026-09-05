@@ -29,6 +29,13 @@ builder.Services.AddSingleton<IAuthenticationProvider,
 builder.Services.AddSingleton<IAuditSink>(
     new OperatedComposition.FileAuditSink("sample-audit.log"));
 
+// D5-S8: every endpoint mapped below carries a permission declaration, checked at startup (I-R6).
+// No real policy provider exists yet — Organizations (S10) ships the second of D5's exactly two —
+// so this sample grants its own declared permissions to any principal, the same "smallest honest
+// thing" shape as the authentication provider and the audit sink above.
+builder.Services.AddSingleton<IPermissionCatalog, OperatedComposition.SamplePermissionCatalog>();
+builder.Services.AddSingleton<IPermissionProvider, OperatedComposition.NoPolicyPermissionProvider>();
+
 // The only mandatory Platform call. Health, readiness and correlation come with it.
 builder.AddPlatformWebHost();
 
@@ -51,12 +58,14 @@ app.MapGet("/", (ICurrentCorrelation correlation, ICurrentTenant tenant) => new
 {
     correlation = correlation.Current.TraceId,
     tenant = tenant.Current.Value,
-});
+}).RequiresPlatformAuthorization(OperatedComposition.SamplePermissions.ReadRoot, feature: null);
 
 // Exists to be called: an unhandled failure must return an envelope carrying the correlation and
-// nothing else, which is only demonstrable against something that actually throws.
+// nothing else, which is only demonstrable against something that actually throws. Exempt rather
+// than gated: it demonstrates the envelope, not the sample's product surface.
 app.MapGet("/boom", void () => throw new InvalidOperationException(
-    "Sample failure with detail that must not reach the wire."));
+    "Sample failure with detail that must not reach the wire."))
+    .ExemptFromPlatformAuthorization("Diagnostic endpoint demonstrating the unhandled-failure envelope.");
 
 // Writes to both modules' tables in one transaction over one connection — Orders enlists through a
 // raw DbCommand against the ambient transaction rather than opening a connection of its own, which
@@ -121,7 +130,7 @@ app.MapPost("/orders", async (
         cancellationToken).ConfigureAwait(false);
 
     return result.IsSuccess ? Results.Ok(result.Value) : Results.Problem(result.Error.Detail);
-});
+}).RequiresPlatformAuthorization(OperatedComposition.SamplePermissions.CreateOrder, feature: null);
 
 app.Run();
 

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -7,9 +8,11 @@ using SubZeroDev.Platform.Core;
 namespace SubZeroDev.Platform.Hosting;
 
 /// <summary>Collects everything registered into the container and freezes the registries.</summary>
-/// <remarks>The work happens in <see cref="StartingAsync"/>, which the host runs before any
+/// <remarks>Most of the work happens in <see cref="StartingAsync"/>, which the host runs before any
 /// service's <c>StartAsync</c> — so the registries are populated and frozen before Kestrel binds,
-/// and a rejected registration aborts startup rather than surfacing at the first probe.</remarks>
+/// and a rejected registration aborts startup rather than surfacing at the first probe. I-R6's
+/// endpoint check is the one exception, in <see cref="StartedAsync"/> — see that method's own
+/// remarks for why it cannot run this early.</remarks>
 internal sealed class PlatformRegistryStartup(
     IEnumerable<IHealthCheck> checks,
     IEnumerable<IBackgroundWork> work,
@@ -27,6 +30,7 @@ internal sealed class PlatformRegistryStartup(
     ITenantResolverRegistry tenantResolverRegistry,
     IEntitlementContributorRegistry entitlementContributorRegistry,
     IAuthenticationProviderRegistry authenticationProviderRegistry,
+    IEnumerable<EndpointDataSource> endpointDataSources,
     PlatformOptions options) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
@@ -166,7 +170,47 @@ internal sealed class PlatformRegistryStartup(
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    /// <summary>I-R6: every mapped endpoint carries a requirement declaration or a named exemption.
+    /// Checked here, in <c>StartedAsync</c> rather than <c>StartingAsync</c>, because the endpoint
+    /// data sources are not finalised until the web host's own hosted service has run — reading
+    /// them any earlier sees an empty table regardless of what the consumer's own <c>Map...</c>
+    /// calls added. A worker host, and any headless test host that never builds an HTTP pipeline,
+    /// resolves no data sources, so this is a no-op there.</summary>
+    public Task StartedAsync(CancellationToken cancellationToken)
+    {
+        foreach (var dataSource in endpointDataSources)
+        {
+            foreach (var endpoint in dataSource.Endpoints)
+            {
+                var requirement = endpoint.Metadata.GetMetadata<EndpointRequirement>();
+                var hasExemption = endpoint.Metadata.GetMetadata<EndpointRequirementExemption>() is not null;
+
+                if (requirement is null && !hasExemption)
+                {
+                    var route = endpoint is RouteEndpoint routeEndpoint
+                        ? routeEndpoint.RoutePattern.RawText ?? endpoint.DisplayName ?? "(unnamed route)"
+                        : endpoint.DisplayName ?? "(unnamed endpoint)";
+
+                    throw new PlatformStartupException(HostStartupError.UndeclaredEndpointRequirement(route));
+                }
+
+                // An endpoint's declared permission is a registration like any other module's —
+                // an undeclared name is a startup-detectable defect, never a runtime denial.
+                if (requirement is not null)
+                {
+                    var declared = permissionCatalogRegistry.EnsureDeclared(requirement.RequiredPermission);
+                    if (!declared.IsSuccess)
+                    {
+                        throw new PlatformStartupException(HostStartupError.Registration(
+                            declared.Error,
+                            declared.Error.Detail));
+                    }
+                }
+            }
+        }
+
+        return Task.CompletedTask;
+    }
 
     public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 

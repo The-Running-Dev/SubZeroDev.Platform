@@ -1,90 +1,90 @@
 {
-  "generated": "2026-09-05",
-  "gates": [
-    {
-      "name": "Test",
-      "status": "Passed",
-      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Total tests: 366, Passed: 366, Failed: 0. Test Run Successful, 41.67s."
-    },
-    {
-      "name": "Run the sample in both roles",
-      "status": "DidNotRun",
-      "reason": "build/Test-SampleRoundTrip.ps1 is documented Linux-only: it P/Invokes libc's kill(2) to distinguish SIGTERM from SIGKILL, which has no Windows equivalent, and it shells out to sqlite3 for a read the script itself relies on. This session ran on a Windows host. The corresponding CI check on the pull request is where the answer comes from."
-    },
-    {
-      "name": "Assert no framework project references a workload",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: No project under src/ or samples/ references workloads/ (28 project file(s) checked)."
-    },
-    {
-      "name": "Typecheck",
-      "status": "Passed",
-      "detail": "cd workloads/game-service && npm run typecheck: tsc --noEmit completed with no output and exit 0."
-    },
-    {
-      "name": "Start the workload and the edge, the documented way",
-      "status": "Passed",
-      "detail": "GAME_SERVICE_PORT=8080 npm start reached http://127.0.0.1:8080/livez and /readyz both {\"status\":\"healthy\"}. GameEdge run from workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0 with GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 reached http://127.0.0.1:5080/health/live {\"status\":\"Healthy\",\"checks\":[]} and /health/ready {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
-    },
-    {
-      "name": "Run the replay against the workload",
-      "status": "Passed",
-      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11), 4.80s."
-    },
-    {
-      "name": "Run the replay against the edge",
-      "status": "Passed",
-      "detail": "GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: Test Files 1 passed (1), Tests 2 passed (2), 4.05s."
-    },
-    {
-      "name": "Migrate the schema to head, the documented way",
-      "status": "Passed",
-      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate: 'migrated ci_documented_migrate to head', exit 0."
-    },
-    {
-      "name": "Start the workload against the durable store, the documented way",
-      "status": "Passed",
-      "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start reached http://127.0.0.1:8081/readyz {\"status\":\"healthy\"} against a PostgreSQL container that reported ready twice in a row via docker compose exec postgres pg_isready."
-    },
-    {
-      "name": "Run the one-instance contention proof",
-      "status": "Passed",
-      "detail": "npx vitest run tests/contention-one-instance.test.ts: Test Files 1 passed (1), Tests 5 passed (5), 1.96s. The 'startup migration attempt failed { code: Unreachable }' stderr line is the S6.5 perturbation scenario's own expected output, not a test failure."
-    },
-    {
-      "name": "Run the two-instance contention proof",
-      "status": "Passed",
-      "detail": "npx vitest run tests/contention-two-instances.test.ts: Test Files 1 passed (1), Tests 7 passed (7), 15.50s."
-    },
-    {
-      "name": "Run the durable replay",
-      "status": "Passed",
-      "detail": "npx vitest run tests/durable-replay.test.ts: Test Files 1 passed (1), Tests 7 passed (7), 4.89s."
-    },
-    {
-      "name": "Run the port-conformance suite",
-      "status": "Passed",
-      "detail": "npx vitest run tests/conformance.test.ts: Test Files 1 passed (1), Tests 7 passed (7), 0.76s."
-    },
-    {
-      "name": "Test (game-service)",
-      "status": "Passed",
-      "detail": "GAME_EDGE_DLL=<built edge dll> npm test: Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198), 30.99s. The one skip is tests/trace-evidence.test.ts self-skipping on an unset OTEL_COLLECTOR_BIN by design (otel-collector.ts: 'a test that needs this skips itself when the variable is unset, so a local npm test with no collector installed still runs everything else') — OTEL_COLLECTOR_BIN is populated in CI by a download step this local run did not reproduce."
-    },
-    {
-      "name": "Validate Markdown links, terminology, and generated files",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1: 'Documentation checks passed across 127 Markdown file(s), with 2 warning(s).' Both warnings are pre-existing terminology notes ('JSON' vs 'Json') in design/d3/90-decisions.md, a completed prior effort's decision log untouched by this branch. Exit 0."
-    },
-    {
-      "name": "Validate design/30-slices.md's Status markers",
-      "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: 'Slice status markers consistent across 11 slice(s) in design/30-slices.md.'"
-    },
-    {
-      "name": "Build and verify the status-page site",
-      "status": "Passed",
-      "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint, typecheck, test (6 files, 57 tests passed), test:build, and test:merge all completed, exit 0. Pre-existing lint warning in site/src/shared.tsx:12:14 (react(only-export-components), fast-refresh) — unrelated to this branch, matches a warning recorded in prior-session memory from before this PR's changes."
-    }
-  ]
+"generated": "2026-09-05",
+"gates": [
+  {
+    "name": "Test",
+    "status": "Passed",
+    "detail": "dotnet test --no-build --configuration Release --verbosity normal: SubZeroDev.Platform.GameEdge.Tests Total tests: 19, Passed: 19; SubZeroDev.Platform.Tests Total tests: 372, Passed: 372."
+  },
+  {
+    "name": "Run the sample in both roles",
+    "status": "DidNotRun",
+    "reason": "build/Test-SampleRoundTrip.ps1 is documented Linux-only: it P/Invokes libc's kill(2) to distinguish SIGTERM from SIGKILL, which has no Windows equivalent, and it shells out to sqlite3. This session ran on Windows. Both samples were exercised manually instead over real HTTP (dotnet run against SubZeroDev.Platform.Sample.Local and SubZeroDev.Platform.Sample.Web): GET / returned 200 on both, POST /orders on Sample.Web returned 200, GET /boom returned 500 with the envelope, and GET /health/ready returned 200 with every check healthy."
+  },
+  {
+    "name": "Assert no framework project references a workload",
+    "status": "Passed",
+    "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: No project under src/ or samples/ references workloads/ (28 project file(s) checked)."
+  },
+  {
+    "name": "Typecheck",
+    "status": "Failed",
+    "detail": "cd workloads/game-service && npm run typecheck: tsc reports errors in src/store.ts, src/conformance.ts, tests/row-guards.test.ts, tests/storage-seam.test.ts, tests/store.test.ts and tests/support/persistence-stub.ts, e.g. \"src/store.ts(75,16): error TS2322: Type '2' is not assignable to type '1'.\" and \"tests/storage-seam.test.ts(24,9): error TS2353: Object literal may only specify known properties, and 'listByProfile' does not exist in type 'SaveRecordStore'.\" This branch touches no file under workloads/game-service; git log shows src/store.ts last changed in commit 665103a (already on main, merged as #207), and the missing 'listByProfile'/'branch-session' surface matches this repository's own recorded gap (D5-S14/S15 must add list_saves, branch_session, delete_save for 13-op MCP catalogue parity) — pre-existing on main, not introduced here."
+  },
+  {
+    "name": "Start the workload and the edge, the documented way",
+    "status": "Passed",
+    "detail": "GAME_SERVICE_PORT=8080 npm start reached http://127.0.0.1:8080/livez and /readyz both {\"status\":\"healthy\"}. GameEdge run from workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0 with GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 ASPNETCORE_URLS=http://127.0.0.1:5080 reached http://127.0.0.1:5080/health/live {\"status\":\"Healthy\",\"checks\":[]} and /health/ready {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}. This also proves the I-R6 fix in workloads/game-edge/SubZeroDev.Platform.GameEdge/Endpoints.cs: the edge host starts and serves with the new startup check active."
+  },
+  {
+    "name": "Run the replay against the workload",
+    "status": "Failed",
+    "detail": "cd workloads/game-service && npx vitest run tests/replay.test.ts: Test Files 1 failed (1), Tests 9 failed | 2 passed (11). e.g. \"expected [ Array(3) ] to deeply equal []\" at tests/replay.test.ts naming missing MCP tool names \"branch-session\", \"list-saves\" against the golden transcript, and \"S5.10 ... AssertionError: expected false to be true\" at tests/replay.test.ts:228. Pre-existing: matches this repository's own recorded gap (D5-S14/S15, MCP catalogue parity) rather than anything this branch's diff touches."
+  },
+  {
+    "name": "Run the replay against the edge",
+    "status": "Failed",
+    "detail": "cd workloads/game-service && GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts: Test Files 1 failed (1), Tests 2 failed (2). \"expect(hosted.ok).toBe(true)\" fails at tests/replay-edge.test.ts:61, the same golden-transcript/tool-catalogue drift as the in-process replay test above (Failed) — no PlatformStartupException or UndeclaredEndpointRequirement appears in the output, confirming the I-R6 change is not the cause."
+  },
+  {
+    "name": "Migrate the schema to head, the documented way",
+    "status": "Passed",
+    "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate: \"migrated ci_documented_migrate to head\", exit 0, against a PostgreSQL container started via docker compose up -d postgres in workloads/game-service."
+  },
+  {
+    "name": "Start the workload against the durable store, the documented way",
+    "status": "Passed",
+    "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start reached http://127.0.0.1:8081/readyz {\"status\":\"healthy\"} against the same PostgreSQL container."
+  },
+  {
+    "name": "Run the one-instance contention proof",
+    "status": "Passed",
+    "detail": "cd workloads/game-service && npx vitest run tests/contention-one-instance.test.ts: Test Files 1 passed (1), Tests 5 passed (5)."
+  },
+  {
+    "name": "Run the two-instance contention proof",
+    "status": "Passed",
+    "detail": "cd workloads/game-service && npx vitest run tests/contention-two-instances.test.ts: Test Files 1 passed (1), Tests 7 passed (7)."
+  },
+  {
+    "name": "Run the durable replay",
+    "status": "Failed",
+    "detail": "cd workloads/game-service && npx vitest run tests/durable-replay.test.ts: Test Files 1 failed (1), Tests 3 failed | 4 passed (7). Same golden-transcript/tool-catalogue drift as the other replay gates above (Failed) — pre-existing, tracked under D5-S14/S15's MCP catalogue parity gap."
+  },
+  {
+    "name": "Run the port-conformance suite",
+    "status": "Failed",
+    "detail": "cd workloads/game-service && npx vitest run tests/conformance.test.ts: Test Files 1 failed (1), Tests 2 failed | 5 passed (7). Same golden-transcript/tool-catalogue drift as the other replay gates above (Failed) — pre-existing, tracked under D5-S14/S15's MCP catalogue parity gap."
+  },
+  {
+    "name": "Test (game-service)",
+    "status": "Failed",
+    "detail": "cd workloads/game-service && GAME_EDGE_DLL=<built edge dll> npm test: Test Files 5 failed | 19 passed | 1 skipped (25), Tests 17 failed | 180 passed | 1 skipped (198). All 17 failures are the same golden-transcript/tool-catalogue drift named above (missing branch-session/list-saves tool rows) — no PlatformStartupException or UndeclaredEndpointRequirement appears anywhere in the output. Pre-existing, tracked under D5-S14/S15."
+  },
+  {
+    "name": "Validate Markdown links, terminology, and generated files",
+    "status": "Passed",
+    "detail": "pwsh ./build/Test-Documentation.ps1: \"Documentation checks passed across 127 Markdown file(s), with 2 warning(s).\" Both warnings are the pre-existing 'Use JSON instead of Json' terminology notes in design/d3/90-decisions.md, noted on PR #211, untouched by this branch."
+  },
+  {
+    "name": "Validate design/30-slices.md's Status markers",
+    "status": "Passed",
+    "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: \"Slice status markers consistent across 11 slice(s) in design/30-slices.md.\""
+  },
+  {
+    "name": "Build and verify the status-page site",
+    "status": "Passed",
+    "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint, typecheck, test (6 files, 57 tests passed), test:build and test:merge all completed, exit 0. Pre-existing lint warning in site/src/shared.tsx:12:14 (react(only-export-components), fast-refresh) — unrelated to this branch, noted on PR #211 too."
+  }
+]
 }

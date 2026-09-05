@@ -84,4 +84,48 @@ public static class OperatedComposition
             }
         }
     }
+
+    /// <summary>The permission names this sample's own endpoints declare (D5-S8: every endpoint
+    /// mapped through the pipeline now carries a requirement or a named exemption). Declared here
+    /// rather than inline at the map call so the catalog and the provider below can both reach
+    /// them.</summary>
+    public static class SamplePermissions
+    {
+        /// <summary>Reads the sample's root diagnostic response.</summary>
+        public static PermissionName ReadRoot { get; } = new("Sample.Web.ReadRoot");
+
+        /// <summary>Creates a catalogue item and an order in one transaction.</summary>
+        public static PermissionName CreateOrder { get; } = new("Sample.Web.CreateOrder");
+    }
+
+    /// <summary><see cref="SamplePermissions"/> declared as a catalog, so a typo here fails startup
+    /// the same way any module's would.</summary>
+    public sealed class SamplePermissionCatalog : IPermissionCatalog
+    {
+        public IReadOnlyCollection<PermissionName> Declares { get; } =
+        [
+            SamplePermissions.ReadRoot,
+            SamplePermissions.CreateOrder,
+        ];
+    }
+
+    /// <summary>No real permission policy exists in this sample — Organizations, which ships the
+    /// second of D5's exactly two permission providers, is S10. Granting this sample's own declared
+    /// permissions to any principal is the smallest honest thing that satisfies I-R6 without
+    /// pretending a policy has been decided: it is not a role-assignment table, it grants nothing
+    /// beyond what this sample itself declares, and it is replaced rather than kept once S10 lands.</summary>
+    public sealed class NoPolicyPermissionProvider : IPermissionProvider
+    {
+        private static readonly IReadOnlySet<PermissionName> Granted = new HashSet<PermissionName>
+        {
+            SamplePermissions.ReadRoot,
+            SamplePermissions.CreateOrder,
+        };
+
+        public PermissionProviderName Name { get; } = new("Sample.NoPolicy");
+
+        public Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
+            Principal principal, TenantId tenant, ResourceRef? resource, CancellationToken cancellationToken) =>
+            Task.FromResult(Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(Granted));
+    }
 }

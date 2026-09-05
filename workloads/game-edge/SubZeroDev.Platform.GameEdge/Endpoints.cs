@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Hosting;
 
 namespace SubZeroDev.Platform.GameEdge;
 
@@ -27,7 +28,16 @@ public static class GameEdgeEndpointExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        endpoints.Map("/{**catchAll}", HandleAsync);
+        // D5-S8 (I-R6): every endpoint the standard registration maps now needs a declared
+        // requirement or a named exemption. This route forwards every request verbatim, of every
+        // method and path, to the workload — it has no permission or feature of its own to
+        // declare, because it does not interpret what it carries. The workload's own boundary is
+        // where that belongs, not Platform's per-endpoint declaration at the edge in front of it.
+        endpoints
+            .Map("/{**catchAll}", HandleAsync)
+            .ExemptFromPlatformAuthorization(
+                "Forwards every request verbatim to the game workload; it has no permission or "
+                + "feature of its own to declare, and the workload's own boundary authorizes what it carries.");
 
         return endpoints;
     }

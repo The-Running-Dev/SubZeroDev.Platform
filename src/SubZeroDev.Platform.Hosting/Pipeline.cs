@@ -11,6 +11,14 @@ namespace SubZeroDev.Platform.Hosting;
 
 /// <summary>Places Platform's middleware at the front of the pipeline without the consumer calling
 /// anything. The brief's done-criterion is that a second mandatory call is bespoke wiring.</summary>
+/// <remarks>Steps 4 and 5 (authorize, check entitlement) are not middleware here: an
+/// <c>IStartupFilter</c>'s contribution always runs before the framework's own implicit routing
+/// match and endpoint dispatch, which are inserted as a single unit at the far end of whatever a
+/// consumer's own <c>Map...</c> calls add — there is no seam in that unit an <c>IStartupFilter</c>
+/// can occupy. <see cref="EndpointRequirement"/>'s declaration instead attaches an
+/// <see cref="IEndpointFilter"/> at the point it is declared (<see cref="PlatformEndpointConventions"/>),
+/// which is the framework's own supported seam for running per-endpoint logic between routing and
+/// the handler, with the matched endpoint already resolved.</remarks>
 internal sealed class PlatformStartupFilter : IStartupFilter
 {
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) =>
