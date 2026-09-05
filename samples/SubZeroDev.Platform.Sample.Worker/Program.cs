@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Identity;
 using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
 
@@ -17,9 +18,11 @@ if (args is ["migrate"])
 
 // Both roles of one installation declare the same profile, so both owe it the same two
 // registrations (D5-S8, I-C1 and I-C2) — a worker that composed differently from its web peer would
-// be the divergence the settings fingerprint exists to catch, arrived at deliberately.
-builder.Services.AddSingleton<IAuthenticationProvider,
-    OperatedComposition.NoCredentialAuthenticationProvider>();
+// be the divergence the settings fingerprint exists to catch, arrived at deliberately. D5-S9: the
+// same Identity module and test issuer the web role registers.
+builder.Services.AddSingleton<IPlatformModule, IdentityModule>();
+builder.Services.AddSingleton<IAuthenticationProvider>(new JwtBearerAuthenticationProvider(
+    "Sample.TestIssuer", OperatedComposition.TestIssuer, OperatedComposition.TestIssuerSigningKey));
 builder.Services.AddSingleton<IAuditSink>(
     new OperatedComposition.FileAuditSink("sample-audit.log"));
 

@@ -15,6 +15,12 @@
     <PackageReference Include="SubZeroDev.Platform.Persistence" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
+  <!-- Identity is not packed yet (S18 packs every D5 package): a project reference regardless
+       of UsePlatformPackages, unlike the two framework packages above. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
