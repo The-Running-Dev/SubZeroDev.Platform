@@ -161,9 +161,12 @@ internal static class ProbeBody
             .ConfigureAwait(false);
     }
 
-    internal static async Task WriteAsync(HttpContext context, ErrorEnvelope envelope)
+    internal static Task WriteAsync(HttpContext context, ErrorEnvelope envelope) =>
+        WriteAsync(context, envelope, StatusCodes.Status500InternalServerError);
+
+    internal static async Task WriteAsync(HttpContext context, ErrorEnvelope envelope, int statusCode)
     {
-        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/json; charset=utf-8";
 
         var body = new EnvelopeDocument(envelope.Code, envelope.Correlation.TraceId);
