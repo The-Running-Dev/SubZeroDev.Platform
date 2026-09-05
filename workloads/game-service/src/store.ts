@@ -70,7 +70,10 @@ const CONFLICT_BRAND = "SessionPersistenceConflict" as const;
  *  shape failure, and the one `compose.ts`'s `unavailableProfiles()` returns while no durable store
  *  has connected yet — exported so both sites construct it from one definition. */
 export function corruptProfileResult(profileId: string): ProfileLoadResult {
-  return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_corrupt", profileId }] };
+  return {
+    profile: { formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] },
+    warnings: [{ code: "profile_corrupt", profileId }],
+  };
 }
 
 /** Same reasoning as `corruptProfileResult` above, for a write failure. */
@@ -249,10 +252,23 @@ export function sessionReclassifyStatement(tenantId: TenantId, sessionId: string
 export function saveSelectStatement(tenantId: TenantId, saveId: string): Statement {
   return {
     text:
-      "select tenant_id, save_id, campaign_id, blob, saved_at_seq, audience, profile_id, " +
+      "select tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
       "engine_version, row_created_at, expires_at " +
       "from save where tenant_id = $1 and save_id = $2 and expires_at > now()",
     values: [tenantId, saveId],
+  };
+}
+
+/** §7.4. Every stored save for one profile — the caller (`SaveRecordStore.listByProfile`) sorts,
+ *  so this carries no `order by`. `expires_at > now()` matches every other live read in this file
+ *  (S3.5): an expired save is not found, independent of the sweep. */
+export function saveListByProfileStatement(tenantId: TenantId, profileId: string): Statement {
+  return {
+    text:
+      "select tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
+      "engine_version, row_created_at, expires_at " +
+      "from save where tenant_id = $1 and profile_id = $2 and expires_at > now()",
+    values: [tenantId, profileId],
   };
 }
 
@@ -260,6 +276,7 @@ export interface SaveRowInput {
   readonly saveId: string;
   readonly campaignId: string;
   readonly blob: string;
+  readonly savedAt: EngineInstant;
   readonly savedAtSeq: number;
   readonly audience: ProjectionAudience;
   readonly profileId: string | null;
@@ -276,18 +293,19 @@ export function saveUpsertStatement(
 ): Statement {
   return {
     text:
-      "insert into save (tenant_id, save_id, campaign_id, blob, saved_at_seq, audience, profile_id, " +
+      "insert into save (tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
       "engine_version, expires_at) " +
-      "values ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(secs => $9)) " +
+      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(secs => $10)) " +
       "on conflict (tenant_id, save_id) do update set " +
-      "campaign_id = excluded.campaign_id, blob = excluded.blob, saved_at_seq = excluded.saved_at_seq, " +
-      "audience = excluded.audience, profile_id = excluded.profile_id, " +
+      "campaign_id = excluded.campaign_id, blob = excluded.blob, saved_at = excluded.saved_at, " +
+      "saved_at_seq = excluded.saved_at_seq, audience = excluded.audience, profile_id = excluded.profile_id, " +
       "engine_version = excluded.engine_version, expires_at = excluded.expires_at",
     values: [
       tenantId,
       row.saveId,
       row.campaignId,
       row.blob,
+      row.savedAt,
       row.savedAtSeq,
       row.audience,
       row.profileId,
@@ -297,8 +315,16 @@ export function saveUpsertStatement(
   };
 }
 
-export function saveDeleteStatement(tenantId: TenantId, saveId: string): Statement {
-  return { text: "delete from save where tenant_id = $1 and save_id = $2", values: [tenantId, saveId] };
+/** §7.4. Conditional: only a `save` row whose stored `saved_at` still matches `expectedSavedAt` is
+ *  removed — a second, concurrent adapter that already deleted and re-put this `saveId` under a
+ *  new `savedAt` must not have that write undone by a delete issued against the stale value
+ *  (invariant D2). The predicate is the whole of the guard; there is no read-then-decide because
+ *  the row's absence and its `saved_at` mismatch answer identically — nothing to delete either way. */
+export function saveDeleteStatement(tenantId: TenantId, saveId: string, expectedSavedAt: string): Statement {
+  return {
+    text: "delete from save where tenant_id = $1 and save_id = $2 and saved_at = $3",
+    values: [tenantId, saveId, expectedSavedAt],
+  };
 }
 
 export function sessionLifecycleStatement(tenantId: TenantId, sessionId: string): Statement {
@@ -390,6 +416,7 @@ function firstInvalidSaveColumn(raw: Record<string, unknown>): string | null {
   if (typeof raw["save_id"] !== "string") return "save_id";
   if (typeof raw["campaign_id"] !== "string") return "campaign_id";
   if (typeof raw["blob"] !== "string") return "blob";
+  if (typeof raw["saved_at"] !== "string") return "saved_at";
   if (typeof raw["saved_at_seq"] !== "number") return "saved_at_seq";
   if (typeof raw["audience"] !== "string") return "audience";
   if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
@@ -438,6 +465,7 @@ interface RawSaveRow {
   readonly save_id: string;
   readonly campaign_id: string;
   readonly blob: string;
+  readonly saved_at: string;
   readonly saved_at_seq: number;
   readonly audience: string;
   readonly profile_id: string | null;
@@ -456,6 +484,7 @@ function toSaveRow(raw: RawSaveRow): SaveRow {
     saveId: raw.save_id,
     campaignId: raw.campaign_id,
     blob: raw.blob,
+    savedAt: raw.saved_at as EngineInstant,
     savedAtSeq: raw.saved_at_seq,
     audience: raw.audience as ProjectionAudience,
     profileId: raw.profile_id,
@@ -532,6 +561,7 @@ function toStoredSaveRecord(row: SaveRow): StoredSaveRecord {
     saveId: row.saveId,
     campaignId: row.campaignId,
     blob: row.blob,
+    savedAt: row.savedAt,
     savedAtSeq: row.savedAtSeq,
     audience: row.audience,
     ...(row.profileId !== null ? { profileId: row.profileId } : {}),
@@ -727,6 +757,7 @@ export async function openDurableStore(
             saveId: record.saveId,
             campaignId: record.campaignId,
             blob: record.blob,
+            savedAt: record.savedAt as EngineInstant,
             savedAtSeq: record.savedAtSeq,
             audience: record.audience,
             profileId: record.profileId ?? null,
@@ -738,8 +769,24 @@ export async function openDurableStore(
             throw new Error("durable save write failed", { cause: classifyStoreError(error, "other") });
           }
         },
-        delete: async (saveId: string): Promise<void> => {
-          const statement = saveDeleteStatement(tenantId, saveId);
+        listByProfile: async (profileId: string): Promise<readonly StoredSaveRecord[]> => {
+          const statement = saveListByProfileStatement(tenantId, profileId);
+          let result;
+          try {
+            result = await pool.query(statement.text, statement.values as unknown[]);
+          } catch (error) {
+            throw new Error("durable save list failed", { cause: classifyStoreError(error, "other") });
+          }
+          return result.rows.map((rawRow) => {
+            const invalidColumn = firstInvalidSaveColumn(rawRow as Record<string, unknown>);
+            if (invalidColumn !== null) {
+              throw new Error("durable save list failed", { cause: { code: "RowUndeserializable", column: invalidColumn } });
+            }
+            return toStoredSaveRecord(toSaveRow(rawRow as unknown as RawSaveRow));
+          });
+        },
+        delete: async (saveId: string, expectedSavedAt: string): Promise<void> => {
+          const statement = saveDeleteStatement(tenantId, saveId, expectedSavedAt);
           try {
             await pool.query(statement.text, statement.values as unknown[]);
           } catch (error) {
@@ -775,7 +822,10 @@ export async function openDurableStore(
         return corruptProfileResult(profileId);
       }
       if (rows.rows.length === 0) {
-        return { profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [{ code: "profile_missing", profileId }] };
+        return {
+          profile: { formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] },
+          warnings: [{ code: "profile_missing", profileId }],
+        };
       }
       // S13.3: `ProfileStore.load` has no error channel, so a column widened to hold a value its
       // declared type cannot is folded into `profile_corrupt` here rather than thrown as
@@ -793,8 +843,12 @@ export async function openDurableStore(
       const profileRow = toProfileRow(firstRow);
       // The one host column the engine's `PlayerProfile` does carry, and the reason `profile_corrupt`
       // stays a reachable outcome against a normalised store — a format this release cannot read is
-      // a corrupt profile to it, not a partial one.
-      if (profileRow.formatVersion !== 1) {
+      // a corrupt profile to it, not a partial one. `1` and `3` are both readable: this store has
+      // never had a schema for terminals/kindData, so a `1` row migrates the same way a `3` row
+      // already reads — `formatVersion: 3` with both arrays empty (`20-contract.md`, "`formatVersion`
+      // has moved twice ... a version-1 profile reads as `{ ...profile, formatVersion: 3, terminals:
+      // [], kindData: [] }`"). `2` was never written here and stays corrupt.
+      if (profileRow.formatVersion !== 1 && profileRow.formatVersion !== 3) {
         return corruptProfileResult(profileId);
       }
 
@@ -803,15 +857,15 @@ export async function openDurableStore(
         .map(toProfileAchievementRow)
         .map((row) => ({ campaignId: row.campaignId, achievementId: row.achievementId }));
       return {
-        profile: { formatVersion: 1, profileId, achievements },
+        profile: { formatVersion: 3, profileId, achievements, terminals: [], kindData: [] },
         warnings: [],
       };
     },
     async save(profile) {
       try {
         await pool.query(
-          "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 1, now()) " +
-            "on conflict (tenant_id, profile_id) do update set format_version = 1, row_updated_at = now()",
+          "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 3, now()) " +
+            "on conflict (tenant_id, profile_id) do update set format_version = 3, row_updated_at = now()",
           [tenantId, profile.profileId],
         );
         // One batched insert via `unnest`, not one round trip per achievement.

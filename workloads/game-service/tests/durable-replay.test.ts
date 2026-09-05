@@ -29,12 +29,15 @@ import { RawSchemaClient, TEST_CONNECTION_STRING, configurationFor } from "./sup
 const GOLDEN_PATH = fileURLToPath(new URL("./fixtures/golden-transcript.json", import.meta.url));
 const contract = loadPublishedContract();
 
-// REPLAY_FIXTURE mints two sessions and one save. `create-session` mints the first; every step
-// through `resume-session` addresses that same id rather than minting another (`resumeSession`
-// only reads the record, it never writes one). `load-game`, the final step, mints the second: the
-// engine's `loadGame` (game-engine's session store) always opens a fresh session id and persists it
-// to hold the loaded state, even though the fixture never addresses that second id afterward.
-const EXPECTED_SESSIONS = 2;
+// REPLAY_FIXTURE mints three sessions and, net of its own delete-save step, one save.
+// `create-session` mints the first; `branch-session` mints the second (`SessionStore.branchSession`
+// always opens a fresh session id for the branch, per `20-contract.md` §7.4); every other step
+// through `resume-session` addresses the first id rather than minting another (`resumeSession`
+// only reads the record, it never writes one). `load-game`, the last id-minting step, mints the
+// third: the engine's `loadGame` always opens a fresh session id and persists it to hold the
+// loaded state, even though the fixture never addresses that third id afterward. Two saves are
+// made and one is deleted (`../fixtures/replay-fixture.ts`'s own note on why), leaving one.
+const EXPECTED_SESSIONS = 3;
 const EXPECTED_SAVES = 1;
 
 function goldenTranscript(): Transcript {
@@ -162,6 +165,7 @@ describe("S8.5 — assertNonEmpty fails before comparison A, naming expected ver
       sessions: [
         { id: "s0", blob: "{}" },
         { id: "s1", blob: "{}" },
+        { id: "s2", blob: "{}" },
       ],
       saves: [{ id: "sv", blob: "{}" }],
     };

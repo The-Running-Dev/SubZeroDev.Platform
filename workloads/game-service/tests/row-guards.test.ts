@@ -32,6 +32,7 @@ function saveRecord(id: string, overrides: Partial<StoredSaveRecord> = {}): Stor
     saveId: id,
     campaignId: "campaign-a",
     blob: "{}",
+    savedAt: "2026-01-01T00:00:00.000Z",
     savedAtSeq: 0,
     audience: "player",
     ...overrides,
@@ -166,7 +167,13 @@ describe("S13.3 — the same seeding against profile/profile_achievement rows yi
     const store = opened.value;
     try {
       const profileId = "s13-3-profile";
-      await store.profiles.save({ formatVersion: 1, profileId, achievements: [{ campaignId: "c", achievementId: "a" }] });
+      await store.profiles.save({
+        formatVersion: 3,
+        profileId,
+        achievements: [{ campaignId: "c", achievementId: "a" }],
+        terminals: [],
+        kindData: [],
+      });
 
       const raw = await RawSchemaClient.connect(schema.schema);
       try {
@@ -250,8 +257,8 @@ describe("S13.4/S13.5 — the sweep runs under its configured statement timeout"
       // locked save row is what its second delete blocks on. Two runs, one label each, is what
       // makes the label load-bearing rather than decorative.
       await blocker.query(
-        "insert into save (tenant_id, save_id, campaign_id, blob, saved_at_seq, audience, engine_version, expires_at) " +
-          "values ('implicit-tenant', 's-sweep-label', 'c', '{}', 1, 'player', '1.0.0', now() - interval '1 day')",
+        "insert into save (tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, engine_version, expires_at) " +
+          "values ('implicit-tenant', 's-sweep-label', 'c', '{}', '2026-01-01T00:00:00.000Z', 1, 'player', '1.0.0', now() - interval '1 day')",
       );
       await blocker.query("begin");
       await blocker.query("select * from save where save_id = $1 for update", ["s-sweep-label"]);

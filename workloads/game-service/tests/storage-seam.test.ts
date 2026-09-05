@@ -18,10 +18,18 @@ function rawSeam(): StorageSeam {
   return {
     persistence: {
       sessions: { get: async () => undefined, put: async () => undefined },
-      saves: { get: async () => undefined, put: async () => undefined, delete: async () => undefined },
+      saves: {
+        get: async () => undefined,
+        put: async () => undefined,
+        listByProfile: async () => [],
+        delete: async () => undefined,
+      },
     },
     profiles: {
-      load: async (profileId: string) => ({ profile: { formatVersion: 1, profileId, achievements: [] }, warnings: [] }),
+      load: async (profileId: string) => ({
+        profile: { formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] },
+        warnings: [],
+      }),
       save: async () => ({ ok: true, warnings: [] }),
     },
     lifecycle: {

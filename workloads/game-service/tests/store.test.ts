@@ -64,6 +64,7 @@ function saveRecord(id: string, overrides: Partial<StoredSaveRecord> = {}): Stor
     saveId: id,
     campaignId: "campaign-a",
     blob: "{}",
+    savedAt: "2026-01-01T00:00:00.000Z",
     savedAtSeq: 0,
     audience: "player",
     ...overrides,
@@ -356,6 +357,7 @@ describe("S3.9 — tenant_id in every statement", () => {
       saveId: "sv1",
       campaignId: "c1",
       blob: "{}",
+      savedAt: "x" as EngineInstant,
       savedAtSeq: 0,
       audience: "player" as const,
       profileId: null,
@@ -368,7 +370,7 @@ describe("S3.9 — tenant_id in every statement", () => {
       sessionReclassifyStatement(tenantId, "s1"),
       saveSelectStatement(tenantId, "sv1"),
       saveUpsertStatement(tenantId, saveInput, ENGINE_VERSION_A, 10),
-      saveDeleteStatement(tenantId, "sv1"),
+      saveDeleteStatement(tenantId, "sv1", "x"),
       sessionLifecycleStatement(tenantId, "s1"),
       saveLifecycleStatement(tenantId, "sv1"),
       sweeps.sessions,
@@ -535,7 +537,7 @@ describe("S3.16 — migrateToHead is idempotent and safe under concurrent caller
         expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "save", "session"].sort());
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(1);
+        expect(migrationRows.rows).toHaveLength(2);
       } finally {
         await raw.close();
       }

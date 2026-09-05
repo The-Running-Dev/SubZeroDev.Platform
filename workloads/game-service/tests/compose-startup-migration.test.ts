@@ -172,7 +172,7 @@ describe("S12.4 — two composed instances starting concurrently against one nev
         );
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(1);
+        expect(migrationRows.rows).toHaveLength(2);
       } finally {
         await raw.close();
       }

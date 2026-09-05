@@ -173,6 +173,7 @@ export interface SaveRow {
   readonly saveId: string;
   readonly campaignId: string;
   readonly blob: string;
+  readonly savedAt: EngineInstant;
   readonly savedAtSeq: number;
   readonly audience: ProjectionAudience;
   readonly profileId: string | null;

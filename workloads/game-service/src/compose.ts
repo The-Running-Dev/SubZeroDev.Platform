@@ -101,8 +101,10 @@ function inMemoryPersistence(): {
         put: async (record) => {
           saves.set(record.saveId, record);
         },
-        delete: async (saveId) => {
-          saves.delete(saveId);
+        listByProfile: async (profileId) => [...saves.values()].filter((record) => record.profileId === profileId),
+        delete: async (saveId, expectedSavedAt) => {
+          const current = saves.get(saveId);
+          if (current !== undefined && current.savedAt === expectedSavedAt) saves.delete(saveId);
         },
       },
     },
@@ -120,7 +122,7 @@ function unavailablePersistence(): SessionPersistence {
   };
   return {
     sessions: { get: async () => fail(), put: async () => fail() },
-    saves: { get: async () => fail(), put: async () => fail(), delete: async () => fail() },
+    saves: { get: async () => fail(), put: async () => fail(), listByProfile: async () => fail(), delete: async () => fail() },
   };
 }
 

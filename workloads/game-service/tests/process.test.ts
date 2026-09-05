@@ -118,7 +118,7 @@ describe("S3.15 — the contract comes from the package, not from a copy in this
 
     const resolved = join(WORKLOAD_ROOT, "node_modules", "@subzerodev", "service-contract", "dist", "contract.json");
     expect(existsSync(resolved)).toBe(true);
-    expect(contract.operations.length).toBe(10);
+    expect(contract.operations.length).toBe(13);
   });
 
   it("holds no copy of the contract artifact in tracked repository source", () => {

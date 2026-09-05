@@ -132,7 +132,13 @@ export function createDispatcher(
 
       try {
         const returned = await invocation.apply(store, positional);
-        return { kind: "result", value: project(returned as JsonValue, row) };
+        // A `void`-returning store method (`deleteSave`) answers `undefined` — not itself a
+        // `JsonValue`, and rejected outright by `canonicalEncode`. Its response schema is
+        // `type: "null"` (contract-authored, per row, like every other response shape), so `null`
+        // is the one substitution this makes; every other operation's real return value passes
+        // through `project` unchanged.
+        const value = returned === undefined ? null : (returned as JsonValue);
+        return { kind: "result", value: project(value, row) };
       } catch (thrown) {
         // The engine's own `SessionStoreError` is the single exception that crosses a boundary as
         // a throw, because no `SessionStore` signature has an error channel. It is converted here
