@@ -6,26 +6,23 @@ namespace SubZeroDev.Platform.Sample.Web;
 /// written the way a consumer writes it — in the sample, not in a framework package.</summary>
 /// <remarks>D5-S8 turns the profile from a claim into a checked fact: an operated host with no
 /// authentication provider (I-C1) or no sink declaring <c>IsDurable</c> (I-C2) refuses to start.
-/// Both of these are the smallest honest thing that satisfies the rule, and both are replaced
-/// rather than kept: S9 registers the Identity module and a test issuer in place of the provider,
-/// and S13 registers the audit store module's sink in place of this one. Keeping them until then is
-/// what lets the operated sample run while the gate that made them necessary stays real — the
-/// alternative was degrading the host, which the profile exists to rule out.</remarks>
+/// Both of these are the smallest honest thing that satisfies the rule, and the authentication half
+/// is now the Identity module's <c>JwtBearerAuthenticationProvider</c>, configured here with a test
+/// issuer's signing key (D5-S9) — the sample's issuer is a test double, never a real one Platform
+/// chose or operates. S13 still owes the audit sink half, registered below until then.</remarks>
 public static class OperatedComposition
 {
-    /// <summary>An authentication provider that reads no credential and therefore establishes
-    /// none — every request continues as <see cref="Principal.Anonymous"/>, to be denied later by
-    /// authorization if it is denied at all. It is deliberately not a stub that fabricates a
-    /// principal: a sample that authenticates nobody is honest, and one that authenticates everybody
-    /// is the "registered check that always passes" the brief refuses.</summary>
-    public sealed class NoCredentialAuthenticationProvider : IAuthenticationProvider
-    {
-        public string Name => "Sample.NoCredential";
+    /// <summary>The test issuer's own identity. Never a real identity provider — the sample's issuer
+    /// is a test double per <c>20-contract.md</c> §Out of scope.</summary>
+    public const string TestIssuer = "https://sample-test-issuer.internal";
 
-        public Task<Result<Principal, AuthenticationError>> AuthenticateAsync(
-            IAuthenticationRequest request, CancellationToken cancellationToken) =>
-            Task.FromResult(Result<Principal, AuthenticationError>.Success(Principal.Anonymous));
-    }
+    /// <summary>The test issuer's signing key. Already cached, exactly as a real deployment's key
+    /// material is fetched at startup rather than on the request path — fixed, rather than
+    /// generated per run, so a token minted against it for manual testing keeps validating across
+    /// restarts. A real deployment's key is the operator's secret; this one is a published test
+    /// fixture and must never be reused as one.</summary>
+    public static byte[] TestIssuerSigningKey { get; } =
+        Convert.FromHexString("2f8a6c1d9e4b7053a1c8f2d6b9e0473c5a8d1f6b2e9c4073ad6f18b2e9c40735");
 
     /// <summary>An audit sink that appends to a file the operator names, and declares
     /// <see cref="IsDurable"/> because a file survives a restart. Not the audit store: it has no

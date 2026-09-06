@@ -29,6 +29,12 @@
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Testing\SubZeroDev.Platform.Testing.csproj" />
   </ItemGroup>
 
+  <!-- Identity is not packed yet (S18 packs every D5 package), so there is no package form for
+       UsePlatformPackages to switch this to: a project reference regardless. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
     <PackageReference Include="SubZeroDev.Platform.Testing" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
