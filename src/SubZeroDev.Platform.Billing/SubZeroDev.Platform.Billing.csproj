@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Not shipped as a package yet: S18 packs every D5 package in CI. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
+  </ItemGroup>
+
+</Project>
