@@ -1,6 +1,6 @@
 {
-  "manifestHash": "6fc653c74a574b0557ec9bf0cf687e59eb8c0bbfcdf653ce4d454a010e2f80c3",
-  "generated": "2026-09-03",
+  "manifestHash": "3b572b56e4c91da2146d6614cdf3b3516fbdadf1b07589e82f358b36e5f6f38c",
+  "generated": "2026-09-06",
   "gates": [
     {
       "name": "Test",
@@ -8,7 +8,7 @@
     },
     {
       "name": "Run the sample in both roles",
-      "command": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1 (Linux-only)"
+      "command": "pwsh ./build/Test-SampleRoundTrip.ps1"
     },
     {
       "name": "Assert no framework project references a workload",
@@ -16,58 +16,62 @@
     },
     {
       "name": "Typecheck",
-      "command": "cd workloads/game-service && npm run typecheck"
+      "command": "npm run typecheck (workloads/game-service)"
     },
     {
       "name": "Start the workload and the edge, the documented way",
-      "command": "cd workloads/game-service && GAME_SERVICE_PORT=8080 npm start; then start workloads/game-edge .../SubZeroDev.Platform.GameEdge.dll with GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 ASPNETCORE_URLS=http://127.0.0.1:5080; curl /livez /readyz /health/live /health/ready"
+      "command": "smoke test per build.yml"
     },
     {
       "name": "Run the replay against the workload",
-      "command": "cd workloads/game-service && npx vitest run tests/replay.test.ts"
+      "command": "npx vitest run tests/replay.test.ts"
     },
     {
       "name": "Run the replay against the edge",
-      "command": "cd workloads/game-service && GAME_EDGE_DLL=<built edge dll> npx vitest run tests/replay-edge.test.ts"
+      "command": "npx vitest run tests/replay-edge.test.ts"
     },
     {
       "name": "Migrate the schema to head, the documented way",
-      "command": "cd workloads/game-service && GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate"
+      "command": "npm run migrate"
     },
     {
       "name": "Start the workload against the durable store, the documented way",
-      "command": "cd workloads/game-service && GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start; curl /readyz"
+      "command": "smoke test per build.yml"
     },
     {
       "name": "Run the one-instance contention proof",
-      "command": "cd workloads/game-service && npx vitest run tests/contention-one-instance.test.ts"
+      "command": "npx vitest run tests/contention-one-instance.test.ts"
     },
     {
       "name": "Run the two-instance contention proof",
-      "command": "cd workloads/game-service && npx vitest run tests/contention-two-instances.test.ts"
+      "command": "npx vitest run tests/contention-two-instances.test.ts"
     },
     {
       "name": "Run the durable replay",
-      "command": "cd workloads/game-service && npx vitest run tests/durable-replay.test.ts"
+      "command": "npx vitest run tests/durable-replay.test.ts"
     },
     {
       "name": "Run the port-conformance suite",
-      "command": "cd workloads/game-service && npx vitest run tests/conformance.test.ts"
+      "command": "npx vitest run tests/conformance.test.ts"
     },
     {
       "name": "Test (game-service)",
-      "command": "cd workloads/game-service && GAME_EDGE_DLL=<built edge dll> npm test"
+      "command": "npm test (workloads/game-service)"
     },
     {
       "name": "Validate Markdown links, terminology, and generated files",
-      "command": "pwsh ./build/Test-Documentation.ps1"
+      "command": "./build/Test-Documentation.ps1"
     },
     {
       "name": "Validate design/30-slices.md's Status markers",
-      "command": "pwsh ./build/Test-SliceStatusMarkers.ps1"
+      "command": "./build/Test-SliceStatusMarkers.ps1"
     },
     {
-      "name": "Build and verify the status-page site",
+      "name": "Build and verify the status-page site (docs-ci)",
+      "command": "npm --prefix site ci && npm --prefix site run check"
+    },
+    {
+      "name": "Build and verify the status-page site (docs-deploy)",
       "command": "npm --prefix site ci && npm --prefix site run check"
     }
   ]

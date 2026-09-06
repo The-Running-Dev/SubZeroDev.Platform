@@ -99,16 +99,16 @@ internal sealed class EntitlementContributorRegistry : IEntitlementContributorRe
     }
 }
 
-/// <summary>The keyed-service key every entitlement contributor registers under. Internal, and
+/// <summary>The keyed-service key every entitlement contributor registers under. Public, and
 /// deliberately not the plain <see cref="IEntitlementContributor"/> service type: nothing may resolve
 /// a contributor by ordinary unkeyed resolution (S7.7) — <see cref="IEntitlementEvaluator"/> stays the
-/// only public entry. Billing's and Licensing's registration channel (S11, S12) is not decided by
-/// this slice; only the framework's own Community baseline and this repository's tests use this key
-/// today.</summary>
-internal static class EntitlementContributorRegistration
+/// only public entry. This is Billing's and Licensing's registration channel (S11, S12): a module
+/// outside Core has no way to reach an internal type, so the key must be reachable to be usable by
+/// anything other than the framework's own Community baseline.</summary>
+public static class EntitlementContributorRegistration
 {
     /// <summary>The key. A <see langword="const string"/> so <c>[FromKeyedServices]</c> can name it.</summary>
-    internal const string ServiceKey = "platform.entitlement.contributor";
+    public const string ServiceKey = "platform.entitlement.contributor";
 }
 
 /// <summary>The feature names the Community baseline grants. Empty by default; a consuming host

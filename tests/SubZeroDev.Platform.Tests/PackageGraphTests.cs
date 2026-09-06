@@ -79,6 +79,40 @@ public sealed class PackageGraphTests
         }
     }
 
+    // S11.3 -------------------------------------------------------------------------------------
+
+    [Fact]
+    public void I_C8_nothing_outside_Billing_references_SubscriptionState_or_any_subscription_type()
+    {
+        var map = SubscriptionTypeGuard.Resolve(NonBillingAssemblies());
+
+        var violations = SubscriptionTypeGuard.Violations(map);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void S11_3_the_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["SubZeroDev.Platform.Organizations"] = new HashSet<string> { "SubscriptionState" },
+        };
+
+        var violations = SubscriptionTypeGuard.Violations(broken);
+
+        Assert.Equal(["SubZeroDev.Platform.Organizations -> SubscriptionState"], violations);
+    }
+
+    /// <summary>Every assembly outside Billing that is built alongside this test run: the six
+    /// framework assemblies plus every other module. Billing itself is deliberately absent — I-C8
+    /// bounds what may reference its types from <em>outside</em> it, not from within.</summary>
+    private static IReadOnlyCollection<Assembly> NonBillingAssemblies() =>
+    [
+        .. FrameworkAssemblies(),
+        typeof(SubZeroDev.Platform.Organizations.Organization).Assembly, // Organizations
+    ];
+
     private static IReadOnlyCollection<Assembly> FrameworkAssemblies() =>
     [
         typeof(CompositionProfile).Assembly, // Abstractions
@@ -227,6 +261,69 @@ internal static class PackageGraph
                 references
                     .Where(reference => !FrameworkPackages.Contains(reference))
                     .Select(reference => $"{package} -> {reference}"));
+        }
+
+        return violations;
+    }
+}
+
+/// <summary>I-C8's checking logic, on the same abstracted-graph mechanism <see cref="PackageGraph"/>
+/// uses for I-C6 and I-C7 (S1) — a map from assembly name to the type names it references, checked
+/// against a fixed forbidden set, proved first against a deliberately broken fixture (S11.3) before
+/// it is trusted against the real, compiled assemblies.</summary>
+internal static class SubscriptionTypeGuard
+{
+    /// <summary>The subscription-specific type names nothing outside Billing may reference (I-C8).
+    /// Deliberately narrower than every type Billing declares: <c>PlanKey</c> and
+    /// <c>ProviderEventReceipt</c> are not subscription types, and the invariant does not reach
+    /// them.</summary>
+    internal static readonly IReadOnlyCollection<string> SubscriptionTypeNames =
+    [
+        "SubscriptionState",
+        "SubscriptionId",
+        "Subscription",
+    ];
+
+    /// <summary>Reads the <c>TypeRef</c> table directly from each assembly's compiled metadata,
+    /// keeping only the bare type names — the same "inspect metadata, never load or run the
+    /// assembly" discipline <c>PackageGraphTests.ReferencedAssemblyNames</c> uses for assembly
+    /// references.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlySet<string>> Resolve(IReadOnlyCollection<Assembly> assemblies)
+    {
+        var map = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var assembly in assemblies)
+        {
+            using var stream = File.OpenRead(assembly.Location);
+            using var peReader = new PEReader(stream);
+            var metadataReader = peReader.GetMetadataReader();
+
+            var typeNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var handle in metadataReader.TypeReferences)
+            {
+                var reference = metadataReader.GetTypeReference(handle);
+                typeNames.Add(metadataReader.GetString(reference.Name));
+            }
+
+            map[assembly.GetName().Name!] = typeNames;
+        }
+
+        return map;
+    }
+
+    /// <summary>I-C8: nothing in <paramref name="typeReferencesByAssembly"/> — which the caller
+    /// builds from every assembly <em>outside</em> Billing — may reference a subscription type.</summary>
+    internal static IReadOnlyList<string> Violations(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> typeReferencesByAssembly)
+    {
+        var violations = new List<string>();
+
+        foreach (var (assembly, typeNames) in typeReferencesByAssembly)
+        {
+            violations.AddRange(
+                typeNames
+                    .Where(SubscriptionTypeNames.Contains)
+                    .Select(typeName => $"{assembly} -> {typeName}"));
         }
 
         return violations;
