@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -106,6 +107,38 @@ public sealed class IdentityTests
 
         Assert.False(authenticated.IsSuccess);
         Assert.Equal(nameof(AuthenticationError.KeyMaterialUnavailable), authenticated.Error.Code);
+    }
+
+    /// <summary>S8.10, completed — with the real provider wired through the full request pipeline
+    /// and no key cached, the request fails as unauthenticated rather than as a server error, and
+    /// the module holds nothing capable of issuing the outbound call S8.10 forbids: the Identity
+    /// assembly carries no reference to <c>System.Net.Http</c> at all, so there is no client left to
+    /// reach for one, cached or not.</summary>
+    [Fact]
+    public async Task S8_10_No_cached_key_fails_end_to_end_with_no_outbound_call_capability()
+    {
+        var identityAssembly = typeof(JwtBearerAuthenticationProvider).Assembly;
+        var referenced = identityAssembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
+        Assert.DoesNotContain("System.Net.Http", referenced);
+
+        var (app, client) = await WebHostUnderTest.StartAsync(services => services.AddSingleton<IAuthenticationProvider>(
+            new JwtBearerAuthenticationProvider("test-issuer-a", IssuerA, signingKey: null)));
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/");
+            request.Headers.Add("Authorization", $"Bearer {MintToken(IssuerAKey, IssuerA, "alice")}");
+
+            using var response = await client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains(nameof(AuthenticationError.KeyMaterialUnavailable), body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
     }
 
     /// <summary>No credential of this provider's kind (no header, and a differently-issued, still
