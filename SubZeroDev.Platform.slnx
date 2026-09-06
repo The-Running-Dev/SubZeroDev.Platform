@@ -10,6 +10,7 @@
     <Project Path="src/SubZeroDev.Platform.Core/SubZeroDev.Platform.Core.csproj" />
     <Project Path="src/SubZeroDev.Platform.Hosting/SubZeroDev.Platform.Hosting.csproj" />
     <Project Path="src/SubZeroDev.Platform.Identity/SubZeroDev.Platform.Identity.csproj" />
+    <Project Path="src/SubZeroDev.Platform.Licensing/SubZeroDev.Platform.Licensing.csproj" />
     <Project Path="src/SubZeroDev.Platform.Observability/SubZeroDev.Platform.Observability.csproj" />
     <Project Path="src/SubZeroDev.Platform.Organizations/SubZeroDev.Platform.Organizations.csproj" />
     <Project Path="src/SubZeroDev.Platform.Persistence/SubZeroDev.Platform.Persistence.csproj" />
