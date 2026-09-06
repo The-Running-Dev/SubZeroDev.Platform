@@ -1,99 +1,94 @@
 {
-"gates": [
-  {
-    "name": "Test",
-    "status": "Passed",
-    "detail": "dotnet test --no-build --configuration Release --verbosity normal (build.yml, 'build' job): Test Run Successful. Total tests: 396. Passed: 396. Total time: 46.1148 Seconds."
-  },
-  {
-    "name": "Run the sample in both roles",
-    "status": "DidNotRun",
-    "reason": "build/Test-SampleRoundTrip.ps1 documents itself as Linux-only ('Linux-only, and it always was: it signals processes and reads the store with sqlite3... both signals go through a P/Invoke to libc's kill(2)'). This session runs on Windows, so the script's SIGTERM/SIGKILL distinction via libc P/Invoke cannot execute here. The corresponding CI check on the pull request (build.yml, 'build' job) is where the answer comes from."
-  },
-  {
-    "name": "Assert no framework project references a workload",
-    "status": "Passed",
-    "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: 'No project under src/ or samples/ references workloads/ (34 project file(s) checked).' Exit code 0."
-  },
-  {
-    "name": "Typecheck",
-    "status": "Passed",
-    "detail": "npm run typecheck (workloads/game-service, tsc --noEmit): completed with no output and exit code 0, i.e. no type errors."
-  },
-  {
-    "name": "Start the workload and the edge, the documented way",
-    "status": "Passed",
-    "detail": "Reproduced the CI step's commands directly: started the game-service workload on 127.0.0.1:8080 (npm start), curl http://127.0.0.1:8080/livez -> {\"status\":\"healthy\"}, curl http://127.0.0.1:8080/readyz -> {\"status\":\"healthy\"}; started the built GameEdge on 127.0.0.1:5080 against that workload, curl http://127.0.0.1:5080/health/live -> {\"status\":\"Healthy\",\"checks\":[]}, curl http://127.0.0.1:5080/health/ready -> {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}. Both processes stopped afterward."
-  },
-  {
-    "name": "Run the replay against the workload",
-    "status": "Passed",
-    "detail": "npx vitest run tests/replay.test.ts (workloads/game-service): Test Files 1 passed (1). Tests 11 passed (11)."
-  },
-  {
-    "name": "Run the replay against the edge",
-    "status": "Passed",
-    "detail": "GAME_EDGE_DLL=<built GameEdge.dll path> npx vitest run tests/replay-edge.test.ts (workloads/game-service): Test Files 1 passed (1). Tests 2 passed (2)."
-  },
-  {
-    "name": "Migrate the schema to head, the documented way",
-    "status": "Passed",
-    "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate (workloads/game-service) against docker compose postgres: output 'migrated ci_documented_migrate to head', exit code 0."
-  },
-  {
-    "name": "Start the workload against the durable store, the documented way",
-    "status": "Passed",
-    "detail": "GAME_SERVICE_PORT=8081 GAME_SERVICE_STORAGE=durable GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start npm start, then curl http://127.0.0.1:8081/readyz -> {\"status\":\"healthy\"}. Process stopped afterward."
-  },
-  {
-    "name": "Run the one-instance contention proof",
-    "status": "Passed",
-    "detail": "npx vitest run tests/contention-one-instance.test.ts (workloads/game-service): Test Files 1 passed (1). Tests 5 passed (5)."
-  },
-  {
-    "name": "Run the two-instance contention proof",
-    "status": "Passed",
-    "detail": "npx vitest run tests/contention-two-instances.test.ts (workloads/game-service): Test Files 1 passed (1). Tests 7 passed (7)."
-  },
-  {
-    "name": "Run the durable replay",
-    "status": "Passed",
-    "detail": "npx vitest run tests/durable-replay.test.ts (workloads/game-service): Test Files 1 passed (1). Tests 7 passed (7)."
-  },
-  {
-    "name": "Run the port-conformance suite",
-    "status": "Passed",
-    "detail": "npx vitest run tests/conformance.test.ts (workloads/game-service): Test Files 1 passed (1). Tests 7 passed (7)."
-  },
-  {
-    "name": "Test (game-service)",
-    "status": "Passed",
-    "detail": "GAME_EDGE_DLL=<built GameEdge.dll path> npm test (workloads/game-service, vitest run, full suite) against docker compose postgres: Test Files 24 passed | 1 skipped (25). Tests 197 passed | 1 skipped (198). The one skipped test is inside tests/trace-evidence.test.ts, which self-skips when OTEL_COLLECTOR_BIN is unset; CI downloads a Linux otelcol-contrib binary for this env var, and no Windows-compatible build of that binary was available locally, so that one sub-case was not exercised here (see the separate 'OTEL trace-evidence sub-case' DidNotRun entry below)."
-  },
-  {
-    "name": "OTEL trace-evidence sub-case (tests/trace-evidence.test.ts, within npm test)",
-    "status": "DidNotRun",
-    "reason": "This test requires OTEL_COLLECTOR_BIN pointing at a real OpenTelemetry Collector binary. build.yml's CI job downloads otelcol-contrib_0.158.0_linux_amd64.tar.gz (a Linux binary) for this purpose. This session runs on Windows and no Windows-compatible collector binary was fetched, so the test self-skipped rather than running for real; the corresponding CI check on the pull request is where this sub-case is actually exercised."
-  },
-  {
-    "name": "Validate Markdown links, terminology, and generated files",
-    "status": "Passed",
-    "detail": "./build/Test-Documentation.ps1: 'Documentation checks passed across 127 Markdown file(s), with 2 warning(s).' (design/d3/90-decisions.md:1138 and :1141, both 'Use JSON instead of Json' terminology warnings — non-blocking.) Exit code 0."
-  },
-  {
-    "name": "Validate design/30-slices.md's Status markers",
-    "status": "Passed",
-    "detail": "./build/Test-SliceStatusMarkers.ps1: 'Slice status markers consistent across 11 slice(s) in .../design/30-slices.md.' Exit code 0."
-  },
-  {
-    "name": "Build and verify the status-page site (docs-ci.yml verify job)",
-    "status": "Passed",
-    "detail": "npm --prefix site ci && npm --prefix site run check: format:check, lint (1 non-blocking oxlint warning in src/shared.tsx), typecheck, test (Test Files 6 passed (6), Tests 57 passed (57)), test:build ('Both built HTML entry points contain their required static metadata.'), test:merge ('Package merge preserves docs and rejects all protected-boundary violations.') all completed, exit code 0."
-  },
-  {
-    "name": "Build and verify the status-page site (docs-deploy.yml)",
-    "status": "Passed",
-    "detail": "Identical command to the docs-ci.yml verify job's step above (npm --prefix site ci && npm --prefix site run check), run once and applying to both workflow occurrences; this workflow only triggers on push to main so it never runs as a PR check, but the command was verified locally regardless. Same result: exit code 0."
-  }
-]
+  "gates": [
+    {
+      "name": "Test",
+      "status": "Passed",
+      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Test Run Successful. Total tests: 408. Passed: 408. Total time: 43.6 seconds."
+    },
+    {
+      "name": "Run the sample in both roles",
+      "status": "DidNotRun",
+      "reason": "build/Test-SampleRoundTrip.ps1 P/Invokes libc's kill(2) to send real POSIX signals (documented in the script's own header as deliberate, since .NET/PowerShell have no SIGTERM expression), which only resolves on Linux; this worktree is Windows. Running it anyway got as far as 'Both roles served their probes in Production.' (the actual round-trip assertion) before the script's own kill-based cleanup path threw 'Exception calling \"kill\" with \"2\" argument(s): \"Value cannot be null. (Parameter 'path1')\"' and exited 1. The corresponding CI check on the pull request (job build, ubuntu-latest) is where this gate's real answer comes from."
+    },
+    {
+      "name": "Assert no framework project references a workload",
+      "status": "Passed",
+      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: No project under src/ or samples/ references workloads/ (37 project file(s) checked)."
+    },
+    {
+      "name": "Typecheck",
+      "status": "Passed",
+      "detail": "npm run typecheck (workloads/game-service, tsc --noEmit): completed with no errors, exit 0."
+    },
+    {
+      "name": "Start the workload and the edge, the documented way",
+      "status": "Passed",
+      "detail": "Started game-service (npm start, GAME_SERVICE_PORT=8080): /livez and /readyz both returned {\"status\":\"healthy\"}. Started GameEdge (dotnet SubZeroDev.Platform.GameEdge.dll, GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080, ASPNETCORE_ENVIRONMENT=Production) on 127.0.0.1:5080: /health/live returned {\"status\":\"Healthy\",\"checks\":[]} and /health/ready returned {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
+    },
+    {
+      "name": "Run the replay against the workload",
+      "status": "Passed",
+      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11)."
+    },
+    {
+      "name": "Run the replay against the edge",
+      "status": "Passed",
+      "detail": "GAME_EDGE_DLL set to the built Release GameEdge.dll; npx vitest run tests/replay-edge.test.ts: Test Files 1 passed (1), Tests 2 passed (2)."
+    },
+    {
+      "name": "Migrate the schema to head, the documented way",
+      "status": "Passed",
+      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate against the docker-compose postgres: 'migrated ci_documented_migrate to head', exit 0."
+    },
+    {
+      "name": "Start the workload against the durable store, the documented way",
+      "status": "Passed",
+      "detail": "GAME_SERVICE_STORAGE=durable npm start against the docker-compose postgres (schema ci_documented_durable_start): /readyz returned {\"status\":\"healthy\"} within the polling window."
+    },
+    {
+      "name": "Run the one-instance contention proof",
+      "status": "Passed",
+      "detail": "npx vitest run tests/contention-one-instance.test.ts: Test Files 1 passed (1), Tests 5 passed (5)."
+    },
+    {
+      "name": "Run the two-instance contention proof",
+      "status": "Passed",
+      "detail": "npx vitest run tests/contention-two-instances.test.ts: Test Files 1 passed (1), Tests 7 passed (7)."
+    },
+    {
+      "name": "Run the durable replay",
+      "status": "Passed",
+      "detail": "npx vitest run tests/durable-replay.test.ts: Test Files 1 passed (1), Tests 7 passed (7)."
+    },
+    {
+      "name": "Run the port-conformance suite",
+      "status": "Passed",
+      "detail": "npx vitest run tests/conformance.test.ts, against the durable target with postgres up: Test Files 1 passed (1), Tests 7 passed (7)."
+    },
+    {
+      "name": "Test (game-service)",
+      "status": "Passed",
+      "detail": "npm test (vitest run, GAME_EDGE_DLL set): Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198), exit 0. The single skip is inside tests/trace-evidence.test.ts, which self-skips its one test when OTEL_COLLECTOR_BIN is unset; the CI step sets it to a Linux otelcol-contrib binary that has no Windows build, so this one sub-test could not be reproduced in this environment and is unverified here even though the step as a whole passed. The corresponding CI check on the pull request covers that sub-test."
+    },
+    {
+      "name": "Validate Markdown links, terminology, and generated files",
+      "status": "Passed",
+      "detail": "pwsh ./build/Test-Documentation.ps1: Documentation checks passed across 127 Markdown file(s), with 2 warning(s) (pre-existing 'Use JSON instead of Json' terminology warnings in design/d3/90-decisions.md, unrelated to this change and not touched by it)."
+    },
+    {
+      "name": "Validate design/30-slices.md's Status markers",
+      "status": "Passed",
+      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: Slice status markers consistent across 11 slice(s) in design/30-slices.md."
+    },
+    {
+      "name": "Build and verify the status-page site (docs-ci)",
+      "status": "Passed",
+      "detail": "npm --prefix site ci && npm --prefix site run check (format:check, lint, typecheck, test, test:build, test:merge): Prettier clean; oxlint reported one pre-existing warning (src/shared.tsx:12:14, react/only-export-components, unrelated to this change); tsc -b clean; vitest Test Files 6 passed (6), Tests 57 passed (57); production build succeeded and both entry points carry required metadata; package-merge script reported 'Package merge preserves docs and rejects all protected-boundary violations.' Exit 0."
+    },
+    {
+      "name": "Build and verify the status-page site (docs-deploy)",
+      "status": "Passed",
+      "detail": "Identical command and working tree as the docs-ci step above (npm --prefix site ci && npm --prefix site run check) — this workflow only runs on push to main and duplicates that step verbatim, so the run just performed for docs-ci covers it too: same 6/6 test files, 57/57 tests, clean build, exit 0."
+    }
+  ]
 }
