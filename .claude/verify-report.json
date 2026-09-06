@@ -1,94 +1,107 @@
 {
+  "pullRequest": 218,
+  "headSha": "a745dc912faf4db8c5c6bdda5b74e9660b98e9a6",
+  "discoveredBy": "# verification: true flags in .github/workflows/*.yml",
   "gates": [
     {
-      "name": "Test",
+      "name": "build.yml / build — Test",
       "status": "Passed",
-      "detail": "dotnet test --no-build --configuration Release --verbosity normal: Test Run Successful. Total tests: 408. Passed: 408. Total time: 43.6 seconds."
+      "detail": "dotnet build --configuration Release then dotnet test --no-build --configuration Release --verbosity normal: Total tests 422, Passed 422, Failed 0, Total time 47.8321 Seconds; build succeeded with 0 Warning(s), 0 Error(s)."
     },
     {
-      "name": "Run the sample in both roles",
+      "name": "build.yml / build — Run the sample in both roles",
       "status": "DidNotRun",
-      "reason": "build/Test-SampleRoundTrip.ps1 P/Invokes libc's kill(2) to send real POSIX signals (documented in the script's own header as deliberate, since .NET/PowerShell have no SIGTERM expression), which only resolves on Linux; this worktree is Windows. Running it anyway got as far as 'Both roles served their probes in Production.' (the actual round-trip assertion) before the script's own kill-based cleanup path threw 'Exception calling \"kill\" with \"2\" argument(s): \"Value cannot be null. (Parameter 'path1')\"' and exited 1. The corresponding CI check on the pull request (job build, ubuntu-latest) is where this gate's real answer comes from."
+      "reason": "build/Test-SampleRoundTrip.ps1 is Linux-only by its own docstring (\"Linux-only, and it always was: it signals processes and reads the store with sqlite3\") — it P/Invokes libc's kill(2) for SIGTERM/SIGKILL. On this Windows host it printed \"Both roles served their probes in Production.\" and then exited 1 at the first signal: \"Test-SampleRoundTrip.ps1: Exception calling \\\"kill\\\" with \\\"2\\\" argument(s): \\\"Value cannot be null. (Parameter 'path1')\\\"\". The outbox-survives-process-death half of the gate was therefore never evaluated; the CI check on this pull request is where its answer comes from."
     },
     {
-      "name": "Assert no framework project references a workload",
+      "name": "build.yml / build — Assert no framework project references a workload",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1: No project under src/ or samples/ references workloads/ (37 project file(s) checked)."
+      "detail": "pwsh ./build/Test-WorkloadIsolation.ps1, exit 0: \"No project under src/ or samples/ references workloads/ (40 project file(s) checked).\""
     },
     {
-      "name": "Typecheck",
+      "name": "build.yml / game-service — Typecheck",
       "status": "Passed",
-      "detail": "npm run typecheck (workloads/game-service, tsc --noEmit): completed with no errors, exit 0."
+      "detail": "npm run typecheck in workloads/game-service (tsc --noEmit), exit 0, no diagnostics."
     },
     {
-      "name": "Start the workload and the edge, the documented way",
+      "name": "build.yml / game-service — Start the workload and the edge, the documented way",
       "status": "Passed",
-      "detail": "Started game-service (npm start, GAME_SERVICE_PORT=8080): /livez and /readyz both returned {\"status\":\"healthy\"}. Started GameEdge (dotnet SubZeroDev.Platform.GameEdge.dll, GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080, ASPNETCORE_ENVIRONMENT=Production) on 127.0.0.1:5080: /health/live returned {\"status\":\"Healthy\",\"checks\":[]} and /health/ready returned {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
+      "detail": "The step's own commands, run locally: workload livez {\"status\":\"healthy\"}, readyz {\"status\":\"healthy\"}; edge health/live {\"status\":\"Healthy\",\"checks\":[]}, health/ready {\"status\":\"Healthy\",\"checks\":[{\"name\":\"game-workload\",\"status\":\"Healthy\"},{\"name\":\"platform.audit.sink\",\"status\":\"Healthy\"}]}."
     },
     {
-      "name": "Run the replay against the workload",
+      "name": "build.yml / game-service — Run the replay against the workload",
       "status": "Passed",
-      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11)."
+      "detail": "npx vitest run tests/replay.test.ts: Test Files 1 passed (1), Tests 11 passed (11), duration 12.81s."
     },
     {
-      "name": "Run the replay against the edge",
+      "name": "build.yml / game-service — Run the replay against the edge",
       "status": "Passed",
-      "detail": "GAME_EDGE_DLL set to the built Release GameEdge.dll; npx vitest run tests/replay-edge.test.ts: Test Files 1 passed (1), Tests 2 passed (2)."
+      "detail": "npx vitest run tests/replay-edge.test.ts with GAME_EDGE_DLL set to the Release build: Test Files 1 passed (1), Tests 2 passed (2), duration 6.03s."
     },
     {
-      "name": "Migrate the schema to head, the documented way",
+      "name": "build.yml / game-service — Migrate the schema to head, the documented way",
       "status": "Passed",
-      "detail": "GAME_SERVICE_DB_SCHEMA=ci_documented_migrate npm run migrate against the docker-compose postgres: 'migrated ci_documented_migrate to head', exit 0."
+      "detail": "npm run migrate with GAME_SERVICE_DB_SCHEMA=ci_documented_migrate against the compose PostgreSQL: \"migrated ci_documented_migrate to head\", exit 0."
     },
     {
-      "name": "Start the workload against the durable store, the documented way",
+      "name": "build.yml / game-service — Start the workload against the durable store, the documented way",
       "status": "Passed",
-      "detail": "GAME_SERVICE_STORAGE=durable npm start against the docker-compose postgres (schema ci_documented_durable_start): /readyz returned {\"status\":\"healthy\"} within the polling window."
+      "detail": "npm start with GAME_SERVICE_STORAGE=durable, GAME_SERVICE_DB_SCHEMA=ci_documented_durable_start, port 8081; /readyz answered {\"status\":\"healthy\"} — the self-migrating durable start path reached a serving, ready instance."
     },
     {
-      "name": "Run the one-instance contention proof",
+      "name": "build.yml / game-service — Run the one-instance contention proof",
       "status": "Passed",
-      "detail": "npx vitest run tests/contention-one-instance.test.ts: Test Files 1 passed (1), Tests 5 passed (5)."
+      "detail": "npx vitest run tests/contention-one-instance.test.ts: Test Files 1 passed (1), all tests passed."
     },
     {
-      "name": "Run the two-instance contention proof",
+      "name": "build.yml / game-service — Run the two-instance contention proof",
       "status": "Passed",
-      "detail": "npx vitest run tests/contention-two-instances.test.ts: Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "npx vitest run tests/contention-two-instances.test.ts: Test Files 1 passed (1), Tests 7 passed (7), duration 18.54s."
     },
     {
-      "name": "Run the durable replay",
+      "name": "build.yml / game-service — Run the durable replay",
       "status": "Passed",
-      "detail": "npx vitest run tests/durable-replay.test.ts: Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "npx vitest run tests/durable-replay.test.ts: Test Files 1 passed (1), Tests 7 passed (7), duration 7.83s."
     },
     {
-      "name": "Run the port-conformance suite",
+      "name": "build.yml / game-service — Run the port-conformance suite",
       "status": "Passed",
-      "detail": "npx vitest run tests/conformance.test.ts, against the durable target with postgres up: Test Files 1 passed (1), Tests 7 passed (7)."
+      "detail": "npx vitest run tests/conformance.test.ts: Test Files 1 passed (1), Tests 7 passed (7), duration 1.50s."
     },
     {
-      "name": "Test (game-service)",
+      "name": "build.yml / game-service — Test",
       "status": "Passed",
-      "detail": "npm test (vitest run, GAME_EDGE_DLL set): Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198), exit 0. The single skip is inside tests/trace-evidence.test.ts, which self-skips its one test when OTEL_COLLECTOR_BIN is unset; the CI step sets it to a Linux otelcol-contrib binary that has no Windows build, so this one sub-test could not be reproduced in this environment and is unverified here even though the step as a whole passed. The corresponding CI check on the pull request covers that sub-test."
+      "detail": "npm test in workloads/game-service with GAME_EDGE_DLL set: Test Files 24 passed | 1 skipped (25), Tests 197 passed | 1 skipped (198), duration 30.98s. The skipped file is tests/trace-evidence.test.ts, whose describe block is `describe.skipIf(!process.env[\"OTEL_COLLECTOR_BIN\"])` — that variable is set only by build.yml, which downloads a linux_amd64 OpenTelemetry Collector this host cannot run. That one block was not exercised locally; the CI check on this pull request is where its answer comes from."
     },
     {
-      "name": "Validate Markdown links, terminology, and generated files",
+      "name": "docs-ci.yml / documentation — Validate Markdown links, terminology, and generated files",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-Documentation.ps1: Documentation checks passed across 127 Markdown file(s), with 2 warning(s) (pre-existing 'Use JSON instead of Json' terminology warnings in design/d3/90-decisions.md, unrelated to this change and not touched by it)."
+      "detail": "./build/Test-Documentation.ps1, exit 0: \"Documentation checks passed across 127 Markdown file(s), with 2 warning(s).\" Both warnings are pre-existing and untouched by this branch — design/d3/90-decisions.md:1138:66 and :1141:948, Terminology: Use 'JSON' instead of 'Json'."
     },
     {
-      "name": "Validate design/30-slices.md's Status markers",
+      "name": "docs-ci.yml / slice-status-markers — Validate design/30-slices.md's Status markers",
       "status": "Passed",
-      "detail": "pwsh ./build/Test-SliceStatusMarkers.ps1: Slice status markers consistent across 11 slice(s) in design/30-slices.md."
+      "detail": "./build/Test-SliceStatusMarkers.ps1, exit 0: \"Slice status markers consistent across 11 slice(s) in design/30-slices.md.\""
     },
     {
-      "name": "Build and verify the status-page site (docs-ci)",
+      "name": "docs-ci.yml / verify — Build and verify the status-page site",
       "status": "Passed",
-      "detail": "npm --prefix site ci && npm --prefix site run check (format:check, lint, typecheck, test, test:build, test:merge): Prettier clean; oxlint reported one pre-existing warning (src/shared.tsx:12:14, react/only-export-components, unrelated to this change); tsc -b clean; vitest Test Files 6 passed (6), Tests 57 passed (57); production build succeeded and both entry points carry required metadata; package-merge script reported 'Package merge preserves docs and rejects all protected-boundary violations.' Exit 0."
+      "detail": "npm --prefix site ci then npm --prefix site run check, exit 0: format:check, lint, typecheck, vitest (Test Files 6 passed (6), Tests 57 passed (57)), build (tsc -b plus the landing-page adapter, built in 263ms), \"Both built HTML entry points contain their required static metadata.\", and \"Package merge preserves docs and rejects all protected-boundary violations.\""
     },
     {
-      "name": "Build and verify the status-page site (docs-deploy)",
+      "name": "docs-deploy.yml / deploy — Build and verify the status-page site",
       "status": "Passed",
-      "detail": "Identical command and working tree as the docs-ci step above (npm --prefix site ci && npm --prefix site run check) — this workflow only runs on push to main and duplicates that step verbatim, so the run just performed for docs-ci covers it too: same 6/6 test files, 57/57 tests, clean build, exit 0."
+      "detail": "The identical command as docs-ci.yml's flagged step above (npm --prefix site ci; npm --prefix site run check), run once and reported against both flags: exit 0, 6 test files and 57 tests passed, build and both verification scripts clean."
+    },
+    {
+      "name": "tools/Test-Companion.ps1 (not CI-gated)",
+      "status": "Passed",
+      "detail": "State Valid, CoreCount 23, CompanionCount 0, AbsentCount 23, no findings: \"Companion split OK - 23 core(s) checked, 0 companion file(s) present, 23 core(s) with no companion.\""
+    },
+    {
+      "name": "tools/Test-DesignState.ps1 (not CI-gated)",
+      "status": "DidNotRun",
+      "reason": "Exit code 2 — could not evaluate. The script's own two reasons, verbatim: \"[ContractListUnreadable] SectionNotFound: design\\\\20-contract.md\" and \"[StateSetAbsent] design/state/ is missing or holds no records other than WorkRef mirrors\"; report line \"StateSetAbsent: nothing to check.\" Findings (0), Reported (0). This repository has no design/state/ record set, so there is nothing for it to check — it is not a regression on this branch."
     }
   ]
 }

@@ -1,78 +1,78 @@
 {
-  "manifestHash": "3b572b56e4c91da2146d6614cdf3b3516fbdadf1b07589e82f358b36e5f6f38c",
-  "generated": "2026-09-06",
+  "manifestHash": "ce330657440ebb91031e1989389ea4ffe0088870246aa9d23f5436d88136bf62",
+  "generated": "2026-09-07",
   "gates": [
     {
-      "name": "Test",
+      "name": "build.yml / build — Test",
       "command": "dotnet test --no-build --configuration Release --verbosity normal"
     },
     {
-      "name": "Run the sample in both roles",
+      "name": "build.yml / build — Run the sample in both roles",
       "command": "pwsh ./build/Test-SampleRoundTrip.ps1"
     },
     {
-      "name": "Assert no framework project references a workload",
+      "name": "build.yml / build — Assert no framework project references a workload",
       "command": "pwsh ./build/Test-WorkloadIsolation.ps1"
     },
     {
-      "name": "Typecheck",
+      "name": "build.yml / game-service — Typecheck",
       "command": "npm run typecheck (workloads/game-service)"
     },
     {
-      "name": "Start the workload and the edge, the documented way",
-      "command": "smoke test per build.yml"
+      "name": "build.yml / game-service — Start the workload and the edge, the documented way",
+      "command": "npm start + dotnet SubZeroDev.Platform.GameEdge.dll, probe livez/readyz and health/live,health/ready"
     },
     {
-      "name": "Run the replay against the workload",
+      "name": "build.yml / game-service — Run the replay against the workload",
       "command": "npx vitest run tests/replay.test.ts"
     },
     {
-      "name": "Run the replay against the edge",
-      "command": "npx vitest run tests/replay-edge.test.ts"
+      "name": "build.yml / game-service — Run the replay against the edge",
+      "command": "npx vitest run tests/replay-edge.test.ts (GAME_EDGE_DLL)"
     },
     {
-      "name": "Migrate the schema to head, the documented way",
-      "command": "npm run migrate"
+      "name": "build.yml / game-service — Migrate the schema to head, the documented way",
+      "command": "npm run migrate (GAME_SERVICE_DB_SCHEMA=ci_documented_migrate)"
     },
     {
-      "name": "Start the workload against the durable store, the documented way",
-      "command": "smoke test per build.yml"
+      "name": "build.yml / game-service — Start the workload against the durable store, the documented way",
+      "command": "npm start (GAME_SERVICE_STORAGE=durable, port 8081), probe readyz"
     },
     {
-      "name": "Run the one-instance contention proof",
+      "name": "build.yml / game-service — Run the one-instance contention proof",
       "command": "npx vitest run tests/contention-one-instance.test.ts"
     },
     {
-      "name": "Run the two-instance contention proof",
+      "name": "build.yml / game-service — Run the two-instance contention proof",
       "command": "npx vitest run tests/contention-two-instances.test.ts"
     },
     {
-      "name": "Run the durable replay",
+      "name": "build.yml / game-service — Run the durable replay",
       "command": "npx vitest run tests/durable-replay.test.ts"
     },
     {
-      "name": "Run the port-conformance suite",
+      "name": "build.yml / game-service — Run the port-conformance suite",
       "command": "npx vitest run tests/conformance.test.ts"
     },
     {
-      "name": "Test (game-service)",
-      "command": "npm test (workloads/game-service)"
+      "name": "build.yml / game-service — Test",
+      "command": "npm test (workloads/game-service, GAME_EDGE_DLL, OTEL_COLLECTOR_BIN)"
     },
     {
-      "name": "Validate Markdown links, terminology, and generated files",
+      "name": "docs-ci.yml / documentation — Validate Markdown links, terminology, and generated files",
       "command": "./build/Test-Documentation.ps1"
     },
     {
-      "name": "Validate design/30-slices.md's Status markers",
+      "name": "docs-ci.yml / slice-status-markers — Validate design/30-slices.md's Status markers",
       "command": "./build/Test-SliceStatusMarkers.ps1"
     },
     {
-      "name": "Build and verify the status-page site (docs-ci)",
-      "command": "npm --prefix site ci && npm --prefix site run check"
+      "name": "docs-ci.yml / verify — Build and verify the status-page site",
+      "command": "npm --prefix site ci; npm --prefix site run check"
     },
     {
-      "name": "Build and verify the status-page site (docs-deploy)",
-      "command": "npm --prefix site ci && npm --prefix site run check"
+      "name": "docs-deploy.yml / deploy — Build and verify the status-page site",
+      "command": "npm --prefix site ci; npm --prefix site run check"
     }
   ]
 }
