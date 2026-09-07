@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Audit;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Identity;
@@ -8,6 +9,10 @@ using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Audit owns a migration (D5-S13), so — the same reason the web role registers it ahead of its own
+// migrate-mode branch — it goes on the collection before this early return, not after it.
+builder.Services.AddSingleton<IPlatformModule, AuditModule>();
 
 // Migrate mode is a one-shot command, not a third host role — it exits before
 // AddPlatformWorkerHost ever runs, and never serves HTTP or probes.
@@ -19,12 +24,11 @@ if (args is ["migrate"])
 // Both roles of one installation declare the same profile, so both owe it the same two
 // registrations (D5-S8, I-C1 and I-C2) — a worker that composed differently from its web peer would
 // be the divergence the settings fingerprint exists to catch, arrived at deliberately. D5-S9: the
-// same Identity module and test issuer the web role registers.
+// same Identity module and test issuer the web role registers. D5-S13: the Audit module, registered
+// above.
 builder.Services.AddSingleton<IPlatformModule, IdentityModule>();
 builder.Services.AddSingleton<IAuthenticationProvider>(new JwtBearerAuthenticationProvider(
     "Sample.TestIssuer", OperatedComposition.TestIssuer, OperatedComposition.TestIssuerSigningKey));
-builder.Services.AddSingleton<IAuditSink>(
-    new OperatedComposition.FileAuditSink("sample-audit.log"));
 
 // The worker is the same bootstrap with the product HTTP surface omitted. It maps no endpoints;
 // the listener exists for its probes and nothing else.

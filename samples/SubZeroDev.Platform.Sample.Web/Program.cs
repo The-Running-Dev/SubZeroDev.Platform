@@ -2,6 +2,7 @@ using System.Data.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Audit;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Identity;
@@ -11,9 +12,13 @@ using SubZeroDev.Platform.Sample.Web;
 var builder = WebApplication.CreateBuilder(args);
 
 // Modules are ordinary registrations, and they go on before the standard call: a module
-// contributes services, and nothing can be added once the container is built.
+// contributes services, and nothing can be added once the container is built. Audit is registered
+// here, ahead of the migrate-mode branch below, because — unlike Identity — it owns a migration
+// (D5-S13): migrate mode exits before AddPlatformWebHost runs, so a module whose table needs
+// creating must be on the collection before that early return, not after it.
 builder.Services.AddSingleton<IPlatformModule, CatalogueModule>();
 builder.Services.AddSingleton<IPlatformModule, OrdersModule>();
+builder.Services.AddSingleton<IPlatformModule, AuditModule>();
 
 // Migrate mode is a one-shot command, not a third host role — it exits before AddPlatformWebHost
 // ever runs, and never serves HTTP or probes.
@@ -24,13 +29,10 @@ if (args is ["migrate"])
 
 // What declaring Operated now costs a consumer (D5-S8): an authentication provider (I-C1) and a
 // sink declaring IsDurable (I-C2), or the host refuses to start. D5-S9 registers the Identity
-// module and a test issuer for the first; S13 still owes the second, so Composition.cs's file
-// sink stays until then.
+// module and a test issuer for the first; D5-S13's Audit module, registered above, is the second.
 builder.Services.AddSingleton<IPlatformModule, IdentityModule>();
 builder.Services.AddSingleton<IAuthenticationProvider>(new JwtBearerAuthenticationProvider(
     "Sample.TestIssuer", OperatedComposition.TestIssuer, OperatedComposition.TestIssuerSigningKey));
-builder.Services.AddSingleton<IAuditSink>(
-    new OperatedComposition.FileAuditSink("sample-audit.log"));
 
 // D5-S8: every endpoint mapped below carries a permission declaration, checked at startup (I-R6).
 // No real policy provider exists yet — Organizations (S10) ships the second of D5's exactly two —

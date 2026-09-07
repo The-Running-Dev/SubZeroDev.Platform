@@ -6,10 +6,10 @@ namespace SubZeroDev.Platform.Sample.Web;
 /// written the way a consumer writes it — in the sample, not in a framework package.</summary>
 /// <remarks>D5-S8 turns the profile from a claim into a checked fact: an operated host with no
 /// authentication provider (I-C1) or no sink declaring <c>IsDurable</c> (I-C2) refuses to start.
-/// Both of these are the smallest honest thing that satisfies the rule, and the authentication half
-/// is now the Identity module's <c>JwtBearerAuthenticationProvider</c>, configured here with a test
-/// issuer's signing key (D5-S9) — the sample's issuer is a test double, never a real one Platform
-/// chose or operates. S13 still owes the audit sink half, registered below until then.</remarks>
+/// The authentication half is the Identity module's <c>JwtBearerAuthenticationProvider</c>,
+/// configured here with a test issuer's signing key (D5-S9) — the sample's issuer is a test double,
+/// never a real one Platform chose or operates. The audit half is D5-S13's Audit module, registered
+/// in <c>Program.cs</c> alongside it.</remarks>
 public static class OperatedComposition
 {
     /// <summary>The test issuer's own identity. Never a real identity provider — the sample's issuer
@@ -23,64 +23,6 @@ public static class OperatedComposition
     /// fixture and must never be reused as one.</summary>
     public static byte[] TestIssuerSigningKey { get; } =
         Convert.FromHexString("2f8a6c1d9e4b7053a1c8f2d6b9e0473c5a8d1f6b2e9c4073ad6f18b2e9c40735");
-
-    /// <summary>An audit sink that appends to a file the operator names, and declares
-    /// <see cref="IsDurable"/> because a file survives a restart. Not the audit store: it has no
-    /// read API, no tenant scoping and no indexes — it is the least a deployment can offer and still
-    /// truthfully claim its audit trail outlives the process. S13 replaces it.</summary>
-    public sealed class FileAuditSink(string path) : IAuditSink
-    {
-        // Two concurrent appends to one file interleave partial lines, so writes are serialised.
-        // A store-backed sink writes rows and needs none of this, which is part of why this one is
-        // the placeholder rather than the destination.
-        private readonly SemaphoreSlim _gate = new(1, 1);
-
-        public string Name => "Sample.FileAudit";
-
-        public bool IsDurable => true;
-
-        public async Task<Result<AuditError>> WriteAsync(
-            AuditEvent auditEvent, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(auditEvent);
-
-            // The record's own fields only. There is no payload, changed-field list or free-form
-            // detail to render because AuditEvent declares none — structural, rather than a rule
-            // this sink has to remember. The actor is written as two fields, never as the rendered
-            // pair split back apart (I-I3).
-            var line = string.Join(
-                '\t',
-                auditEvent.OccurredAt.ToString("O"),
-                auditEvent.Tenant,
-                auditEvent.Actor.Issuer,
-                auditEvent.Actor.Subject,
-                auditEvent.ActorKind,
-                auditEvent.Action,
-                auditEvent.Outcome,
-                auditEvent.Class,
-                auditEvent.Correlation);
-
-            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                await File.AppendAllTextAsync(path, line + System.Environment.NewLine, cancellationToken)
-                    .ConfigureAwait(false);
-
-                return Result<AuditError>.Success();
-            }
-            catch (IOException)
-            {
-                // The class rule decides the consequence and the sink does not choose it: this says
-                // only that it could not write, and the caller applies Required or Recorded.
-                // Retryable, because a locked or full file is a condition that clears.
-                return Result<AuditError>.Failure(AuditError.SinkUnavailable(Name));
-            }
-            finally
-            {
-                _gate.Release();
-            }
-        }
-    }
 
     /// <summary>The permission names this sample's own endpoints declare (D5-S8: every endpoint
     /// mapped through the pipeline now carries a requirement or a named exemption). Declared here
