@@ -37,6 +37,7 @@
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Billing\SubZeroDev.Platform.Billing.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Licensing\SubZeroDev.Platform.Licensing.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Audit\SubZeroDev.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Mcp\SubZeroDev.Platform.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">

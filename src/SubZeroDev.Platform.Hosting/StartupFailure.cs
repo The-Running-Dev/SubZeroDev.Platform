@@ -96,6 +96,21 @@ public sealed record HostStartupError : PlatformError
             $"Endpoint '{route}' carries neither a platform authorization requirement nor a named "
             + "exemption. Call RequiresPlatformAuthorization or ExemptFromPlatformAuthorization on it.",
             null);
+
+    /// <summary>A registered tool's schema names a parameter matching the redaction marker set —
+    /// I-M2. A tool that could ask for a password never gets as far as running.</summary>
+    /// <param name="detail">The tool and the offending parameter.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError SensitiveToolParameter(string detail) =>
+        new(nameof(SensitiveToolParameter), detail, null);
+
+    /// <summary>A tool, an endpoint, or any registration requires a <see cref="PermissionName"/> no
+    /// catalog declares. A startup-detectable defect, never a runtime denial.</summary>
+    /// <param name="inner">The permission catalog's own rejection.</param>
+    /// <param name="detail">The tool or registration and the undeclared name.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError UnregisteredPermission(PlatformError? inner, string detail) =>
+        new(nameof(UnregisteredPermission), detail, inner);
 }
 
 /// <summary>A fatal condition at host build or start. Distinct from
