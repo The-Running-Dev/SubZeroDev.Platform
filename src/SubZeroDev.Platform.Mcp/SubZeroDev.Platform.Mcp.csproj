@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Not shipped as a package yet: S18 packs every D5 package. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
+  </ItemGroup>
+
+</Project>

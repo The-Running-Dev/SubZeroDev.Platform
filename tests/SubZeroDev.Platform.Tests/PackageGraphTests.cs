@@ -104,6 +104,57 @@ public sealed class PackageGraphTests
         Assert.Equal(["SubZeroDev.Platform.Organizations -> SubscriptionState"], violations);
     }
 
+    // S14.8 -------------------------------------------------------------------------------------
+
+    /// <summary>I-M9's containment half: nothing outside Mcp references the SDK. S14 does not yet
+    /// wire the SDK's transport in — that is S15's "the SDK transport and session" — so this proves
+    /// the boundary the check exists to hold, ahead of anything crossing it.</summary>
+    [Fact]
+    public void I_M9_ModelContextProtocol_is_referenced_by_no_package_other_than_Mcp()
+    {
+        var graph = SdkReferenceGuard.Resolve(AllPlatformAssemblies());
+
+        var violations = SdkReferenceGuard.ReferencedOutsideMcp(graph);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void S14_8_the_reference_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["SubZeroDev.Platform.Organizations"] = new HashSet<string> { "ModelContextProtocol.Core" },
+        };
+
+        var violations = SdkReferenceGuard.ReferencedOutsideMcp(broken);
+
+        Assert.Equal(["SubZeroDev.Platform.Organizations -> ModelContextProtocol.Core"], violations);
+    }
+
+    [Fact]
+    public void I_M9_no_platform_public_type_exposes_returns_accepts_or_derives_from_an_sdk_type()
+    {
+        var map = SdkTypeSurfaceGuard.Resolve(AllPlatformAssemblies());
+
+        var violations = SdkTypeSurfaceGuard.Violations(map);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void S14_8_the_surface_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["SubZeroDev.Platform.Mcp.LeakyType"] = new HashSet<string> { "ModelContextProtocol.Protocol.Tool" },
+        };
+
+        var violations = SdkTypeSurfaceGuard.Violations(broken);
+
+        Assert.Equal(["SubZeroDev.Platform.Mcp.LeakyType -> ModelContextProtocol.Protocol.Tool"], violations);
+    }
+
     /// <summary>Every assembly outside Billing that is built alongside this test run: the six
     /// framework assemblies plus every other module. Billing itself is deliberately absent — I-C8
     /// bounds what may reference its types from <em>outside</em> it, not from within.</summary>
@@ -111,6 +162,19 @@ public sealed class PackageGraphTests
     [
         .. FrameworkAssemblies(),
         typeof(SubZeroDev.Platform.Organizations.Organization).Assembly, // Organizations
+    ];
+
+    /// <summary>Every framework assembly plus every module assembly built alongside this test
+    /// run — I-M9 bounds the SDK's reach across the whole tree, not just inside Mcp.</summary>
+    private static IReadOnlyCollection<Assembly> AllPlatformAssemblies() =>
+    [
+        .. FrameworkAssemblies(),
+        typeof(SubZeroDev.Platform.Identity.IdentityModule).Assembly,
+        typeof(SubZeroDev.Platform.Organizations.Organization).Assembly,
+        typeof(SubZeroDev.Platform.Billing.BillingModule).Assembly,
+        typeof(SubZeroDev.Platform.Licensing.LicensingModule).Assembly,
+        typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
+        typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
     ];
 
     private static IReadOnlyCollection<Assembly> FrameworkAssemblies() =>
@@ -327,5 +391,179 @@ internal static class SubscriptionTypeGuard
         }
 
         return violations;
+    }
+}
+
+/// <summary>I-M9's package-reference half: <c>ModelContextProtocol.*</c> is referenced by
+/// <c>SubZeroDev.Platform.Mcp</c> and by nothing else. Same abstracted-graph mechanism as
+/// <see cref="PackageGraph"/>, filtered to the SDK's own assembly-name prefix rather than
+/// <c>SubZeroDev.Platform.*</c>.</summary>
+internal static class SdkReferenceGuard
+{
+    private const string SdkAssemblyPrefix = "ModelContextProtocol";
+
+    /// <summary>Resolves the reference graph over a set of loaded assemblies, keeping only
+    /// references whose name starts with <see cref="SdkAssemblyPrefix"/>.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlySet<string>> Resolve(IReadOnlyCollection<Assembly> assemblies)
+    {
+        var graph = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var assembly in assemblies)
+        {
+            var references = assembly.GetReferencedAssemblies()
+                .Select(referenced => referenced.Name)
+                .Where(referencedName => referencedName is not null
+                    && referencedName.StartsWith(SdkAssemblyPrefix, StringComparison.Ordinal))
+                .Cast<string>()
+                .ToHashSet(StringComparer.Ordinal);
+
+            graph[assembly.GetName().Name!] = references;
+        }
+
+        return graph;
+    }
+
+    /// <summary>I-M9: nothing but <c>SubZeroDev.Platform.Mcp</c> may reference the SDK.</summary>
+    internal static IReadOnlyList<string> ReferencedOutsideMcp(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> graph)
+    {
+        var violations = new List<string>();
+
+        foreach (var (package, references) in graph)
+        {
+            if (package == "SubZeroDev.Platform.Mcp")
+            {
+                continue;
+            }
+
+            violations.AddRange(references.Select(reference => $"{package} -> {reference}"));
+        }
+
+        return violations;
+    }
+}
+
+/// <summary>I-M9's public-surface half: no Platform public type exposes, returns, accepts or
+/// derives from an SDK type. On the same two-layer shape as <see cref="SubscriptionTypeGuard"/> —
+/// <see cref="Resolve"/> does the real reflection, <see cref="Violations"/> is pure logic proved
+/// first against a fixture no real build could produce.</summary>
+internal static class SdkTypeSurfaceGuard
+{
+    private const string SdkNamespacePrefix = "ModelContextProtocol";
+
+    /// <summary>Maps every public type's full name to the full names of every type its public
+    /// surface — base type, interfaces, and public property, field and method signatures — refers
+    /// to, generic arguments and array element types flattened in.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlySet<string>> Resolve(IReadOnlyCollection<Assembly> assemblies)
+    {
+        var map = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var assembly in assemblies)
+        {
+            foreach (var type in assembly.GetExportedTypes())
+            {
+                var referenced = SurfaceTypeNames(type);
+                if (referenced.Count > 0)
+                {
+                    map[type.FullName ?? type.Name] = referenced;
+                }
+            }
+        }
+
+        return map;
+    }
+
+    /// <summary>I-M9: nothing in <paramref name="typeReferencesByType"/> may name an SDK type.</summary>
+    internal static IReadOnlyList<string> Violations(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> typeReferencesByType)
+    {
+        var violations = new List<string>();
+
+        foreach (var (type, referenced) in typeReferencesByType)
+        {
+            violations.AddRange(
+                referenced
+                    .Where(name => name.StartsWith(SdkNamespacePrefix, StringComparison.Ordinal))
+                    .Select(name => $"{type} -> {name}"));
+        }
+
+        return violations;
+    }
+
+    private static IReadOnlySet<string> SurfaceTypeNames(Type type)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(Type candidate)
+        {
+            foreach (var flattened in Flatten(candidate))
+            {
+                if (flattened.FullName is { } fullName)
+                {
+                    names.Add(fullName);
+                }
+            }
+        }
+
+        if (type.BaseType is not null)
+        {
+            Add(type.BaseType);
+        }
+
+        foreach (var implemented in type.GetInterfaces())
+        {
+            Add(implemented);
+        }
+
+        foreach (var member in type.GetMembers(
+            BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
+        {
+            switch (member)
+            {
+                case PropertyInfo property:
+                    Add(property.PropertyType);
+                    break;
+                case FieldInfo field:
+                    Add(field.FieldType);
+                    break;
+                case MethodInfo method when !method.IsSpecialName:
+                    Add(method.ReturnType);
+                    foreach (var parameter in method.GetParameters())
+                    {
+                        Add(parameter.ParameterType);
+                    }
+
+                    break;
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>Yields <paramref name="type"/> itself, then every generic argument and array
+    /// element type it carries, recursively — so <c>Task&lt;IReadOnlyCollection&lt;Tool&gt;&gt;</c>
+    /// surfaces <c>Tool</c> rather than hiding it inside the wrapper types.</summary>
+    private static IEnumerable<Type> Flatten(Type type)
+    {
+        yield return type;
+
+        if (type.IsGenericType)
+        {
+            foreach (var argument in type.GetGenericArguments())
+            {
+                foreach (var nested in Flatten(argument))
+                {
+                    yield return nested;
+                }
+            }
+        }
+
+        if (type.HasElementType)
+        {
+            foreach (var nested in Flatten(type.GetElementType()!))
+            {
+                yield return nested;
+            }
+        }
     }
 }
