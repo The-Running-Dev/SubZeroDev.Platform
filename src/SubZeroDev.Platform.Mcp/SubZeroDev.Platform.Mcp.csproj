@@ -12,6 +12,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- D5-S15: the transport, the session and the filter pipeline. Pinned exact version per
+         design/90-decisions.md, 2026-08-29 ("Platform.Mcp adopts the official MCP C# SDK and
+         projects to it at the boundary") — referenced by this project and by no other (I-M9). -->
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="SubZeroDev.Platform.Testing" />
     <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
   </ItemGroup>
