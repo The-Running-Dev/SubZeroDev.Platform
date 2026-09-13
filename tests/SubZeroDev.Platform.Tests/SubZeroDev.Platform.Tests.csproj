@@ -40,6 +40,13 @@
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Mcp\SubZeroDev.Platform.Mcp.csproj" />
   </ItemGroup>
 
+  <!-- D5-S16: the shell's endpoints and permission declarations live in the sample host that backs
+       it, so the shell's-call-list assertion (I-W1) and the switch-endpoint HTTP test (S16.2) drive
+       the exact same mapping the shell calls rather than a reimplementation of it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\samples\SubZeroDev.Platform.Sample.Web\SubZeroDev.Platform.Sample.Web.csproj" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
     <PackageReference Include="SubZeroDev.Platform.Testing" Version="$(PlatformPackageVersion)" />
   </ItemGroup>

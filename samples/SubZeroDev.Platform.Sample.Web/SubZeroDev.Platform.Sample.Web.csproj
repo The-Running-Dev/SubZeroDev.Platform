@@ -15,11 +15,15 @@
     <PackageReference Include="SubZeroDev.Platform.Persistence" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
-  <!-- Identity and Audit are not packed yet (S18 packs every D5 package): a project reference
-       regardless of UsePlatformPackages, unlike the two framework packages above. -->
+  <!-- Identity, Audit, Organizations, Billing and Licensing are not packed yet (S18 packs every D5
+       package): a project reference regardless of UsePlatformPackages, unlike the two framework
+       packages above. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Audit\SubZeroDev.Platform.Audit.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Organizations\SubZeroDev.Platform.Organizations.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Billing\SubZeroDev.Platform.Billing.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Licensing\SubZeroDev.Platform.Licensing.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

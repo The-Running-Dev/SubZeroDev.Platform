@@ -35,6 +35,21 @@ public static class OperatedComposition
 
         /// <summary>Creates a catalogue item and an order in one transaction.</summary>
         public static PermissionName CreateOrder { get; } = new("Sample.Web.CreateOrder");
+
+        /// <summary>Reads the ambient principal's own kind and display name (D5-S16: the shell's
+        /// identity view). Granted to every principal, including <see cref="PrincipalKind.Anonymous"/>
+        /// — the read that lets the shell tell an anonymous caller apart from an authenticated one
+        /// must itself be reachable by an anonymous caller.</summary>
+        public static PermissionName ReadIdentity { get; } = new("Sample.Web.ReadIdentity");
+
+        /// <summary>Attempts to switch the active organization (D5-S16). The declared permission
+        /// only gates the attempt; <see cref="SubZeroDev.Platform.Organizations.IOrganizationApi.SwitchActiveOrganizationAsync"/>
+        /// itself refuses an organization the caller does not belong to.</summary>
+        public static PermissionName SwitchOrganization { get; } = new("Sample.Web.SwitchOrganization");
+
+        /// <summary>Reads the resolved entitlement for the shell's own demonstration feature, plus
+        /// the licence tier and grace state (D5-S16).</summary>
+        public static PermissionName ReadEntitlement { get; } = new("Sample.Web.ReadEntitlement");
     }
 
     /// <summary><see cref="SamplePermissions"/> declared as a catalog, so a typo here fails startup
@@ -45,6 +60,9 @@ public static class OperatedComposition
         [
             SamplePermissions.ReadRoot,
             SamplePermissions.CreateOrder,
+            SamplePermissions.ReadIdentity,
+            SamplePermissions.SwitchOrganization,
+            SamplePermissions.ReadEntitlement,
         ];
     }
 
@@ -52,13 +70,20 @@ public static class OperatedComposition
     /// second of D5's exactly two permission providers, is S10. Granting this sample's own declared
     /// permissions to any principal is the smallest honest thing that satisfies I-R6 without
     /// pretending a policy has been decided: it is not a role-assignment table, it grants nothing
-    /// beyond what this sample itself declares, and it is replaced rather than kept once S10 lands.</summary>
+    /// beyond what this sample itself declares, and it is replaced rather than kept once S10 lands.
+    /// <see cref="PlatformPermissions.ReadAudit"/> is granted here too, on the same terms — no audit
+    /// permission policy exists in this sample either, and the shell's audit view (D5-S16) needs a
+    /// grant from somewhere.</summary>
     public sealed class NoPolicyPermissionProvider : IPermissionProvider
     {
         private static readonly IReadOnlySet<PermissionName> Granted = new HashSet<PermissionName>
         {
             SamplePermissions.ReadRoot,
             SamplePermissions.CreateOrder,
+            SamplePermissions.ReadIdentity,
+            SamplePermissions.SwitchOrganization,
+            SamplePermissions.ReadEntitlement,
+            PlatformPermissions.ReadAudit,
         };
 
         public PermissionProviderName Name { get; } = new("Sample.NoPolicy");

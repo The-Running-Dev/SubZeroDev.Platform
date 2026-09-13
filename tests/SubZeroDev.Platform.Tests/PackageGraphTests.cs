@@ -79,6 +79,36 @@ public sealed class PackageGraphTests
         }
     }
 
+    // S16.6 -------------------------------------------------------------------------------------
+
+    /// <summary>I-W1's first half: no backend package references the shell. The shell is a
+    /// front-end build with no .NET package at all (<c>design/20-contract.md</c> § <em>Types</em>
+    /// 11) — checked here as no <c>.csproj</c> under <c>src/</c> or <c>samples/</c> naming
+    /// <c>shell</c> in a project or package reference, and the shell's own directory carrying no
+    /// <c>.csproj</c> for one to reference.</summary>
+    [Fact]
+    public void I_W1_no_dotnet_project_references_the_shell()
+    {
+        var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
+
+        var shellDirectory = Path.Combine(repositoryRoot, "shell");
+        Assert.True(Directory.Exists(shellDirectory), $"'{shellDirectory}' does not exist.");
+        Assert.Empty(Directory.GetFiles(shellDirectory, "*.csproj", SearchOption.AllDirectories));
+
+        var projectFiles = Directory
+            .GetFiles(Path.Combine(repositoryRoot, "src"), "*.csproj", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(Path.Combine(repositoryRoot, "samples"), "*.csproj", SearchOption.AllDirectories));
+
+        foreach (var projectFile in projectFiles)
+        {
+            var content = File.ReadAllText(projectFile);
+            Assert.DoesNotContain(
+                "shell",
+                content,
+                StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     // S11.3 -------------------------------------------------------------------------------------
 
     [Fact]

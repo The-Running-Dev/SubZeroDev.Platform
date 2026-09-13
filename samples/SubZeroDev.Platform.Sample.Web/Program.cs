@@ -1,24 +1,45 @@
 using System.Data.Common;
+using System.Security.Cryptography;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Audit;
+using SubZeroDev.Platform.Billing;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Identity;
+using SubZeroDev.Platform.Licensing;
+using SubZeroDev.Platform.Organizations;
 using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Sample.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Modules are ordinary registrations, and they go on before the standard call: a module
-// contributes services, and nothing can be added once the container is built. Audit is registered
-// here, ahead of the migrate-mode branch below, because — unlike Identity — it owns a migration
-// (D5-S13): migrate mode exits before AddPlatformWebHost runs, so a module whose table needs
-// creating must be on the collection before that early return, not after it.
+// contributes services, and nothing can be added once the container is built. Audit, Organizations,
+// Billing and Licensing are registered here, ahead of the migrate-mode branch below, because —
+// unlike Identity — each owns a migration (D5-S13, D5-S16): migrate mode exits before
+// AddPlatformWebHost runs, so a module whose table needs creating must be on the collection before
+// that early return, not after it.
 builder.Services.AddSingleton<IPlatformModule, CatalogueModule>();
 builder.Services.AddSingleton<IPlatformModule, OrdersModule>();
 builder.Services.AddSingleton<IPlatformModule, AuditModule>();
+builder.Services.AddSingleton<IPlatformModule, OrganizationsModule>();
+builder.Services.AddSingleton<IPlatformModule, BillingModule>();
+builder.Services.AddSingleton<IPlatformModule, LicensingModule>();
+
+// D5-S16: the shell's licence view needs an ILicenceState to read, which only exists once
+// LicensingOptions is registered. The sample names a document that does not exist on disk —
+// verification fails closed to Community with LicenceVerificationOutcome.Unavailable (I-L9), which
+// is an honest demonstration of the same path a real deployment with a missing document takes. The
+// signing key is generated fresh per run: it never verifies anything real, so there is nothing
+// about it to keep stable across restarts.
+builder.Services.AddSingleton(_ =>
+{
+    using var key = RSA.Create(2048);
+    var signingKey = new LicenceSigningKey("sample-key", RSA.Create(key.ExportParameters(false)));
+    return new LicensingOptions([signingKey], "sample-licence-document-not-present.json");
+});
 
 // Migrate mode is a one-shot command, not a third host role — it exits before AddPlatformWebHost
 // ever runs, and never serves HTTP or probes.
@@ -136,6 +157,11 @@ app.MapPost("/orders", async (
 
     return result.IsSuccess ? Results.Ok(result.Value) : Results.Problem(result.Error.Detail);
 }).RequiresPlatformAuthorization(OperatedComposition.SamplePermissions.CreateOrder, feature: null);
+
+// D5-S16: the administration shell's four reads and one write — design/20-contract.md § Public
+// surface 11, I-W1. Every route it calls is mapped here as an ordinary endpoint, declared the same
+// way every other endpoint above is, so it is callable without the shell.
+app.MapAdminEndpoints();
 
 app.Run();
 
