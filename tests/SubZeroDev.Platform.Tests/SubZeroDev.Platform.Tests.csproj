@@ -40,6 +40,29 @@
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Mcp\SubZeroDev.Platform.Mcp.csproj" />
   </ItemGroup>
 
+  <!-- D5-S16: the shell's endpoints and permission declarations live in the sample host that backs
+       it, so the shell's-call-list assertion (I-W1) and the switch-endpoint HTTP test (S16.2) drive
+       the exact same mapping the shell calls rather than a reimplementation of it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\samples\SubZeroDev.Platform.Sample.Web\SubZeroDev.Platform.Sample.Web.csproj" />
+  </ItemGroup>
+
+  <!-- Sample.Web is a Microsoft.NET.Sdk.Web project, and referencing it copies its own
+       appsettings.json (CopyToOutputDirectory content) into this project's output directory too —
+       ExcludeAssets does not stop this, because Sample.Web is not packable and NuGet never builds
+       an asset group for it to exclude from. Left in place, that file sits beside this assembly and
+       ASP.NET Core's default configuration loading picks it up in every test that builds a
+       WebApplication, silently overriding Settings.Required()'s :memory: connection string with
+       Sample.Web's own "Data Source=sample.db" — a single real file every parallel test class would
+       then contend for. Deleting it after build is the fix; the file has no purpose here and
+       Sample.Web's own build is unaffected. -->
+  <Target Name="RemoveLeakedSampleWebContent" AfterTargets="Build;Publish">
+    <ItemGroup>
+      <_LeakedSampleWebContent Include="$(OutDir)appsettings.json" />
+    </ItemGroup>
+    <Delete Files="@(_LeakedSampleWebContent)" Condition="Exists('$(OutDir)appsettings.json')" />
+  </Target>
+
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
     <PackageReference Include="SubZeroDev.Platform.Testing" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
