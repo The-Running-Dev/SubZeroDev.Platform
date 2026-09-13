@@ -81,342 +81,41 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S7 — The entitlement seam and the Community baseline** — shipped:
   [#175](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/175) via
   [#203](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/203).
+- **S8 — The fixed request order and the composition profile's startup rules** — shipped:
+  [#176](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/176) via
+  [#204](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/204),
+  [#210](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/210),
+  [#211](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/211),
+  [#213](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/213) and
+  [#215](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/215).
+- **S9 — Identity: authenticating a principal at the transport** — shipped:
+  [#177](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/177) via
+  [#214](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/214).
+- **S10 — Organizations** — shipped:
+  [#178](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/178) via
+  [#216](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/216).
+- **S11 — Billing** — shipped:
+  [#179](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/179) via
+  [#217](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/217).
+- **S12 — Licensing** — shipped:
+  [#180](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/180) via
+  [#218](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/218).
+- **S13 — The durable audit store** — shipped:
+  [#181](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/181) via
+  [#219](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/219).
+- **S14 — Mcp: the frozen catalogue and its startup checks** — shipped:
+  [#182](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/182) via
+  [#220](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/220).
+- **S15 — Mcp: the transport, the connection principal and invocation** — shipped:
+  [#183](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/183) via
+  [#221](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/221).
 
 ---
 
 ## Outstanding
 
-## S8 — The fixed request order and the composition profile's startup rules
-**Status:** in progress
-
-Delivers: both deployment shapes run the same steps in the same order, so a rule proved in one holds in
-the other. A host whose installed packages and declared shape disagree refuses to start, instead of
-serving something nobody meant to run.
-
-Touches:
-- **`SubZeroDev.Platform.Abstractions`** — `IAuthenticationProvider`, `IAuthenticationRequest`,
-  `AuthenticationError`
-- **`SubZeroDev.Platform.Core`** — the authentication-provider registry, the freeze of all five
-  registries, the profile validation, and the settings-fingerprint input per Contract Unresolved 2
-- **`SubZeroDev.Platform.Hosting`** — the fixed request pipeline, and
-  [`StartupFailure.cs`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs)'s remaining variants
-
-Depends on: S7.
-
-Acceptance:
-- **S8.1** A single request through the operated host produces an ordered trace of exactly: authenticate,
-  resolve tenant, open scope, authorize, check entitlement, do the work, audit.
-- **S8.2** The same request through the local host produces the same seven steps in the same order, with
-  no step skipped and no branch taken.
-- **S8.3** A request that is both unauthorized and unentitled is refused as unauthorized, and the trace
-  shows no entitlement evaluation ran.
-- **S8.4** An endpoint that only reads runs no entitlement evaluation at all, even for data produced under
-  a gated feature.
-- **S8.5** `Operated` with no authentication provider registered fails startup with
-  `HostStartupError.AuthenticationProviderRequired`, naming the profile and the missing registration.
-- **S8.6** `Operated` with no sink declaring `IsDurable` fails startup with
-  `HostStartupError.DurableAuditSinkRequired`; the default log sink does not satisfy it.
-- **S8.7** `Local` with an authentication provider, with a tenant resolver, or with an entitlement
-  contributor other than the Community baseline fails startup with
-  `HostStartupError.RegistrationForbiddenByProfile`, naming the offending registration and which of the
-  two it disagrees with.
-- **S8.8** Two hosts differing only in their frozen contributor set compute different settings
-  fingerprints and `platform.settings-fingerprint` reports the disagreement; `SettingsFingerprint`'s
-  format version changes in the same commit.
-- **S8.9** Presenting no credential succeeds carrying an `Anonymous` principal; presenting an invalid one
-  fails with `AuthenticationError.CredentialRejected` and does not fall back to `Anonymous`.
-- **S8.10** With no signing key cached, a request fails with `AuthenticationError.KeyMaterialUnavailable`,
-  surfaces as unauthenticated rather than as a server error, and issues no outbound call on the request
-  path.
-- **S8.11** `IAuthenticationRequest` exposes headers and nothing else — asserted over its members, with no
-  route to a request body.
-- **S8.12** Every startup check in this slice fails the host and names the registration that caused it;
-  none degrades the host into serving.
-
-Out of scope: a concrete authentication provider, which is S9 — this slice ships the seam, its registry
-and its profile rule. The Organizations resolver (S10).
-
-## S9 — Identity: authenticating a principal at the transport
-**Status:** queued
-
-Delivers: an operated deployment can put a real sign-in in front of Platform without Platform choosing
-the sign-in service, holding a list of users, or knowing anything at all about the account behind the
-person using it.
-
-Touches:
-- **`SubZeroDev.Platform.Identity`** — new module: authentication providers and the mapping from an
-  authentication result to a principal. No entity type, no context, no migration
-- **The operated sample host** — registers the module and a test issuer
-
-Depends on: S8.
-
-Acceptance:
-- **S9.1** The operated host authenticates a bearer credential at the transport, and the request observes
-  a principal of kind `Account` whose id carries the issuer and the subject as two opaque halves.
-- **S9.2** A credential from a second issuer carrying the same subject produces a different principal id
-  and is not treated as the same principal.
-- **S9.3** An invalid credential is refused with `AuthenticationError.CredentialRejected` and the request
-  does not proceed as anonymous.
-- **S9.4** A principal established from an upstream-proxy assertion observes kind `Delegated` with no
-  claims, and carries a membership and an audit actor identically to an `Account` one.
-- **S9.5** An architecture test asserts the module declares no entity type, no `DbContext` and no
-  migration.
-- **S9.6** The local host's resolved dependency graph contains no reference to the module, and the local
-  host starts and serves every one of its scenarios with the package absent.
-- **S9.7** Two credentials differing only in the case of the subject produce two different principals —
-  nothing is trimmed, folded or normalised.
-
-Out of scope: choosing or operating an identity provider — the sample's issuer is a test double.
-Federation, account linking and any shared user directory, which are brief non-goals.
-
-## S10 — Organizations
-**Status:** queued
-
-Delivers: someone can create an organization, invite another person into it, and have that person accept.
-Afterwards each of them can work in the organizations they belong to, and neither can see, enter or
-administer one they do not — they are simply told it is not there.
-
-Touches:
-- **`SubZeroDev.Platform.Organizations`** — new module: `OrganizationId`, `InvitationId`,
-  `OrganizationRole`, `MembershipState`, `Organization`, `Membership`, `Invitation`, `OrganizationError`,
-  the organization API, an `ITenantResolver`, an `IPermissionProvider`, and three tables
-
-Depends on: S9.
-
-Acceptance:
-- **S10.1** Creating an organization mints a tenant, writes the organization, writes the owner's
-  membership and writes the audit row in one transaction; forcing any one of the four to fail leaves none
-  of them.
-- **S10.2** Two organizations created concurrently never share a tenant: the losing create answers
-  `OrganizationError.TenantAlreadyAssigned`, is retryable, and the retry mints a fresh tenant.
-- **S10.3** Minting an invitation returns its token exactly once. No API reads it back, and the stored row
-  holds only its hash.
-- **S10.4** Redeeming a valid token creates exactly one active membership; the same token presented a
-  second time creates no second membership and answers `OrganizationError.InvitationNotRedeemable`.
-- **S10.5** An expired token, an already-redeemed token and a token that never existed produce the
-  identical caller-facing answer; the distinction between them appears only in the log.
-- **S10.6** A principal switches its active organization to one it belongs to and the request's tenant
-  becomes that organization's tenant. Switching to one it does not belong to answers
-  `OrganizationError.OrganizationNotFound` — never forbidden.
-- **S10.7** A non-member attempting to administer the organization is told not found.
-- **S10.8** With no active organization selected the module's resolver defers and the request proceeds in
-  `TenantId.Implicit`.
-- **S10.9** The module's permission provider grants `Platform.Organizations.Administer` to `Owner` and
-  `Administrator` and not to `Member`, and the resulting decision names the provider as its source.
-- **S10.10** Membership is keyed by issuer and subject as two columns with no reference to a user row, and
-  a `Delegated` principal holds a membership that behaves identically to an `Account` one.
-- **S10.11** The module's schema contains no role-assignment table — the role is the closed enum on the
-  membership.
-- **S10.12** Membership and ownership changes write audit records of class `Required`.
-
-Out of scope: teams, nested organizations and richer organization administration. Invitation delivery —
-D5 mints and redeems; delivery is Notifications, which is D4.
-
-## S11 — Billing
-**Status:** queued
-
-Delivers: a deployment can put a customer on a plan, move them to another, and have what that customer
-may do change accordingly — while the product's own code never learns that a subscription exists at all.
-
-Touches:
-- **`SubZeroDev.Platform.Billing`** — new module: `PlanKey`, `SubscriptionId`, `SubscriptionState`,
-  `Plan`, `Subscription`, `ProviderEventReceipt`, `BillingError`, an `IEntitlementContributor`, the
-  administration API, the inbound provider event seam, and three tables
-- **`tests/SubZeroDev.Platform.Tests`** — the I-C8 architecture check, on S1's mechanism
-
-Depends on: S8.
-
-Acceptance:
-- **S11.1** A tenant subscribed to a plan granting a feature resolves that feature as granted; the same
-  tenant with no subscription does not.
-- **S11.2** A transition from a plan granting a feature to one that does not changes the resolved
-  entitlement by writing one row, with no per-feature fan-out and no entitlement stored anywhere in the
-  module's schema.
-- **S11.3** An architecture test fails the build when any package other than the Billing module references
-  `SubscriptionState` or any subscription type, and it fails against a deliberately broken fixture before
-  it counts.
-- **S11.4** A subscription whose period has ended against the injected clock stops granting its plan's
-  features with no row written.
-- **S11.5** The same inbound provider event delivered twice updates the subscription once, answers success
-  both times, and records one receipt.
-- **S11.6** An uninterpretable inbound event answers `BillingError.ProviderEventMalformed` and records no
-  receipt.
-- **S11.7** A transition naming an unregistered plan answers `BillingError.PlanNotFound`; a transition to
-  a state unreachable from the current one answers `BillingError.InvalidTransition`.
-- **S11.8** One tenant holds at most one subscription, enforced by a unique index rather than by a check
-  in code.
-- **S11.9** With outbound network unavailable the host starts, serves and reports ready: no provider is
-  contacted on the request path, at startup or on readiness.
-- **S11.10** An entitlement transition writes an audit record with action
-  `platform.billing.entitlement-changed` and class `Required`.
-
-Out of scope: real payment-provider integration — checkout, invoices, tax handling, webhooks and live
-credentials. Metering, quotas and any usage-based enforcement.
-
-## S12 — Licensing
-**Status:** queued
-
-Delivers: a deployment with no internet connection can prove from a signed file what it is entitled to,
-keep working when that file goes missing, and — once the licence has been expired for a month — stop
-being able to start new paid work while everything already running finishes and all of its data stays
-readable and exportable.
-
-Touches:
-- **`SubZeroDev.Platform.Licensing`** — new module: `LicenceTier`, `LicenceVerificationOutcome`,
-  `LicenceClaims`, `LicenceSigningKey`, `LicensingError`, an `IEntitlementContributor`, the revocation
-  extension point, and the one-row verified-licence table
-
-Depends on: S8.
-
-Acceptance:
-- **S12.1** A validly signed document verifies with outbound network unavailable and writes one row
-  carrying the tier, the granted features, the issue instant, the expiry and grace-end instants as
-  computed at verification, the verification instant, a fingerprint of the document, and the id of the key
-  that verified it.
-- **S12.2** Those claims survive a restart: the host restarted with the document deleted resolves the same
-  features from the stored row.
-- **S12.3** Fifty consecutive `Unavailable` or `ClockUnusable` verifications leave every column of the row
-  unchanged, compared before and after.
-- **S12.4** A tampered or wrongly signed document grants no tier: a host holding one and no prior row
-  resolves the Community tier.
-- **S12.5** A fresh installation with no row resolves the Community tier and grants only the Community
-  baseline's features.
-- **S12.6** `Invalid` and `Unavailable` are separately named in the log and in the audit record, though
-  both fall back identically.
-- **S12.7** A clock reading earlier than the stored verification instant is evaluated at the stored
-  verification instant: grace is neither extended nor expired early.
-- **S12.8** Two hosts verifying different documents converge on the one with the later verification
-  instant; the host holding the older document answers `LicensingError.SupersededByNewerVerification`,
-  which its caller treats as success.
-- **S12.9** After the grace end passes on the injected clock, an endpoint admitting new paid-feature work
-  is refused while work already accepted, running or scheduled completes, and reads, lists and exports of
-  existing data continue to succeed.
-- **S12.10** Grace defaults to thirty days when the document names none, and the module's options type
-  exposes no member by which a deployment could set it.
-- **S12.11** Accepted signing keys are a required ordered option supplied by the host; no key is compiled
-  into the module, and a document signed by the second key in the set verifies.
-- **S12.12** Verification never fails startup and never fails a request: a host whose document is
-  unreadable starts, reports ready and serves.
-- **S12.13** With the revocation seam absent, and again with one registered, the host makes no outbound
-  call at startup, on readiness or on any request.
-- **S12.14** A licence state change writes an audit record with action `platform.licensing.state-changed`
-  once per detection: a thousand requests against one expired licence write one record.
-
-Out of scope: machine activation, seat enforcement, trial issuance and an online revocation service.
-Resisting an operator who controls the machine's clock — D5 detects and logs, and claims no more.
-
-## S13 — The durable audit store
-**Status:** queued
-
-Delivers: an operated deployment keeps a record of who did what, in which tenant, and how it turned
-out — one that survives restarts, that an operator can search, and that nothing in the system can quietly
-edit or delete.
-
-Touches:
-- **`SubZeroDev.Platform.Audit`** — new module: the audit table, an `IAuditSink` declaring
-  `IsDurable == true`, and the read API scoped by tenant, instant range, actor and correlation
-
-Depends on: S8.
-
-Acceptance:
-- **S13.1** Allowed, denied and failed actions each persist actor issuer, actor subject, actor kind,
-  tenant, action, resource, outcome, correlation and instant, and every one is present after a restart.
-- **S13.2** The actor is stored as two columns, and no code path splits the rendered pair to recover them.
-- **S13.3** The read API answers by tenant with an instant range, by correlation, and by actor subject
-  with an instant range; the schema carries indexes for those three reads and no others.
-- **S13.4** The module exposes no update and no delete — asserted over its public surface and over the
-  operations its schema permits.
-- **S13.5** The primary key is the event id and carries no tenant prefix, so an operator's cross-tenant
-  query is one indexed read rather than a scan.
-- **S13.6** The sink declares `IsDurable == true`, and an `Operated` host with this module present starts
-  where the same host without it fails with `HostStartupError.DurableAuditSinkRequired`.
-- **S13.7** A thousand concurrent appends from two hosts against PostgreSQL all land, and no unique
-  constraint spans hosts.
-- **S13.8** Representative secrets pushed through every audited input surface reach neither a stored row
-  nor a log line.
-
-Out of scope: retention, pruning, archival, export formats and shipping to an external audit system. D5
-selects none, and the table grows without bound deliberately — recorded under
-[`90-decisions.md`](90-decisions.md) § *Open*.
-
-## S14 — Mcp: the frozen catalogue and its startup checks
-**Status:** queued
-
-Delivers: a product can offer tools to an AI client from two independent sources — a manifest it ships
-and its own code — with neither privileged over the other. Nothing is offered to anyone until someone
-explicitly says so, and a tool that could ask for a password never gets as far as running.
-
-Touches:
-- **`SubZeroDev.Platform.Mcp`** — new module: `ToolName`, `ToolProducerName`, `ToolDefinition`,
-  `ToolRegistration`, `IToolProducer`, `IToolCatalogue`, exposure configuration, and the startup
-  validation
-- **`tests/SubZeroDev.Platform.Tests`** — the I-M9 containment check, on S1's mechanism
-
-Depends on: S8.
-
-Acceptance:
-- **S14.1** A manifest-projecting producer and a product-owned fixed-table producer both register through
-  the same interface, and the catalogue treats them identically — no ordering, capability or
-  schema-derivation difference between them.
-- **S14.2** `ToolDefinition` declares no exposure member — asserted over the type. Exposure comes only
-  from configuration.
-- **S14.3** A registered tool absent from the exposure configuration is not in the catalogue's exposed
-  set, and looking it up answers exactly what looking up a name that was never registered answers.
-- **S14.4** `IToolCatalogue` declares no member reaching an unexposed registration — no enumeration of all
-  registrations, no exposure-ignoring lookup.
-- **S14.5** A registered tool whose parameter schema names a parameter matching the redaction marker set
-  fails startup with `HostStartupError.SensitiveToolParameter`, naming the tool and the parameter.
-- **S14.6** A tool requiring a permission no catalog declares fails startup with
-  `HostStartupError.UnregisteredPermission`.
-- **S14.7** Each producer's production runs once at startup and never again, and the catalogue exposes no
-  registration, unregistration or re-exposure member.
-- **S14.8** An architecture test asserts `ModelContextProtocol.*` is referenced by the Mcp module and by
-  no other package, and that no Platform public type exposes, returns, accepts or derives from an SDK
-  type.
-
-Out of scope: the transport, the connection principal and invocation, which are S15.
-
-## S15 — Mcp: the transport, the connection principal and invocation
-**Status:** queued
-
-Delivers: an AI client connects once, proves who it is at that moment, and can then use the tools it is
-allowed to use. Every call is recorded, a tool it may not use looks exactly like a tool that does not
-exist, and no password ever travels through a tool's arguments.
-
-Touches:
-- **`SubZeroDev.Platform.Mcp`** — the SDK transport and session, Platform's own list and call filters
-  installed ahead of the SDK's, `McpError`, the fixed invocation order, and the invocation audit
-
-Depends on: S14.
-
-Acceptance:
-- **S15.1** The connection authenticates once and its principal is fixed for the connection's lifetime; a
-  session request carrying a different principal answers `McpError.ConnectionUnauthenticated` and the
-  exchange ends.
-- **S15.2** No member of the invocation surface accepts a credential, and the audit record of a call
-  contains no argument.
-- **S15.3** One invocation produces an ordered trace of exactly: catalogue lookup, tenant resolution,
-  argument parse, authorization, entitlement, invocation inside its own operation scope, audit.
-- **S15.4** Authorization runs before any producer code: a producer that records having run is never
-  reached on a denied call.
-- **S15.5** A tool whose schema names a resource parameter is authorized scoped to the parsed resource id;
-  a tool whose schema names none is authorized at the tool level.
-- **S15.6** An unregistered tool and a registered-but-unexposed tool produce the identical answer on both
-  list and call, and that answer is Platform's rather than the SDK's default, which discloses existence.
-- **S15.7** Listing returns exposed tools only.
-- **S15.8** `McpError.InvalidArguments` names no argument value.
-- **S15.9** Every invocation writes exactly one audit record with the tool as the action and class
-  `Required`.
-- **S15.10** Two calls on one long-lived connection carry different correlations.
-- **S15.11** A connection dropped mid-invocation cancels the call through the existing cancellation
-  plumbing and leaves no half-applied write.
-
-Out of scope: runtime registration, unregistration or re-exposure of a tool. The SDK's
-authorization-metadata path, which is not used at all — Platform's evaluator is the only authority on
-this surface.
-
 ## S16 — The administration shell
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator can see who they are signed in as, move between the organizations they belong to,
 read what the deployment is entitled to and what its licence says, and look through the record of what
