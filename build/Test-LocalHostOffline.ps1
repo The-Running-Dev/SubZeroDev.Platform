@@ -92,9 +92,9 @@ try {
         throw "Local liveness returned HTTP $($liveness.StatusCode)."
     }
 
-    $root = Invoke-WebRequest -Uri "$baseUri/" -TimeoutSec 5 -UseBasicParsing
-    if ($root.StatusCode -ne 200) {
-        throw "Local root returned HTTP $($root.StatusCode)."
+    $rootResponse = Invoke-WebRequest -Uri "$baseUri/" -TimeoutSec 5 -UseBasicParsing
+    if ($rootResponse.StatusCode -ne 200) {
+        throw "Local root returned HTTP $($rootResponse.StatusCode)."
     }
 
     if ([LocalHostSignal]::kill($hostProcess.Id, [LocalHostSignal]::SIGTERM) -ne 0) {
