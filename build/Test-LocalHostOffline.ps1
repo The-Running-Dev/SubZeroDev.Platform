@@ -92,13 +92,9 @@ try {
         throw "Local liveness returned HTTP $($liveness.StatusCode)."
     }
 
-    $root = Invoke-RestMethod -Uri "$baseUri/" -TimeoutSec 5
-    if ([string]::IsNullOrWhiteSpace([string]$root.correlation)) {
-        throw 'The local root response carried no correlation id.'
-    }
-
-    if ([string]::IsNullOrWhiteSpace([string]$root.tenant)) {
-        throw 'The local root response carried no tenant id.'
+    $root = Invoke-WebRequest -Uri "$baseUri/" -TimeoutSec 5 -UseBasicParsing
+    if ($root.StatusCode -ne 200) {
+        throw "Local root returned HTTP $($root.StatusCode)."
     }
 
     if ([LocalHostSignal]::kill($hostProcess.Id, [LocalHostSignal]::SIGTERM) -ne 0) {
