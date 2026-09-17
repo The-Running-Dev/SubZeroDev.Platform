@@ -114,7 +114,11 @@ try {
         throw "SIGTERM failed for local sample process $($hostProcess.Id)."
     }
 
-    $hostProcess.WaitForExit()
+    if (-not $hostProcess.WaitForExit(15000)) {
+        Show-Logs
+        throw "The local sample did not exit within 15 seconds of SIGTERM."
+    }
+
     if ($hostProcess.ExitCode -ne 0) {
         Show-Logs
         throw "The local sample exited $($hostProcess.ExitCode) after SIGTERM."
