@@ -108,7 +108,8 @@ jobs:
             DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
             POWERSHELL_TELEMETRY_OPTOUT=1 \
             HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= NO_PROXY=127.0.0.1,localhost \
-            pwsh ./build/Test-LocalHostOffline.ps1 -DataDirectory /tmp/platform-local-offline
+            pwsh "$GITHUB_WORKSPACE/build/Test-LocalHostOffline.ps1" \
+              -Root "$GITHUB_WORKSPACE" -DataDirectory /tmp/platform-local-offline
 
       # `always()` makes an attempted connection visible even if the host swallowed the socket
       # error or another assertion stopped the scenario first.
