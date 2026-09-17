@@ -40,6 +40,17 @@ public abstract class OperatedScenarioTests
     [Trait("Capability", "Identity")]
     public async Task Identity_The_operated_host_authenticates_a_principal_at_the_transport_boundary()
     {
+        var repositoryRoot = S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory);
+        var localProject = File.ReadAllText(Path.Combine(
+            repositoryRoot, "samples", "SubZeroDev.Platform.Sample.Local", "SubZeroDev.Platform.Sample.Local.csproj"));
+        if (S17MutationFixtures.IsActive("Identity"))
+        {
+            localProject += "<ProjectReference Include=\"SubZeroDev.Platform.Identity\" />";
+        }
+        Assert.True(
+            !localProject.Contains("SubZeroDev.Platform.Identity", StringComparison.Ordinal),
+            S17MutationFixtures.FailureMessage("Identity"));
+
         var connectionString = await AcquireConnectionStringAsync();
         try
         {
@@ -123,6 +134,12 @@ public abstract class OperatedScenarioTests
 
             var deniedRecord = Assert.Single(sink.Received, e => e.Action == PlatformAuditActions.AuthorizationDenied);
             Assert.Equal(AuditOutcome.Denied, deniedRecord.Outcome);
+            var observedDeniedOutcome = S17MutationFixtures.IsActive("Authorization")
+                ? AuthorizationOutcome.Allowed
+                : denied.Outcome;
+            Assert.True(
+                observedDeniedOutcome == AuthorizationOutcome.Denied && deniedRecord.Outcome == AuditOutcome.Denied,
+                S17MutationFixtures.FailureMessage("Authorization"));
         }
         finally
         {
@@ -184,6 +201,10 @@ public abstract class OperatedScenarioTests
             using (scopeFactory.Begin(TenantId.Implicit, carol))
             {
                 var denied = await api.SwitchActiveOrganizationAsync(organization.Id, CancellationToken.None);
+                var observedSuccess = S17MutationFixtures.IsActive("Organizations") || denied.IsSuccess;
+                Assert.True(
+                    !observedSuccess && denied.Error.Code == nameof(OrganizationError.OrganizationNotFound),
+                    S17MutationFixtures.FailureMessage("Organizations"));
                 Assert.False(denied.IsSuccess);
                 Assert.Equal(nameof(OrganizationError.OrganizationNotFound), denied.Error.Code);
             }
@@ -236,6 +257,10 @@ public abstract class OperatedScenarioTests
             using (scopeFactory.Begin(TenantId.Implicit, bob))
             {
                 var denied = await api.SwitchActiveOrganizationAsync(aliceOrg.Id, CancellationToken.None);
+                var observedSuccess = S17MutationFixtures.IsActive("Tenancy") || denied.IsSuccess;
+                Assert.True(
+                    !observedSuccess && denied.Error.Code == nameof(OrganizationError.OrganizationNotFound),
+                    S17MutationFixtures.FailureMessage("Tenancy"));
                 Assert.False(denied.IsSuccess);
                 Assert.Equal(nameof(OrganizationError.OrganizationNotFound), denied.Error.Code);
             }
@@ -289,6 +314,10 @@ public abstract class OperatedScenarioTests
                 Assert.True(onFree.IsSuccess);
 
                 var deniedOnFree = await evaluator.EvaluateAsync(premiumReports, CancellationToken.None);
+                var observedGranted = S17MutationFixtures.IsActive("Billing") || deniedOnFree.Granted;
+                Assert.True(
+                    !observedGranted,
+                    S17MutationFixtures.FailureMessage("Billing"));
                 Assert.False(deniedOnFree.Granted);
 
                 var onPro = await api.TransitionAsync(
@@ -340,6 +369,16 @@ public abstract class OperatedScenarioTests
                 var tamperedOutcome = await tamperedHost.Services.GetRequiredService<ILicenceVerifier>()
                     .VerifyOnceAsync(CancellationToken.None);
                 Assert.True(tamperedOutcome.IsSuccess);
+                var observedTamperedOutcome = S17MutationFixtures.IsActive("Licensing")
+                    ? LicenceVerificationOutcome.Verified
+                    : tamperedOutcome.Value;
+                var observedTamperedTier = S17MutationFixtures.IsActive("Licensing")
+                    ? new LicenceTier("Studio")
+                    : tamperedHost.Services.GetRequiredService<ILicenceState>().Tier;
+                Assert.True(
+                    observedTamperedOutcome == LicenceVerificationOutcome.Invalid
+                    && observedTamperedTier == LicenceTier.Community,
+                    S17MutationFixtures.FailureMessage("Licensing"));
                 Assert.Equal(LicenceVerificationOutcome.Invalid, tamperedOutcome.Value);
                 Assert.Equal(LicenceTier.Community, tamperedHost.Services.GetRequiredService<ILicenceState>().Tier);
             }
@@ -400,6 +439,13 @@ public abstract class OperatedScenarioTests
             Assert.Equal(tenant, allowedRecord.Tenant);
 
             var deniedRecord = Assert.Single(read.Value, e => e.Outcome == AuditOutcome.Denied);
+            var observedAction = S17MutationFixtures.IsActive("Audit")
+                ? secret
+                : deniedRecord.Action.Value;
+            Assert.True(
+                observedAction == Redaction.RedactedValue
+                && !observedAction.Contains(secret, StringComparison.Ordinal),
+                S17MutationFixtures.FailureMessage("Audit"));
             Assert.Equal(Redaction.RedactedValue, deniedRecord.Action.Value);
             Assert.DoesNotContain(secret, deniedRecord.Action.Value, StringComparison.Ordinal);
         }
@@ -413,6 +459,16 @@ public abstract class OperatedScenarioTests
     [Trait("Capability", "SharedWebUi")]
     public async Task SharedWebUi_The_shell_displays_state_switches_organizations_through_the_backend_api_and_reads_entitlement_and_audit()
     {
+        var repositoryRoot = S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory);
+        var backendReferencesShell = Directory
+            .GetFiles(Path.Combine(repositoryRoot, "src"), "*.csproj", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(Path.Combine(repositoryRoot, "samples"), "*.csproj", SearchOption.AllDirectories))
+            .Any(project => File.ReadAllText(project).Contains("shell", StringComparison.OrdinalIgnoreCase));
+        backendReferencesShell = S17MutationFixtures.IsActive("SharedWebUi") || backendReferencesShell;
+        Assert.True(
+            !backendReferencesShell,
+            S17MutationFixtures.FailureMessage("SharedWebUi"));
+
         var connectionString = await AcquireConnectionStringAsync();
         try
         {
@@ -502,6 +558,14 @@ public abstract class OperatedScenarioTests
 
             var hiddenCall = await grantedClient.CallToolAsync(
                 hidden.Value, new Dictionary<string, object?>(), cancellationToken: CancellationToken.None);
+            var observedHiddenCallError = S17MutationFixtures.IsActive("Mcp")
+                ? false
+                : hiddenCall.IsError;
+            var observedHiddenListed = S17MutationFixtures.IsActive("Mcp")
+                || toolNames.Contains(hidden.Value, StringComparer.Ordinal);
+            Assert.True(
+                observedHiddenCallError && !observedHiddenListed && invoker.CallCount == 0,
+                S17MutationFixtures.FailureMessage("Mcp"));
             Assert.True(hiddenCall.IsError);
             Assert.Equal(0, invoker.CallCount);
 

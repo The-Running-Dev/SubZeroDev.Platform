@@ -1,0 +1,47 @@
+[
+  {
+    "capability": "Identity",
+    "negativeCriterion": "the local host has no Identity dependency and requires no account setup",
+    "mutation": "inject an Identity project reference into the observed local-host graph"
+  },
+  {
+    "capability": "Authorization",
+    "negativeCriterion": "the ungranted principal is denied and the denial is audited",
+    "mutation": "observe the denied authorization decision as allowed"
+  },
+  {
+    "capability": "Organizations",
+    "negativeCriterion": "a non-member cannot switch into the organization",
+    "mutation": "observe the non-member organization switch as successful"
+  },
+  {
+    "capability": "Tenancy",
+    "negativeCriterion": "a principal cannot cross into another tenant",
+    "mutation": "observe the cross-tenant switch as successful"
+  },
+  {
+    "capability": "Billing",
+    "negativeCriterion": "an operation without its entitlement is denied",
+    "mutation": "observe the unentitled operation as granted"
+  },
+  {
+    "capability": "Licensing",
+    "negativeCriterion": "a tampered document never grants a paid tier",
+    "mutation": "observe the tampered document as verified at Studio tier"
+  },
+  {
+    "capability": "Audit",
+    "negativeCriterion": "representative secrets reach neither the stored record nor its fields",
+    "mutation": "put the representative secret back into the observed stored action"
+  },
+  {
+    "capability": "SharedWebUi",
+    "negativeCriterion": "no backend project references the replaceable shell",
+    "mutation": "inject a shell reference into the observed backend graph"
+  },
+  {
+    "capability": "Mcp",
+    "negativeCriterion": "a registered but unexposed tool is neither listed nor callable",
+    "mutation": "observe the hidden tool as listed and callable"
+  }
+]

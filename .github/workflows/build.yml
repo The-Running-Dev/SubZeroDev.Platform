@@ -27,6 +27,14 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
 
+      # S17.5: activate each capability's deliberately broken negative observation in isolation.
+      # The gate accepts only the one expected, marked scenario failure; a build failure, missing
+      # test, crash or unrelated assertion failure remains a CI failure rather than false evidence
+      # that the mutation was caught.
+      # verification: true
+      - name: Reject all nine negative mutation fixtures
+        run: pwsh ./build/Test-S17Mutations.ps1
+
       # S8.1: with no OTLP endpoint configured (the sample's appsettings.json carries none), the
       # standard registration call must start no exporter and attempt no outbound connection —
       # neither at startup nor in steady state. Rejecting the two OTLP ports before the sample runs
@@ -57,6 +65,64 @@ jobs:
       # verification: true
       - name: Assert no framework project references a workload
         run: pwsh ./build/Test-WorkloadIsolation.ps1
+
+      # S17.3: isolate only the operating-system identity used by the local sample, so runner and
+      # Actions traffic cannot create false positives. Loopback remains available for the sample's
+      # probes; every non-loopback packet from that identity is rejected and counted.
+      - name: Install the local-host outbound guard
+        run: |
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin platform-local-offline
+          offline_uid=$(id -u platform-local-offline)
+          sudo iptables -N PLATFORM_LOCAL_OFFLINE
+          sudo iptables -A PLATFORM_LOCAL_OFFLINE -o lo -j RETURN
+          sudo iptables -A PLATFORM_LOCAL_OFFLINE -j REJECT
+          sudo iptables -I OUTPUT 1 -m owner --uid-owner "$offline_uid" -j PLATFORM_LOCAL_OFFLINE
+          sudo install -d -o platform-local-offline -g platform-local-offline /tmp/platform-local-offline
+
+      # A guard that has never rejected traffic is not known to constrain anything. This deliberate
+      # probe must fail and increment the same counter inspected after the real local-host run.
+      # verification: true
+      - name: Prove the outbound guard rejects an attempted connection
+        run: |
+          set +e
+          sudo -u platform-local-offline env HOME=/tmp/platform-local-offline \
+            curl --connect-timeout 3 --max-time 5 https://example.com >/dev/null 2>&1
+          probe_status=$?
+          set -e
+
+          rejected=$(sudo iptables -L PLATFORM_LOCAL_OFFLINE -v -x -n | \
+            awk '$3 == "REJECT" { total += $1 } END { print total + 0 }')
+          if [ "$probe_status" -eq 0 ] || [ "$rejected" -eq 0 ]; then
+            echo "the outbound guard did not reject and count its negative-control probe" >&2
+            exit 1
+          fi
+
+          sudo iptables -Z PLATFORM_LOCAL_OFFLINE
+
+      # verification: true
+      - name: Run the local host with outbound networking unavailable
+        run: |
+          sudo -u platform-local-offline env \
+            HOME=/tmp/platform-local-offline \
+            DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+            POWERSHELL_TELEMETRY_OPTOUT=1 \
+            HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= NO_PROXY=127.0.0.1,localhost \
+            pwsh ./build/Test-LocalHostOffline.ps1 -DataDirectory /tmp/platform-local-offline
+
+      # `always()` makes an attempted connection visible even if the host swallowed the socket
+      # error or another assertion stopped the scenario first.
+      # verification: true
+      - name: Assert the local host attempted no outbound connection
+        if: always()
+        run: |
+          rejected=$(sudo iptables -L PLATFORM_LOCAL_OFFLINE -v -x -n | \
+            awk '$3 == "REJECT" { total += $1 } END { print total + 0 }')
+          if [ "$rejected" -ne 0 ]; then
+            echo "the local-host run attempted $rejected outbound packet(s)" >&2
+            exit 1
+          fi
+          echo "the local-host run attempted no outbound connections"
 
   # S3.15: the workload's suite runs from a fresh clone. It is its own job rather than a step in
   # the one above so that "a fresh clone" is literal — this job shares no restored state, no
