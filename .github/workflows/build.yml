@@ -72,6 +72,12 @@ jobs:
       - name: Install the local-host outbound guard
         run: |
           sudo useradd --system --no-create-home --shell /usr/sbin/nologin platform-local-offline
+          workspace_parent=$(dirname "$GITHUB_WORKSPACE")
+          work_parent=$(dirname "$workspace_parent")
+          runner_home=$(dirname "$work_parent")
+          sudo chmod o+x "$runner_home" "$work_parent" "$workspace_parent" "$GITHUB_WORKSPACE"
+          sudo -u platform-local-offline test -r "$GITHUB_WORKSPACE/build/Test-LocalHostOffline.ps1"
+
           offline_uid=$(id -u platform-local-offline)
           sudo iptables -N PLATFORM_LOCAL_OFFLINE
           sudo iptables -A PLATFORM_LOCAL_OFFLINE -o lo -j RETURN
