@@ -64,10 +64,11 @@ foreach ($fixture in $fixtures) {
         }
         $hasMarker = $message.Contains($marker, [StringComparison]::Ordinal)
 
-        if ($testStatus -eq 0
-            -or $testResults.Count -ne 1
-            -or $outcome -ne 'Failed'
-            -or -not $hasMarker) {
+        $mutationEscaped = ($testStatus -eq 0) `
+            -or ($testResults.Count -ne 1) `
+            -or ($outcome -ne 'Failed') `
+            -or (-not $hasMarker)
+        if ($mutationEscaped) {
             $escaped.Add(
                 "${capability}: expected exactly one marked scenario failure; exit=$testStatus, " +
                 "results=$($testResults.Count), outcome=$outcome, marker=$hasMarker")
