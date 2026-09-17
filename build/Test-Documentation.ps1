@@ -499,7 +499,11 @@ function Test-DocumentationLink {
 
             # Addresses this gate deliberately does not resolve. Site-absolute
             # routes are checked by the Docusaurus build's own broken-link pass.
-            if ($value -match '^(https?|mailto|ftp):' -or $value.StartsWith('/')) {
+            # A drive-letter path (e.g. C:/Users/...) is the kit's home-install
+            # convention for referencing a shared file outside this repo -- it
+            # is host-specific by design and unresolvable from any checkout,
+            # this machine's or CI's.
+            if ($value -match '^(https?|mailto|ftp):' -or $value.StartsWith('/') -or $value -match '^[A-Za-z]:[/\\]') {
                 continue
             }
 
