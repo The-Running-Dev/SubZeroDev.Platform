@@ -560,7 +560,7 @@ public abstract class OperatedScenarioTests
                 hidden.Value, new Dictionary<string, object?>(), cancellationToken: CancellationToken.None);
             var observedHiddenCallError = S17MutationFixtures.IsActive("Mcp")
                 ? false
-                : hiddenCall.IsError;
+                : hiddenCall.IsError is true;
             var observedHiddenListed = S17MutationFixtures.IsActive("Mcp")
                 || toolNames.Contains(hidden.Value, StringComparer.Ordinal);
             Assert.True(

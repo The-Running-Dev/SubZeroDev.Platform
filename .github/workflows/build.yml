@@ -116,6 +116,11 @@ jobs:
       - name: Assert the local host attempted no outbound connection
         if: always()
         run: |
+          if ! sudo iptables -L PLATFORM_LOCAL_OFFLINE -n >/dev/null 2>&1; then
+            echo "the local-host outbound guard was not installed" >&2
+            exit 1
+          fi
+
           rejected=$(sudo iptables -L PLATFORM_LOCAL_OFFLINE -v -x -n | \
             awk '$3 == "REJECT" { total += $1 } END { print total + 0 }')
           if [ "$rejected" -ne 0 ]; then
