@@ -4,15 +4,16 @@
 
 .DESCRIPTION
     The caller owns the network guard and runs this script under the guarded operating-system user.
-    This script migrates a fresh SQLite store, starts the built local sample in Production, and
-    proves readiness, liveness and the local root endpoint through loopback. CI then inspects the
-    guard's rejected-packet counter and fails if the sample attempted any non-loopback connection.
+    This script starts the built, dependency-free local sample in Production from a clean writable
+    directory and proves readiness, liveness and the local root endpoint through loopback. CI then
+    inspects the guard's rejected-packet counter and fails if the sample attempted any non-loopback
+    connection.
 
 .PARAMETER Root
     Repository root. Defaults to the current directory.
 
 .PARAMETER DataDirectory
-    Writable directory for the isolated user's SQLite database and process logs.
+    Clean writable directory for the isolated user's process logs.
 #>
 [CmdletBinding()]
 param(
@@ -35,7 +36,6 @@ public static class LocalHostSignal
 
 $sampleDirectory = Join-Path $Root 'samples' 'SubZeroDev.Platform.Sample.Local' 'bin' 'Release' 'net10.0'
 $sampleExecutable = Join-Path $sampleDirectory 'SubZeroDev.Platform.Sample.Local'
-$databasePath = Join-Path $DataDirectory 'sample-local-offline.db'
 $stdoutPath = Join-Path $DataDirectory 'sample-local.out.log'
 $stderrPath = Join-Path $DataDirectory 'sample-local.err.log'
 $baseUri = 'http://127.0.0.1:5299'
@@ -47,7 +47,6 @@ if (-not (Test-Path -LiteralPath $sampleExecutable)) {
 [void](New-Item -ItemType Directory -Path $DataDirectory -Force)
 $env:ASPNETCORE_ENVIRONMENT = 'Production'
 $env:ASPNETCORE_URLS = $baseUri
-$env:Platform__Persistence__ConnectionString = "Data Source=$databasePath"
 
 function Show-Logs {
     foreach ($path in @($stdoutPath, $stderrPath)) {
@@ -57,14 +56,6 @@ function Show-Logs {
         Write-Host "----- $(Split-Path -Leaf $path)"
         Write-Host $content
     }
-}
-
-$migration = Start-Process -FilePath $sampleExecutable -ArgumentList 'migrate' `
-    -WorkingDirectory $sampleDirectory -NoNewWindow -PassThru -Wait `
-    -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-if ($migration.ExitCode -ne 0) {
-    Show-Logs
-    throw "The local sample's migrate mode exited $($migration.ExitCode)."
 }
 
 $hostProcess = $null
@@ -124,7 +115,7 @@ try {
         throw "The local sample exited $($hostProcess.ExitCode) after SIGTERM."
     }
 
-    Write-Host 'The local sample migrated, served readiness, liveness and root, and shut down cleanly.'
+    Write-Host 'The local sample served readiness, liveness and root, and shut down cleanly.'
 }
 finally {
     if ($null -ne $hostProcess -and -not $hostProcess.HasExited) {
