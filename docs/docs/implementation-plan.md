@@ -160,13 +160,21 @@ having if it is applied at the moment it is inconvenient.
 
 ### D5 — Commercial *(ecosystem Phase 8)*
 
-Identity, Authorization, Organizations, Tenancy, Billing, Licensing, Audit, shared web UI.
-Shapes are specified in
-[`second-consumer-packages.md`](second-consumer-packages.md).
+Identity, Authorization, Organizations, Tenancy, Billing, Licensing, Audit, shared web UI and
+`Platform.Mcp`. The bounded scope and authoritative done-criteria are in the
+[D5 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md#definition-of-done).
 
-**Done when** the divergences that document names are satisfied for **both** consumers —
-particularly: tenancy models deliberately shared resources explicitly, and `Platform.Mcp`
-accepts tool definitions from a producer other than manifest projection.
+**Done when** the assertion-driven sample proves all nine capabilities in both the operated and
+identity-free local compositions, including the brief's negative cases, database matrix,
+offline-local proof and dependency-direction gates; the public contracts are implemented in
+versioned 0.x CI package artifacts consumed by that sample; and consumer testing helpers and
+human-facing documentation cover the same boundaries. See the [commercial guide](commercial-guide.md)
+for registration, composition, security defaults, failure semantics and the asserted scenarios.
+
+The sample is the executable proof, **not an external consumer**. The retained consumer-evidence
+objection for Authorization, Licensing, Audit and shared web UI remains unresolved in the
+[D5 decision log](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/90-decisions.md).
+Public registry publishing and onboarding any named consumer are separate work.
 
 > **The tenant column does not wait for this stage.** It ships with Persistence in D3.
 

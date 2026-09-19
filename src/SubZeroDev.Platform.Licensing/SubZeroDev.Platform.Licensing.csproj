@@ -1,9 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <!-- Not shipped as a package yet: S18 packs every D5 package in CI. -->
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />

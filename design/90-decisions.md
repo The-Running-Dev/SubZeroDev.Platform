@@ -16,6 +16,36 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-19 — D5 package delivery uses the approved lockstep version
+
+Context: S18 needed the answer to `10-design.md` § Open questions 4 before producing package
+artifacts. Ben approved lockstep on 2026-09-17, recorded on issue #186.
+
+Chosen: the framework and all D5 modules use one shared, explicitly unstable 0.x version. CI packs
+and restores the artifacts without publishing to a public registry. The shared version prefix
+remains owned by `src/Directory.Build.props`; CI supplies a common prerelease version per run.
+
+Rejected: independent module versions during D5, because there is no independently running
+consumer to justify the compatibility matrix. Revisit when a module has such a consumer.
+
+Reversibility: cheap before external adoption; independent releases later require a compatibility
+policy and its tests.
+
+### 2026-09-19 — D5 retains the consumer-evidence objection
+
+Context: the brief's decision 2 admits Authorization, Licensing, Audit and shared web UI without
+consumer evidence under ADR-006 rule 4. S18.6 requires this objection to remain visible.
+
+Chosen: retain all four capabilities in D5 while recording the objection as **unresolved**.
+The sample supplies executable evidence of the stated boundaries; it does not establish external
+adoption or satisfy the second-consumer extraction guard. Placement must remain reversible.
+
+Rejected: treating package artifacts, passing sample scenarios or completion of D5 as evidence
+that an outside product runs on these capabilities. No named consumer is onboarded by this slice.
+
+Reversibility: cheap while packages remain 0.x and have no external consumer; later consumer
+evidence must be assessed separately.
+
 ### 2026-09-05 — An endpoint declares its permission and its feature, and a mapped endpoint declaring neither fails startup
 
 Context: `20-contract.md` § *Public surface* 11 fixed the order — authorize at step 4, check

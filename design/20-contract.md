@@ -750,48 +750,9 @@ Fakes for the framework seams only, beside the existing ones in
 a fake tenant resolver, a fake entitlement contributor, a fake permission provider, an audit
 inspector, and the composition profile on the test host.
 
-The missing declarations are scaffolded below. Existing principal helpers and
-`FakeDurableAuditSink` remain declared in `Fakes.cs`; the existing host interface is in
-[`PlatformTestHost.cs`](../src/SubZeroDev.Platform.Testing/PlatformTestHost.cs). The slice that
-implements these declarations replaces this scaffold with pointers to their source files.
-
-```csharp
-public sealed class FakeTenantResolver : ITenantResolver
-{
-    public FakeTenantResolver();
-    public string Name { get; set; }
-    public TenantId? Tenant { get; set; }
-    public Task<TenantId?> ResolveAsync(CancellationToken cancellationToken);
-}
-
-public sealed class FakeEntitlementContributor : IEntitlementContributor
-{
-    public FakeEntitlementContributor();
-    public EntitlementContributorName Name { get; set; }
-    public Result<bool, EntitlementError> Response { get; set; }
-    public Task<Result<bool, EntitlementError>> GrantsAsync(
-        FeatureName feature, TenantId tenant, CancellationToken cancellationToken);
-}
-
-public sealed class FakePermissionProvider : IPermissionProvider
-{
-    public FakePermissionProvider();
-    public PermissionProviderName Name { get; set; }
-    public Result<IReadOnlySet<PermissionName>, AuthorizationError> Response { get; set; }
-    public Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
-        Principal principal, TenantId tenant, ResourceRef? resource,
-        CancellationToken cancellationToken);
-}
-
-public sealed class AuditInspector
-{
-    public AuditInspector(FakeDurableAuditSink sink);
-    public IReadOnlyList<AuditEvent> Records { get; }
-}
-
-// Added to the existing IPlatformTestHost interface; all existing members remain.
-CompositionProfile CompositionProfile { get; }
-```
+The helper declarations are implemented in [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs).
+The getter-only effective composition profile is declared on `IPlatformTestHost` in
+[`PlatformTestHost.cs`](../src/SubZeroDev.Platform.Testing/PlatformTestHost.cs).
 
 **Semantics of the helpers.**
 

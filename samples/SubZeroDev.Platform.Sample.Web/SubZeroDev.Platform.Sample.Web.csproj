@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!-- The ordinary build references Platform's projects directly. Passing
-       -p:UsePlatformPackages=true (and -p:PlatformPackageVersion=<version>) switches these two to
-       the packages CI just published, so S9.2/S9.3 rerun the sample and its round-trip assertions
+       -p:UsePlatformPackages=true (and -p:PlatformPackageVersion=<version>) switches every Platform
+       reference to the packages CI packed, so S18.1 reruns the sample and its round-trip assertions
        against the restored packages rather than the source tree, without a second sample to
        maintain. -->
   <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
@@ -13,12 +13,14 @@
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
     <PackageReference Include="SubZeroDev.Platform.Hosting" Version="$(PlatformPackageVersion)" />
     <PackageReference Include="SubZeroDev.Platform.Persistence" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Identity" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Audit" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Organizations" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Billing" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Licensing" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
-  <!-- Identity, Audit, Organizations, Billing and Licensing are not packed yet (S18 packs every D5
-       package): a project reference regardless of UsePlatformPackages, unlike the two framework
-       packages above. -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Audit\SubZeroDev.Platform.Audit.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Organizations\SubZeroDev.Platform.Organizations.csproj" />
