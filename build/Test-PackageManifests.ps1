@@ -1,14 +1,13 @@
 <#
 .SYNOPSIS
-    Validates the six shipped packages' manifests: S9.1, S9.5 and S9.6 of
-    design/d3/30-slices.md.
+    Validates the framework and D5 module manifests (D5-S18.1).
 
 .DESCRIPTION
     Packs SubZeroDev.Platform.slnx to a scratch directory and checks the
     produced .nupkg set rather than trusting the build to have produced the
     right thing implicitly:
 
-    - Exactly the six shipped packages are produced (S9.1) -- neither sample
+    - Exactly the twelve framework and module packages are produced -- no sample
       project is packable, so a passing `dotnet pack` over the solution
       already proves this; this script asserts it rather than assuming it.
     - Every package's version is 0.x (S9.6) -- the brief's stated
@@ -17,7 +16,7 @@
       later) package here would be the release silently making a promise
       Lifespan has not authorised.
     - No package's dependency list names SubZeroDev.Platform.Testing (S9.5)
-      -- Testing exists to write tests against the other five, and a shipped
+      -- Testing exists to write tests against the framework, and a shipped
       dependency on it would carry Testing's own dependencies (xunit,
       Testcontainers, ...) into every consumer's production restore.
 
@@ -32,6 +31,10 @@
     already carries (VersionPrefix), so a plain local run checks exactly what
     an unversioned build would produce.
 
+.PARAMETER OutputDirectory
+    Keeps the checked packages here for the artifact upload and consumer restore.
+    Omit to use and clean up a temporary directory.
+
 .EXAMPLE
     ./build/Test-PackageManifests.ps1
 
@@ -41,7 +44,8 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [string]$Version
+    [string]$Version,
+    [string]$OutputDirectory
 )
 
 Set-StrictMode -Version 3.0
@@ -57,10 +61,19 @@ $expectedPackages = @(
     'SubZeroDev.Platform.Observability'
     'SubZeroDev.Platform.Persistence'
     'SubZeroDev.Platform.Testing'
+    'SubZeroDev.Platform.Identity'
+    'SubZeroDev.Platform.Organizations'
+    'SubZeroDev.Platform.Billing'
+    'SubZeroDev.Platform.Licensing'
+    'SubZeroDev.Platform.Audit'
+    'SubZeroDev.Platform.Mcp'
 )
 
-$scratch = Join-Path ([System.IO.Path]::GetTempPath()) "szdfp-pack-$([Guid]::NewGuid())"
-New-Item -ItemType Directory -Path $scratch | Out-Null
+$temporary = -not $OutputDirectory
+$scratch = if ($temporary) {
+    Join-Path ([System.IO.Path]::GetTempPath()) "szdfp-pack-$([Guid]::NewGuid())"
+} else { [System.IO.Path]::GetFullPath($OutputDirectory) }
+New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 
 try {
     $packArgs = @($solution, '-c', 'Release', '-o', $scratch)
@@ -85,9 +98,13 @@ try {
     if ($extra.Count -gt 0) {
         throw "Unexpected package(s) produced: $($extra -join ', ')."
     }
+    if ($produced.Count -ne $expectedPackages.Count) {
+        throw 'Expected exactly one artifact per package.'
+    }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+    $sharedVersion = $null
     foreach ($package in $produced) {
         $zip = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
         try {
@@ -109,6 +126,13 @@ try {
             if ($packageVersion -notmatch '^0\.') {
                 throw "'$($package.Name)': version '$packageVersion' is not 0.x."
             }
+            if ($Version -and $packageVersion -ne $Version) {
+                throw "'$($package.Name)': expected version '$Version', found '$packageVersion'."
+            }
+            if ($sharedVersion -and $packageVersion -ne $sharedVersion) {
+                throw "'$($package.Name)': D5 packages must version in lockstep ($sharedVersion)."
+            }
+            $sharedVersion = $packageVersion
 
             $dependencyIds = @($nuspec.SelectNodes('//*[local-name()="dependency"]') | ForEach-Object { $_.id })
             if ('SubZeroDev.Platform.Testing' -in $dependencyIds) {
@@ -125,8 +149,8 @@ try {
         }
     }
 
-    Write-Host "All six package manifests are consistent with S9.1, S9.5 and S9.6." -ForegroundColor Green
+    Write-Host "All twelve package manifests passed at $sharedVersion (S18.1)." -ForegroundColor Green
 }
 finally {
-    Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+    if ($temporary) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
 }

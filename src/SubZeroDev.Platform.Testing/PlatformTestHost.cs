@@ -60,6 +60,9 @@ public interface IPlatformTestHostBuilder
 /// <summary>A started test host.</summary>
 public interface IPlatformTestHost : IAsyncDisposable
 {
+    /// <summary>The effective composition profile validated when this host started.</summary>
+    CompositionProfile CompositionProfile { get; }
+
     /// <summary>The host's services.</summary>
     IServiceProvider Services { get; }
 
@@ -299,6 +302,8 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
 internal sealed class StartedTestHost(IHost host, FakeClock clock, IEventCapture events, string? sqliteFile = null)
     : IPlatformTestHost
 {
+    public CompositionProfile CompositionProfile => host.Services.GetRequiredService<PlatformOptions>().CompositionProfile;
+
     public IServiceProvider Services => host.Services;
 
     public FakeClock Clock => clock;

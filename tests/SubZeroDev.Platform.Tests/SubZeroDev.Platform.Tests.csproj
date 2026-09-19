@@ -29,9 +29,8 @@
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Testing\SubZeroDev.Platform.Testing.csproj" />
   </ItemGroup>
 
-  <!-- Identity is not packed yet (S18 packs every D5 package), so there is no package form for
-       UsePlatformPackages to switch this to: a project reference regardless. -->
-  <ItemGroup>
+  <!-- S18: module assertions must exercise the same artifacts as the sample. -->
+  <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Organizations\SubZeroDev.Platform.Organizations.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Billing\SubZeroDev.Platform.Billing.csproj" />
@@ -65,6 +64,12 @@
 
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
     <PackageReference Include="SubZeroDev.Platform.Testing" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Identity" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Organizations" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Billing" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Licensing" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Audit" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Mcp" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
   <ItemGroup>

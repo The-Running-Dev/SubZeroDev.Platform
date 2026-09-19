@@ -125,3 +125,83 @@ public sealed class FakeCurrentCulture : ICurrentCulture
     /// <summary>The culture every read returns.</summary>
     public CultureTag Current { get; set; } = CultureTag.Invariant;
 }
+
+/// <summary>A configurable framework tenant resolver. Initially defers to the next resolver.</summary>
+public sealed class FakeTenantResolver : ITenantResolver
+{
+    /// <summary>Creates a resolver that defers.</summary>
+    public FakeTenantResolver() { }
+
+    /// <inheritdoc/>
+    public string Name { get; set; } = "Platform.Testing.TenantResolver";
+
+    /// <summary>The tenant to resolve, or null to defer.</summary>
+    public TenantId? Tenant { get; set; }
+
+    /// <inheritdoc/>
+    public Task<TenantId?> ResolveAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Tenant);
+    }
+}
+
+/// <summary>A configurable entitlement answer, with no subscription or licence knowledge.</summary>
+public sealed class FakeEntitlementContributor : IEntitlementContributor
+{
+    /// <summary>Creates a contributor that grants nothing.</summary>
+    public FakeEntitlementContributor() { }
+
+    /// <inheritdoc/>
+    public EntitlementContributorName Name { get; set; } = new("Platform.Testing.EntitlementContributor");
+
+    /// <summary>The grant or seam error returned by the next call.</summary>
+    public Result<bool, EntitlementError> Response { get; set; } = Result<bool, EntitlementError>.Success(false);
+
+    /// <inheritdoc/>
+    public Task<Result<bool, EntitlementError>> GrantsAsync(
+        FeatureName feature, TenantId tenant, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Response);
+    }
+}
+
+/// <summary>A configurable permission answer, with no organization or membership knowledge.</summary>
+public sealed class FakePermissionProvider : IPermissionProvider
+{
+    /// <summary>Creates a provider that grants nothing.</summary>
+    public FakePermissionProvider() { }
+
+    /// <inheritdoc/>
+    public PermissionProviderName Name { get; set; } = new("Platform.Testing.PermissionProvider");
+
+    /// <summary>The grants or seam error returned by the next call.</summary>
+    public Result<IReadOnlySet<PermissionName>, AuthorizationError> Response { get; set; } =
+        Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(new HashSet<PermissionName>());
+
+    /// <inheritdoc/>
+    public Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
+        Principal principal, TenantId tenant, ResourceRef? resource, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Response);
+    }
+}
+
+/// <summary>Reads snapshots from one test audit sink. Offers no write, clear or durable-store query.</summary>
+public sealed class AuditInspector
+{
+    private readonly FakeDurableAuditSink _sink;
+
+    /// <summary>Observes an existing test sink.</summary>
+    /// <param name="sink">The sink whose received records are inspected.</param>
+    public AuditInspector(FakeDurableAuditSink sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        _sink = sink;
+    }
+
+    /// <summary>A read-only snapshot in arrival order, unaffected by subsequent writes.</summary>
+    public IReadOnlyList<AuditEvent> Records => Array.AsReadOnly(_sink.Written.ToArray());
+}

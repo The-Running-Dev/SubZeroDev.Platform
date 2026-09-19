@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="SubZeroDev.Platform.Sample.Local/SubZeroDev.Platform.Sample.Local.csproj" />
+  <Project Path="SubZeroDev.Platform.Sample.Web/SubZeroDev.Platform.Sample.Web.csproj" />
+  <Project Path="SubZeroDev.Platform.Sample.Worker/SubZeroDev.Platform.Sample.Worker.csproj" />
+  <Project Path="../tests/SubZeroDev.Platform.Tests/SubZeroDev.Platform.Tests.csproj" />
+</Solution>
