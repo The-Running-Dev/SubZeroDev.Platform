@@ -750,6 +750,66 @@ Fakes for the framework seams only, beside the existing ones in
 a fake tenant resolver, a fake entitlement contributor, a fake permission provider, an audit
 inspector, and the composition profile on the test host.
 
+The missing declarations are scaffolded below. Existing principal helpers and
+`FakeDurableAuditSink` remain declared in `Fakes.cs`; the existing host interface is in
+[`PlatformTestHost.cs`](../src/SubZeroDev.Platform.Testing/PlatformTestHost.cs). The slice that
+implements these declarations replaces this scaffold with pointers to their source files.
+
+```csharp
+public sealed class FakeTenantResolver : ITenantResolver
+{
+    public FakeTenantResolver();
+    public string Name { get; set; }
+    public TenantId? Tenant { get; set; }
+    public Task<TenantId?> ResolveAsync(CancellationToken cancellationToken);
+}
+
+public sealed class FakeEntitlementContributor : IEntitlementContributor
+{
+    public FakeEntitlementContributor();
+    public EntitlementContributorName Name { get; set; }
+    public Result<bool, EntitlementError> Response { get; set; }
+    public Task<Result<bool, EntitlementError>> GrantsAsync(
+        FeatureName feature, TenantId tenant, CancellationToken cancellationToken);
+}
+
+public sealed class FakePermissionProvider : IPermissionProvider
+{
+    public FakePermissionProvider();
+    public PermissionProviderName Name { get; set; }
+    public Result<IReadOnlySet<PermissionName>, AuthorizationError> Response { get; set; }
+    public Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
+        Principal principal, TenantId tenant, ResourceRef? resource,
+        CancellationToken cancellationToken);
+}
+
+public sealed class AuditInspector
+{
+    public AuditInspector(FakeDurableAuditSink sink);
+    public IReadOnlyList<AuditEvent> Records { get; }
+}
+
+// Added to the existing IPlatformTestHost interface; all existing members remain.
+CompositionProfile CompositionProfile { get; }
+```
+
+**Semantics of the helpers.**
+
+- The resolver initially defers (`Tenant == null`). The entitlement contributor initially
+  returns successful `false`; the permission provider initially returns a successful empty set.
+  Tests can explicitly supply either grants or seam errors through `Response`. The helpers
+  return their configured answer, without consulting a store or another module.
+- Default registration names are `Platform.Testing.TenantResolver`,
+  `Platform.Testing.EntitlementContributor` and `Platform.Testing.PermissionProvider` respectively.
+  Tests configure distinct names before registering multiple instances; startup's duplicate-name
+  checks are unchanged. These helpers are not automatically registered by the test host.
+- The inspector observes only the supplied in-memory sink. Each read returns a read-only snapshot
+  in arrival order; neither modifying a returned collection nor later writes can alter an earlier
+  snapshot. It is not a durable-store query API. A null sink is rejected at construction.
+- The host property reports the effective, startup-validated composition profile. It cannot change
+  the running host's profile and introduces no new builder setting or runtime profile branch.
+- The new seam methods honour cancellation before returning their configured answer.
+
 - **`FakeCurrentPrincipal.Current` becomes `Principal`, non-null**, following the interface.
 - **No fake organization, subscription or licence.** Those are module knowledge, and a framework
   package faking one is ADR-006 rule 1 violated by the test helpers, which is where it is least likely
