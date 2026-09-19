@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-
   <ItemGroup>
     <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
     <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
