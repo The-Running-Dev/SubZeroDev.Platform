@@ -1240,7 +1240,7 @@ shipping the vocabulary at `0.8.0`. **8 is the one that remains open.**
    widen `TransportErrorCode`, which is a closed union in the published package. That is a contract
    minor version and a republish. G1 consumed it as a vendored tarball; whether G2 does the same or
    switches to the registry is a delivery decision, not a design one.
-   **Left open deliberately, and routed to [`/contract`](../../.claude/commands/contract.md)** — signed
+   **Left open deliberately, and routed to `/contract`** — signed
    off 2026-08-12 as belonging to the stage that owns the contract artifact. Nothing in this document
    changes on either answer, which is the test for whether it was ever a design question.
 

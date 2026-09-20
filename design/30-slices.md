@@ -42,7 +42,7 @@ Neither the design nor the contract settles these, and none is a slice's to sett
 
 ## How this document is kept
 
-A slice's body is its specification while it is outstanding. **A re-run of `/slices` appends new slices
+A slice's body is its specification while it is outstanding. **A re-run of `/plan` appends new slices
 under `## Outstanding` only** — it never rewrites `## Landed`, and it never renumbers or reuses a
 retired id, including one that never got an issue. Removing a criterion leaves a gap; the next
 criterion takes the next unused number.

@@ -1,7 +1,7 @@
 # Brief — commercial (D5)
 
 > **Provenance.** This brief was assembled from decisions taken by Ben on 2026-08-22 and from
-> constraints already recorded in the tree. It was revised after `/brief-check` on 2026-08-24 to
+> constraints already recorded in the tree. It was revised after `/brief` on 2026-08-24 to
 > make the scope boundary, operating assumptions and acceptance evidence explicit. Where the
 > ecosystem documents describe a longer-term capability catalogue, this brief names the subset D5
 > actually commits to deliver.
@@ -112,7 +112,7 @@ while identity-free local mode continues to use the implicit tenant without setu
 - **Hardening licensing against determined piracy or a malicious deployment clock.** The recorded
   threat model is casual over-use, not DRM resistant to an operator who controls the machine.
 - **Choosing the framework-versus-application-module tier in this brief.** `/design` must settle and
-  record the tier for every capability before `/contract`; no capability may remain `Undecided` when
+  record the tier for every capability before `/spec`; no capability may remain `Undecided` when
   D5 finishes.
 - **Requiring Identity, Organizations, Billing or Licensing in local/community mode.** Their packages,
   configuration and storage are absent from that composition, not registered checks that always pass.
