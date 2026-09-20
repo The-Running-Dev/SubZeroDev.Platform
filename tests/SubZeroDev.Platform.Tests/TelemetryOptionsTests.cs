@@ -1,12 +1,13 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Observability;
 
 namespace SubZeroDev.Platform.Tests;
 
 /// <summary>S8.2 (partial): <c>Platform:Telemetry</c> binds a default log directory and an absent
-/// OTLP endpoint, and rejects a present-but-malformed one, the same way every other setting in
-/// <c>PlatformOptionsBinder</c> does.</summary>
+/// OTLP endpoint, and both host registration paths reject a present-but-malformed one.</summary>
 public sealed class TelemetryOptionsTests
 {
     [Fact]
@@ -73,6 +74,61 @@ public sealed class TelemetryOptionsTests
         builder.Configuration.AddInMemoryCollection(settings);
 
         var exception = Record.Exception(() => builder.AddPlatformWebHost());
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void Standalone_observability_accepts_an_absent_OtlpEndpoint()
+    {
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            EnvironmentName = "Production",
+        });
+
+        var exception = Record.Exception(() => builder.AddPlatformObservability());
+
+        Assert.Null(exception);
+    }
+
+    [Theory]
+    [InlineData("/not-absolute")]
+    [InlineData("ftp://collector.example/otlp")]
+    public void Standalone_observability_rejects_a_malformed_OtlpEndpoint(string endpoint)
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["Platform:Telemetry:OtlpEndpoint"] = endpoint,
+        };
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            EnvironmentName = "Production",
+        });
+        builder.Configuration.AddInMemoryCollection(settings);
+
+        var thrown = Assert.Throws<ObservabilityStartupException>(() => builder.AddPlatformObservability());
+        var error = Assert.IsType<ConfigurationError>(thrown.Error);
+
+        Assert.Equal("InvalidSetting", error.Code);
+        Assert.False(error.IsRetryable);
+        Assert.Contains("Platform:Telemetry:OtlpEndpoint", error.Detail, StringComparison.Ordinal);
+        Assert.Contains("absolute http or https URI", error.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Standalone_observability_accepts_a_valid_absolute_http_OtlpEndpoint()
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["Platform:Telemetry:OtlpEndpoint"] = "http://collector.example:4318",
+        };
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            EnvironmentName = "Production",
+        });
+        builder.Configuration.AddInMemoryCollection(settings);
+
+        var exception = Record.Exception(() => builder.AddPlatformObservability());
 
         Assert.Null(exception);
     }

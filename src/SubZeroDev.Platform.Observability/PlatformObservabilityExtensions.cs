@@ -21,6 +21,8 @@ namespace SubZeroDev.Platform.Observability;
 /// <summary>Observability's registration call.</summary>
 public static class PlatformObservabilityExtensions
 {
+    private const string OtlpEndpointSetting = "Platform:Telemetry:OtlpEndpoint";
+
     /// <summary>Wires telemetry and trace-context propagation. Called by both forms of the standard
     /// registration call, and exposed separately for a consumer that wants telemetry without a
     /// Platform host.</summary>
@@ -262,10 +264,14 @@ public static class PlatformObservabilityExtensions
             return null;
         }
 
-        return Uri.TryCreate(raw, UriKind.Absolute, out var parsed)
-            && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps)
-            ? parsed
-            : null;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var parsed)
+            && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+        {
+            return parsed;
+        }
+
+        throw new ObservabilityStartupException(
+            ConfigurationError.InvalidSetting(OtlpEndpointSetting, "must be an absolute http or https URI"));
     }
 
     private static string EntryAssemblyName() => Assembly.GetEntryAssembly()?.GetName().Name ?? "unknown";
