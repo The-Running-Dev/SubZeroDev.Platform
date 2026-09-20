@@ -23,6 +23,9 @@
     only fail the site's build -- this is what fails the documentation gate
     on a pull request that merges a slice without updating its marker.
 
+    A completed ledger may instead contain shipped entries under Landed and
+    an Outstanding section explicitly beginning 'None.', with no slice bodies.
+
 .PARAMETER Path
     The slices document to check. Defaults to design/30-slices.md relative to
     this script's location.
@@ -98,6 +101,17 @@ for ($i = 0; $i -lt $headingMatches.Count; $i++) {
 }
 
 if ($slices.Count -eq 0) {
+    $landed = [regex]::Match($text, '(?ms)^## Landed\n(?<body>.*?)(?=^## |\z)')
+    $outstanding = [regex]::Match($text, '(?ms)^## Outstanding\n(?<body>.*)\z')
+    $retired = [regex]::Matches($landed.Groups['body'].Value, '(?m)^- \*\*S\d+ — .+\*\* — shipped:')
+    $remaining = $outstanding.Groups['body'].Value.Trim()
+    if ($landed.Success -and $outstanding.Success -and $retired.Count -gt 0 `
+            -and $remaining -match '^None\.' `
+            -and $remaining -notmatch '(?m)^(?:#{1,6}\s|[-*]\s)' `
+            -and $text -notmatch '(?m)^#{2,3}\s+S\d+\b') {
+        Write-Host "Completed slice ledger: $($retired.Count) landed entries; no outstanding slices." -ForegroundColor Green
+        exit 0
+    }
     throw "'$Path': no 'S<n> — ' slice headings found among its '## ' headings."
 }
 

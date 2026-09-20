@@ -109,106 +109,18 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S15 — Mcp: the transport, the connection principal and invocation** — shipped:
   [#183](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/183) via
   [#221](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/221).
+- **S16 — The administration shell** — shipped:
+  [#184](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/184) via
+  [#223](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/223).
+- **S17 — The proof: two databases, two hosts, contention and offline** — shipped:
+  [#185](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/185) via
+  [#226](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/226), [#227](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/227), [#228](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/228), [#231](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/231).
+- **S18 — Packages, documentation and the corrected plan** — shipped:
+  [#186](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/186) via
+  [#233](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/233).
 
 ---
 
 ## Outstanding
 
-## S16 — The administration shell
-**Status:** in progress
-
-Delivers: an operator can see who they are signed in as, move between the organizations they belong to,
-read what the deployment is entitled to and what its licence says, and look through the record of what
-has happened — in a screen a consumer can throw away and replace with their own.
-
-Touches:
-- **The shell** — a front-end build in the delivery shape settled for design Open question 2, with no
-  .NET package a backend could reference
-- **`tests/SubZeroDev.Platform.Tests`** — the I-W1 assertions over the package graph and the shell's call
-  list
-
-Depends on: S13.
-
-Acceptance:
-- **S16.1** The shell displays the current principal's kind and display name, and shows an anonymous state
-  distinctly from an authenticated account.
-- **S16.2** The shell switches the active organization through the same HTTP endpoint an ordinary caller
-  uses; a test performs the identical switch with an HTTP client and no UI, and both succeed.
-- **S16.3** Every endpoint the shell calls is callable without it: enumerating the shell's calls against
-  the public API surface finds no admin-only or UI-only endpoint.
-- **S16.4** The shell displays the resolved entitlement, the licence tier and the grace state, reading all
-  three through the public API.
-- **S16.5** The shell reads the audit record with tenant and instant-range filters and offers no update
-  and no delete.
-- **S16.6** No backend package references the shell, and the backend builds and runs with the shell's
-  assets absent.
-- **S16.7** The shell holds no server-side state: it renders an error when the backend is unavailable, and
-  nothing is lost when it does.
-
-Out of scope: settings, notifications, API-key administration, payment UI, plugin administration and
-feature-flag management — a complete shared administration product is a brief non-goal.
-
-## S17 — The proof: two databases, two hosts, contention and offline
-**Status:** queued
-
-Delivers: anyone deciding whether to adopt Platform can look at one CI run and see each of the nine
-capabilities pass or fail on its own — on both databases, with the offline deployment and the
-several-instances deployment actually exercised rather than assumed.
-
-Touches:
-- **The sample solution's scenarios** — one focused set per capability, positive and negative
-- **The CI workflow** — the database matrix, the offline run, the multi-instance run, and the
-  per-capability reporting
-
-Depends on: S16.
-
-Acceptance:
-- **S17.1** CI runs the operated scenarios against SQLite and against PostgreSQL, and reports each of the
-  nine capabilities as a separately named result. Starting successfully is not one of them.
-- **S17.2** The contention scenarios — concurrent licence verification, concurrent organization creation,
-  one invitation redeemed twice, and concurrent audit appends — run against PostgreSQL with at least two
-  host instances.
-- **S17.3** The local host's scenarios run with outbound network unavailable, and the run fails if any
-  outbound connection is attempted.
-- **S17.4** The operated proof uses at least two principals, two organizations and two tenants.
-- **S17.5** Nine mutation fixtures, one per capability, each violating a negative criterion from the
-  brief's capability table, and CI fails against every one of them.
-- **S17.6** The local host's scenarios assert it has no package or project reference to Identity,
-  Organizations, Billing or Licensing, requires no configuration or storage for them, and uses the
-  `system:local` audit actor.
-
-Out of scope: deploying or operating the sample — it is a CI proof, not an environment. Performance,
-throughput, latency and capacity measurement, and any comparison between the two database providers.
-
-## S18 — Packages, documentation and the corrected plan
-**Status:** queued
-
-Delivers: someone outside this repository can take Platform's commercial surface as published packages,
-follow written instructions to build either deployment shape, and find the effort's own plan describing
-what was actually built rather than what was once intended.
-
-Touches:
-- **The CI packaging steps** and the sample solution's package references
-- **[`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs)** — the D5 fakes and the audit inspector
-- **`docs/`** — the human-facing guide
-- **`implementation-plan.md`** and [`90-decisions.md`](90-decisions.md)
-
-Depends on: S17.
-
-Acceptance:
-- **S18.1** Every D5 package is packed in CI as a versioned 0.x artifact, and the sample solution restores
-  them from those artifacts rather than through project references.
-- **S18.2** `SubZeroDev.Platform.Testing` exposes a fake principal of each of the four kinds, a fake tenant
-  resolver, a fake entitlement contributor, a fake permission provider, an audit inspector and the
-  composition profile on the test host — and no fake organization, subscription or licence.
-- **S18.3** The audit inspector reads records and exposes no write and no clear.
-- **S18.4** The human-facing documentation covers registration, optional composition, both deployment
-  shapes, security defaults, failure semantics and the sample's asserted scenarios, and the documentation
-  build passes with no broken link.
-- **S18.5** `implementation-plan.md`'s D5 capability list includes `Platform.Mcp`, and its done-when
-  matches [`00-brief.md`](00-brief.md).
-- **S18.6** The retained consumer-evidence objection for Authorization, Licensing, Audit and the shared web
-  UI is recorded in [`90-decisions.md`](90-decisions.md) and is not written as resolved.
-
-Out of scope: publishing to a public registry, and onboarding any named consumer — external adoption is
-separate work.
+None. All D5 slices have landed; their closed issues retain the acceptance criteria.
