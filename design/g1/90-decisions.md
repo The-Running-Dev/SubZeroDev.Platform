@@ -611,9 +611,9 @@ socket.
 Chosen: classify a transport failure during the body read as `workload_unreachable`, the same as one
 during the send. The contract's neighbouring sentence — "the edge produces no other error; every
 other status a caller sees came from the workload" — leaves no third answer available, and the two
-cases are the same lost hop from the caller's side. The wording in `20-contract.md` is narrower than
-this behaviour and is worth widening at the next `/contract` pass; the behaviour is what the
-invariant requires either way.
+cases are the same lost hop from the caller's side. **Reconciled 2026-09-20:** `20-contract.md` now
+states that `WorkloadUnreachable` covers a forward failure before or after response headers arrive,
+as well as the readiness probe failing to reach the workload.
 Rejected: letting it escape to the `500` envelope — that status came from neither the workload nor
 `EdgeError`, so it breaks the invariant while telling the caller nothing about which hop failed.
 A third code for "died mid-response" — `EdgeError` is deliberately two variants, the retry answer is

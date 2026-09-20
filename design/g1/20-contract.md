@@ -954,7 +954,7 @@ public abstract record EdgeError(string Code) : PlatformError(Code);
 
 | Variant | Status | Raised when | Retryable | Caller does |
 |---|---|---|---|---|
-| `WorkloadUnreachable` | `503` | The forward cannot connect, or the readiness probe cannot reach the workload's liveness endpoint | **No** | The caller re-reads with a query operation. **The edge does not retry** — a retry against a `submitAction` whose outcome is unknown is a second action, and merging two is explicitly not available |
+| `WorkloadUnreachable` | `503` | The forward fails before or after response headers arrive, or the readiness probe cannot reach the workload | **No** | The caller re-reads with a query operation. **The edge does not retry** — a retry against a `submitAction` whose outcome is unknown is a second action, and merging two is explicitly not available |
 | `WorkloadTimeout` | `504` | The forward exceeds `ForwardTimeout` | **No** | Same. The state is unknown to the edge and knowable only at the workload, which is exactly the partial-failure case; G1's honest answer is a re-read, not a resubmit |
 
 **`IsRetryable` is `false` on both**, and that is a statement about this system rather than about
