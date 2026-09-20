@@ -763,6 +763,32 @@ declaration is metadata Hosting reads rather than a call the handler makes. `End
   consults to discover what it requires; a handler that branches on its own endpoint's metadata has
   reintroduced the per-handler ordering the fixed order exists to remove.
 
+### 12. Standalone observability startup — `SubZeroDev.Platform.Observability`
+
+`PlatformObservabilityExtensions.AddPlatformObservability` is declared in the tree:
+[`PlatformObservabilityExtensions.cs`](../src/SubZeroDev.Platform.Observability/PlatformObservabilityExtensions.cs).
+The package cannot use Hosting's startup exception without reversing the dependency edge, so its own
+startup-abort wrapper is added by [ADR-008](../docs/docs/adr/ADR-008-observability-startup-failure.md):
+
+```csharp
+public sealed class ObservabilityStartupException : Exception
+{
+    public ObservabilityStartupException(PlatformError error);
+    public PlatformError Error { get; }
+}
+```
+
+- **The standalone path applies the same OTLP endpoint constraint as the Platform-host path.** An
+  absent or whitespace `Platform:Telemetry:OtlpEndpoint` means no exporter starts. A present value is
+  accepted only when it is an absolute `http` or `https` URI.
+- **A present value that violates that constraint aborts registration** with
+  `ObservabilityStartupException` carrying `ConfigurationError.InvalidSetting` and naming
+  `Platform:Telemetry:OtlpEndpoint`. It is never converted to absence, because a typo must not
+  silently disable export.
+- **This startup rule does not change exporter-failure semantics.** Once valid configuration has been
+  accepted, file and OTLP failures remain behind their bounded non-blocking processors and never
+  propagate to application work.
+
 ---
 
 ## Error semantics
@@ -968,6 +994,20 @@ One variant is added to the existing set in
 It **throws** rather than returning, on the same terms as `NoAmbientTransaction`: a defect in the
 caller, not a runtime condition.
 
+### 11. Standalone observability startup — `SubZeroDev.Platform.Observability`
+
+`ObservabilityStartupException` is the package-local startup-abort wrapper from *Public surface*,
+§ 12. It always carries a `PlatformError`; no bare exception or string error crosses the package
+boundary.
+
+| Error | Raised when | Retryable | The caller is expected to |
+|---|---|---|---|
+| `ConfigurationError.InvalidSetting` | standalone `AddPlatformObservability` receives a present `Platform:Telemetry:OtlpEndpoint` that is not an absolute `http` or `https` URI | no | fix the named setting and rebuild the host |
+
+The Platform-host path continues to wrap the same configuration error in `PlatformStartupException`.
+The wrapper type differs because the package graph forbids Observability from referencing Hosting;
+the setting, constraint and non-retryable meaning are identical.
+
 ---
 
 ## Invariants
@@ -1092,6 +1132,12 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-M9 | No SDK type appears in Platform's public surface; `ModelContextProtocol.*` is referenced by `SubZeroDev.Platform.Mcp` and by nothing else | Mcp | **code** — architecture test over the resolved package graph, alongside I-C6 and I-C7 |
 | I-M10 | `IToolCatalogue` offers no route to an unexposed registration — no `All`, no exposure-ignoring lookup | Mcp | **code** — the interface |
 | I-M11 | Platform's permission evaluator is the only authorization authority on this surface; the SDK's authorization-metadata path is not used | Mcp | instruction, and **code** — the sample's unknown-tool scenario |
+
+### Observability
+
+| # | Invariant | Owner | Enforced by |
+|---|---|---|---|
+| I-OB1 | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work | Observability, Hosting | **code** — standalone and hosted configuration tests, plus the existing blocked-export test |
 
 ### Shared web UI
 
