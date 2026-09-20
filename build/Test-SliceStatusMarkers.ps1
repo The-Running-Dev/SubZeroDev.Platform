@@ -29,7 +29,7 @@
 
     On the default path only, a missing document passes with a stated skip
     rather than failing. Between the commit that archives a finished effort's
-    set and the /slices run that writes the next one, the active effort has a
+    set and the /plan run that writes the next one, the active effort has a
     brief and no slices -- stage 0 of the pipeline, not a broken repository --
     and a gate that cannot tell those apart trains everyone to ignore it. An
     explicitly supplied Path that does not exist is still a caller error and

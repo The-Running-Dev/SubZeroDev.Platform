@@ -4,8 +4,8 @@ sidebar_label: Durable Sessions (G2)
 sidebar_position: 14
 ---
 
-> Generated from `design/` by `/make-human-docs`. Do not edit by hand — edit the
-> design docs and regenerate. `/reconcile` reports when this has gone stale.
+> Generated from `design/` by `/docs`. Do not edit by hand — edit the
+> design docs and regenerate. `/align` reports when this has gone stale.
 
 # Durable sessions
 

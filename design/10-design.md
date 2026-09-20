@@ -806,7 +806,7 @@ paid for.
 
 **Reversibility: expensive.** This is the public shape product code is written against. Changing it
 later rewrites every call site in every consumer, which is why it is settled here rather than at
-`/contract`.
+`/spec`.
 
 ### 3. The shared-resource escape — an audited read scope, a per-row flag, or a cross-tenant permission
 
@@ -1000,7 +1000,7 @@ reasoning, the alternatives rejected and the one retained objection are in
 
 The question as originally posed, kept because the criteria are what the answer was measured against:
 
-**Recommendation: evaluate before deciding, and treat the evaluation as a gate on `/contract` rather
+**Recommendation: evaluate before deciding, and treat the evaluation as a gate on `/spec` rather
 than something this document assumes.** What has to be established is the licence and its durability —
 [`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §3a's finding that three
 foundational .NET libraries changed licence within one year is the reason durability is a first-class

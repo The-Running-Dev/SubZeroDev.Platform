@@ -227,7 +227,7 @@ describe("the active design/30-slices.md — the assertion that survives every f
   );
 
   // Between the commit that archives a finished effort's set and the
-  // /slices run that writes the next one, the active effort has a brief
+  // /plan run that writes the next one, the active effort has a brief
   // and no slices — stage 0 of the pipeline, matching
   // build/Test-SliceStatusMarkers.ps1's own SKIP for the same absence.
   if (!existsSync(activePath)) {
