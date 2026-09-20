@@ -16,6 +16,8 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+- 2026-09-20 — [ADR-008: Standalone Observability fails fast on invalid OTLP configuration](../docs/docs/adr/ADR-008-observability-startup-failure.md).
+
 ### 2026-09-19 — D5 package delivery uses the approved lockstep version
 
 Context: S18 needed the answer to `10-design.md` § Open questions 4 before producing package
