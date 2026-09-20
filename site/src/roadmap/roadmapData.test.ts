@@ -134,6 +134,35 @@ Depends on: S3.
   });
 });
 
+describe("a fully retired ledger", () => {
+  const retired = `# Slices — completed
+
+## Landed
+
+- **S1 — First slice** — shipped:
+  [#1](https://github.com/example/repo/issues/1).
+
+## Outstanding
+
+None. All slices have landed.
+`;
+
+  it("accepts shipped entries with explicitly no outstanding work", () => {
+    expect(parseSlices(retired)).toEqual([]);
+    expect(() => assertConsistent(parseSlices(retired))).not.toThrow();
+  });
+
+  it.each([
+    retired.replace(/- \*\*S1[^\n]*\n/, ""),
+    retired.replace("## Outstanding", "## Other"),
+    retired + "\n## S2 - malformed\n",
+    retired + "\n### S2 — hidden\n**Status:** queued\n",
+    retired + "\n- S2 still needs implementation.\n",
+  ])("rejects an incomplete or malformed retirement", (broken) => {
+    expect(() => parseSlices(broken)).toThrow(/no 'S<n> — ' slice headings/);
+  });
+});
+
 // Cases: 5 total — 2 positive (one in-progress slice with queued slices
 // after it; all-shipped with none in progress and none queued) and 3
 // negative (more than one in-progress slice, zero in-progress while a
@@ -237,7 +266,6 @@ describe("the active design/30-slices.md — the assertion that survives every f
 
     it("parses without throwing, and every slice carries a recognised status", () => {
       const active = parseSlices(activeRaw);
-      expect(active.length).toBeGreaterThan(0);
       for (const slice of active) {
         expect(["shipped", "in-progress", "queued"]).toContain(slice.status);
       }
