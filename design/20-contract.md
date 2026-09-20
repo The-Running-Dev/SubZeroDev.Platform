@@ -768,15 +768,9 @@ declaration is metadata Hosting reads rather than a call the handler makes. `End
 `PlatformObservabilityExtensions.AddPlatformObservability` is declared in the tree:
 [`PlatformObservabilityExtensions.cs`](../src/SubZeroDev.Platform.Observability/PlatformObservabilityExtensions.cs).
 The package cannot use Hosting's startup exception without reversing the dependency edge, so its own
-startup-abort wrapper is added by [ADR-008](../docs/docs/adr/ADR-008-observability-startup-failure.md):
-
-```csharp
-public sealed class ObservabilityStartupException : Exception
-{
-    public ObservabilityStartupException(PlatformError error);
-    public PlatformError Error { get; }
-}
-```
+startup-abort wrapper, authorized by
+[ADR-008](../docs/docs/adr/ADR-008-observability-startup-failure.md), is declared in the tree:
+[`StartupFailure.cs`](../src/SubZeroDev.Platform.Observability/StartupFailure.cs).
 
 - **The standalone path applies the same OTLP endpoint constraint as the Platform-host path.** An
   absent or whitespace `Platform:Telemetry:OtlpEndpoint` means no exporter starts. A present value is
