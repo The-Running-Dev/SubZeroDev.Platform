@@ -22,7 +22,8 @@ const PR_LINK_RE = /\[#(\d+)]\((https:\/\/\S+?)\)/;
  * than returning an empty or partial result on any malformed input — an
  * empty roadmap or a silently-SCHEDULED slice is exactly the failure mode
  * this function exists to make impossible. See design/d3/40-site.md, "Derived
- * content".
+ * content". A fully retired ledger returns no active slice bodies only when
+ * it has shipped Landed entries and explicitly declares Outstanding as None.
  */
 export function parseSlices(raw: string): Slice[] {
   const headingMatches = [...raw.matchAll(HEADING_RE)];
@@ -67,6 +68,28 @@ export function parseSlices(raw: string): Slice[] {
   }
 
   if (slices.length === 0) {
+    const section = (name: string): string | undefined => {
+      const index = headingMatches.findIndex((heading) => heading[1] === name);
+      if (index < 0) return undefined;
+      const heading = headingMatches[index];
+      return raw
+        .slice(
+          heading.index + heading[0].length,
+          headingMatches[index + 1]?.index ?? raw.length,
+        )
+        .trim();
+    };
+    const landed = section("Landed");
+    const outstanding = section("Outstanding");
+    if (
+      landed &&
+      /^- \*\*S\d+ — .+\*\* — shipped:/m.test(landed) &&
+      outstanding?.startsWith("None.") &&
+      !/^(?:#{1,6}\s|[-*]\s)/m.test(outstanding) &&
+      !/^#{2,3}\s+S\d+\b/m.test(raw)
+    ) {
+      return [];
+    }
     throw new Error(
       "30-slices.md: no 'S<n> — ' slice headings found among its '## ' headings",
     );
