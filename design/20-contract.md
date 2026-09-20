@@ -181,46 +181,9 @@ and nothing else to the storage shape — `IShareable` is declared in
 
 ### 7. Organizations — `SubZeroDev.Platform.Organizations`
 
-```csharp
-public readonly record struct OrganizationId(Guid Value);
-public readonly record struct InvitationId(Guid Value);
-
-public enum OrganizationRole
-{
-    Owner,
-    Administrator,
-    Member,
-}
-
-public enum MembershipState
-{
-    Active,
-    Revoked,
-}
-
-public sealed record Organization(
-    OrganizationId Id,
-    TenantId Tenant,
-    string Name,
-    PrincipalId Owner,
-    DateTimeOffset CreatedAt);
-
-public sealed record Membership(
-    OrganizationId Organization,
-    PrincipalId Principal,
-    OrganizationRole Role,
-    MembershipState State,
-    DateTimeOffset CreatedAt);
-
-public sealed record Invitation(
-    InvitationId Id,
-    OrganizationId Organization,
-    OrganizationRole Role,
-    DateTimeOffset ExpiresAt,
-    string TokenHash,
-    PrincipalId? RedeemedBy,
-    DateTimeOffset? RedeemedAt);
-```
+`OrganizationId`, `InvitationId`, `OrganizationRole`, `MembershipState`, `Organization`, `Membership`
+and `Invitation` are declared in the tree:
+[`Organizations.cs`](../src/SubZeroDev.Platform.Organizations/Organizations.cs).
 
 **What the declarations cannot say.**
 
@@ -243,41 +206,15 @@ public sealed record Invitation(
 
 ### 8. Billing — `SubZeroDev.Platform.Billing`
 
-```csharp
-public readonly record struct PlanKey(string Value);
-public readonly record struct SubscriptionId(Guid Value);
-
-public enum SubscriptionState
-{
-    Trialing,
-    Active,
-    PastDue,
-    Cancelled,
-    Expired,
-}
-
-public sealed record Plan(
-    PlanKey Key,
-    string DisplayName,
-    IReadOnlySet<FeatureName> Features);
-
-public sealed record Subscription(
-    SubscriptionId Id,
-    TenantId Tenant,
-    PlanKey Plan,
-    SubscriptionState State,
-    DateTimeOffset PeriodStart,
-    DateTimeOffset PeriodEnd,
-    DateTimeOffset? TrialEndsAt,
-    string ProviderReference);
-
-public sealed record ProviderEventReceipt(
-    string Provider,
-    string ProviderEventId,
-    DateTimeOffset ReceivedAt);
-```
+`PlanKey`, `SubscriptionId`, `SubscriptionState`, `Plan`, `Subscription` and `ProviderEventReceipt`
+are declared in the tree: [`Billing.cs`](../src/SubZeroDev.Platform.Billing/Billing.cs).
 
 **What the declarations cannot say.**
+
+- **The inbound event's own shape is not contract-fixed.** `ProviderEvent`, declared in the same
+  file, is Billing's, because D5 integrates no real provider and a shape fixed here before one exists
+  would be fixed against nothing. What this document fixes about the seam is the paragraph below and
+  `ProviderEventReceipt`'s idempotency, not the payload.
 
 - **`SubscriptionState` must never be read outside this module**, and an architecture check enforces
   it (I-C8). Product code consumes `EntitlementDecision`; it does not learn that a subscription exists.
@@ -296,43 +233,16 @@ public sealed record ProviderEventReceipt(
 
 ### 9. Licensing — `SubZeroDev.Platform.Licensing`
 
-```csharp
-/// The tier a licence document claims. An opaque stable name: Platform is not a licensor and owns
-/// no tier vocabulary beyond the well-known baseline.
-public readonly record struct LicenceTier(string Value)
-{
-    public string Value { get; }
-
-    /// The tier of an installation with no verified claims. Never absent, never null.
-    public static LicenceTier Community { get; }
-
-    public override string ToString();
-}
-
-public enum LicenceVerificationOutcome
-{
-    Verified,
-    Invalid,
-    Unavailable,
-    ClockUnusable,
-}
-
-/// The claims in force. Derived from the stored record; never from the document.
-public sealed record LicenceClaims(
-    LicenceTier Tier,
-    IReadOnlySet<FeatureName> Features,
-    DateTimeOffset IssuedAt,
-    DateTimeOffset? ExpiresAt,
-    DateTimeOffset? GraceEndsAt,
-    DateTimeOffset VerifiedAt);
-
-/// One accepted signing key. A deployment supplies an ordered set.
-public sealed record LicenceSigningKey(
-    string KeyId,
-    System.Security.Cryptography.AsymmetricAlgorithm PublicKey);
-```
+`LicenceTier` (with `Community`), `LicenceVerificationOutcome`, `LicenceClaims` and
+`LicenceSigningKey` are declared in the tree:
+[`Licensing.cs`](../src/SubZeroDev.Platform.Licensing/Licensing.cs), which also declares what a
+deployment supplies (`LicensingOptions`), the revocation extension point (`IRevocationCheck`) and the
+read of the claims in force that *Public surface*, § 10 gives Licensing (`ILicenceState`).
 
 **What the declarations cannot say.**
+
+- **`LicensingOptions` has no grace member and none may be added** (I-L6) — the bullet below says why,
+  and a declaration can only be silent about a member that is absent.
 
 - **The licence document is an input file and is never persisted by Platform.** What is persisted is
   one record for the installation — *Persisted schemas*, § 4.
@@ -367,54 +277,11 @@ types below are Platform's own, and the module maps them to the SDK's `Tool` and
 the way out. The evaluation and the alternatives rejected are in
 [`90-decisions.md`](90-decisions.md), 2026-08-29.
 
-```csharp
-/// A tool's name, unique across every producer.
-public readonly record struct ToolName(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-/// Which producer supplied a definition.
-public readonly record struct ToolProducerName(string Value)
-{
-    public string Value { get; }
-    public override string ToString();
-}
-
-/// A tool as its producer supplies it. Carries no exposure: a producer cannot expose itself.
-public sealed record ToolDefinition(
-    ToolName Name,
-    string Description,
-    System.Text.Json.JsonElement ParameterSchema,
-    PermissionName RequiredPermission,
-    FeatureName? RequiredFeature);
-
-/// A definition after configuration has decided its exposure. What the frozen catalogue holds.
-public sealed record ToolRegistration(
-    ToolDefinition Definition,
-    ToolProducerName Producer,
-    bool IsExposed);
-
-/// Supplies definitions at startup. Manifest projection and a product-owned fixed table each
-/// implement this, and neither is privileged.
-public interface IToolProducer
-{
-    ToolProducerName Name { get; }
-
-    ValueTask<IReadOnlyCollection<ToolDefinition>> ProduceAsync(CancellationToken cancellationToken);
-}
-
-/// The catalogue, frozen after startup.
-public interface IToolCatalogue
-{
-    /// Every exposed registration. An unexposed one is not here and is not reachable from here.
-    IReadOnlyCollection<ToolRegistration> Exposed { get; }
-
-    /// Looks up an exposed tool. Unregistered and unexposed both answer false.
-    bool TryGetExposed(ToolName name, out ToolRegistration registration);
-}
-```
+`ToolName`, `ToolProducerName`, `ToolDefinition`, `ToolRegistration`, `IToolProducer` and
+`IToolCatalogue` are declared in the tree: [`Tool.cs`](../src/SubZeroDev.Platform.Mcp/Tool.cs). The
+catalogue's only implementation is internal to the module
+([`ToolCatalogue.cs`](../src/SubZeroDev.Platform.Mcp/ToolCatalogue.cs)), so a consumer reaches the
+frozen catalogue through the interface and has no other way in.
 
 **What the declarations cannot say.**
 
@@ -855,30 +722,10 @@ paid-feature work, do the work inside a transaction when it writes, audit.
 
 **The endpoint's declaration.** Steps 4 and 5 need to know which permission an endpoint requires and
 whether it admits new paid-feature work, and the pipeline is where the order is enforced, so the
-declaration is metadata Hosting reads rather than a call the handler makes. Nothing in the tree
-carries it yet, so the shape is a scaffold:
-
-```csharp
-/// What an endpoint requires of the fixed order's authorize and entitlement steps.
-public sealed record EndpointRequirement(PermissionName RequiredPermission, FeatureName? RequiredFeature);
-
-/// Why an endpoint stands outside steps 4 and 5.
-public sealed record EndpointRequirementExemption(string Reason);
-
-public static class PlatformEndpointConventions
-{
-    public static TBuilder RequiresPlatformAuthorization<TBuilder>(
-        this TBuilder builder,
-        PermissionName permission,
-        FeatureName? feature)
-        where TBuilder : IEndpointConventionBuilder;
-
-    public static TBuilder ExemptFromPlatformAuthorization<TBuilder>(
-        this TBuilder builder,
-        string reason)
-        where TBuilder : IEndpointConventionBuilder;
-}
-```
+declaration is metadata Hosting reads rather than a call the handler makes. `EndpointRequirement`,
+`EndpointRequirementExemption` and the two conventions that attach them
+(`PlatformEndpointConventions`) are declared in the tree:
+[`EndpointRequirement.cs`](../src/SubZeroDev.Platform.Hosting/EndpointRequirement.cs).
 
 **What the declarations cannot say.**
 
@@ -1272,7 +1119,7 @@ Item 1 (the nullability of `IAuditable.CreatedBy` under a total principal) was r
 **`CreatedBy` becomes non-null** — and is recorded under *Persisted schemas*, § 6 and
 [`90-decisions.md`](90-decisions.md), 2026-08-31.
 
-Item 1 (how the registered entitlement-contributor set reaches the settings-fingerprint input) was
+Item 2 (how the registered entitlement-contributor set reaches the settings-fingerprint input) was
 resolved for S8 — **`Compute` gains a second parameter** carrying the frozen contributor names,
 rather than projecting them onto a `[Fingerprinted]` property of `PlatformOptions` — and is recorded
 at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) and
