@@ -111,6 +111,50 @@ public sealed class AuditStoreTests
         }
     }
 
+    [Fact]
+    public async Task By_actor_matches_the_issuer_and_the_subject_so_two_issuers_sharing_a_subject_stay_apart()
+    {
+        var database = TemporaryPath();
+        try
+        {
+            await using var host = await StartHostAsync(database);
+            var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+            var writer = host.Services.GetRequiredService<IAuditWriter>();
+
+            // A principal id is an (issuer, subject) pair: the same subject under another issuer is
+            // another principal, and a read by one must not return the other's records.
+            var sameSubjectOtherIssuer = new Principal(
+                new PrincipalId("issuer-other", ActorA.Id.Subject), PrincipalKind.Account, "Other", null);
+
+            using (scopeFactory.Begin(TenantOne, ActorA))
+            {
+                await writer.WriteAsync(
+                    new AuditAction("test.mine"), null, AuditOutcome.Allowed, AuditClass.Recorded,
+                    CancellationToken.None);
+            }
+
+            using (scopeFactory.Begin(TenantOne, sameSubjectOtherIssuer))
+            {
+                await writer.WriteAsync(
+                    new AuditAction("test.theirs"), null, AuditOutcome.Allowed, AuditClass.Recorded,
+                    CancellationToken.None);
+            }
+
+            var readApi = host.Services.GetRequiredService<IAuditReadApi>();
+            var byActor = await readApi.ByActorAsync(
+                ActorA.Id, DateTimeOffset.MinValue, DateTimeOffset.MaxValue, CancellationToken.None);
+
+            Assert.True(byActor.IsSuccess);
+            var recorded = Assert.Single(byActor.Value);
+            Assert.Equal("test.mine", recorded.Action.Value);
+            Assert.Equal(ActorA.Id, recorded.Actor);
+        }
+        finally
+        {
+            DeleteSqliteFiles(database);
+        }
+    }
+
     // S13.3 -----------------------------------------------------------------------------------
 
     [Fact]

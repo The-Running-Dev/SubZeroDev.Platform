@@ -159,6 +159,35 @@ public sealed class BillingTests
         Assert.DoesNotContain(tables, t => t.Contains("entitlement", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task A_transition_whose_store_transaction_fails_answers_the_retryable_StoreUnavailable()
+    {
+        var sink = new RecordingAuditSink(isDurable: true);
+        await using var host = await StartHostAsync(sink);
+        var api = host.Services.GetRequiredService<IBillingApi>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        await api.RegisterPlanAsync(ProKey, "Pro", new HashSet<FeatureName> { PremiumReports }, CancellationToken.None);
+
+        // The transition's Required audit record is flushed before commit; refusing it rolls the
+        // transaction back, which is a store failure — not an unreachable state or a missing plan.
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable(sink.Name)));
+
+        var tenant = new TenantId(Guid.NewGuid());
+        Result<Subscription, BillingError> transitioned;
+        using (scopeFactory.Begin(tenant, Operator))
+        {
+            transitioned = await api.TransitionAsync(
+                tenant, ProKey, SubscriptionState.Active, host.Clock.UtcNow, host.Clock.UtcNow.AddDays(30),
+                null, "ref-1", CancellationToken.None);
+        }
+
+        Assert.False(transitioned.IsSuccess);
+        Assert.Equal(nameof(BillingError.StoreUnavailable), transitioned.Error.Code);
+        Assert.True(transitioned.Error.IsRetryable);
+        Assert.Equal(0, await CountRowsAsync(host, "subscription"));
+    }
+
     // S11.3 is BillingArchitectureTests, alongside PackageGraphTests (S1's mechanism).
 
     // S11.4 -----------------------------------------------------------------------------------

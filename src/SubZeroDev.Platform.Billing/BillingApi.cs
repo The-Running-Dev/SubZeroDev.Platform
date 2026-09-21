@@ -67,10 +67,7 @@ internal sealed class BillingApi(
             },
             cancellationToken).ConfigureAwait(false);
 
-        // No variant models a bare infrastructure failure (design/20-contract.md fixes exactly
-        // four); PlanNotFound is the closest of the four to "the write did not take" for an
-        // operation that is entirely about plans.
-        return Unwrap(result, BillingError.PlanNotFound);
+        return Unwrap(result);
     }
 
     public async Task<Result<Subscription, BillingError>> GetSubscriptionAsync(
@@ -87,7 +84,7 @@ internal sealed class BillingApi(
             },
             cancellationToken).ConfigureAwait(false);
 
-        return Unwrap(result, BillingError.SubscriptionNotFound);
+        return Unwrap(result);
     }
 
     public async Task<Result<Subscription, BillingError>> TransitionAsync(
@@ -173,7 +170,7 @@ internal sealed class BillingApi(
         }
 
         logger.LogWarning("Subscription transition failed: {Code}.", result.Error.Code);
-        return Result<Subscription, BillingError>.Failure(BillingError.InvalidTransition());
+        return Result<Subscription, BillingError>.Failure(BillingError.StoreUnavailable());
     }
 
     public async Task<Result<ProviderEventReceipt, BillingError>> HandleProviderEventAsync(
@@ -247,7 +244,7 @@ internal sealed class BillingApi(
         }
 
         logger.LogWarning("Provider event handling failed: {Code}.", result.Error.Code);
-        return Result<ProviderEventReceipt, BillingError>.Failure(BillingError.ProviderEventMalformed());
+        return Result<ProviderEventReceipt, BillingError>.Failure(BillingError.StoreUnavailable());
     }
 
     /// <summary>The subscription state machine. <see langword="null"/> represents "no subscription
@@ -280,9 +277,8 @@ internal sealed class BillingApi(
         && !string.IsNullOrWhiteSpace(providerEvent.ProviderReference)
         && providerEvent.PeriodEnd > providerEvent.PeriodStart;
 
-    private static Result<T, BillingError> Unwrap<T>(
-        Result<Result<T, BillingError>, TransactionError> outer, Func<BillingError> fallback) =>
+    private static Result<T, BillingError> Unwrap<T>(Result<Result<T, BillingError>, TransactionError> outer) =>
         outer.IsSuccess
             ? outer.Value
-            : Result<T, BillingError>.Failure(fallback());
+            : Result<T, BillingError>.Failure(BillingError.StoreUnavailable());
 }

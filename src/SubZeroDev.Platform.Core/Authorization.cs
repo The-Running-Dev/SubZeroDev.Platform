@@ -244,8 +244,9 @@ internal sealed class CompositionPermissionProvider(
 /// <inheritdoc cref="IAuthorizationEvaluator"/>
 /// <remarks>Asks every registered provider and takes the union. A provider that errors contributes
 /// nothing and does not fail the evaluation — the union proceeds with whatever the others
-/// answered. Audits exactly one <see cref="AuditClass.Required"/> record on a denial; an allowed
-/// decision is not itself an audited fact.</remarks>
+/// answered. Audits exactly one <see cref="AuditClass.Required"/> record on a denial, and carries
+/// that write's failure on <see cref="AuthorizationDecision.AuditFailure"/>; an allowed decision is
+/// not itself an audited fact — the writer that performs the action audits it.</remarks>
 internal sealed class AuthorizationEvaluator(
     IPermissionProviderRegistry providers,
     ICurrentPrincipal principal,
@@ -273,9 +274,10 @@ internal sealed class AuthorizationEvaluator(
 
         var outcome = sources.Count > 0 ? AuthorizationOutcome.Allowed : AuthorizationOutcome.Denied;
 
+        AuditError? auditFailure = null;
         if (outcome == AuthorizationOutcome.Denied)
         {
-            await auditWriter
+            var audited = await auditWriter
                 .WriteAsync(
                     PlatformAuditActions.AuthorizationDenied,
                     resource,
@@ -283,8 +285,12 @@ internal sealed class AuthorizationEvaluator(
                     AuditClass.Required,
                     cancellationToken)
                 .ConfigureAwait(false);
+            auditFailure = audited.IsSuccess ? null : audited.Error;
         }
 
-        return new AuthorizationDecision(permission, resource, currentTenant, outcome, sources);
+        return new AuthorizationDecision(permission, resource, currentTenant, outcome, sources)
+        {
+            AuditFailure = auditFailure,
+        };
     }
 }

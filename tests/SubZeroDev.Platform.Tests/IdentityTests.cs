@@ -237,6 +237,19 @@ public sealed class IdentityTests
             type => type.Name.Contains("DbContext", StringComparison.Ordinal));
     }
 
+    /// <summary>I-I4 — Platform declares no user entity and no directory. The persistence half is
+    /// <see cref="S9_5_The_module_declares_no_entity_type_no_DbContext_and_no_migration"/>; this is
+    /// the naming half, over every type the module declares, so a user or directory type that holds
+    /// no storage at all still trips it.</summary>
+    [Fact]
+    public void I_I4_The_module_declares_no_user_and_no_directory_type()
+    {
+        Assert.DoesNotContain(
+            typeof(IdentityModule).Assembly.GetTypes(),
+            type => type.Name.Contains("User", StringComparison.OrdinalIgnoreCase)
+                || type.Name.Contains("Directory", StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>S9.7 — two credentials differing only in the case of the subject produce two
     /// different principals: nothing is trimmed, folded or normalised.</summary>
     [Fact]

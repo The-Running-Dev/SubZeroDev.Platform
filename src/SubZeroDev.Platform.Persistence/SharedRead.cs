@@ -7,10 +7,13 @@ namespace SubZeroDev.Platform.Persistence;
 public interface ISharedReadScopeFactory
 {
     /// <summary>Widens the query filter to "mine, or shared" for <typeparamref name="TEntity"/>
-    /// only, for the scope's lifetime. Emits one audit record when the scope opens.</summary>
+    /// only, for the scope's lifetime. Emits one <see cref="AuditClass.Required"/> audit record when
+    /// the scope opens, and does not open at all when that record could not be written.</summary>
     /// <typeparam name="TEntity">The one shareable type this scope widens the filter for.</typeparam>
-    /// <returns>A handle that narrows the filter back when disposed.</returns>
-    IDisposable Open<TEntity>() where TEntity : class, IShareable;
+    /// <returns>A handle that narrows the filter back when disposed, or the audit write's failure
+    /// — the retryable failure the class rule makes of it (Error semantics § 4), with the filter
+    /// untouched.</returns>
+    Result<IDisposable, AuditError> Open<TEntity>() where TEntity : class, IShareable;
 
     /// <summary>Whether a shared-read scope is currently open for <typeparamref name="TEntity"/>.
     /// Persistence imposes no repository or ORM, so this is the seam a consumer's own query code —
@@ -41,14 +44,13 @@ internal sealed class SharedReadScopeState
 /// <inheritdoc cref="ISharedReadScopeFactory"/>
 internal sealed class SharedReadScopeFactory(SharedReadScopeState state, IAuditWriter auditWriter) : ISharedReadScopeFactory
 {
-    public IDisposable Open<TEntity>() where TEntity : class, IShareable
+    public Result<IDisposable, AuditError> Open<TEntity>() where TEntity : class, IShareable
     {
         // One audit record per scope, not per row (I-T4) — written before the filter widens, so a
-        // caller never observes a widened read that was not recorded. Open() is synchronous by
-        // contract, so a Required write's failure has to surface here rather than through a Result;
-        // an unstarted scope leaves the filter untouched, matching the "no code path in Platform by
-        // which a write reaches another tenant's row" asymmetry — an escape that could not be
-        // recorded does not open at all.
+        // caller never observes a widened read that was not recorded. Open() stays synchronous
+        // because the widened state is an AsyncLocal, and one set inside an async method does not
+        // flow back to its caller. An escape that could not be recorded does not open at all, and
+        // the filter is left untouched.
         var written = auditWriter.WriteAsync(
             PlatformAuditActions.SharedReadScopeOpened,
             resource: null,
@@ -58,13 +60,12 @@ internal sealed class SharedReadScopeFactory(SharedReadScopeState state, IAuditW
 
         if (!written.IsSuccess)
         {
-            throw new InvalidOperationException(
-                $"Could not open a shared-read scope: the audit write failed ({written.Error.Code}).");
+            return Result<IDisposable, AuditError>.Failure(written.Error);
         }
 
         var previous = state.OpenFor;
         state.OpenFor = typeof(TEntity);
-        return new Scope(state, previous);
+        return Result<IDisposable, AuditError>.Success(new Scope(state, previous));
     }
 
     public bool IsOpenFor<TEntity>() where TEntity : class, IShareable => state.OpenFor == typeof(TEntity);

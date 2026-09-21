@@ -274,6 +274,52 @@ public sealed class AuditTests
     }
 
     [Fact]
+    public async Task A_required_write_a_sink_rejects_as_malformed_is_still_a_retryable_failure()
+    {
+        var sink = new RecordingAuditSink();
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkRejected("recording", "malformed")));
+
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithServices(services => services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink)))
+            .StartAsync(CancellationToken.None);
+
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var writer = host.Services.GetRequiredService<IAuditWriter>();
+
+        using (scopeFactory.Begin(TestTenant, TestPrincipal))
+        {
+            var written = await writer.WriteAsync(
+                new AuditAction("test.required"), null, AuditOutcome.Denied, AuditClass.Required, CancellationToken.None);
+
+            Assert.False(written.IsSuccess);
+            Assert.True(written.Error.IsRetryable);
+        }
+    }
+
+    [Fact]
+    public async Task A_denial_whose_required_audit_record_cannot_be_written_carries_the_failure_on_the_decision()
+    {
+        var sink = new RecordingAuditSink();
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable("recording")));
+
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithServices(services => services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink)))
+            .StartAsync(CancellationToken.None);
+
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var evaluator = host.Services.GetRequiredService<IAuthorizationEvaluator>();
+
+        using (scopeFactory.Begin(TestTenant, TestPrincipal))
+        {
+            var decision = await evaluator.EvaluateAsync(PlatformPermissions.ReadAudit, null, CancellationToken.None);
+
+            Assert.Equal(AuthorizationOutcome.Denied, decision.Outcome);
+            Assert.NotNull(decision.AuditFailure);
+            Assert.True(decision.AuditFailure.IsRetryable);
+        }
+    }
+
+    [Fact]
     public async Task S3_8_A_recorded_write_that_a_sink_refuses_leaves_the_response_unaffected_but_still_degrades()
     {
         var sink = new RecordingAuditSink();

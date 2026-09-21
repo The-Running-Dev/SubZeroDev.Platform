@@ -21,8 +21,8 @@ namespace SubZeroDev.Platform.Hosting;
 public sealed record EndpointRequirement(PermissionName RequiredPermission, FeatureName? RequiredFeature);
 
 /// <summary>Why an endpoint stands outside steps 4 and 5. The reason is not optional: an exemption
-/// list nobody can read is an ungated surface with an extra step, and the probes are the only
-/// thing in Platform that carries one.</summary>
+/// list nobody can read is an ungated surface with an extra step. Platform itself carries two: the
+/// probes, and the Mcp transport, which authorizes per tool call instead.</summary>
 /// <param name="Reason">Why this endpoint is exempt.</param>
 public sealed record EndpointRequirementExemption(string Reason)
 {
@@ -63,8 +63,9 @@ public static class PlatformEndpointConventions
         return builder;
     }
 
-    /// <summary>Exempts this endpoint from steps 4 and 5. Reserved for the probes — the only thing
-    /// in Platform that carries one — and for an endpoint the standard registration did not map.</summary>
+    /// <summary>Exempts this endpoint from steps 4 and 5. Reserved for Platform's two — the probes,
+    /// and the Mcp transport, which authorizes per tool call — and for an endpoint the standard
+    /// registration did not map.</summary>
     /// <typeparam name="TBuilder">The convention builder's type, so the call chains.</typeparam>
     /// <param name="builder">The endpoint's convention builder.</param>
     /// <param name="reason">Why this endpoint stands outside the fixed order's checked steps. Not
@@ -102,6 +103,16 @@ internal sealed class EndpointAuthorizationFilter(PermissionName permission, Fea
         var decision = await authorization
             .EvaluateAsync(permission, null, http.RequestAborted)
             .ConfigureAwait(false);
+
+        if (decision.AuditFailure is { } auditFailure)
+        {
+            // A denial whose Required audit record could not be written is a retryable failure, not
+            // a forbidden answer (Error semantics § 4).
+            await WriteRefusalAsync(
+                http, auditFailure.Code, correlation, StatusCodes.Status503ServiceUnavailable)
+                .ConfigureAwait(false);
+            return Results.Empty;
+        }
 
         if (decision.Outcome != AuthorizationOutcome.Allowed)
         {

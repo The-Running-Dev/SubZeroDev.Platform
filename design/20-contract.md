@@ -73,6 +73,11 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
   an empty set — the reason for a denial is that nothing granted, which is not a provider fact.
 - **`Sources` is a set, and its order carries no meaning.** A caller reading the first entry has
   invented a precedence the evaluator does not have.
+- **`AuditFailure` is set only on a denial whose `Required` audit record could not be written**, and
+  the caller then answers a retryable failure carrying it rather than forbidden — *Error semantics*,
+  § 4. The HTTP pipeline answers 503 with the `AuditError` code; Mcp answers a tool result saying the
+  call could not be audited and may be retried. A denial that cannot be recorded is not answered as
+  though it were.
 - **A `PermissionName` reaching the evaluator unregistered is a startup-detectable defect, never a
   runtime denial.** A typo that silently denies is indistinguishable from a policy that denies — I-A3.
 - **`PermissionName.Value` must not acquire a parser, a wildcard, a hierarchy or a prefix match.** It
@@ -317,9 +322,9 @@ frozen catalogue through the interface and has no other way in.
 **No .NET type, and no package a backend could reference.** The web shell consumes the public HTTP API
 over the network ([`10-design.md`](10-design.md) § *Module boundaries* 1 and 4), which is what makes
 the brief's "backend packages build and run with no reference to the UI package" provable by the build
-rather than asserted. Its delivery shape is [`10-design.md`](10-design.md) § *Open questions* 2 and
-does not affect this document: neither answer introduces a .NET declaration, and the recommendation
-and its alternative differ only in how the assets are built and served.
+rather than asserted. Its delivery shape is [`10-design.md`](10-design.md) § *Open questions* 2, resolved
+2026-09-21 as a separate front-end build with no .NET package, and does not affect this document: it
+introduces no .NET declaration.
 
 The shell's contract is therefore a constraint rather than a type, and it is I-W1.
 
@@ -489,8 +494,9 @@ provider are declared in
   that could not answer returns `AuthorizationError` to the evaluator, which turns it into a denial
   the caller may retry — *Error semantics*, § 2.
 - **`GrantsAsync` returning an error denies; it never grants.** An unreachable store fails closed.
-- **A provider must not audit.** The evaluator audits the decision once, so a union across three
-  providers does not write three records.
+- **A provider must not audit.** The evaluator audits a denial once, so a union across three
+  providers does not write three records. An allowed decision is not itself an audited fact: the
+  writer performing the action audits it, inside that action's transaction.
 - **`IPermissionProvider.Name` must be unique**, and two providers sharing a name is a startup
   failure: a decision naming its source is worthless if two sources share a name.
 - **D5 ships exactly two providers, and neither is a role-assignment table:** the composition provider
@@ -585,6 +591,11 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
   matters.
 - **A scope left undisposed is bounded by the operation scope's lifetime.** The request ends, the
   ambient context is restored, and the next request does not inherit it.
+- **`Open<TEntity>` returns `Result<IDisposable, AuditError>`**: the scope on success, the audit
+  write's failure otherwise. The escape's record is `Required`, so a scope whose record could not be
+  written is never opened and the filter is left untouched — *Error semantics*, § 4. It stays
+  synchronous: the scope's state is ambient, and ambient state set inside an asynchronous method does
+  not flow back to its caller.
 - **`Open<TEntity>` must not acquire a tenant parameter.** Naming the tenant to read from would turn
   the modelled escape into a cross-tenant fetch, and the point of the scope is that the caller states
   *that* it is crossing, not *whose* rows it wants.
@@ -702,7 +713,9 @@ projects to it at the boundary (*Types*, § 10); its semantics are:
 Hosting gains the fixed order, and **it is the most expensive thing in this contract to change later,
 because every capability's semantics are stated relative to it**: authenticate at the transport,
 resolve the tenant, open the operation scope, authorize, check entitlement if the endpoint admits new
-paid-feature work, do the work inside a transaction when it writes, audit.
+paid-feature work, do the work inside a transaction when it writes. Auditing is not a step of its own:
+the evaluator audits a denial at step 4, and the writer performing an action audits it inside that
+action's transaction at step 6.
 
 - **Authorization precedes entitlement, and both precede any side effect.** A principal who may not
   perform an action must not learn from the response whether the deployment is entitled to the
@@ -748,10 +761,13 @@ declaration is metadata Hosting reads rather than a call the handler makes. `End
 - **An exemption states a reason, and the reason is not optional.** An exemption list nobody can read
   is an ungated surface with an extra step, and the reason is what makes it reviewable — the same
   argument that makes a decision name its source rather than merely being a decision.
-- **The probes are exempt, and they are the only thing in Platform that is.** They must answer before
-  a principal can be granted anything: the composition provider grants nothing at all in `Operated`,
-  so a probe declaring a permission is a probe denied in every operated host, which fails the
-  deployment the probes exist to keep alive.
+- **Platform takes exactly two exemptions: the probes, and the Mcp transport.** The probes must
+  answer before a principal can be granted anything: the composition provider grants nothing at all
+  in `Operated`, so a probe declaring a permission is a probe denied in every operated host, which
+  fails the deployment the probes exist to keep alive. The Mcp transport's permission varies per
+  call, so it authorizes and checks entitlement per tool call, inside its own fixed order
+  (*Types* § 10), rather than once at the endpoint — its exemption moves the check, it does not
+  remove it.
 - **The pipeline's authorization check is never resource-scoped.** It passes no `ResourceRef`, and an
   endpoint whose authorization is genuinely per-resource makes a second, explicit `EvaluateAsync` call
   in its handler with the reference it constructed. Mcp can scope its check because the SDK parsed the
@@ -839,7 +855,7 @@ self-hosted deployment's licence state is not an operated caller's business, and
 | Variant | Raised when | Retryable | The caller is expected to |
 |---|---|---|---|
 | `SinkUnavailable` | a sink could not write | **yes** | apply the class rule below |
-| `SinkRejected` | a sink refused the record as malformed | no | log, degrade readiness; **still apply the class rule** |
+| `SinkRejected` | a sink refused the record as malformed | no | log, degrade readiness; **still apply the class rule** — under `Required` the caller receives `SinkUnavailable` naming the sink, because the class, not the sink, decides that the response is retryable |
 
 **The class decides the consequence, and the sink does not choose it:**
 
@@ -847,6 +863,11 @@ self-hosted deployment's licence state is not an operated caller's business, and
   authorization denials, shared-resource escapes, membership and ownership changes, entitlement and
   licence transitions, and MCP invocations.
 - **`Recorded`** — logged, readiness degrades, the response is unaffected. Everything else.
+
+**No `Required` write's result may be discarded.** An authorization denial carries it on
+`AuthorizationDecision.AuditFailure` (*Types* § 2), a shared-read escape returns it from
+`Open<TEntity>` (*Types* § 7), and an MCP invocation or refusal whose record cannot be written answers
+a retryable tool result rather than its outcome.
 
 **A single class was rejected in both directions.** All-`Required` makes an audit outage a total
 outage, which is the self-inflicted outage
@@ -863,12 +884,20 @@ change that rolled back.
 | Variant | Raised when | Retryable | The caller is expected to |
 |---|---|---|---|
 | `OrganizationNotFound` | the organization does not exist, **or the principal is not a member** | no | return not found |
-| `NotAMember` | a member-only action by a principal whose membership is revoked | no | return forbidden |
+| `NotAMember` | the principal an administrative action names has no active membership | no | return forbidden |
 | `InvitationNotRedeemable` | the token is expired, already redeemed, **or never existed** | no | return the same answer for all three |
 | `TenantAlreadyAssigned` | the unique tenant constraint rejected a concurrent create | **yes** | retry the create; it mints a fresh tenant |
+| `StoreUnavailable` | the organization store could not complete the operation | **yes** | retry |
 
 **`OrganizationNotFound` deliberately covers "exists but you may not see it".** Existence is not
-confirmed to a caller who may not see it.
+confirmed to a caller who may not see it. **A caller who is not an active member gets
+`OrganizationNotFound`, never `NotAMember`**: `NotAMember` describes the principal an action names,
+and only a caller already confirmed as an active member can receive it.
+
+**`StoreUnavailable` is an infrastructure failure, not an answer about any organization**, and it
+confirms nothing about existence: every organization answers it alike while the store is down.
+`OrganizationNotFound` is kept for a membership check that failed, and no other variant stands in for
+a store failure.
 
 **`InvitationNotRedeemable` deliberately collapses three causes into one answer.** An invitation token
 is a capability, and a probe that tells the prober which guesses were close is a capability oracle.
@@ -883,6 +912,7 @@ log, which the prober cannot read.
 | `SubscriptionNotFound` | administration acts on a tenant with no subscription | no | reject |
 | `InvalidTransition` | the target state is unreachable from the current one | no | reject |
 | `ProviderEventMalformed` | an inbound event cannot be interpreted | no | reject and log; **do not record a receipt** |
+| `StoreUnavailable` | the billing store could not complete the operation | **yes** | retry; a provider's redelivery of the same event is idempotent |
 
 **A redelivered provider event is not an error.** The recorded event identity makes it idempotent
 success, and returning an error would make a provider's ordinary retry look like a fault.
@@ -927,10 +957,14 @@ The one returned error, `LicensingError`:
 |---|---|---|---|
 | `UnknownTool` | the name is unregistered, **or registered and not exposed** | no | return unknown tool for both |
 | `InvalidArguments` | arguments fail the tool's declared schema | no | return the failure; **name no argument value** |
-| `ConnectionUnauthenticated` | a session request presents a principal other than the one the session was established with | no | end the exchange; a new principal means a new connection |
-
 Authorization and entitlement refusals are not `McpError` variants: they are § 2's and § 3's, raised
 by the same evaluators the HTTP path uses, so a denial means the same thing on both surfaces.
+
+**A principal change on an established session is not an `McpError` either.** The adopted SDK binds a
+session to the principal that established it and answers a later request carrying a different one
+with its own 403 at the transport, before any tool is reached; a new principal means a new connection.
+A connection that arrives with no principal is `Anonymous`, and each of its tool calls is authorized
+like any other.
 
 | Condition | Answer | Retryable |
 |---|---|---|
@@ -956,9 +990,10 @@ an argument that failed validation is as likely to be a secret as one that passe
 
 ### 9. Startup — `SubZeroDev.Platform.Core`, surfaced as `HostStartupError`
 
-A new `PlatformError` subtype, wrapped by
-[`HostStartupError.Registration`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs) on the shape
-`ModuleGraphError` already establishes. **Every variant fails the host; none degrades it. None is
+Each condition surfaces as a [`HostStartupError`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs),
+on the shape `ModuleGraphError` already establishes. Most are `HostStartupError` codes of their own;
+the duplicate-name conditions are the registries' own errors, carried as the inner error of
+`HostStartupError.Registration`. **Every variant fails the host; none degrades it. None is
 retryable — a misconfigured installation does not resolve itself.**
 
 | Variant | Raised when |
@@ -966,9 +1001,9 @@ retryable — a misconfigured installation does not resolve itself.**
 | `AuthenticationProviderRequired` | `Operated` with no authentication provider registered |
 | `DurableAuditSinkRequired` | `Operated` with no sink declaring `IsDurable` |
 | `RegistrationForbiddenByProfile` | `Local` with an authentication provider, a tenant resolver, or an entitlement contributor other than the Community baseline |
-| `DuplicatePermissionName` | two modules declare the same `PermissionName` |
-| `DuplicateProviderName` | two providers, contributors, resolvers or sinks share a name |
-| `UnregisteredPermission` | a tool, an endpoint, or any registration requires a `PermissionName` no catalog declares |
+| `DuplicatePermissionName` | two modules declare the same `PermissionName` — `PermissionCatalogError`, inside `Registration` |
+| `DuplicateProviderName` | two permission providers, authentication providers, tenant resolvers or audit sinks share a name — each registry's own error, inside `Registration`; two entitlement contributors sharing a name raise `DuplicateContributorName` there instead |
+| `UnregisteredPermission` | a tool, an endpoint, or any registration requires a `PermissionName` no catalog declares — its own code, carrying `PermissionCatalogError.UnregisteredPermission` as the inner error |
 | `SensitiveToolParameter` | a registered tool's schema names a parameter matching the redaction marker set |
 | `UndeclaredEndpointRequirement` | a mapped endpoint carries neither a requirement nor an exemption |
 
@@ -1032,7 +1067,7 @@ this document is the only thing holding it, and a reviewer is the enforcement.
 | I-A5 | A provider returning an error denies and never grants | Core | **code** — evaluator |
 | I-A6 | The composition provider grants nothing to `Anonymous` in either profile | Core | **code** — the provider, plus a sample scenario |
 | I-A7 | The composition provider grants nothing at all in `Operated` | Core | **code** — the provider |
-| I-A8 | No provider writes an audit record; the evaluator audits the decision once | Core | instruction |
+| I-A8 | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it | Core | instruction |
 | I-A9 | D5 has no role-assignment store | Organizations | **code** — schema |
 
 ### Tenancy

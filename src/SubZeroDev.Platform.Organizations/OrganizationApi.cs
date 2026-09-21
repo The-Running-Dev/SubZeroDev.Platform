@@ -136,11 +136,8 @@ internal sealed class OrganizationApi(
             return Result<Organization, OrganizationError>.Failure(OrganizationError.TenantAlreadyAssigned());
         }
 
-        // No OrganizationError variant models a bare infrastructure failure (design/20-contract.md
-        // fixes exactly four); the safest fallback that still uses only those four is the one
-        // retryable variant this operation can produce.
         logger.LogWarning("Organization create failed: {Code}.", result.Error.Code);
-        return Result<Organization, OrganizationError>.Failure(OrganizationError.TenantAlreadyAssigned());
+        return Result<Organization, OrganizationError>.Failure(OrganizationError.StoreUnavailable());
     }
 
     public async Task<Result<InvitationToken, OrganizationError>> InviteAsync(
@@ -242,7 +239,7 @@ internal sealed class OrganizationApi(
 
         return result.IsSuccess
             ? result.Value
-            : Result<OrganizationError>.Failure(OrganizationError.OrganizationNotFound());
+            : Result<OrganizationError>.Failure(OrganizationError.StoreUnavailable());
     }
 
     public async Task<Result<TenantId, OrganizationError>> SwitchActiveOrganizationAsync(
@@ -292,10 +289,10 @@ internal sealed class OrganizationApi(
     private static Result<T, OrganizationError> Unwrap<T>(Result<Result<T, OrganizationError>, TransactionError> outer) =>
         outer.IsSuccess
             ? outer.Value
-            // As in CreateOrganizationAsync: no variant models a bare infrastructure failure, so an
-            // unexpected transaction failure fails closed as "not found" — existence is never
-            // confirmed to a caller Organizations could not positively identify as a member.
-            : Result<T, OrganizationError>.Failure(OrganizationError.OrganizationNotFound());
+            // A transaction failure is the store's, not an answer about the organization, so it is
+            // not "not found": OrganizationNotFound is kept for a membership check that failed.
+            // StoreUnavailable confirms nothing about existence either.
+            : Result<T, OrganizationError>.Failure(OrganizationError.StoreUnavailable());
 
     private static string MintToken()
     {

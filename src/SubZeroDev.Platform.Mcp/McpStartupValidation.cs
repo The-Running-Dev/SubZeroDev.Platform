@@ -10,7 +10,7 @@ namespace SubZeroDev.Platform.Mcp;
 /// <see cref="IHostedLifecycleService"/>: its work belongs in the <c>StartAsync</c> phase, which the
 /// generic host runs for every hosted service only after every <c>StartingAsync</c> hook has
 /// completed — so <see cref="SubZeroDev.Platform.Core.IPermissionCatalogRegistry"/> is already
-/// populated and frozen by <c>PlatformRegistryStartup</c>'s own <c>StartingAsync</c> by the time
+/// fully populated by <c>PlatformRegistryStartup</c>'s own <c>StartingAsync</c> by the time
 /// this runs, and <see cref="IPermissionCatalogRegistry.EnsureDeclared"/> answers against the whole
 /// composition rather than whatever had registered first.</summary>
 internal sealed class McpStartupValidation(

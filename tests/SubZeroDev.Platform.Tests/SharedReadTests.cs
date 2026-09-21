@@ -106,7 +106,7 @@ public sealed class SharedReadTests
 
         using (scopes.Begin(TenantA, FakePrincipals.System))
         {
-            using (scopeFactory.Open<ShareableRowA>())
+            using (scopeFactory.Open<ShareableRowA>().Value)
             {
                 var widened = await QueryAsync<ShareableRowA>(unitOfWork, ambient, scopeFactory, TableA, TenantA, CancellationToken.None);
                 Assert.Equal(2, widened.Count);
@@ -144,7 +144,7 @@ public sealed class SharedReadTests
 
         using (scopes.Begin(TenantA, FakePrincipals.System))
         {
-            using (scopeFactory.Open<ShareableRowA>())
+            using (scopeFactory.Open<ShareableRowA>().Value)
             {
                 var first = await QueryAsync<ShareableRowA>(unitOfWork, ambient, scopeFactory, TableA, TenantA, CancellationToken.None);
                 var second = await QueryAsync<ShareableRowA>(unitOfWork, ambient, scopeFactory, TableA, TenantA, CancellationToken.None);
@@ -170,7 +170,7 @@ public sealed class SharedReadTests
 
         using (scopes.Begin(TenantA, FakePrincipals.System))
         {
-            using (scopeFactory.Open<ShareableRowA>())
+            using (scopeFactory.Open<ShareableRowA>().Value)
             {
                 var thrown = Assert.Throws<PlatformContractViolationException>(() =>
                     unitOfWork.ExecuteAsync(
@@ -266,6 +266,18 @@ public sealed class SharedReadTests
 
         Assert.True(openedOnFirstFlow);
         Assert.False(openOnSecondFlow);
+    }
+
+    [Fact]
+    public void Open_answers_the_audit_failure_and_leaves_the_filter_untouched_when_the_record_cannot_be_written()
+    {
+        var factory = new SharedReadScopeFactory(new SharedReadScopeState(), new FailingAuditWriter());
+
+        var opened = factory.Open<ShareableRowA>();
+
+        Assert.False(opened.IsSuccess);
+        Assert.True(opened.Error.IsRetryable);
+        Assert.False(factory.IsOpenFor<ShareableRowA>());
     }
 
     [Fact]
@@ -417,5 +429,13 @@ public sealed class SharedReadTests
         public Task<Result<AuditError>> WriteAsync(
             AuditAction action, ResourceRef? resource, AuditOutcome outcome, AuditClass auditClass, CancellationToken cancellationToken) =>
             Task.FromResult(Result<AuditError>.Success());
+    }
+
+    /// <summary>Answers the retryable failure a Required write whose sink could not write gets.</summary>
+    private sealed class FailingAuditWriter : IAuditWriter
+    {
+        public Task<Result<AuditError>> WriteAsync(
+            AuditAction action, ResourceRef? resource, AuditOutcome outcome, AuditClass auditClass, CancellationToken cancellationToken) =>
+            Task.FromResult(Result<AuditError>.Failure(AuditError.SinkUnavailable("failing")));
     }
 }
