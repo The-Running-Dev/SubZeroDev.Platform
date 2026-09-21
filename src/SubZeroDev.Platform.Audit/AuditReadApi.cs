@@ -79,10 +79,12 @@ internal sealed class AuditReadApi(
     public Task<Result<IReadOnlyList<AuditEvent>, AuditReadError>> ByActorAsync(
         PrincipalId actor, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
         RunAsync(
-            "actor_subject = @actorSubject AND occurred_at >= @from AND occurred_at <= @to",
+            "actor_subject = @actorSubject AND actor_issuer = @actorIssuer"
+            + " AND occurred_at >= @from AND occurred_at <= @to",
             command =>
             {
                 AddParameter(command, "@actorSubject", actor.Subject);
+                AddParameter(command, "@actorIssuer", actor.Issuer);
                 AddParameter(command, "@from", capability.FormatInstant(from));
                 AddParameter(command, "@to", capability.FormatInstant(to));
             },

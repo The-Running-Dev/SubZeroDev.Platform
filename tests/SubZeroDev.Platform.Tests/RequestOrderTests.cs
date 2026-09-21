@@ -208,7 +208,7 @@ public sealed class RequestOrderTests
                 .RequiresPlatformAuthorization(undeclared, feature: null)));
 
         var error = Assert.IsType<HostStartupError>(thrown.Error);
-        Assert.Equal(nameof(HostStartupError.Registration), error.Code);
+        Assert.Equal(nameof(HostStartupError.UnregisteredPermission), error.Code);
         Assert.Equal(nameof(PermissionCatalogError.UnregisteredPermission), error.Inner?.Code);
     }
 

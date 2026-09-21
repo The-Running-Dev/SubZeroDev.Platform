@@ -156,4 +156,11 @@ public sealed record BillingError : PlatformError
     /// <returns>The error.</returns>
     public static BillingError ProviderEventMalformed() =>
         new(nameof(ProviderEventMalformed), isRetryable: false, "The inbound provider event could not be interpreted.");
+
+    /// <summary>The billing store could not complete the operation — an infrastructure failure, not
+    /// an answer about any plan, subscription or event. Retryable; a provider redelivering an event
+    /// after this is handled idempotently (I-B7).</summary>
+    /// <returns>The error.</returns>
+    public static BillingError StoreUnavailable() =>
+        new(nameof(StoreUnavailable), isRetryable: true, "The billing store could not complete the operation. Retry.");
 }

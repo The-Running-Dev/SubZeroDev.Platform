@@ -98,6 +98,11 @@ public sealed class OrganizationsTests
         {
             var created = await api.CreateOrganizationAsync("Acme", CancellationToken.None);
             Assert.False(created.IsSuccess);
+
+            // A rolled-back transaction is the store's failure, not a tenant race: it answers the
+            // retryable StoreUnavailable rather than borrowing TenantAlreadyAssigned.
+            Assert.Equal(nameof(OrganizationError.StoreUnavailable), created.Error.Code);
+            Assert.True(created.Error.IsRetryable);
         }
 
         Assert.Equal(0, await CountRowsAsync(host, "organization"));

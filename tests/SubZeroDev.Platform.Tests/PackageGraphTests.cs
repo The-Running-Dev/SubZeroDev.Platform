@@ -28,9 +28,10 @@ public sealed class PackageGraphTests
     [Fact]
     public void I_C7_no_module_package_references_another_module_package()
     {
-        // With no module package present today, this direction is vacuously satisfied — the
-        // fixture test below is what proves the check itself would catch a real violation.
-        var graph = PackageGraph.Resolve(FrameworkAssemblies());
+        // Resolved over every module built alongside this run, not the framework alone — over the
+        // framework alone this direction has no module to check and passes vacuously. The fixture
+        // test below proves the check itself would catch a real violation.
+        var graph = PackageGraph.Resolve(AllPlatformAssemblies());
 
         var violations = PackageGraph.ModuleReferencesModule(graph);
 
@@ -191,7 +192,11 @@ public sealed class PackageGraphTests
     private static IReadOnlyCollection<Assembly> NonBillingAssemblies() =>
     [
         .. FrameworkAssemblies(),
-        typeof(SubZeroDev.Platform.Organizations.Organization).Assembly, // Organizations
+        typeof(SubZeroDev.Platform.Identity.IdentityModule).Assembly,
+        typeof(SubZeroDev.Platform.Organizations.Organization).Assembly,
+        typeof(SubZeroDev.Platform.Licensing.LicensingModule).Assembly,
+        typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
+        typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
     ];
 
     /// <summary>Every framework assembly plus every module assembly built alongside this test
@@ -284,7 +289,7 @@ internal static class PackageGraph
     ];
 
     /// <summary>The four commercial modules I-C5 asserts the local sample never references by
-    /// name. None exists in the tree yet; this list is what makes the assertion bite once one does.</summary>
+    /// name.</summary>
     internal static readonly IReadOnlyCollection<string> CommercialModules =
     [
         "SubZeroDev.Platform.Identity",

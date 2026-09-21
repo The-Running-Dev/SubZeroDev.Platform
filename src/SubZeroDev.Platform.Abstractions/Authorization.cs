@@ -46,7 +46,14 @@ public sealed record AuthorizationDecision(
     ResourceRef? Resource,
     TenantId Tenant,
     AuthorizationOutcome Outcome,
-    IReadOnlyCollection<PermissionProviderName> Sources);
+    IReadOnlyCollection<PermissionProviderName> Sources)
+{
+    /// <summary>Set only on a denial whose <see cref="AuditClass.Required"/> audit record could not be
+    /// written. The caller answers a retryable failure carrying it rather than forbidden — the class
+    /// rule (<c>design/20-contract.md</c>, Error semantics § 4): a denial that cannot be recorded is
+    /// not answered as though it were.</summary>
+    public AuditError? AuditFailure { get; init; }
+}
 
 /// <summary>Platform's own permission names. Public surface: a consumer's policy refers to them by
 /// name.</summary>

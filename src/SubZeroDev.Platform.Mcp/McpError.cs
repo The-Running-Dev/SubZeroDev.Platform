@@ -5,7 +5,9 @@ namespace SubZeroDev.Platform.Mcp;
 /// <summary>D5-S15's own error type (design/20-contract.md § 8). Authorization and entitlement
 /// refusals are deliberately not here — they are raised by the same <see cref="IAuthorizationEvaluator"/>
 /// and <see cref="IEntitlementEvaluator"/> the HTTP path uses, so a denial means the same thing on
-/// both surfaces.</summary>
+/// both surfaces. Nor is a principal change on an established session: the adopted SDK answers that
+/// with its own 403 at the transport (<see cref="McpPrincipalBindingMiddleware"/>), before any tool
+/// is reached.</summary>
 public sealed record McpError : PlatformError
 {
     private McpError(string code, string detail)
@@ -30,12 +32,4 @@ public sealed record McpError : PlatformError
     /// <returns>The error.</returns>
     public static McpError InvalidArguments(ToolName tool) =>
         new(nameof(InvalidArguments), $"Arguments for tool '{tool}' do not satisfy its declared schema.");
-
-    /// <summary>A session request presented a principal other than the one the session was
-    /// established with. Ends the exchange — a new principal means a new connection.</summary>
-    /// <returns>The error.</returns>
-    public static McpError ConnectionUnauthenticated() =>
-        new(
-            nameof(ConnectionUnauthenticated),
-            "The session's connection presented a principal other than the one it was established with.");
 }

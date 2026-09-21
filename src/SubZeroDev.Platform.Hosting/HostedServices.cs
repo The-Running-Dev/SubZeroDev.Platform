@@ -201,7 +201,7 @@ internal sealed class PlatformRegistryStartup(
                     var declared = permissionCatalogRegistry.EnsureDeclared(requirement.RequiredPermission);
                     if (!declared.IsSuccess)
                     {
-                        throw new PlatformStartupException(HostStartupError.Registration(
+                        throw new PlatformStartupException(HostStartupError.UnregisteredPermission(
                             declared.Error,
                             declared.Error.Detail));
                     }

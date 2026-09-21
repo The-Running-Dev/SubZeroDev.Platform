@@ -81,6 +81,7 @@ internal sealed class AuditSinkDispatcher(
         AuditEvent auditEvent, AuditClass auditClass, CancellationToken cancellationToken)
     {
         AuditError? failure = null;
+        string? failedSink = null;
 
         foreach (var sink in registry.Registered)
         {
@@ -88,6 +89,7 @@ internal sealed class AuditSinkDispatcher(
             if (!written.IsSuccess)
             {
                 failure ??= written.Error;
+                failedSink ??= sink.Name;
                 logger.LogWarning(
                     "Audit sink '{Sink}' failed to write event {EventId}: {Code}.",
                     sink.Name, auditEvent.Id, written.Error.Code);
@@ -102,9 +104,15 @@ internal sealed class AuditSinkDispatcher(
 
         health.MarkDegraded(failure.Detail);
 
-        return auditClass == AuditClass.Required
-            ? Result<AuditError>.Failure(failure)
-            : Result<AuditError>.Success();
+        if (auditClass != AuditClass.Required)
+        {
+            return Result<AuditError>.Success();
+        }
+
+        // The class decides the consequence, not the sink: a Required write the sink refused as
+        // malformed is still a retryable failure to the caller. The refusal's own reason is in the
+        // log line above and in the degraded readiness detail.
+        return Result<AuditError>.Failure(failure.IsRetryable ? failure : AuditError.SinkUnavailable(failedSink!));
     }
 }
 

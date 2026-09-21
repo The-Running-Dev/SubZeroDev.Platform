@@ -132,14 +132,15 @@ public sealed record OrganizationError : PlatformError
             isRetryable: false,
             "The organization does not exist, or is not visible to this principal.");
 
-    /// <summary>A member-only action by a principal whose membership is revoked (or, for an
-    /// administrative action naming another principal, one whose membership is not active).</summary>
+    /// <summary>The principal an administrative action names has no active membership. Never raised
+    /// for the caller: a caller who is not an active member is answered
+    /// <see cref="OrganizationNotFound"/>, so existence is not confirmed to them.</summary>
     /// <returns>The error.</returns>
     public static OrganizationError NotAMember() =>
         new(
             nameof(NotAMember),
             isRetryable: false,
-            "This principal's membership in the organization is not active.");
+            "The named principal's membership in the organization is not active.");
 
     /// <summary>The token is expired, already redeemed, or never existed. Deliberately one answer for
     /// all three causes (S10.5) — this variant must never be split for diagnosability.</summary>
@@ -158,4 +159,14 @@ public sealed record OrganizationError : PlatformError
             nameof(TenantAlreadyAssigned),
             isRetryable: true,
             "A concurrent create already claimed the minted tenant. Retry.");
+
+    /// <summary>The organization store could not complete the operation — an infrastructure failure,
+    /// not an answer about any organization. Retryable. Confirms nothing about existence: every
+    /// organization answers it the same way while the store is unavailable.</summary>
+    /// <returns>The error.</returns>
+    public static OrganizationError StoreUnavailable() =>
+        new(
+            nameof(StoreUnavailable),
+            isRetryable: true,
+            "The organization store could not complete the operation. Retry.");
 }

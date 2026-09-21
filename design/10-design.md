@@ -505,7 +505,10 @@ capability's semantics are stated relative to it.
    answered. This is what keeps the brief's "only new paid-feature work is denied after grace" true at
    the endpoint level and not only at the work-item level.
 6. **Do the work**, inside a transaction when it writes.
-7. **Audit**, per the class rules in *Failure modes* below.
+
+Auditing is not a step of its own. The evaluator audits a denial at step 4, and the writer performing
+an action audits it inside that action's transaction at step 6, per the class rules in *Failure modes*
+below.
 
 **Authorization precedes entitlement, and both precede any side effect.** The order is not arbitrary. A
 principal who may not perform an action must not learn from the response whether the deployment is
@@ -1014,7 +1017,13 @@ because that is the designed-from-one-consumer failure arriving through the door
 
 Either way this needs a decision-log entry naming what was rejected, per `AGENTS.md`, *Hard rules*.
 
-### 2. How is the shared administration shell delivered?
+### ~~2. How is the shared administration shell delivered?~~
+
+**Resolved 2026-09-21, by Ben: a separate front-end build, with no .NET package the backend could
+reference** — the recommendation below, taken as written. The decision is in
+[`90-decisions.md`](90-decisions.md).
+
+The question as originally posed:
 
 The brief requires a replaceable shell that consumes the same backend API a caller uses without it, and
 backend packages that build with no reference to it. That leaves the delivery shape open, and it sets a
@@ -1053,7 +1062,12 @@ difference, and a tier introduced before a rule needs it is a tier that will acq
 This is an ADR amendment and therefore the repository owner's, not `/design`'s. The placement in
 *Module boundaries* does not wait on the answer.
 
-### 4. Do the D5 packages version and release independently of the framework's 0.x, or in lockstep?
+### ~~4. Do the D5 packages version and release independently of the framework's 0.x, or in lockstep?~~
+
+**Resolved 2026-09-17, by Ben: lockstep**, recorded on issue #186 and in
+[`90-decisions.md`](90-decisions.md), 2026-09-19.
+
+The question as originally posed:
 
 ADR-006's consequences name "two release cadences, and a version matrix" as real packaging work that did
 not exist when Platform was six packages shipping together. D5 makes it six more, and the brief requires

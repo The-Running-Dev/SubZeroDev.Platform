@@ -67,12 +67,16 @@ internal sealed class PlatformMcpTool(ToolRegistration registration, IServicePro
         if (decision.Outcome != AuthorizationOutcome.Allowed)
         {
             // A denial is audited too (S15.9 counts every invocation of a known tool), inside its own
-            // scope — never the one a successful invocation would open around producer work.
+            // scope — never the one a successful invocation would open around producer work. A
+            // Required record that could not be written, the evaluator's or this one, turns the
+            // answer into a retryable failure (Error semantics § 4).
             using var deniedScope = scopeFactory.Begin(tenant, principal);
-            await auditWriter
+            var deniedAudit = await auditWriter
                 .WriteAsync(new AuditAction(tool.Value), resource, AuditOutcome.Denied, AuditClass.Required, cancellationToken)
                 .ConfigureAwait(false);
-            return McpToolResults.Forbidden(tool);
+            return decision.AuditFailure is null && deniedAudit.IsSuccess
+                ? McpToolResults.Forbidden(tool)
+                : McpToolResults.AuditUnavailable(tool);
         }
 
         // Step 5 — check entitlement, only when the tool declares a feature.
@@ -83,10 +87,12 @@ internal sealed class PlatformMcpTool(ToolRegistration registration, IServicePro
             if (!entitlementDecision.Granted)
             {
                 using var deniedScope = scopeFactory.Begin(tenant, principal);
-                await auditWriter
+                var notEntitledAudit = await auditWriter
                     .WriteAsync(new AuditAction(tool.Value), resource, AuditOutcome.Denied, AuditClass.Required, cancellationToken)
                     .ConfigureAwait(false);
-                return McpToolResults.NotEntitled(tool);
+                return notEntitledAudit.IsSuccess
+                    ? McpToolResults.NotEntitled(tool)
+                    : McpToolResults.AuditUnavailable(tool);
             }
         }
 
@@ -120,9 +126,13 @@ internal sealed class PlatformMcpTool(ToolRegistration registration, IServicePro
             }
 
             // Step 7 — audit, with the tool as the action and no arguments.
-            await auditWriter
+            var invocationAudit = await auditWriter
                 .WriteAsync(new AuditAction(tool.Value), resource, outcome, AuditClass.Required, cancellationToken)
                 .ConfigureAwait(false);
+            if (!invocationAudit.IsSuccess)
+            {
+                return McpToolResults.AuditUnavailable(tool);
+            }
         }
 
         return McpToolResults.FromInvocation(result);
@@ -145,6 +155,9 @@ internal static class McpToolResults
 
     internal static CallToolResult NotEntitled(ToolName tool) =>
         Error($"Tool '{tool}' is not entitled.");
+
+    internal static CallToolResult AuditUnavailable(ToolName tool) =>
+        Error($"Tool '{tool}' could not be audited; the call may be retried.");
 
     internal static CallToolResult FromInvocation(ToolInvocationResult result) => new()
     {

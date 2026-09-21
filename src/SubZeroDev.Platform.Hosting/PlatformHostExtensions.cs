@@ -48,7 +48,7 @@ public static class PlatformHostExtensions
         var mapping = endpoints.ServiceProvider.GetRequiredService<ProbeMapping>();
         mapping.MappedExplicitly = true;
 
-        // The probes are exempt, and they are the only thing in Platform that is (20-contract.md
+        // The probes are exempt, one of Platform's two exemptions with the Mcp transport (20-contract.md
         // § Public surface 11): they must answer before a principal can be granted anything, and
         // the composition provider grants nothing at all in Operated.
         endpoints

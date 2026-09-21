@@ -21,10 +21,11 @@ public interface IAuditable
     /// split to recover the pair.</summary>
     string CreatedBy { get; }
 
-    /// <summary>When the row was last modified.</summary>
+    /// <summary>When the row was last modified. Null until the row is first modified.</summary>
     DateTimeOffset? ModifiedAt { get; }
 
-    /// <summary>Who last modified the row. Null when there was no principal.</summary>
+    /// <summary>Who last modified the row. Null until the row is first modified — never for want of
+    /// a principal, which is total.</summary>
     string? ModifiedBy { get; }
 }
 

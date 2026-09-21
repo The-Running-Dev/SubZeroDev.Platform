@@ -16,6 +16,114 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-21 — `ConnectionUnauthenticated` is dropped from `McpError`
+
+Context: `/align` after D5 found the variant declared in `20-contract.md` § *Error semantics* 8 and in
+`McpError.cs`, and raised nowhere. A principal change on an established session is answered by the
+adopted SDK's own 403 at the transport (`McpPrincipalBindingMiddleware`) before any tool is reached,
+and a connection with no principal is `Anonymous` and authorized per call.
+Chosen: remove the variant from the code and the contract, and state in § 8 where each case is
+answered instead.
+Rejected: keeping it as a reserved variant, because a declared error nothing raises tells a caller to
+handle a case that cannot reach it; and raising it from Platform code, which would duplicate the SDK's
+transport answer with a second one.
+Reversibility: cheap — re-adding a variant is additive.
+
+### 2026-09-21 — `10-design.md` § Open questions 2 resolved: the shell is a separate front-end build
+
+Context: the question was open since `/design`; `/align` surfaced it with no slice depending on it.
+Chosen: a separate front-end build, served as static assets by whichever host chooses to, with no
+server-side rendering and no .NET package the backend could reference. Q2 and the already-decided Q4
+are struck through in `10-design.md`, per its rule that resolved questions keep their number.
+Rejected: a .NET-hosted UI shipped as a package, because the reference it needs is the one ADR-006
+rule 1 exists to prevent, and every admin-only convenience endpoint it acquires is a step away from
+replaceable.
+Reversibility: cheap while no shell exists; the choice is not yet built.
+
+### 2026-09-21 — Organizations and Billing gain a retryable `StoreUnavailable`
+
+Context: both APIs mapped a failed store transaction onto a business variant — Organizations onto
+`OrganizationNotFound`, Billing onto `PlanNotFound`, `SubscriptionNotFound`, `InvalidTransition` or
+`ProviderEventMalformed` depending on the call — so an outage was answered as a non-retryable fact
+about the caller's data. The code carried comments admitting no variant fit.
+Chosen: `StoreUnavailable`, retryable, on both error types, returned from every store-failure fallback
+including the subscription transition and membership revocation paths. `OrganizationNotFound` is kept
+for a membership check that failed. Recorded in `20-contract.md` § *Error semantics* 5 and 6.
+Rejected: reusing `OrganizationNotFound` on the ground that it already confirms nothing about
+existence, because a caller told "not found" does not retry, and one told nothing distinguishes an
+outage from a revoked membership.
+Reversibility: cheap before external consumers; a variant removed later breaks every caller's match.
+
+### 2026-09-21 — `NotAMember` names the principal an administrative action targets, never the caller
+
+Context: the contract defined `NotAMember` as a member-only action by a revoked principal; the code
+answers a non-member caller `OrganizationNotFound` and raises `NotAMember` only about the principal an
+administrative action names. `/align` asked which was right.
+Chosen: amend the doc to the code. A caller who is not an active member gets `OrganizationNotFound`, so
+existence is never confirmed to a caller who may not see it.
+Rejected: raising `NotAMember` for the caller, because it would confirm the organization exists to
+someone outside it — the leak `OrganizationNotFound` exists to prevent.
+Reversibility: cheap; the variant's meaning is fixed by the doc and one test.
+
+### 2026-09-21 — Auditing is not a pipeline step: the evaluator audits denials, the writer audits actions
+
+Context: `10-design.md` and `20-contract.md` § *Public surface* 11 listed "audit" as a final step, and
+I-A8 said the evaluator audits every decision once. The code audits a denial in the evaluator and an
+allowed action in the writer performing it, inside that action's transaction.
+Chosen: amend the doc to the code, in § 11, the provider rule under *Types* 2, and I-A8.
+Rejected: a trailing pipeline audit step, because a record written after the transaction commits can
+be lost while the action stands, and one written by the evaluator on allow records a decision rather
+than the action that followed.
+Reversibility: cheap; the change is to the documents.
+
+### 2026-09-21 — Required audit failures are surfaced, never discarded
+
+Context: `/align` found three paths where a `Required` audit write's failure was dropped: the
+authorization evaluator's denial record, `SharedRead.Open`'s escape record, and a `SinkRejected` under
+`Required`, which the writer answered as success. I-C7 and I-C8's tests passed vacuously, written
+before these paths existed.
+Chosen: fix all three and widen the tests. `AuthorizationDecision.AuditFailure` carries the failure
+and the HTTP pipeline answers 503 with its code, Mcp a retryable tool result; `Open<TEntity>` returns
+`Result<IDisposable, AuditError>` and stays synchronous because its state is ambient; `SinkRejected`
+under `Required` surfaces as `SinkUnavailable` naming the sink. I-C7, I-C8 and I-I4's tests were widened
+to the paths that now exist. Recorded in `20-contract.md` § *Error semantics* 4 and *Types* 2 and 7.
+Rejected: amending the doc to permit best-effort denial records, because a denial that cannot be
+recorded would then be answered as though it were, which is the silent-loss `Required` exists to
+refuse.
+Reversibility: cheap before external consumers; `Open`'s return type is a breaking change after.
+
+### 2026-09-21 — Platform takes two endpoint exemptions: the probes and the Mcp transport
+
+Context: the 2026-09-05 entry below says the probes are the only exemption Platform takes. The Mcp
+transport endpoint also carries `ExemptFromPlatformAuthorization`, because its permission varies per
+call and it authorizes and checks entitlement per tool call. That entry is not rewritten; this one
+amends it.
+Chosen: amend the doc to the code. § 11 and the code comments now name both exemptions.
+Rejected: declaring a transport-wide permission on the Mcp endpoint, because no single permission
+covers every tool, and one that did would be granted to everyone who may call any tool.
+Reversibility: cheap; the exemption and the per-call check are both local to `Platform.Mcp`.
+
+### 2026-09-21 — `ByActorAsync` filters on the issuer and the subject
+
+Context: `PrincipalId` is the (issuer, subject) pair, but the audit read API filtered on the subject
+alone, so two issuers sharing a subject string read each other's records.
+Chosen: filter on both columns. The existing subject-led index still serves the query.
+Rejected: documenting the subject-only filter, because a principal's identity is the pair everywhere
+else in the contract, and one read that disagrees merges two principals' histories.
+Reversibility: cheap; the read API is additive-only and the filter only narrows.
+
+### 2026-09-21 — An endpoint's undeclared permission fails startup as `UnregisteredPermission`
+
+Context: § *Error semantics* 9 names `UnregisteredPermission` for a tool, an endpoint or any
+registration requiring an undeclared permission. The endpoint check threw
+`HostStartupError.Registration` instead, while Mcp's tool check used the named code.
+Chosen: the endpoint check throws `HostStartupError.UnregisteredPermission`, carrying the
+`PermissionCatalogError` as the inner error. § 9's table now says which conditions are their own codes
+and which are registry errors wrapped by `Registration`.
+Rejected: amending the doc to `Registration`, because one condition would then surface under two codes
+depending on whether a tool or an endpoint declared it.
+Reversibility: cheap before external consumers match on the code.
+
 - 2026-09-20 — [ADR-008: Standalone Observability fails fast on invalid OTLP configuration](../docs/docs/adr/ADR-008-observability-startup-failure.md).
 
 ### 2026-09-19 — D5 package delivery uses the approved lockstep version
