@@ -5,16 +5,17 @@
     (design/20-contract.md § tools/Update-DesignProjection.ps1).
 
 .DESCRIPTION
-    Reads design/state/ via Read-DesignState.ps1 and renders each projection in the minimum set
-    except `outstanding` (design/20-contract.md § Unresolved - no document is determined for it
-    yet, and this script does not invent one).
+    Reads design/state/ via Read-DesignState.ps1 and renders every projection in the minimum
+    set (design/20-contract.md § tools/Update-DesignProjection.ps1).
 
-    Six projections target a marked region in a tracked document and are written there:
-    `units`, `bound-by`, `consumers`, `decision-affects` and `question-affects` render into
-    design/state-index.md; `invariants` renders into design/20-contract.md's own § Invariants
-    region. `agent` has no document region - GitHub is where an issue's agent block lives, this
-    script never calls `gh`, so `agent` is rendered per WorkRef record and returned to the
-    caller only (S7.10).
+    Seven projections target a marked region in a tracked document and are written there:
+    `units`, `bound-by`, `consumers`, `decision-affects`, `question-affects` and `outstanding`
+    render into design/state-index.md; `invariants` renders into design/20-contract.md's own
+    § Invariants region. `outstanding` renders only `WorkRef` records whose `State` is `OPEN`,
+    ordered by `Rank` - it is a projection of the mirror, never a second read of the tracker
+    (I14: input is records, never a live gh call). `agent` has no document region - GitHub is
+    where an issue's agent block lives, this script never calls `gh`, so `agent` is rendered per
+    WorkRef record and returned to the caller only (S7.10).
 
     Writes only between the markers of a projected region (I18, I29): never a byte outside one,
     never a new region, never a document with no region for the id, and never inside a
@@ -62,13 +63,17 @@ function Format-IdList {
     ($Ids | Sort-Object -Unique | ForEach-Object { "``$_``" }) -join ', '
 }
 
-function Get-InvariantSortKey {
-    <# An id outside the I<digits> shape is a checker finding elsewhere (IdCollision's path
-       check, or simply a malformed record), not something -DryRun should crash over - it
-       sorts after every well-formed invariant instead of aborting the whole render. #>
-    param([string] $Id)
-    if ($Id -match '^I(\d+)$') { return [int]$Matches[1] }
-    [int]::MaxValue
+function Get-InvariantIdSortKey {
+    <#
+        Invariant ids are either AgentKit's own I<N> (I1, I27) or a project's module-prefixed
+        I-<Module><N> (I-I1, I-A9, I-OB1). Sorting numerically requires splitting the trailing
+        digits from whatever prefix precedes them, for either shape, without throwing.
+    #>
+    param([Parameter(Mandatory)][string] $Id)
+    if ($Id -match '^(?<prefix>.*?)(?<num>\d+)$') {
+        return ('{0}{1:D6}' -f $Matches['prefix'], [int]$Matches['num'])
+    }
+    $Id
 }
 
 function Get-UnitsProjectionContent {
@@ -88,7 +93,7 @@ function Get-UnitsProjectionContent {
 
 function Get-BoundByProjectionContent {
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
-    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { Get-InvariantSortKey -Id $_.Id })
+    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { Get-InvariantIdSortKey -Id $_.Id })
     $units = @($Records | Where-Object { $_.Kind -eq 'Unit' })
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('| Invariant | Bound by |')
@@ -120,10 +125,51 @@ function Get-ConsumersProjectionContent {
     ,@($lines)
 }
 
+<#
+    A StatedIn entry is `<id> § <heading>`; the id half is what "the units its StatedIn sites
+    resolve to" (design/20-contract.md § tools/Update-DesignProjection.ps1) resolves against.
+    Read-DesignState.ps1 already drops a malformed entry as a parse failure, so every entry seen
+    here already has this shape - this only ever needs the id half.
+#>
+function ConvertFrom-StatedInSiteId {
+    param([Parameter(Mandatory)][string] $Site)
+    if ($Site -notmatch '^(?<id>\S+) § .+$') { return $null }
+    $Matches['id']
+}
+
+<#
+    The unit a StatedIn site's id stands for: itself when the id already is a unit, or that
+    contract's Owner when it names a contract - a script cannot be absorbed into directly, so its
+    decisions are stated in its contract's Semantics instead (design/10-design.md § Absorption).
+    Anything else - an id with no record, or a record of another kind - resolves to nothing; that
+    site is SiteAmbiguous's or SiteOutOfReach's to report, not a unit for this union to add.
+#>
+function Resolve-StatedInSiteUnitId {
+    param([Parameter(Mandatory)][string] $SiteId, [Parameter(Mandatory)][hashtable] $ById)
+    if (-not $ById.ContainsKey($SiteId)) { return $null }
+    $record = $ById[$SiteId]
+    if ($record.Kind -eq 'Unit') { return $SiteId }
+    if ($record.Kind -eq 'Contract') {
+        $owner = $record.Scalars['Owner']
+        if ([string]::IsNullOrWhiteSpace($owner)) { return $null }
+        return $owner
+    }
+    $null
+}
+
 function Get-DecisionAffectsProjectionContent {
+    <#
+        S22.1. Decision.Affects is the union of the units whose Live names the decision, the
+        units whose Archival does, and the units its own StatedIn sites resolve to - rendered as
+        one combined list, because design/10-design.md § Derived states Affects as a single
+        derived edge, not three. A decision reachable only through a site now renders with that
+        unit named, where before this slice - Live only - it rendered empty.
+    #>
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
     $decisions = @($Records | Where-Object { $_.Kind -eq 'Decision' } | Sort-Object Id)
     $units = @($Records | Where-Object { $_.Kind -eq 'Unit' })
+    $byId = @{}
+    foreach ($r in $Records) { if (-not $byId.ContainsKey($r.Id)) { $byId[$r.Id] = $r } }
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('| Decision | In force for |')
     $lines.Add('|---|---|')
@@ -131,42 +177,69 @@ function Get-DecisionAffectsProjectionContent {
         $lines.Add('| _(no decision records yet)_ | |')
     }
     foreach ($d in $decisions) {
-        $affects = @($units | Where-Object { $_.Lists.ContainsKey('Live') -and $d.Id -in $_.Lists['Live'] } | ForEach-Object { $_.Id })
+        $affects = [System.Collections.Generic.List[string]]::new()
+        $affects.AddRange([string[]]@($units | Where-Object { $_.Lists.ContainsKey('Live') -and $d.Id -in $_.Lists['Live'] } | ForEach-Object { $_.Id }))
+        $affects.AddRange([string[]]@($units | Where-Object { $_.Lists.ContainsKey('Archival') -and $d.Id -in $_.Lists['Archival'] } | ForEach-Object { $_.Id }))
+        if ($d.Lists.ContainsKey('StatedIn')) {
+            foreach ($site in $d.Lists['StatedIn']) {
+                if ([string]::IsNullOrWhiteSpace($site)) { continue }
+                $siteId = ConvertFrom-StatedInSiteId -Site $site
+                if (-not $siteId) { continue }
+                $unitId = Resolve-StatedInSiteUnitId -SiteId $siteId -ById $byId
+                if ($unitId) { $affects.Add($unitId) }
+            }
+        }
         $lines.Add("| $($d.Id) | $(Format-IdList -Ids $affects) |")
     }
     ,@($lines)
 }
 
 function Get-QuestionAffectsProjectionContent {
+    <#
+        S22.2. Question.Affects derives from two fields Question.Affects is documented against
+        (design/10-design.md § Derived) - the units whose Questions names the question (still
+        open, still blocking) and the units whose Answered does (retired, no longer blocking) -
+        rendered as two distinguished columns rather than one combined list, because collapsing
+        them the way Decision.Affects does would render an answered question's units under
+        "Blocks" alongside a genuinely open one, which is exactly the state
+        design/20-contract.md § Unresolved's answered-question-unit-edge fix exists to end.
+    #>
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
     $questions = @($Records | Where-Object { $_.Kind -eq 'Question' } | Sort-Object Id)
     $units = @($Records | Where-Object { $_.Kind -eq 'Unit' })
     $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('| Question | Blocks |')
-    $lines.Add('|---|---|')
+    $lines.Add('| Question | Blocks | Answered |')
+    $lines.Add('|---|---|---|')
     if ($questions.Count -eq 0) {
-        $lines.Add('| _(no question records yet)_ | |')
+        $lines.Add('| _(no question records yet)_ | | |')
     }
     foreach ($q in $questions) {
-        $affects = @($units | Where-Object { $_.Lists.ContainsKey('Questions') -and $q.Id -in $_.Lists['Questions'] } | ForEach-Object { $_.Id })
-        $lines.Add("| $($q.Id) | $(Format-IdList -Ids $affects) |")
+        $blocks = @($units | Where-Object { $_.Lists.ContainsKey('Questions') -and $q.Id -in $_.Lists['Questions'] } | ForEach-Object { $_.Id })
+        $answered = @($units | Where-Object { $_.Lists.ContainsKey('Answered') -and $q.Id -in $_.Lists['Answered'] } | ForEach-Object { $_.Id })
+        $lines.Add("| $($q.Id) | $(Format-IdList -Ids $blocks) | $(Format-IdList -Ids $answered) |")
     }
     ,@($lines)
 }
 
 function Get-InvariantsProjectionContent {
+    <#
+        S31.4. `Held by` renders the derived BoundBy - Unit.Binds naming the invariant - not a
+        written field (design/10-design.md § Invariant, "There is no Owner"). An invariant no
+        unit's Binds names renders `—`, the *enforced by nothing* case, rather than hiding it.
+    #>
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Records)
-    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { Get-InvariantSortKey -Id $_.Id })
+    $invariants = @($Records | Where-Object { $_.Kind -eq 'Invariant' -and $_.Scalars['Status'] -eq 'active' } | Sort-Object { Get-InvariantIdSortKey -Id $_.Id })
+    $units = @($Records | Where-Object { $_.Kind -eq 'Unit' })
     $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('| | Statement | Owner | Enforcement | Evidence |')
+    $lines.Add('| | Statement | Held by | Enforcement | Evidence |')
     $lines.Add('|---|---|---|---|---|')
     foreach ($inv in $invariants) {
         $statement = ($inv.Prose['Statement'] -replace '\s*\n\s*', ' ').Trim()
-        $owner = $inv.Scalars['Owner']
+        $binders = @($units | Where-Object { $_.Lists.ContainsKey('Binds') -and $inv.Id -in $_.Lists['Binds'] } | ForEach-Object { $_.Id })
         $enforcement = $inv.Scalars['Enforcement']
         $evidence = @(if ($inv.Lists.ContainsKey('Evidence')) { @($inv.Lists['Evidence'] | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) } else { @() })
         $evidenceCell = if ($evidence.Count -eq 0) { '—' } else { ($evidence -join ', ') }
-        $lines.Add("| **$($inv.Id)** | $statement | ``$owner`` | $enforcement | $evidenceCell |")
+        $lines.Add("| **$($inv.Id)** | $statement | $(Format-IdList -Ids $binders) | $enforcement | $evidenceCell |")
     }
     ,@($lines)
 }
@@ -305,6 +378,7 @@ function Invoke-DesignProjection {
         [pscustomobject]@{ Id = 'consumers'; Document = 'design/state-index.md'; Render = { Get-ConsumersProjectionContent -Records $records } }
         [pscustomobject]@{ Id = 'decision-affects'; Document = 'design/state-index.md'; Render = { Get-DecisionAffectsProjectionContent -Records $records } }
         [pscustomobject]@{ Id = 'question-affects'; Document = 'design/state-index.md'; Render = { Get-QuestionAffectsProjectionContent -Records $records } }
+        [pscustomobject]@{ Id = 'outstanding'; Document = 'design/state-index.md'; Render = { Get-OutstandingProjectionContent -Records $records } }
         [pscustomobject]@{ Id = 'invariants'; Document = 'design/20-contract.md'; Render = { Get-InvariantsProjectionContent -Records $records } }
     )
 
@@ -363,6 +437,17 @@ function Invoke-DesignProjection {
 # Guards the invocation so this script's tests can dot-source it - the same shape
 # Test-DesignState.ps1, Read-DesignState.ps1 and Test-DesignDrift.ps1 already use.
 if ($MyInvocation.InvocationName -ne '.') {
+    <#
+        A -DryRun caller (Test-DesignState.ps1's Invoke-Projector) captures this process's
+        stdout over a pipe. PowerShell still encodes pipeline output using
+        [Console]::OutputEncoding even when stdout is redirected, and that defaults to the
+        OS's OEM code page (ibm437 on this host) rather than UTF-8 - so a non-ASCII byte in a
+        rendered region (the em dashes design/20-contract.md renders throughout, a mirrored
+        issue title) got best-fit-substituted before it ever left this process, no matter how
+        correctly the caller decoded it. Setting this here, once, before the only place this
+        script writes to stdout, fixes the write side to match Invoke-GhRaw's read-side fix.
+    #>
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $Path = (Resolve-Path -LiteralPath $Path).Path
     $result = Invoke-DesignProjection -RepoPath $Path -DryRun:$DryRun
 
@@ -370,10 +455,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         $result.Regions | ConvertTo-Json -Depth 6
     }
     foreach ($r in $result.Refusals) {
-        # Write-Warning renders to the console host's stdout in pwsh's default host, which
-        # would land inside -DryRun's captured JSON stream. A refusal is diagnostic output,
-        # never part of the region payload, so it goes to the real OS stderr explicitly.
-        [Console]::Error.WriteLine("Update-DesignProjection: refused '$($r.Id)' in $($r.Document): $($r.Reason) - $($r.Detail)")
+        Write-Warning "Update-DesignProjection: refused '$($r.Id)' in $($r.Document): $($r.Reason) - $($r.Detail)"
     }
 
     if ($result.Refusals.Count -gt 0) { exit 1 }
