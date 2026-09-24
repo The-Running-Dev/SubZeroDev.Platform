@@ -102,7 +102,7 @@ for ($i = 0; $i -lt $headingMatches.Count; $i++) {
 
 if ($slices.Count -eq 0) {
     $landed = [regex]::Match($text, '(?ms)^## Landed\n(?<body>.*?)(?=^## |\z)')
-    $outstanding = [regex]::Match($text, '(?ms)^## Outstanding\n(?<body>.*)\z')
+    $outstanding = [regex]::Match($text, '(?ms)^## Outstanding\n(?<body>.*?)(?=^## |\z)')
     $retired = [regex]::Matches($landed.Groups['body'].Value, '(?m)^- \*\*S\d+ — .+\*\* — shipped:')
     $remaining = $outstanding.Groups['body'].Value.Trim()
     if ($landed.Success -and $outstanding.Success -and $retired.Count -gt 0 `
