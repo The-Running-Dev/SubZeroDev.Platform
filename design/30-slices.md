@@ -58,6 +58,12 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ---
 
+## Outstanding
+
+None. All D5 slices have landed; their closed issues retain the acceptance criteria.
+
+---
+
 ## Landed
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
@@ -118,9 +124,3 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 - **S18 — Packages, documentation and the corrected plan** — shipped:
   [#186](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/186) via
   [#233](https://github.com/The-Running-Dev/SubZeroDev.Platform/pull/233).
-
----
-
-## Outstanding
-
-None. All D5 slices have landed; their closed issues retain the acceptance criteria.
