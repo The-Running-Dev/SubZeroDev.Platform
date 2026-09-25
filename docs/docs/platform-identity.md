@@ -80,7 +80,8 @@ module door is a much weaker claim than a "yes" at the framework door.
 | Persistence and transaction boundaries | Framework | Schema for executions or game saves |
 | Observability wiring | Framework | What a specific event means |
 | Ambient operation context — tenant, correlation, culture | Framework | What a culture means to a product's own content |
-| Identity, authorization, tenancy | Undecided | Who may run *this* plugin, or own *that* save |
+| Identity | Framework seam + application module — [ADR-009](adr/ADR-009-identity-package.md) | Who may run *this* plugin, or own *that* save |
+| Authorization, tenancy | Undecided | Who may run *this* plugin, or own *that* save |
 | Billing primitives — plans, entitlements, metering | Undecided | Which dimensions a product meters |
 | MCP transport, auth, consent, tool registration | Undecided | Which tools exist, and where they come from |
 | Notifications — channels, templates, deduplication, retry | Undecided | Which events deserve to notify a person |

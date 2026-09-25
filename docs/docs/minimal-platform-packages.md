@@ -321,11 +321,15 @@ existing packages before it is written.
 
 ## 4. What Is Deliberately Not Here
 
-Configuration, Events, Identity, Authorization, Organizations, Tenancy, Notifications,
+Configuration, Events, Authorization, Organizations, Tenancy, Notifications,
 Storage, BackgroundJobs, Scheduling, Plugins, Billing, Licensing, Audit, Api, Mcp, Web, UI.
 
-Each is specified in [`platform-specification.md`](platform-specification.md) so the shape is
-agreed, and none is built. Several now have a justified second consumer, and some a third —
+**Identity has since moved out of this list.** [ADR-009](adr/ADR-009-identity-package.md) settled it
+as a framework seam plus the `SubZeroDev.Platform.Identity` module, and D5-S2 and D5-S9 built it — the
+correction above (2026-08-10) still stands for the substrate question, which stays a deployment choice.
+
+Each of the rest is specified in [`platform-specification.md`](platform-specification.md) so the shape
+is agreed, and none is built. Several now have a justified second consumer, and some a third —
 [Platform Identity](platform-identity.md) §4 holds the count,
 [`second-consumer-packages.md`](second-consumer-packages.md) and
 [`application-modules.md`](application-modules.md) hold the shapes.
