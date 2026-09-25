@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Two comparisons that a model should never do by eye, because both are set arithmetic over
-    files and both fail silently when done from memory (AGENTS.md, "What should stop being
+    files and both fail silently when done from memory (AGENTS.shared.md, "What should stop being
     model work" - the red row):
 
       1. Criterion ids. Every `S<n>.<m>` under a slice's `Acceptance:` lines, against every
@@ -27,7 +27,9 @@
     reporting it as a finished one is exactly the failure I12 forbids. Never prompts.
 
 .PARAMETER SlicesPath
-    Path to the slices document. Defaults to design/30-slices.md beside this script's repo root.
+    Path to the slices document. Defaults to design/30-slices.md under the current directory -
+    the calling repo, not this script's own location, so it resolves correctly whether the
+    script runs from a repo checkout or an installed copy elsewhere.
 
 .PARAMETER Repository
     owner/repo. Defaults to the current git remote, via gh's own resolution.
@@ -88,14 +90,15 @@ function New-Failure {
 }
 
 <#
-    A tracker outlives the effort that filled it. This repository's issues already carry two
-    retired slice sets, G1's and G2's, both numbered from S1 - so matching an issue on the bare
-    `S<n>` prefix pairs a live slice with a closed issue from a different effort and reports
-    every criterion of both as drift. The effort tag keeps the numbering spaces apart, and the
-    slices document already states its own: `# Slices - commercial (D5)`.
+    A tracker outlives the effort that filled it, and slice numbering restarts at S1 with each
+    effort. Matching an issue on the bare `S<n>` prefix then pairs a live slice with a retired
+    effort's closed issue of the same number and reports both sets of criteria as drift. The
+    effort tag keeps the numbering spaces apart, and the slices document already states its own:
+    `# Slices - commercial (D5)`.
 
     Returns $null when the title carries no tag, which is the unqualified behaviour every
-    single-effort repository had before this and still gets.
+    single-effort repository had before this and still gets. Update-SlicesDocument.ps1 reads the
+    tag the same way.
 #>
 function Get-EffortTag {
     param([Parameter(Mandatory)][string] $Path)
@@ -132,10 +135,13 @@ function Get-SliceCriteria {
     $current = $null
 
     foreach ($line in (Get-Content -LiteralPath $Path)) {
-        if ($line -match '^##\s') {
-            # A new second-level heading always ends the previous slice's body, so an
-            # Acceptance line can never be attributed across a section boundary.
-            $current = if ($line -match '^##\s+S(?<n>\d+)\b') { [int]$Matches['n'] } else { $null }
+        if ($line -match '^#{2,3}\s') {
+            # A new second- or third-level heading always ends the previous slice's body, so an
+            # Acceptance line can never be attributed across a section boundary. Slices sit at
+            # `##` when they are top-level sections (S1-S18) and at `###` when nested under
+            # `## Outstanding` (S19 onward, design/90-decisions.md, 2026-08-30 revision) - both
+            # depths name the same thing and are compared the same way.
+            $current = if ($line -match '^#{2,3}\s+S(?<n>\d+)\b') { [int]$Matches['n'] } else { $null }
             if ($null -ne $current -and -not $slices.ContainsKey($current)) {
                 $slices[$current] = [System.Collections.Generic.List[string]]::new()
             }
@@ -147,6 +153,8 @@ function Get-SliceCriteria {
             continue
         }
 
+        # The id may be bold (`- **S1.1** ...`), the form /track's own issue body uses and the
+        # form a slices document commonly copies; Get-IssueCriteria already accepts it.
         if ($null -ne $current -and $line -match '^\s*-\s+\*{0,2}S(?<n>\d+)\.(?<m>\d+)\*{0,2}\b') {
             if ([int]$Matches['n'] -ne $current) {
                 # An id numbered for a different slice than the section it sits in. Reported
@@ -194,37 +202,54 @@ function Get-IssuePin {
     $null
 }
 
+function Invoke-GhRaw {
+    <#
+        gh writes UTF-8. PowerShell's native-command capture (`& gh @args`) decodes that
+        stdout using [Console]::OutputEncoding, which on a Windows host defaults to the OEM
+        code page (ibm437) rather than UTF-8 - the same class of bug Sync-Kit.ps1's
+        Invoke-GitRaw fixed for git's output (#20), never applied to gh. A non-ASCII byte in
+        an issue body (a section mark in a slice pin, say) then decodes to the wrong
+        character and the pin regex below silently fails to match. Routing through
+        ProcessStartInfo with an explicit UTF-8 StandardOutputEncoding sidesteps the console
+        entirely.
+    #>
+    param([string[]] $GhArgs)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'gh'
+    foreach ($a in $GhArgs) { $psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $proc.StandardError.ReadToEnd() | Out-Null
+    $proc.WaitForExit()
+    [pscustomobject]@{ Output = $stdout; ExitCode = $proc.ExitCode }
+}
+
 function Get-TrackerIssue {
     param([string] $Repository)
 
     $ghArgs = @('issue', 'list', '--state', 'all', '--limit', '200', '--json', 'number,title,state,body')
     if ($Repository) { $ghArgs += @('-R', $Repository) }
 
-    # gh writes UTF-8. PowerShell on Windows decodes a native command's stdout using
-    # [Console]::OutputEncoding, which defaults to the OEM code page - so an em-dash in an
-    # issue title arrives as three mojibake characters and is written back out as those. It
-    # went unnoticed while every tracked title was ASCII, and appeared the moment a slice set
-    # titled `D5-S1 - ...` with a real em-dash landed. Set for the call and restored after,
-    # rather than at script scope, so a dot-sourcing caller's console is left as it was.
-    $priorOutputEncoding = [Console]::OutputEncoding
     try {
-        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-        $json = & gh @ghArgs 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'GhUnavailable' -Detail "gh exited $LASTEXITCODE") }
+        $result = Invoke-GhRaw -GhArgs $ghArgs
+        if ($result.ExitCode -ne 0) {
+            return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'GhUnavailable' -Detail "gh exited $($result.ExitCode)") }
         }
+        $json = $result.Output
     } catch {
         return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'GhUnavailable' -Detail $_.Exception.Message) }
-    } finally {
-        [Console]::OutputEncoding = $priorOutputEncoding
     }
 
-    if ([string]::IsNullOrWhiteSpace(($json -join ''))) {
+    if ([string]::IsNullOrWhiteSpace($json)) {
         return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'GhUnavailable' -Detail 'gh returned no output') }
     }
 
     try {
-        $parsed = ($json -join "`n") | ConvertFrom-Json
+        $parsed = $json | ConvertFrom-Json
     } catch {
         return [pscustomobject]@{ Issues = @(); Failure = (New-Failure -Reason 'TrackerUnreadable' -Detail $_.Exception.Message) }
     }
@@ -274,8 +299,7 @@ function Invoke-DriftCheck {
     # An explicit tag wins over the document's own, so a caller can compare one effort's doc
     # against another's issues deliberately. Neither is a finding: an untagged document simply
     # matches the unqualified titles it has always matched.
-    $tag = if ($PSBoundParameters.ContainsKey('EffortTag') -and $EffortTag) { $EffortTag }
-           else { Get-EffortTag -Path $SlicesPath }
+    $tag = if ($EffortTag) { $EffortTag } else { Get-EffortTag -Path $SlicesPath }
     $titlePrefix = if ($tag) { "$tag-S" } else { 'S' }
 
     $tracker = Get-TrackerIssue -Repository $Repository
@@ -289,7 +313,7 @@ function Invoke-DriftCheck {
 
     foreach ($number in ($doc.Slices.Keys | Sort-Object)) {
         $docIds = @($doc.Slices[$number] | Sort-Object -Unique)
-        $issue  = $tracker.Issues | Where-Object { $_.title -match "^$titlePrefix$number\b" } | Select-Object -First 1
+        $issue  = $tracker.Issues | Where-Object { $_.title -match "^$titlePrefix$number(\s|$)" } | Select-Object -First 1
 
         if (-not $issue) {
             $findings.Add((New-Finding -Kind 'NoIssue' -Slice "S$number" -Detail 'slice has no issue; /track opens one' -Issue 0))
@@ -366,7 +390,7 @@ function Write-DriftReport {
 # skips straight past this block rather than exiting the test runner's own process.
 if ($MyInvocation.InvocationName -ne '.') {
     if (-not $SlicesPath) {
-        $SlicesPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'design/30-slices.md'
+        $SlicesPath = Join-Path (Get-Location).Path 'design/30-slices.md'
     }
     $result = Invoke-DriftCheck -SlicesPath $SlicesPath -Repository $Repository -EffortTag $EffortTag
     if (-not $Quiet) { Write-DriftReport -Result $result }
