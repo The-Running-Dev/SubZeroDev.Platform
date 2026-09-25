@@ -41,6 +41,8 @@ capabilities would own, and no migration to skip.
 | Owner | Persisted | In-memory only |
 |---|---|---|
 | Abstractions | — | principal, principal id and kind, permission name, feature name, authorization decision, entitlement decision, audit event, composition profile |
+| Identity module | — | each generic-path provider's validation settings and the issuer's key set, per instance |
+| Vendor configuration package | — | nothing; it contributes configuration values at startup and holds no state |
 | Persistence | the shareable marker on entity types that declare it | the shared-read scope |
 | Audit store module | the audit record | — |
 | Organizations module | organization, membership, invitation | active-organization selection (per request) |
@@ -96,6 +98,13 @@ hosted authentication without choosing or owning an identity provider", and the 
 federation, account linking and a shared directory. Platform therefore has no user entity, and the
 Identity module is authentication providers and principal mapping — no rows.
 
+**Platform validates a credential; it never conducts a sign-in.** The authentication seam sees a
+request's headers and nothing else, and answers with one principal per request. Interactive sign-in —
+the redirect to an issuer, the callback, a session, the sign-out redirect — happens between a client and
+its issuer, and no Platform host serves a sign-in page, a callback, a session cookie or a sign-out
+endpoint. *Control flow*, path 4, traces what that leaves Platform with, and § 10 below is the
+validation path every issuer reaches.
+
 ### 3. Authorization — names, providers, decisions
 
 **`PermissionName` is a stable string id** in the `<Product>.<Area>.<Action>` form
@@ -121,6 +130,23 @@ The consequence worth stating: **D5 has no role-assignment store**, and the brie
 one. Roles are a closed set on the membership — owner, administrator, member — because teams and
 richer organization administration are explicit non-goals. A consumer needing custom roles registers
 a third provider; that is the extension point, and it needs no Platform table.
+
+**Every permission provider takes its grants from a source that can be revoked while the caller's
+credential is still valid.** Platform's own and a consumer's alike. `Principal.Claims` and the raw
+authentication result are never a grant source. A grant read out of a token satisfies I-A10 to the
+letter — nothing is carried from one request to the next — and defeats it, because the token *is* the
+carrier: revoking the grant changes nothing until the token expires, and the issuer, not the operator,
+chose that expiry. Platform cannot stop a consumer's provider reading claims, since the claims are public
+on the principal, so the rule is enforced differently on each side of the line. For Platform's own
+providers it is structural: I-I6 keeps every claim but the principal id out of a Platform decision, and
+each provider carries a revoke-then-deny test — grant, authorize, revoke, and the very next evaluation
+under the same credential denies. For a consumer's provider it is a contract obligation, and
+`Platform.Testing` carries that same revoke-then-deny test as a harness the consumer runs against its own
+provider.
+
+The cost is real and stated. Roles an identity provider manages — Entra app roles, Keycloak realm roles —
+cannot feed the evaluator directly. A consumer who wants them mirrors them into a store it can revoke
+from and registers a provider over that store, and the mirror's freshness is the consumer's to own.
 
 **`AuthorizationDecision`** carries the permission, the resource when the check was resource-scoped,
 the tenant it was evaluated in, the outcome, and **the non-empty set of providers that produced the
@@ -331,6 +357,55 @@ therefore named local providers — the composition permission provider, the ano
 principal, the implicit tenant, the Community entitlement baseline — and each is a thing that exists and
 can be pointed at, not a stub standing in for something missing.
 
+### 10. The generic bearer path, and vendor dialect as configuration
+
+The Identity module holds three providers. The test-grade HMAC provider and the upstream-proxy provider
+exist today. The third is the **generic bearer path**: a provider that validates any OIDC issuer's
+tokens from configuration alone. "Depend on the protocol, not the vendor" and the self-hosted
+deployment shape together make it the thing everything else rests on. An issuer with no vendor package
+must reach production-grade validation through configuration, or there is nothing for a vendor package
+to be sugar over.
+
+**One generic-path provider per trusted issuer**, as ADR-009 point 5 already requires. Each carries:
+
+| Setting | Meaning |
+|---|---|
+| issuer | the expected issuer, compared ordinally, or an issuer *pattern* for an issuer that mints one issuer string per customer tenant |
+| key source | the issuer's discovery address, from which the key set is found, or a fixed set of public keys for an issuer with no discovery |
+| audiences | the non-empty set of audiences a token must name one of |
+| accepted algorithms | asymmetric signature algorithms only. A shared secret is refused on this path, and stays the test-grade provider's |
+| clock tolerance | the skew allowed on expiry and not-before, bounded above |
+| subject claim | the claim that becomes `PrincipalId`'s subject, `sub` unless configured |
+| display-name claim | optional |
+
+The principal produced is `Account` kind. Its `PrincipalId` is the validated issuer and the configured
+subject claim. **No other claim reaches a Platform decision** (I-I6). The settings are validated at
+startup. The key set is held in memory per instance and refreshed off the request path (*Concurrency
+and ordering*).
+
+**The settings are read from configuration, and the configuration schema is the generic path's public
+contract.** A vendor's dialect — Entra's per-tenant issuer string, a vendor's audience convention, where
+its discovery document lives — is expressed as values for those settings. A **vendor configuration
+package** supplies those values for one vendor and nothing else. It is a configuration source, the same
+kind of thing a settings file is. It references no Platform package, so it cannot implement a provider,
+and "sugar over the generic path, never a parallel implementation" is a property of what the package can
+reach rather than a rule its author has to remember. A vendor quirk that configuration cannot express
+does not get code in a vendor package. It becomes a generic-path capability first, which is what keeps
+the generic path from rotting behind the first provider that has a package.
+
+**One vendor, two deployments, two methods — whenever the two speak different protocol surfaces.** A
+hosted and a self-hosted deployment of one vendor are one method only when the same settings, with
+different values, describe both. Self-hosted Supabase is the case that forced the rule. Per ADR-004's
+2026-08-10 provider re-verification, it is an OIDC provider only when `GOTRUE_OAUTH_SERVER_ENABLED` is
+set, and without that it offers nothing the generic path accepts. A discriminator on one method would
+hide that one of its two values is not OIDC at all. Two methods, each stating the surface it requires,
+tell an operator what to switch on before the first token is refused rather than after.
+
+**This pass builds the mechanism and no vendor package.** No consumer runs on Platform today, and the
+first vendor package is built when a consumer names its issuer. The mechanism is proven without one: a
+configuration source built the way a vendor package would build it must produce settings equal to those
+an equivalent settings file produces.
+
 ---
 
 ## Module boundaries
@@ -343,7 +418,7 @@ composition point. **No framework entry contains policy**, and that is the test 
 
 | Capability | Framework | Module |
 |---|---|---|
-| Identity | the principal contract, its four kinds, the ambient principal, the transport-authentication seam | authentication providers and principal mapping. No directory, no user table |
+| Identity | the principal contract, its four kinds, the ambient principal, the transport-authentication seam | authentication providers, including the generic bearer path (*Data model*, § 10), and principal mapping. No directory, no user table |
 | Authorization | permission names, the provider seam, the evaluator, the decision type, tenant-aware evaluation | grant contributors. D5's are the composition provider and Organizations |
 | Organizations | — | all of it: organizations, memberships, invitations, ownership, the tenant resolver for the active organization |
 | Tenancy | the resolver seam, the ambient tenant, query enforcement, the shareable declaration and the audited shared-read scope | tenant *provisioning*, which is Organizations |
@@ -358,6 +433,12 @@ than application concerns, which strains ADR-006's *label* without touching its 
 operative test is "opt-in, separately packaged, and its absence is invisible", and every one of them
 meets it. Whether the ADR's vocabulary should be corrected is in *Open questions*; the placement does
 not wait on the answer.
+
+**A vendor configuration package is neither framework nor module.** It is a configuration source
+(*Data model*, § 10): it contributes values and references no Platform package, so it is outside the
+package graph rule 1 and rule 2 govern, and it cannot violate rule 2 because it can reach no module to
+reference. The table above has no row for it because it places no capability — the capability it
+configures is Identity's.
 
 ### 2. The seam-admission test
 
@@ -412,12 +493,16 @@ and leaves three untouched in kind.
   resolver, a fake entitlement contributor, an audit inspector, and the composition profile. It gains
   no fake organization, subscription or licence — those are module knowledge, and a framework package
   faking one would be rule 1 violated by the test helpers, which is where it is least likely to be
-  noticed. Each module carries its own fakes.
+  noticed. Each module carries its own fakes. It also carries the revoke-then-deny harness (*Data
+  model*, § 3), which exercises only the permission-provider seam and so needs no module to run.
 
 Modules, each depending only on framework packages:
 
-- **Identity** owns authentication providers and the mapping from an authentication result to a
-  `Principal`. Exposes registration. Owns no rows.
+- **Identity** owns authentication providers — the test-grade HMAC provider, the upstream-proxy
+  provider and the generic bearer path — and the mapping from an authentication result to a
+  `Principal`. Exposes registration and the generic path's configuration schema, which is public
+  contract. Owns no rows. Depends on a token-validation library (*Alternatives considered*, § 9), and no
+  type of that library appears in what it exposes.
 - **Organizations** owns organizations, memberships, invitations and the tenant it provisions per
   organization. Exposes the organization API, a tenant resolver and a permission provider. Depends on
   the framework's principal and tenant contracts; it has no knowledge of Identity, and none of Billing.
@@ -431,6 +516,12 @@ Modules, each depending only on framework packages:
   producer registration and exposure configuration. Consumes the principal, permission, entitlement and
   audit seams.
 - **Web shell** owns nothing on the server. It consumes the public HTTP API over the network.
+
+Outside both tiers:
+
+- **A vendor configuration package**, one per vendor, owns that vendor's values for the generic path's
+  settings. Depends on the host's configuration abstraction and on no Platform package. Exposes one
+  method per protocol surface the vendor offers (*Data model*, § 10).
 
 ### 4. Dependency direction
 
@@ -456,6 +547,10 @@ unchanged, modules are leaves, and the web shell is not in the graph at all — 
 over the network, which is what makes "backend packages build and run with no reference to the UI
 package" provable by the build rather than asserted.
 
+Vendor configuration packages are not in the graph either. One reaches Identity through the host's
+configuration, not through a reference, the same way the web shell reaches the system through HTTP: the
+host adds the source, and Identity reads the keys it wrote without knowing a vendor package exists.
+
 ### 5. What enforces it
 
 Three checks, and the brief requires all three to exist before D5 is complete.
@@ -473,6 +568,10 @@ Three checks, and the brief requires all three to exist before D5 is complete.
 The local host's package graph is the fourth check and it is the brief's own: the local host must have
 no package or project reference to Identity, Organizations, Billing or Licensing, and that is an
 assertion over its dependency graph rather than a runtime probe.
+
+The fifth: **a vendor configuration package referencing any Platform package fails the build.** It is
+what makes "sugar, never a parallel implementation" a property of the graph rather than a review
+comment — a package that cannot see the provider contract cannot implement one.
 
 ---
 
@@ -559,9 +658,18 @@ graph fails at startup with a named error rather than at first use.
 7. **The settings fingerprint is computed**, now including the composition profile and the contributor
    set, so a second instance registering a different set is visible through the existing
    `platform.settings-fingerprint` health check rather than through divergent behaviour.
+8. **Each generic-path provider validates its settings, then fetches its key set**, when Identity
+   registers one. A malformed or unrecognised setting fails startup, naming the provider and the key —
+   an unrecognised key is most often a vendor dialect the generic path does not yet express, and
+   ignoring it would validate tokens against settings the operator did not write. The key fetch never
+   fails startup: a provider whose first fetch fails starts with no keys, rejects every credential with
+   `KeyMaterialUnavailable`, reports not-ready, and keeps trying on the refresh schedule (*Concurrency
+   and ordering*).
 
-Steps 3, 4 and 5 are the ones that make the design's guarantees structural. Each is a startup failure
-because each describes a deployment that would otherwise run and be wrong quietly.
+Steps 3, 4 and 5, and the settings half of step 8, are the ones that make the design's guarantees
+structural. Each is a startup failure because each describes a deployment that would otherwise run and
+be wrong quietly. The key fetch is the opposite case for the same reason licence verification is: an
+issuer that is briefly unreachable is an outage to report, not a composition defect.
 
 ### Path 3 — an MCP client invokes a tool
 
@@ -589,6 +697,28 @@ because each describes a deployment that would otherwise run and be wrong quietl
 8. **The invocation is audited** — actor, tenant, tool as the action, outcome — with no arguments, which
    the audit schema makes structural rather than a rule the Mcp module has to remember.
 
+### Path 4 — a person signs in and signs out, and Platform is on neither path
+
+Traced because the brief's Identity row and a vendor's sign-in both read as if Platform takes part, and
+it does not.
+
+1. **The client signs in at the issuer.** A browser application or a native client runs the
+   authorization-code flow with proof-key exchange against its issuer and receives an access token. No
+   Platform host is a party to the redirect, the callback or the code exchange.
+2. **The client presents the token as a bearer credential**, and path 1 begins. Step 1 of path 1 is the
+   generic path of *Data model*, § 10, or whichever provider the host registered for that issuer.
+3. **Sign-out is the client and the issuer.** The client discards its tokens and, where the vendor
+   supports it, sends the person to the issuer's end-session address. Vendor quirks on this path — a
+   logout address that is not the standard one, a required `audience` parameter on the authorize
+   request — are the client's to handle, not Platform's. A host behind a TLS-terminating proxy that
+   builds absolute addresses reads the original scheme through forwarded-header configuration, which is
+   deployment configuration and not an identity concern.
+4. **What sign-out cannot do at Platform.** An access token already issued stays valid at Platform until
+   it expires, because validation reads nothing that sign-out changes. That window is bounded by the
+   token lifetime the operator sets at the issuer. Authorization is not inside the window: no grant is
+   carried in the token (*Data model*, § 3), so a revoked membership or role denies on the next request
+   whatever the token says.
+
 ---
 
 ## Failure modes
@@ -610,6 +740,17 @@ blocking the request on a fetch. Retry: nothing on the request path — Platform
 and `PlatformError.IsRetryable` is the caller's signal, not an instruction Platform follows itself.
 This is also the boundary where the local shape's guarantee is kept: with no authentication provider
 there is no key material and no fetch, so an offline local host has no failure here to have.
+
+Rotation is the same boundary over time. The generic path refreshes each issuer's key set on an
+interval, and a successful refresh replaces the whole set at once. A token signed with a key id the
+cached set does not hold is rejected as `CredentialRejected` and **never triggers a fetch** — a
+request-path fetch keyed on an attacker-chosen key id is an amplifier pointed at the issuer. A failed
+refresh keeps the previous set, logs, and degrades readiness; it does not empty the cache, so an issuer
+outage shorter than its own key lifetime is invisible to callers. The cost of refusing request-path
+fetches is stated: a token signed with a newly published key is rejected until the next refresh, so the
+interval must be shorter than the lead time the issuer gives between publishing a key and signing with
+it. A key the issuer withdraws stays accepted until the next successful refresh, and that interval is the
+bound on how long it does.
 
 **The licence file.** Four outcomes, and they are deliberately distinguishable in the record and the
 log even though three of them fall back identically:
@@ -700,6 +841,17 @@ the invitation already redeemed. An expired invitation reports expired, and neit
 a token that never existed from one that did — an invitation token is a capability, and a probe that
 tells the prober which guesses were close is a capability oracle.
 
+**Vendor configuration the generic path cannot express.** A vendor configuration package writing a key
+the generic path does not recognise fails startup at path 2, step 8, naming the key. It is detected at
+startup and never at the first token, and the fix is a generic-path capability, not a vendor-package
+workaround (*Data model*, § 10). State left behind: none — the host never served.
+
+**A consumer's permission provider reading grants from the token.** Not detectable at runtime: the
+provider returns grants, and where it found them is invisible to the evaluator. The revoke-then-deny
+harness detects it in the consumer's own test run. Undetected, the consequence is that revoking such a
+grant takes effect only when the credential expires. It is a breach of the provider contract (*Data
+model*, § 3), and no Platform guarantee is stated relative to a provider that breaches it.
+
 **Startup failures.** Every check in path 2 fails the host rather than degrading it, and each names the
 registration that caused it. A host that cannot state its own composition should not serve, because
 every guarantee in this document is stated relative to a composition.
@@ -755,10 +907,18 @@ resolve, and no lock on the path every MCP call takes.
 
 **Background work is unchanged.** The existing lease
 ([`src/SubZeroDev.Platform.Persistence/Lease.cs`](../src/SubZeroDev.Platform.Persistence/Lease.cs))
-still decides which instance runs a single-runner registration, and D5 adds no background work of its
-own: no retention job, no revocation poll, no licence re-verification timer. Licence state changes when
-a host restarts or when a host is asked to re-verify; a timer that re-verifies would be a second writer
-contending on the one row for no requirement anybody stated.
+still decides which instance runs a single-runner registration, and D5 adds one piece of background
+work of its own, the generic path's key-set refresh: no retention job, no revocation poll, no licence
+re-verification timer. Licence state changes when a host restarts or when a host is asked to re-verify;
+a timer that re-verifies would be a second writer contending on the one row for no requirement anybody
+stated.
+
+**The key-set refresh runs on every instance, takes no lease and writes nothing durable.** Each instance
+validates tokens against its own cache, so each must refresh its own; a lease would leave every other
+instance's cache stale. The refresh replaces the cached set by a single atomic swap, so a request reading
+it concurrently sees the whole old set or the whole new one and never a partial set. Instances may hold
+different sets for up to one interval, which is the same bound the rotation boundary in *Failure modes*
+already states.
 
 ---
 
@@ -958,9 +1118,24 @@ choice behind the authentication seam, which is what the recommendation "decide 
 what `AGENTS.md`'s "depend on the protocol, not the vendor" requires. No dependency is taken and none is
 foreclosed.
 
-**Token validation is in-box.** An OIDC or JWT bearer provider needs the ASP.NET Core authentication
-handlers that ship with .NET; no third-party package is required for the authentication seam's first
-provider.
+**Token validation is not in-box, and this paragraph said it was.** It read "an OIDC or JWT bearer
+provider needs the ASP.NET Core authentication handlers that ship with .NET". Checked against the shared
+framework actually installed (10.0.12), that is false: the JWT bearer handler and the token and
+discovery libraries under it are separate packages, not part of the shared framework. The correction is
+logged in [`90-decisions.md`](90-decisions.md) rather than made silently.
+
+What the generic bearer path (*Data model*, § 10) takes instead is **the token and discovery libraries —
+`Microsoft.IdentityModel.JsonWebTokens` and `Microsoft.IdentityModel.Protocols.OpenIdConnect` — and not
+the ASP.NET scheme handler built on them.** The handler is an authentication *scheme*: it runs as a
+second authentication pipeline bound to the HTTP context, where Platform's seam is a
+transport-agnostic provider over headers that Mcp calls as well as Hosting, and it refreshes discovery
+metadata on demand from the request path, which the rotation boundary in *Failure modes* refuses.
+Hand-rolling validation over `System.Security.Cryptography` and `System.Text.Json` was rejected too: the
+signature arithmetic is the easy part, and the algorithm-confusion and key-selection cases a JOSE library
+already refuses are the part an original implementation gets wrong. No type from either library appears
+in Identity's public surface; the provider projects at the boundary, as Mcp does with its SDK. The
+libraries' own on-demand refresh is used only from the refresh timer, never from a request. The licence
+is to be confirmed at the version actually taken, per `AGENTS.md`, *Verification*.
 
 **Licence signature verification is in-box.** Asymmetric signature verification over a signed document
 is `System.Security.Cryptography`. The design needs no licensing library, and taking one would mean
@@ -975,6 +1150,104 @@ record names which key verified the document.
 existing MCP protocol implementation or implements the transport. It is in *Open questions*, because
 taking a dependency is a decision with an authorization requirement, and because asserting a package's
 licence and capabilities from memory is exactly what `AGENTS.md`, *Verification*, forbids.
+
+### 10. Where a grant may come from
+
+**Chosen:** every permission provider takes grants from a source revocable while the caller's credential
+is still valid; claims and the raw authentication result are never a grant source; Platform's providers
+are held to it by I-I6 and a revoke-then-deny test, and a consumer's by contract and the same test as a
+`Platform.Testing` harness (*Data model*, § 3).
+
+**Rejected:**
+
+- **Removing the claims from `Principal`**, so no provider could read them. It is the only structural
+  version of the rule, and it is a breaking change to a public type at 0.x that cuts against § 5 of
+  this section, which kept claims reachable "for consumers that want claims" for a reason still true —
+  a consumer's own code, not a permission provider, is entitled to read what its issuer asserted. It also
+  would not hold: the raw authentication result stays reachable through the host's services, and a rule
+  that moves the claims one step further away has not removed them.
+- **Claims-derived grants, allowed with a declared latency** — the provider states that revocation waits
+  for expiry, and the operator accepts it. It makes revocation latency a property the issuer controls,
+  since the issuer sets the token lifetime, which is the exact failure #92 was raised against.
+- **Leaving it to the consumer.** #92 asks for revocation to hold for every provider; a rule that binds
+  only Platform's own providers is the rule Platform already had.
+
+**Why:** the rule the contract states is the one Platform can prove for itself and hand a consumer the
+means to prove. The cost is that issuer-managed roles reach the evaluator only through a mirror the
+consumer owns.
+
+**Reversibility: cheap to relax, expensive to tighten.** Admitting claims-derived grants later is a
+contract relaxation no consumer has to act on. Taking the claims off `Principal` later is the breaking
+change rejected above, with more consumers to break.
+
+### 11. Platform validates credentials; it does not host sign-in
+
+**Chosen:** Platform is a resource server. It validates bearer credentials and never serves a sign-in
+page, a callback, a session or a sign-out endpoint (*Control flow*, path 4).
+
+**Rejected:** a backend-for-frontend host that conducts the code exchange and holds a session. It needs a
+request body, a query and a cookie surface that the authentication seam deliberately does not see, and
+widening the seam to them widens it for Mcp too, where none of them exists. The session is durable state
+Identity would own, against its "no rows". The web shell is static assets (*Open questions*, 2), so the
+host a BFF would live in is not one D5 ships. And every vendor's sign-in and sign-out quirk would become
+Platform's to track for as long as the vendor exists.
+
+**Why:** the seam is transport-agnostic because two transports use it. Validation is the part of sign-in
+every issuer shares; the interactive part is where vendors differ, and it sits naturally with the client
+that already talks to the issuer.
+
+**Reversibility: cheap in the direction that matters.** A BFF can be added later as a module that
+authenticates to Platform like any other client. Removing one that consumers had built sessions around
+would not be.
+
+### 12. Where vendor knowledge lives
+
+**Chosen:** a vendor configuration package per vendor, a configuration source that references no Platform
+package and writes the generic path's settings (*Data model*, § 10). None is built in this pass.
+
+**Rejected:**
+
+- **Vendor presets inside Identity.** The simplest shape, and it departs from the owner's 2026-08-09
+  direction on #94 of a named package per vendor: every host taking Identity would carry every vendor's
+  dialect, and a vendor's change would release Identity.
+- **A vendor-options contract in the framework**, which vendor packages implement. It fails the
+  seam-admission test (*Module boundaries*, § 2) with no producer at all — no framework package consumes
+  it, and no two modules do.
+- **Vendor packages that register their own provider**, the call shape the owner's sketch on #94 reads
+  as. ADR-006 rule 2 forbids a module referencing a module, and a vendor package that implements a
+  provider has to reference Identity. It is also the parallel implementation the same direction rules out.
+- **A raw callback** handed each vendor's validation. The owner rejected it on #94 on 2026-08-09.
+- **Documentation recipes only.** It keeps nothing tested, and a recipe that drifts from the generic
+  path's schema fails silently at a consumer's startup.
+
+**Why:** a package that can reach no Platform type cannot be a parallel implementation, so the owner's
+constraint becomes a build check rather than a review rule. The cost is stated: a vendor quirk
+configuration cannot express has to become a generic-path capability before any vendor package can use
+it, the configuration schema becomes public contract, and a host registers a configuration source rather
+than chaining a vendor method off `AddPlatformIdentity()`.
+
+**Reversibility: moderate.** Configuration keys are public contract once a vendor package writes them.
+Moving to any of the rejected shapes later is additive, but the keys cannot be withdrawn.
+
+### 13. One vendor, hosted and self-hosted
+
+**Chosen:** two methods whenever the two deployments speak different protocol surfaces; one when the same
+settings with different values describe both (*Data model*, § 10). Asymmetric signatures only on the
+production path.
+
+**Rejected:**
+
+- **One method with a hosted-or-self-hosted discriminator.** It hides that one value may not be OIDC at
+  all — self-hosted Supabase without its OAuth server enabled — and turns that into a token rejected at
+  run time rather than a surface named at configuration time.
+- **A production shared-secret mode**, for issuers that sign with a symmetric key. Anyone holding the
+  secret can mint a token the path accepts, so the secret is a signing key handed to every verifier. It
+  stays with the test-grade provider.
+
+**Why:** the method name is the one place a surface requirement can be stated before a token arrives.
+
+**Reversibility: cheap.** Two methods can later collapse into one if the surfaces converge; a
+discriminator whose values already diverge cannot be split without breaking callers.
 
 ---
 
