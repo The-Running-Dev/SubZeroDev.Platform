@@ -175,6 +175,12 @@ true.
 | decision/2026-09-21-platform-takes-two-endpoint-exemptions-probes-and-mcp-transport | — |
 | decision/2026-09-21-required-audit-failures-are-surfaced-never-discarded | — |
 | decision/2026-09-25-adr-009-supersedes-the-2026-08-10-identity-withdrawal | — |
+| decision/2026-09-25-every-permission-provider-takes-grants-from-a-revocable-source | — |
+| decision/2026-09-25-hosted-and-self-hosted-are-two-methods-when-surfaces-differ | — |
+| decision/2026-09-25-identity-gains-generic-bearer-path-asymmetric-only-background-key-refresh | — |
+| decision/2026-09-25-platform-validates-credentials-never-conducts-sign-in | — |
+| decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | — |
+| decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | — |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered

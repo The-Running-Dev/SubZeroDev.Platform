@@ -16,6 +16,106 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-25 — Every permission provider takes grants from a source revocable before the credential expires
+
+Context: `20-contract.md` § Unresolved item 3 (#92) — may a consumer-registered `IPermissionProvider`
+derive grants from token claims? A claims-derived grant satisfies I-A10 literally, since nothing is
+carried between requests, and defeats it, since the token carries the grant until the issuer-chosen
+expiry. `Principal.Claims` is public and the raw authentication result is reachable through DI, so
+Platform cannot stop a consumer's provider reading claims.
+Chosen: the grant-source rule in `10-design.md` *Data model* § 3 — every provider, Platform's and a
+consumer's, takes grants from a source revocable while the caller's credential is valid; claims and the
+raw authentication result are never a grant source. Structural for Platform's providers through I-I6 and
+a revoke-then-deny test; a contract obligation for a consumer's, with the same test shipped in
+`Platform.Testing` as a harness. Cost: issuer-managed roles (Entra app roles, Keycloak realm roles)
+reach the evaluator only through a store the consumer mirrors them into.
+Rejected: removing `Claims` from `Principal` — breaking at 0.x, cuts against *Alternatives* § 5, and
+does not hold while the raw result is reachable; claims-derived grants with a declared latency — hands
+revocation latency to the issuer, which is #92's failure; leaving it to the consumer — #92 asks for all
+providers.
+Reversibility: cheap to relax, expensive to tighten — see `10-design.md` *Alternatives* § 10.
+
+### 2026-09-25 — Platform validates credentials and never conducts a sign-in
+
+Context: #94's done-when includes sign-out, and the owner's sketch reads as vendor sign-in inside
+Platform. `IAuthenticationRequest` carries headers only, by design, and Mcp uses the same seam.
+Chosen: Platform is a resource server. Interactive sign-in and sign-out are between the client and its
+issuer (`10-design.md` *Control flow*, path 4); no Platform host serves a sign-in page, callback,
+session or sign-out endpoint. An issued access token stays valid at Platform until expiry; grants do not
+ride in it, so authorization is unaffected.
+Rejected: a backend-for-frontend host conducting the code exchange and holding a session — needs a body,
+query and cookie surface the seam excludes, a session store Identity would own against "no rows", a host
+D5 does not ship (the shell is static assets), and every vendor's sign-in quirk as Platform's forever.
+Reversibility: cheap — a BFF can be added later as a module that is an ordinary client of Platform.
+
+### 2026-09-25 — Identity gains a production-grade generic bearer path, asymmetric only, with background key refresh
+
+Context: ADR-009 "Not decided here" left the production bearer provider open, and #94's vendor packages
+need a generic path to be sugar over. Only the test-grade HMAC and upstream-proxy providers exist.
+Chosen: a generic bearer provider in Identity, one per trusted issuer, configured by issuer (or issuer
+pattern), key source (discovery or fixed public keys), non-empty audiences, asymmetric algorithms only,
+bounded clock tolerance, subject claim and optional display-name claim (`10-design.md` *Data model*
+§ 10). Settings validated at startup, an unrecognised key failing it; the key fetch never fails startup.
+Keys refresh on an interval off the request path with a whole-set atomic swap, per instance and with no
+lease; an unknown key id is `CredentialRejected` and never triggers a fetch; a failed refresh keeps the
+previous set and degrades readiness. This amends the 2026-08-24 design statement that D5 adds no
+background work of its own: the key refresh is the one exception.
+Rejected: request-path fetch on an unknown key id — an attacker-driven amplifier against the issuer;
+a production shared-secret mode — a secret holder can mint tokens; deferring the provider until a vendor
+package needs it — leaves nothing for the package to be sugar over.
+Reversibility: moderate — the settings schema becomes public contract; the refresh policy is internal.
+
+### 2026-09-25 — Token validation adopts Microsoft.IdentityModel; the 2026-08-24 "in-box" claim was wrong
+
+Context: the 2026-08-24 placement entry and `10-design.md` *Alternatives* § 9 said token validation is
+the in-box ASP.NET Core authentication handlers. Checked against the installed shared framework 10.0.12,
+the JWT bearer handler and the token and discovery libraries are separate packages. That entry is not
+edited; this one corrects it.
+Chosen: `Microsoft.IdentityModel.JsonWebTokens` and `Microsoft.IdentityModel.Protocols.OpenIdConnect`
+(MIT, Microsoft) under the generic bearer path. No IdentityModel type in Platform's public surface — the
+provider projects at the boundary, as Mcp does with its SDK. The library's on-demand refresh is called
+only from the refresh timer. Licence to be re-checked at the version actually taken, per `AGENTS.md`
+*Verification*.
+Rejected: `Microsoft.AspNetCore.Authentication.JwtBearer` — an ASP.NET scheme handler bound to the HTTP
+context, a second authentication pipeline beside a transport-agnostic seam Mcp also uses, and on-demand
+metadata refresh from the request path; hand-rolling over `System.Security.Cryptography` and
+`System.Text.Json` — the JOSE algorithm-confusion and key-selection cases are where an original
+implementation fails.
+Reversibility: cheap — no library type crosses the public surface, so the library can be replaced
+behind the provider.
+
+### 2026-09-25 — Vendor dialect ships as configuration-source packages that reference no Platform package
+
+Context: `20-contract.md` § Unresolved item 4 (#94). The owner's 2026-08-09 direction on #94 is a named
+package per vendor, sugar over the generic path, never a parallel implementation. Its sketch
+(`AddPlatformIdentity().UseAuth0()`) assumes the generic wiring is framework, but ADR-009 point 4 put
+providers in the Identity module, so a vendor package implementing a provider would reference a module —
+ADR-006 rule 2 (ADR-006:51) forbids it.
+Chosen: a vendor configuration package is a configuration source writing the generic path's settings; it
+references no Platform package, and a build check fails if it does (`10-design.md` *Data model* § 10,
+*Module boundaries* § 5). A quirk configuration cannot express becomes a generic-path capability first.
+This pass builds the mechanism and no vendor package; the first is built when a consumer names its
+issuer. Proof without one: a configuration source built like a vendor package yields settings equal to an
+equivalent settings file.
+Rejected: presets inside Identity — departs from the per-vendor direction and couples Identity's release
+to every vendor; a vendor-options contract in the framework — fails the seam-admission test with no
+producer; vendor packages registering their own provider — rule 2, and the parallel implementation the
+direction rules out; a raw callback — rejected by the owner on 2026-08-09; documentation recipes only —
+untested, and drift fails at a consumer's startup.
+Reversibility: moderate — configuration keys are public contract once a vendor package writes them.
+
+### 2026-09-25 — Hosted and self-hosted deployments of one vendor are two methods when their protocol surfaces differ
+
+Context: #94 asks whether hosted versus self-hosted for one vendor is one method with a discriminator or
+two methods. Per ADR-004's 2026-08-10 re-verification, self-hosted Supabase is an OIDC provider only with
+`GOTRUE_OAUTH_SERVER_ENABLED` set.
+Chosen: two methods whenever the deployments speak different protocol surfaces; one method when the same
+settings with different values describe both (`10-design.md` *Data model* § 10).
+Rejected: one method with a discriminator — hides that one value may not be OIDC at all, surfacing it
+as a rejected token at run time rather than a named requirement at configuration time.
+Reversibility: cheap — two methods can collapse later; a diverged discriminator cannot be split without
+breaking callers.
+
 ### 2026-09-25 — ADR-009 ratifies Identity's placement, superseding the 2026-08-10 withdrawal
 
 Context: `design/g1/90-decisions.md`'s 2026-08-10 entry withdrew a proposed identity-substrate ADR
