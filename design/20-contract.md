@@ -724,7 +724,9 @@ action's transaction at step 6.
 - **Tenant resolution precedes authorization**, because permissions are tenant-aware and a decision
   taken before the tenant is known has been taken in the wrong tenant.
 - **The scope's tenant and principal are fixed for the request's lifetime.** A membership revoked
-  while a request is in flight does not change the request that already resolved.
+  while a request is in flight does not change the request that already resolved. **It denies the
+  next request, with no re-authentication in between** — no grant outlives the request that derived
+  it (I-A10).
 - **The local host takes the same path, with no step skipped and no branch taken.** The absence of the
   four commercial packages is visible in the package graph and invisible in the flow.
 - **Only an endpoint that admits new paid-feature work is entitlement-gated, and the endpoint says so
@@ -1061,6 +1063,7 @@ row, because no module has a unit record yet.
 | **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) Enforced by code — the provider. | — | code | — |
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
 | **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | — |
+| **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
 | **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | — |
 | **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | — |
@@ -1155,4 +1158,36 @@ at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprin
 [`90-decisions.md`](90-decisions.md), 2026-09-03. The format version inside `SettingsFingerprint`
 changed in the same commit, per what the item determined either way.
 
-**Nothing is unresolved.**
+**Item 3 — may a consumer-registered permission provider derive a grant from token claims?**
+([#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92); deferred by
+[ADR-009](../docs/docs/adr/ADR-009-identity-package.md), *Not decided here*.) The Platform half is
+stated: `Principal` carries no permission data (Types § 1), no Platform decision reads `Claims`
+(I-I6), the evaluator consults only registered providers (I-A2), and no grant outlives the request
+that derived it (I-A10). What is not determined is the consumer half. `10-design.md` keeps the raw
+authentication result "for consumers that want claims" (*Alternatives considered*, § 5) and names
+a consumer-registered third provider as the extension point for custom roles (§ 3; Types § 2 here),
+yet nothing says whether that provider may read a role from `Principal.Claims`. A provider that
+does would make revocation wait for token expiry, which I-A10 forbids only for Platform's own
+providers. **This blocks** any contract sentence forbidding permissions or roles in a login token for all providers, and so
+#92's third done-when criterion. It needs a `10-design.md` decision first — a rule on
+`IPermissionProvider` implementations, or an explicit statement that a consumer provider's grant
+source is the consumer's own concern.
+
+**Item 4 — a per-vendor escape hatch for sign-in providers that depart from the standard.**
+([#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94); deferred by
+[ADR-009](../docs/docs/adr/ADR-009-identity-package.md), *Not decided here*, together with a
+production-grade bearer provider.) `10-design.md` does not determine a surface, so this contract
+declares none. Three things are missing upstream of any signature:
+
+1. The repository owner's direction on #94 (2026-08-09) — a named provider package per vendor, each
+   one sugar over the generic path and never a parallel implementation, rather than a raw
+   callback — is recorded only on the issue, not in `10-design.md`.
+2. That direction leaves open whether a hosted and a self-hosted deployment of one vendor are one
+   method with a discriminator or two methods.
+3. There is no generic path to be sugar over. Identity ships one test-grade bearer provider and one
+   upstream-proxy provider behind `IAuthenticationProvider`, and no interactive sign-in or sign-out
+   method. #94's sign-out criterion therefore presupposes a method D5 never designed.
+
+**This blocks** any vendor-package or hook signature on `SubZeroDev.Platform.Identity`, the sign-out
+proof against a non-conforming provider, and the documentation that reaching for the escape hatch is
+expected. A `/design` pass that settles all three comes first.
