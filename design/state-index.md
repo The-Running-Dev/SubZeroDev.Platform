@@ -204,29 +204,21 @@ commit the mirror was taken at; check it against `git log` before trusting an en
 |---|---|---|---|---|
 | 11 | #24 | BarStrad's commercial model is undecided, and two of the brief's binding statements depend on the answer | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 12 | #25 | A live Discord webhook is committed in the BarStrad repository | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 13 | #26 | Three documents describe the scope question as still open, and it is not | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 18 | #57 | A feature/capability toggle seam, and what a licence gates | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 19 | #58 | Runtime settings, as distinct from startup configuration | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 20 | #59 | Soft delete as a contributed column | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 21 | #60 | Optimistic concurrency as a contributed column | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 22 | #61 | Seeding has callers but no infrastructure | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 23 | #62 | No consumer-side idempotency seam, where ABP has an inbox | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 24 | #63 | IPlatformModule has one lifecycle hook where ABP has seven | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 25 | #68 | Development-environment automatic migration application is promised and was never built | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 131 | #131 | /verify's `# verification: true` flag has never been added to this repository's workflows | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 151 | #151 | design/state/ does not exist, and the reader/checker/projector tooling built for it has nothing to read | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 187 | #187 | Audit retention is deferred out of D5 and the table grows without bound | 1, 2 | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 224 | #224 | Re-enable McpInvocationTests.A_cancelled_call_writes_no_audit_record_and_never_completes_the_invoker once the SDK ships the cancellation fix | — | `4943900bd936ddd5ae4ce7f093d71caf09d30b32` |
 | milestone/5 | #80 | Decide which slice set the public site's roadmap page renders | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #81 | Settle the @subzerodev registry reservations — only signing in settles it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #85 | The engine writes the mutated blob to memory before persistence on two of its four write paths, and the four disagree with each other | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #86 | The Adventures POC already implements what G2, G3 and G4 will need, against this same engine release | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| milestone/3 | #90 | Platform gains an Identity package, and the decision behind it gets recorded | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| milestone/3 | #91 | Three documents still say Identity is undecided, and it no longer is | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #92 | Permissions must never travel inside the login token | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #93 | Accounts are matched on the provider's own identifier, never on email | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #94 | Configuration-only needs an escape hatch for providers that ignore the standard | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| milestone/3 | #95 | Ownership is checked where the thing is loaded, and refusal is an answer rather than a redirect | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #97 | D3 is built but not proven, and Adventures is the product that would prove it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #98 | What is a principal, when one consumer's principal never has an account? | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #99 | The Automator's audience is unsettled, and its Identity row depends on it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
