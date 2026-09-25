@@ -56,8 +56,8 @@ Acceptance:
   - S1.2 The second criterion holds.
 '@
 
-    # design/30-slices.md's real convention - the id is bold. A doc-side regex tested only
-    # against the plain form above would never notice it can't read the actual document.
+    # The same slice with bold ids, the form /track writes into an issue body and a slices
+    # document commonly copies.
     $script:TwoCriterionDocBoldIds = @'
 # Slices
 
@@ -65,18 +65,13 @@ Acceptance:
 
 ## S1 — A slice
 
-Delivers: something a reader can follow.
-
 Acceptance:
-- **S1.1** The first criterion holds.
-- **S1.2** The second criterion holds.
+  - **S1.1** The first criterion holds.
+  - **S1.2** The second criterion holds.
 '@
 
-    # The regression the effort tag exists for: a tracker holding a retired effort's closed S1
-    # and a live effort's S1. Matching on the bare prefix pairs them and reports both sets of
-    # criteria as drift - 42 findings in this repository, none of them real. Declared here
-    # rather than in its Context, because Pester runs a Context body at discovery time and a
-    # $script: variable set there is gone by the time an It runs.
+    # A slices document whose title names its effort. Declared here rather than in its Context:
+    # Pester runs a Context body at discovery, before any BeforeAll has run.
     $script:TaggedDoc = @'
 # Slices — commercial (D5)
 
@@ -84,11 +79,9 @@ Acceptance:
 
 ## S1 — A slice
 
-Delivers: something a reader can follow.
-
 Acceptance:
-- **S1.1** The first criterion holds.
-- **S1.2** The second criterion holds.
+  - **S1.1** The first criterion holds.
+  - **S1.2** The second criterion holds.
 '@
 }
 
@@ -115,7 +108,36 @@ Describe 'Test-DesignDrift' {
             Get-DriftExitCode -State $r.State | Should -Be 0
         }
 
-        It 'matching ids on both sides is Clean when the doc bolds the id, design/30-slices.md''s actual convention' {
+        It 'a slice nested as a third-level heading under Outstanding is compared, not silently dropped' {
+            # design/90-decisions.md, 2026-08-30: slices from S19 on sit as `### S<n>` under the
+            # `## Outstanding` section rather than as their own `## S<n>` section. A parser that
+            # only recognises `##` sees zero slices here and reports Clean for the wrong reason.
+            $path = New-SlicesDoc -Content @'
+# Slices
+
+## Outstanding
+
+### S19 — A slice
+
+Delivers: something a reader can follow.
+
+Acceptance:
+  - S19.1 The first criterion holds.
+  - S19.2 The second criterion holds.
+
+## Landed
+'@
+            Mock Get-TrackerIssue { New-Tracker -Issues @(
+                New-Issue -Number 171 -Title 'S19 — A slice' -Body "- [ ] **S19.1** first`n- [ ] **S19.2** second"
+            ) }
+
+            $r = Invoke-DriftCheck -SlicesPath $path
+
+            $r.State | Should -Be 'Clean'
+            $r.SlicesCompared | Should -Be 1
+        }
+
+        It 'bold criterion ids in the document are read like plain ones' {
             $path = New-SlicesDoc -Content $script:TwoCriterionDocBoldIds
             Mock Get-TrackerIssue { New-Tracker -Issues @(
                 New-Issue -Number 9 -Title 'S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [x] **S1.2** second"
@@ -221,13 +243,78 @@ None.
         }
     }
 
+    Context 'slice issue lookup' {
+
+        BeforeEach {
+            $script:SliceLookupDoc = New-SlicesDoc -Content @'
+# Slices
+
+## S3 — Close the laptop, open the phone
+
+Acceptance:
+  - S3.1 The first criterion holds.
+  - S3.3 Spill catch-up completes.
+'@
+            # The newer criterion bug precedes the closed slice issue in tracker order.
+            $script:CriterionBug = New-Issue -Number 300 -Title 'S3.3 spill-catch-up test intermittently times out' -Body 'Investigate the intermittent timeout.'
+            $script:SliceIssue = New-Issue -Number 4 -Title 'S3 — Close the laptop, open the phone' -Body "- [x] **S3.1** first`n- [x] **S3.3** spill catch-up"
+            $script:SliceIssue.state = 'CLOSED'
+        }
+
+        It 'selects the real slice issue even when a criterion bug appears first' {
+            Mock Get-TrackerIssue { New-Tracker -Issues @($script:CriterionBug, $script:SliceIssue) }
+
+            $r = Invoke-DriftCheck -SlicesPath $script:SliceLookupDoc
+
+            $r.State | Should -Be 'Clean'
+            $r.SlicesCompared | Should -Be 1
+            $r.Findings.Count | Should -Be 0
+            $r.Failures.Count | Should -Be 0
+            Get-DriftExitCode -State $r.State | Should -Be 0
+        }
+
+        It 'attributes genuine drift to the real slice issue, not the criterion bug' {
+            $script:SliceIssue.body = '- [x] **S3.1** first'
+            Mock Get-TrackerIssue { New-Tracker -Issues @($script:CriterionBug, $script:SliceIssue) }
+
+            $r = Invoke-DriftCheck -SlicesPath $script:SliceLookupDoc
+
+            $r.State | Should -Be 'Drifted'
+            $r.SlicesCompared | Should -Be 1
+            $r.Findings.Count | Should -Be 1
+            $r.Findings[0].Kind | Should -Be 'InDocNotIssue'
+            $r.Findings[0].Detail | Should -Be 'S3.3'
+            $r.Findings[0].Issue | Should -Be 4
+            Get-DriftExitCode -State $r.State | Should -Be 1
+        }
+
+        It 'reports NoIssue when only the criterion bug exists' {
+            Mock Get-TrackerIssue { New-Tracker -Issues @($script:CriterionBug) }
+
+            $r = Invoke-DriftCheck -SlicesPath $script:SliceLookupDoc
+
+            $r.State | Should -Be 'Drifted'
+            $r.SlicesCompared | Should -Be 0
+            $r.Findings.Count | Should -Be 1
+            $r.Findings[0].Kind | Should -Be 'NoIssue'
+            $r.Findings[0].Issue | Should -Be 0
+            Get-DriftExitCode -State $r.State | Should -Be 1
+        }
+    }
+
     Context 'effort-qualified titles' {
 
-        It 'matches the tagged title and ignores another effort''s closed issue of the same number' {
+        BeforeEach {
+            # A retired effort's closed S1, numbered from 1 like every effort, and listed first.
+            $script:RetiredS1 = New-Issue -Number 8 -Title 'S1 — A retired effort''s first slice' -Body '- [x] **S1.7** something else entirely'
+            $script:RetiredS1.state = 'CLOSED'
+        }
+
+        It 'a tagged document matches its own effort''s issue, not a retired effort''s of the same number' {
             $path = New-SlicesDoc -Content $script:TaggedDoc
             Mock Get-TrackerIssue { New-Tracker -Issues @(
-                New-Issue -Number 8 -Title 'S1 — A retired effort''s first slice' -Body "### Done when`n- [x] **S1.7** unrelated"
-                New-Issue -Number 9 -Title 'D5-S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [ ] **S1.2** second"
+                $script:RetiredS1,
+                (New-Issue -Number 9 -Title 'D5-S1 — A slice' -Body "- [ ] **S1.1** first`n- [ ] **S1.2** second")
             ) }
 
             $r = Invoke-DriftCheck -SlicesPath $path
@@ -236,11 +323,9 @@ None.
             $r.SlicesCompared | Should -Be 1
         }
 
-        It 'reports NoIssue rather than pairing with the untagged issue when the tagged one is absent' {
+        It 'a tagged document with only an unqualified issue reports NoIssue rather than borrowing it' {
             $path = New-SlicesDoc -Content $script:TaggedDoc
-            Mock Get-TrackerIssue { New-Tracker -Issues @(
-                New-Issue -Number 8 -Title 'S1 — A retired effort''s first slice' -Body "### Done when`n- [x] **S1.7** unrelated"
-            ) }
+            Mock Get-TrackerIssue { New-Tracker -Issues @($script:RetiredS1) }
 
             $r = Invoke-DriftCheck -SlicesPath $path
 
@@ -249,22 +334,20 @@ None.
             $r.SlicesCompared | Should -Be 0
         }
 
-        It 'an untagged document still matches unqualified titles, the behaviour before this' {
-            $path = New-SlicesDoc -Content $script:TwoCriterionDocBoldIds
+        It 'an untagged document still matches the unqualified title' {
+            $path = New-SlicesDoc -Content $script:TwoCriterionDoc
             Mock Get-TrackerIssue { New-Tracker -Issues @(
-                New-Issue -Number 9 -Title 'S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [ ] **S1.2** second"
+                New-Issue -Number 9 -Title 'S1 — A slice' -Body "- [ ] **S1.1** first`n- [ ] **S1.2** second"
             ) }
 
-            $r = Invoke-DriftCheck -SlicesPath $path
-
-            $r.State | Should -Be 'Clean'
-            $r.SlicesCompared | Should -Be 1
+            (Invoke-DriftCheck -SlicesPath $path).State | Should -Be 'Clean'
         }
 
-        It 'an explicit -EffortTag overrides the document''s own' {
+        It 'an explicit -EffortTag qualifies the match over the document''s own' {
             $path = New-SlicesDoc -Content $script:TaggedDoc
             Mock Get-TrackerIssue { New-Tracker -Issues @(
-                New-Issue -Number 9 -Title 'G1-S1 — A slice' -Body "### Done when`n- [ ] **S1.1** first`n- [ ] **S1.2** second"
+                (New-Issue -Number 9 -Title 'D5-S1 — A slice' -Body '- [ ] **S1.9** not this one'),
+                (New-Issue -Number 10 -Title 'G1-S1 — A slice' -Body "- [ ] **S1.1** first`n- [ ] **S1.2** second")
             ) }
 
             $r = Invoke-DriftCheck -SlicesPath $path -EffortTag 'G1'
@@ -273,14 +356,11 @@ None.
             $r.SlicesCompared | Should -Be 1
         }
 
-        It 'reads the tag from the title only, never from a parenthesis in the body' {
+        It 'a parenthesised tag below the title is prose, not the effort' {
             $path = New-SlicesDoc -Content @'
 # Slices
 
 ## S1 — A slice (D5)
-
-Acceptance:
-- **S1.1** The first criterion holds.
 '@
             Get-EffortTag -Path $path | Should -BeNullOrEmpty
         }
@@ -399,6 +479,35 @@ Acceptance:
             Get-DriftExitCode -State 'Drifted'      | Should -Be 1
             Get-DriftExitCode -State 'NotEvaluated' | Should -Be 2
             { Get-DriftExitCode -State 'Something' } | Should -Throw
+        }
+    }
+
+    Context 'default -SlicesPath resolves against the calling repo, not this script''s own location' {
+        # Run as a real child process so the invocation-guard block (which every dot-sourced
+        # test above never reaches - it exits) actually executes, with its working directory set
+        # to an empty $TestDrive folder rather than this kit repo. Before the fix, the default
+        # was `Join-Path (Split-Path -Parent $PSScriptRoot) 'design/30-slices.md'`, which
+        # resolves to THIS kit repo's own real design/30-slices.md regardless of caller cwd - a
+        # run from a repo with no slices document would silently drift-check the kit's own
+        # document (and shell out to gh for the kit's own tracker) instead of reporting
+        # SlicesDocMissing for the caller's (nonexistent) one. A missing-file default is used
+        # rather than a comparison outcome because Get-SliceCriteria fails before any gh call,
+        # so this stays network-free regardless of what gh is authenticated as on the runner.
+
+        It 'exits 2 (NotEvaluated/SlicesDocMissing) when the calling repo has no design/30-slices.md, even though the kit repo does' {
+            $callerRepo = Join-Path $TestDrive 'caller-repo'
+            New-Item -ItemType Directory -Path $callerRepo -Force | Out-Null
+
+            Push-Location $callerRepo
+            try {
+                $output = & pwsh -NoProfile -File $script:ScriptPath
+                $exitCode = $LASTEXITCODE
+            } finally {
+                Pop-Location
+            }
+
+            $exitCode | Should -Be 2
+            ($output -join "`n") | Should -Match 'SlicesDocMissing'
         }
     }
 }

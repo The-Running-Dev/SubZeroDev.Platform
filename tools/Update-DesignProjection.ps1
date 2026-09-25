@@ -295,7 +295,11 @@ function Get-AgentProjectionContent {
 
     $title = $Record.Scalars['Title']
     $sliceId = $null
-    if ($title -and $title -match '^\s*(S\d+)\b') { $sliceId = $Matches[1] }
+    # An effort-qualified title (`D5-S7 - ...`) names the same slice: the tag separates one
+    # effort's numbering from another's on the tracker, and /slice reads the effort's own
+    # slices document, where the slice is plain S7. `(?=\s|$)` rather than `\b`, as in
+    # Test-DesignDrift.ps1, so a criterion bug titled `S7.3 ...` is not taken for slice S7.
+    if ($title -and $title -match '^\s*(?:[A-Za-z]+\d+-)?(S\d+)(?=\s|$)') { $sliceId = $Matches[1] }
 
     $lines = [System.Collections.Generic.List[string]]::new()
     if ($sliceId) {

@@ -5,23 +5,25 @@
     to a hash of the files whose presence or content determines what the gate list is.
 
 .DESCRIPTION
-    /check's own procedure (C:/Users/Ben/.agent-kit/skills/check/SKILL.md, "Discover, do not assume") reads
+    /check's own procedure (skills/check/SKILL.md, "Discover, do not assume") reads
     CI workflow files, package manifests, and known build-script paths every single run,
     even when none of them have changed since the last run. That discovery is genuine
     judgement the first time - CI is the authoritative list, and matching a workflow's
     steps to local commands takes reading, not just globbing - but re-deriving the same
     answer from an unchanged manifest on every run is the repeated-scan cost
-    AGENTS.md's own model-work table calls out as maybe-avoidable.
+    AGENTS.shared.md's own model-work table calls out as maybe-avoidable.
 
     This script does not discover gates itself - that stays /check's judgement call, and
-    stays owned by the /check skill. It only remembers the answer /check already worked out, and
-    says whether that answer is still trustworthy:
+    stays owned by skills/check/SKILL.md. It only remembers the answer /check already worked
+    out, and says whether that answer is still trustworthy:
 
       (no -Write)   Compute the current manifest hash, compare it to .claude/gates.json.
-                    Fresh   - hash matches. Emits the cached gates; /check runs them
-                              directly and skips discovery.
-                    Stale   - a manifest file changed since the cache was written.
-                              /check re-discovers, then calls this script with -Write.
+                    Fresh   - hash matches and the cache holds at least one gate. Emits
+                              the cached gates; /check runs them directly and skips
+                              discovery.
+                    Stale   - a manifest file changed since the cache was written, or the
+                              cache's gate list is empty or null - it carries no answer to
+                              reuse. /check re-discovers, then calls this script with -Write.
                     Missing - no cache yet. Same as Stale.
 
       -Write        Persist -GatesJson (an array of {name, command} objects) alongside the
