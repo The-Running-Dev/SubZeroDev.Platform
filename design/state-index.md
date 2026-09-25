@@ -24,6 +24,10 @@ true.
 | `unit/document/30-slices` | document | `design/30-slices.md` |
 | `unit/document/90-decisions` | document | `design/90-decisions.md` |
 | `unit/document/state-index` | document | `design/state-index.md` |
+| `unit/script/read-designstate` | script | `tools/Read-DesignState.ps1` |
+| `unit/script/test-designdrift` | script | `tools/Test-DesignDrift.ps1` |
+| `unit/script/test-gatescache` | script | `tools/Test-GatesCache.ps1` |
+| `unit/script/update-designprojection` | script | `tools/Update-DesignProjection.ps1` |
 <!-- units:end -->
 
 ## Invariants — bound by
@@ -40,6 +44,7 @@ true.
 | I-A7 | — |
 | I-A8 | — |
 | I-A9 | — |
+| I-A10 | — |
 | I-B1 | — |
 | I-B2 | — |
 | I-B3 | — |
@@ -169,6 +174,7 @@ true.
 | decision/2026-09-21-organizations-and-billing-gain-retryable-storeunavailable | — |
 | decision/2026-09-21-platform-takes-two-endpoint-exemptions-probes-and-mcp-transport | — |
 | decision/2026-09-21-required-audit-failures-are-surfaced-never-discarded | — |
+| decision/2026-09-25-adr-009-supersedes-the-2026-08-10-identity-withdrawal | — |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
