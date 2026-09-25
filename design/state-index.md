@@ -203,11 +203,8 @@ commit the mirror was taken at; check it against `git log` before trusting an en
 | 25 | #68 | Development-environment automatic migration application is promised and was never built | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 131 | #131 | /verify's `# verification: true` flag has never been added to this repository's workflows | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 151 | #151 | design/state/ does not exist, and the reader/checker/projector tooling built for it has nothing to read | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 185 | #185 | D5-S17 — The proof: two databases, two hosts, contention and offline | S17.1, S17.2, S17.3, S17.4, S17.5, S17.6 | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| 186 | #186 | D5-S18 — Packages, documentation and the corrected plan | S18.1, S18.2, S18.3, S18.4, S18.5, S18.6 | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 187 | #187 | Audit retention is deferred out of D5 and the table grows without bound | 1, 2 | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 224 | #224 | Re-enable McpInvocationTests.A_cancelled_call_writes_no_audit_record_and_never_completes_the_invoker once the SDK ships the cancellation fix | — | `4943900bd936ddd5ae4ce7f093d71caf09d30b32` |
-| milestone/4 | #47 | Standalone AddPlatformObservability silently drops a malformed OtlpEndpoint | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/5 | #80 | Decide which slice set the public site's roadmap page renders | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #81 | Settle the @subzerodev registry reservations — only signing in settles it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #85 | The engine writes the mutated blob to memory before persistence on two of its four write paths, and the four disagree with each other | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
@@ -222,6 +219,5 @@ commit the mirror was taken at; check it against `git log` before trusting an en
 | milestone/3 | #98 | What is a principal, when one consumer's principal never has an account? | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #99 | The Automator's audience is unsettled, and its Identity row depends on it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/3 | #100 | Identity is being replaced in SubZeroDev.Adventures, and that build is the evidence | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
-| milestone/5 | #106 | The edge's unreachable error is described more narrowly than it behaves | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/5 | #110 | The edge cannot front a streaming workload, and nothing says so | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 <!-- outstanding:end -->

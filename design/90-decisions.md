@@ -16,6 +16,8 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+- 2026-09-25 — [ADR-009: Identity is a framework seam plus a module that owns no users](../docs/docs/adr/ADR-009-identity-package.md).
+
 ### 2026-09-21 — `ConnectionUnauthenticated` is dropped from `McpError`
 
 Context: `/align` after D5 found the variant declared in `20-contract.md` § *Error semantics* 8 and in
