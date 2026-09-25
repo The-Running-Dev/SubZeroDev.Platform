@@ -1,78 +1,110 @@
 {
-  "manifestHash": "00e76c4f70953aa474fcdb3808020e52f37b118e6efaaf0b9ae0bf7ff9bed4b4",
-  "generated": "2026-09-13",
+  "manifestHash": "00ca4b7617410d27ce880ae3140831f255689de9564a885bcfd58c93c7770763",
+  "generated": "2026-09-25",
   "gates": [
     {
-      "name": "build.yml / build — Test",
-      "command": "dotnet test --no-build --configuration Release --verbosity normal"
+      "command": "dotnet test --no-build --configuration Release --verbosity normal",
+      "name": "build.yml / build — Test"
     },
     {
-      "name": "build.yml / build — Run the sample in both roles",
-      "command": "pwsh ./build/Test-SampleRoundTrip.ps1"
+      "command": "pwsh ./build/Test-S17Mutations.ps1",
+      "name": "build.yml / build — Reject all nine negative mutation fixtures"
     },
     {
-      "name": "build.yml / build — Assert no framework project references a workload",
-      "command": "pwsh ./build/Test-WorkloadIsolation.ps1"
+      "command": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1",
+      "name": "build.yml / build — Run the sample in both roles"
     },
     {
-      "name": "build.yml / game-service — Typecheck",
-      "command": "npm run typecheck (workloads/game-service)"
+      "command": "pwsh ./build/Test-WorkloadIsolation.ps1",
+      "name": "build.yml / build — Assert no framework project references a workload"
     },
     {
-      "name": "build.yml / game-service — Start the workload and the edge, the documented way",
-      "command": "npm start + dotnet SubZeroDev.Platform.GameEdge.dll, probe livez/readyz and health/live,health/ready"
+      "command": "sudo -u platform-local-offline env HOME=/tmp/platform-local-offline curl --connect-timeout 3 --max-time 5 https://example.com (expect non-zero)",
+      "name": "build.yml / build — Prove the outbound guard rejects an attempted connection"
     },
     {
-      "name": "build.yml / game-service — Run the replay against the workload",
-      "command": "npx vitest run tests/replay.test.ts"
+      "command": "sudo -u platform-local-offline env HOME=/tmp/platform-local-offline DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 -- run the local host",
+      "name": "build.yml / build — Run the local host with outbound networking unavailable"
     },
     {
-      "name": "build.yml / game-service — Run the replay against the edge",
-      "command": "npx vitest run tests/replay-edge.test.ts (GAME_EDGE_DLL)"
+      "command": "sudo iptables -L PLATFORM_LOCAL_OFFLINE -n (assert installed, zero non-loopback packets)",
+      "name": "build.yml / build — Assert the local host attempted no outbound connection"
     },
     {
-      "name": "build.yml / game-service — Migrate the schema to head, the documented way",
-      "command": "npm run migrate (GAME_SERVICE_DB_SCHEMA=ci_documented_migrate)"
+      "command": "npm run typecheck (workloads/game-service)",
+      "name": "build.yml / game-service — Typecheck"
     },
     {
-      "name": "build.yml / game-service — Start the workload against the durable store, the documented way",
-      "command": "npm start (GAME_SERVICE_STORAGE=durable, port 8081), probe readyz"
+      "command": "npm start + dotnet SubZeroDev.Platform.GameEdge.dll, probe livez/readyz and health/live,health/ready",
+      "name": "build.yml / game-service — Start the workload and the edge, the documented way"
     },
     {
-      "name": "build.yml / game-service — Run the one-instance contention proof",
-      "command": "npx vitest run tests/contention-one-instance.test.ts"
+      "command": "npx vitest run tests/replay.test.ts",
+      "name": "build.yml / game-service — Run the replay against the workload"
     },
     {
-      "name": "build.yml / game-service — Run the two-instance contention proof",
-      "command": "npx vitest run tests/contention-two-instances.test.ts"
+      "command": "npx vitest run tests/replay-edge.test.ts (GAME_EDGE_DLL)",
+      "name": "build.yml / game-service — Run the replay against the edge"
     },
     {
-      "name": "build.yml / game-service — Run the durable replay",
-      "command": "npx vitest run tests/durable-replay.test.ts"
+      "command": "npm run migrate (GAME_SERVICE_DB_SCHEMA=ci_documented_migrate)",
+      "name": "build.yml / game-service — Migrate the schema to head, the documented way"
     },
     {
-      "name": "build.yml / game-service — Run the port-conformance suite",
-      "command": "npx vitest run tests/conformance.test.ts"
+      "command": "npm start (GAME_SERVICE_PORT=8081, GAME_SERVICE_STORAGE=durable, GAME_SERVICE_DB_CONNECTION_STRING=...), probe readyz",
+      "name": "build.yml / game-service — Start the workload against the durable store, the documented way"
     },
     {
-      "name": "build.yml / game-service — Test",
-      "command": "npm test (workloads/game-service, GAME_EDGE_DLL, OTEL_COLLECTOR_BIN)"
+      "command": "npx vitest run tests/contention-one-instance.test.ts",
+      "name": "build.yml / game-service — Run the one-instance contention proof"
     },
     {
-      "name": "docs-ci.yml / documentation — Validate Markdown links, terminology, and generated files",
-      "command": "./build/Test-Documentation.ps1"
+      "command": "npx vitest run tests/contention-two-instances.test.ts",
+      "name": "build.yml / game-service — Run the two-instance contention proof"
     },
     {
-      "name": "docs-ci.yml / slice-status-markers — Validate design/30-slices.md's Status markers",
-      "command": "./build/Test-SliceStatusMarkers.ps1"
+      "command": "npx vitest run tests/durable-replay.test.ts",
+      "name": "build.yml / game-service — Run the durable replay"
     },
     {
-      "name": "docs-ci.yml / verify — Build and verify the status-page site",
-      "command": "npm --prefix site ci; npm --prefix site run check"
+      "command": "npx vitest run tests/conformance.test.ts",
+      "name": "build.yml / game-service — Run the port-conformance suite"
     },
     {
-      "name": "docs-deploy.yml / deploy — Build and verify the status-page site",
-      "command": "npm --prefix site ci; npm --prefix site run check"
+      "command": "npm test (GAME_EDGE_DLL, OTEL_COLLECTOR_BIN)",
+      "name": "build.yml / game-service — Test"
+    },
+    {
+      "command": "./build/Test-Documentation.ps1",
+      "name": "docs-ci.yml / documentation — Validate Markdown links, terminology, and generated files"
+    },
+    {
+      "command": "./build/Test-SliceStatusMarkers.ps1",
+      "name": "docs-ci.yml / slice-status-markers — Validate design/30-slices.md's Status markers"
+    },
+    {
+      "command": "npm --prefix site ci && npm --prefix site run check",
+      "name": "docs-ci.yml / verify — Build and verify the status-page site"
+    },
+    {
+      "command": "npm --prefix site ci && npm --prefix site run check",
+      "name": "docs-deploy.yml / deploy — Build and verify the status-page site"
+    },
+    {
+      "command": "pwsh ./build/Test-PackageConsumerGraphFixtures.ps1",
+      "name": "packages.yml / pack — Verify the package graph rejection fixtures"
+    },
+    {
+      "command": "pwsh ./build/Test-PackageManifests.ps1 -Version <ci-version> -OutputDirectory artifacts/packages",
+      "name": "packages.yml / pack — Pack and validate all D5 package manifests"
+    },
+    {
+      "command": "pwsh ./build/Test-PackageRestore.ps1 -PackageDirectory artifacts/packages -Version <version>",
+      "name": "packages.yml / consume — Restore and test the sample solution using only Platform artifacts"
+    },
+    {
+      "command": "ASPNETCORE_ENVIRONMENT=Production pwsh ./build/Test-SampleRoundTrip.ps1",
+      "name": "packages.yml / consume — Run the packaged sample in both roles"
     }
   ]
 }
