@@ -1,7 +1,7 @@
 # Agent contract
 
 
-**Read [`AGENTS.shared.md`](C:/Users/Ben/.agent-kit/AGENTS.shared.md) completely before this file.** It holds the rules every repository using the kit shares.
+**Read `AGENTS.shared.md` completely before this file.** It holds the rules every repository using the kit shares, resolved from `$env:AGENTKIT_HOME` if set, else `$HOME/.agent-kit`.
 
 This file is binding for every agent session in this repo, regardless of tool or model.
 
@@ -429,6 +429,7 @@ Where `design/state/` does not exist, none of this applies — write the decisio
 
 Kit-sync and install forks that had a real alternative, and what was rejected:
 
+- **2026-09-25 — `/sync` rewrote the pointer section's baked machine path to a resolution instruction.** The pointer at the top of this file named a literal absolute path, `C:/Users/Ben/.agent-kit/AGENTS.shared.md`, left over from an install run on this machine and account. Kit commit `9ad2d09` (#406/#419) replaced that pattern kit-wide: every session now resolves `AGENTS.shared.md`'s location itself, from `$env:AGENTKIT_HOME` if set else `$HOME/.agent-kit`, at read time. Rejected: leaving the baked path — cheaper to leave alone, but silently wrong the moment this repository is cloned onto another machine or account, or `AGENTKIT_HOME` moves.
 - **2026-09-21 — `/sync` took the kit's `codex/PROFILES.md` outright, overwriting this repository's tuned reasoning-effort values.** This repository had customized several profiles (`architect`/`quick` at `xhigh`/`low` instead of the kit's `high`/`medium`, and had dropped the kit's `author` profile and its "Output and context budget" section). The kit had since added the `author` profile split (read-only `architect` vs. workspace-write `author`) and the output/context-budget guidance. User explicitly chose to take the kit wholesale rather than merge, trading the local effort tuning for the newer profile split. Rejected: merging (keep local effort values, add only the new sections) — the user asked for the kit version outright instead.
 - **2026-08-30 — `tools/Test-DesignState.ps1` and `tools/Update-WorkMirror.ps1` took the kit's versions outright, overwriting this repository's local edits.** The local edits were a working gh-output UTF-8 fix (commit `a9e56a4`) and simpler mirror docstrings; the kit had since moved further on the same problems — an `Invoke-GhRaw` helper that decodes via `ProcessStartInfo` instead of mutating `[Console]::OutputEncoding` globally, closed-issue re-fetch so a `WorkRef` never sticks at `OPEN`, and a new `GlobDisagreement` check (`Get-ContractGlobPatterns`) with no local equivalent. Rejected: keeping the local versions and skipping the kit's — would have left `GlobDisagreement` unenforced and the paired `.Tests.ps1` updates (which already assume the kit's script shape) failing against the old scripts.
 - **2026-08-30 — `codex/PROFILES.md` was installed**, though `/install`'s default is to skip it absent evidence of Codex use. This repository already had that evidence: `tools/Invoke-CodexCommand.ps1` and an `AGENTS.md` alias table (`Sol`/`Terra`/`Luna`/`Codex Spark`/`GPT-5`) predate this sync.

@@ -1,7 +1,8 @@
 {
   "source": "https://github.com/The-Running-Dev/SubZeroDev.AgentKit",
   "branch": "main",
-  "commit": "e4e99557c44c7dd993881cba505ccc86fa5d82bd",
-  "installed": "2026-09-21",
-  "syncedCommit": "e4e99557c44c7dd993881cba505ccc86fa5d82bd"
+  "version": "main",
+  "commit": "deebadc92b6e43d1018520d01a5af04a6d22c078",
+  "installed": "2026-09-26",
+  "syncedCommit": "deebadc92b6e43d1018520d01a5af04a6d22c078"
 }
