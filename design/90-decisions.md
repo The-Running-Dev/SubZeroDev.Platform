@@ -23,6 +23,16 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
   criterion (the principal carries no permission, role or entitlement data) and its demand that the
   mistake be structurally impossible rather than warned against. Only the owner can decide which gives
   way, #92's criteria or the retained decision. Until then, contract Unresolved item 3 is not closed.
+- **Red-team F3 is a defect: the next-request revocation promise does not hold for mirrored issuer
+  roles** — [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F3 (STRUCTURAL).
+  `10-design.md` contradicts itself. *Data model* § 3 leaves a mirror's freshness to the consumer, while
+  *Control flow* path 4 step 4 and the 2026-09-25 grant-source entry say a revoked role "denies on the
+  next request whatever the token says". A role removed at the issuer keeps granting until the
+  consumer's sync runs, and the `Platform.Testing` revoke-then-deny harness passes regardless, because it
+  revokes the mirror row rather than the issuer's role. Nothing bounds that delay, so it can exceed the
+  token lifetime. *Alternatives* § 10 rejected claims-derived grants for handing revocation delay to the
+  issuer, and never weighed the mirror handing it to the consumer's sync job. A `/design` correction
+  comes before contract Unresolved item 3 closes.
 
 ---
 
