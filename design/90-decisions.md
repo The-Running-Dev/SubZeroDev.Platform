@@ -14,6 +14,16 @@ belongs in `docs/docs/adr/`.
 
 _(previously tracked out of this section: issue [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187))_
 
+- **Red-team F2 is a brief conflict between `10-design.md` and #92's own criteria** —
+  [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F2 (BLOCKING). `Principal.Claims`
+  is public and carries whatever the issuer asserted, roles included, so a consumer's permission provider
+  can still grant from a token claim and revocation waits for expiry. *Data model* § 3 and *Alternatives*
+  § 10 concede that the rule is a contract obligation, not structural, for consumer providers, and they
+  retain `Claims`. What went unrecorded is that this does not meet #92 as written: its first done-when
+  criterion (the principal carries no permission, role or entitlement data) and its demand that the
+  mistake be structurally impossible rather than warned against. Only the owner can decide which gives
+  way, #92's criteria or the retained decision. Until then, contract Unresolved item 3 is not closed.
+
 ---
 
 ### 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
