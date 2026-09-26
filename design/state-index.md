@@ -181,6 +181,7 @@ true.
 | decision/2026-09-25-platform-validates-credentials-never-conducts-sign-in | `unit/document/10-design` |
 | decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | `unit/document/10-design` |
 | decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | `unit/document/10-design` |
+| decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered

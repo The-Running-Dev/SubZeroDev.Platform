@@ -14,7 +14,48 @@ belongs in `docs/docs/adr/`.
 
 _(previously tracked out of this section: issue [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187))_
 
+- **Red-team F2 is a brief conflict between `10-design.md` and #92's own criteria** —
+  [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F2 (BLOCKING). `Principal.Claims`
+  is public and carries whatever the issuer asserted, roles included, so a consumer's permission provider
+  can still grant from a token claim and revocation waits for expiry. *Data model* § 3 and *Alternatives*
+  § 10 concede that the rule is a contract obligation, not structural, for consumer providers, and they
+  retain `Claims`. What went unrecorded is that this does not meet #92 as written: its first done-when
+  criterion (the principal carries no permission, role or entitlement data) and its demand that the
+  mistake be structurally impossible rather than warned against. Only the owner can decide which gives
+  way, #92's criteria or the retained decision. Until then, contract Unresolved item 3 is not closed.
+- **Red-team F3 is a defect: the next-request revocation promise does not hold for mirrored issuer
+  roles** — [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F3 (STRUCTURAL).
+  `10-design.md` contradicts itself. *Data model* § 3 leaves a mirror's freshness to the consumer, while
+  *Control flow* path 4 step 4 and the 2026-09-25 grant-source entry say a revoked role "denies on the
+  next request whatever the token says". A role removed at the issuer keeps granting until the
+  consumer's sync runs, and the `Platform.Testing` revoke-then-deny harness passes regardless, because it
+  revokes the mirror row rather than the issuer's role. Nothing bounds that delay, so it can exceed the
+  token lifetime. *Alternatives* § 10 rejected claims-derived grants for handing revocation delay to the
+  issuer, and never weighed the mirror handing it to the consumer's sync job. A `/design` correction
+  comes before contract Unresolved item 3 closes.
+
 ---
+
+### 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
+
+Context: [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F1 (BLOCKING), against
+`10-design.md` @ 52794de. Under the resource-server decision below, a vendor configuration package
+supplies bearer-validation settings only, so the non-standard sign-out #94 was raised over (Auth0's
+hand-built `/v2/logout`) stays with each client — the hand-wiring #94 exists to remove — and #94's
+sign-out proof cannot be run against Platform. The decision is known and retained, with its
+alternatives (*Alternatives* § 11); its consequence for #94 was not recorded.
+Chosen: accepted risk. Platform stays a resource server. Recorded consequences: #94's first, third and
+fourth done-when criteria — a hook per configured sign-in method, sign-out proven against a
+non-conforming provider, documentation that reaching for the hook is expected — describe a sign-in
+method Platform does not have, and D5 does not deliver them; a vendor's sign-in and sign-out quirks are
+handled once per client, and a vendor configuration package does not reduce that; contract Unresolved
+item 4 is settled for the validation half only, and the `/spec` pass that closes it says so rather than
+treating #94 as satisfied.
+Rejected: defect — the finding names no higher-precedence source the retained decision contradicts; the
+brief's Identity row commits to integration seams for hosted authentication, not to sign-in. Not
+sustained — the consequence is real and was unrecorded.
+Reversibility: cheap — a backend-for-frontend can still be added as a module that is an ordinary client
+of Platform (*Alternatives* § 11).
 
 ### 2026-09-25 — Every permission provider takes grants from a source revocable before the credential expires
 
