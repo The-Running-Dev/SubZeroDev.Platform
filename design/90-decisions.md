@@ -16,6 +16,27 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
+
+Context: [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F1 (BLOCKING), against
+`10-design.md` @ 52794de. Under the resource-server decision below, a vendor configuration package
+supplies bearer-validation settings only, so the non-standard sign-out #94 was raised over (Auth0's
+hand-built `/v2/logout`) stays with each client — the hand-wiring #94 exists to remove — and #94's
+sign-out proof cannot be run against Platform. The decision is known and retained, with its
+alternatives (*Alternatives* § 11); its consequence for #94 was not recorded.
+Chosen: accepted risk. Platform stays a resource server. Recorded consequences: #94's first, third and
+fourth done-when criteria — a hook per configured sign-in method, sign-out proven against a
+non-conforming provider, documentation that reaching for the hook is expected — describe a sign-in
+method Platform does not have, and D5 does not deliver them; a vendor's sign-in and sign-out quirks are
+handled once per client, and a vendor configuration package does not reduce that; contract Unresolved
+item 4 is settled for the validation half only, and the `/spec` pass that closes it says so rather than
+treating #94 as satisfied.
+Rejected: defect — the finding names no higher-precedence source the retained decision contradicts; the
+brief's Identity row commits to integration seams for hosted authentication, not to sign-in. Not
+sustained — the consequence is real and was unrecorded.
+Reversibility: cheap — a backend-for-frontend can still be added as a module that is an ordinary client
+of Platform (*Alternatives* § 11).
+
 ### 2026-09-25 — Every permission provider takes grants from a source revocable before the credential expires
 
 Context: `20-contract.md` § Unresolved item 3 (#92) — may a consumer-registered `IPermissionProvider`
