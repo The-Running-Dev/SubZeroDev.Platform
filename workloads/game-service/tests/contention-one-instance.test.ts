@@ -110,59 +110,63 @@ describe("S6.1, S6.6 — two concurrent submissions resolve to one winner, and t
 
 describe("S6.2 — readWritePauseMs at its default of 0 is inert", () => {
   it("inserts no observable delay between a session read and its write", async () => {
+    // The default is judged against the seam itself, not against a wall-clock ceiling: a store
+    // configured with a non-zero pause is measured alongside the defaulted one, interleaved so
+    // runner load lands on both alike, and each side is summarised by its fastest sample — the one
+    // least inflated by scheduling and I/O noise. A defaulted store that inserted a delay would
+    // close the gap between the two; a loaded runner slows both and leaves the gap intact.
+    const pauseMs = 200;
+    const samples = 5;
+
     const schema = await createTestSchema();
     const opened = await openDurableStore(configurationFor(schema.schema, { readWritePauseMs: 0 }), ENGINE_VERSION_UNDER_TEST);
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     try {
       const persistence = opened.value.persistenceForRequest();
-      await persistence.sessions.put({
+      const row = (blob: string) => ({
         sessionId: "s6-2",
-        blob: "{}",
-        audience: "player",
+        blob,
+        audience: "player" as const,
         attemptCounter: 0,
         replayCompatible: true,
         createdAt: "2026-01-01T00:00:00.000Z" as unknown as string,
         updatedAt: "2026-01-01T00:00:00.000Z" as unknown as string,
       });
-      await persistence.sessions.get("s6-2"); // records the read version the next put guards on
+      await persistence.sessions.put(row("{}"));
 
-      const startedAt = performance.now();
-      await persistence.sessions.put({
-        sessionId: "s6-2",
-        blob: '{"updated":true}',
-        audience: "player",
-        attemptCounter: 0,
-        replayCompatible: true,
-        createdAt: "2026-01-01T00:00:00.000Z" as unknown as string,
-        updatedAt: "2026-01-01T00:00:00.000Z" as unknown as string,
-      });
-      const elapsedAtDefault = performance.now() - startedAt;
+      /** One read/write pair: the read records the version the write guards on, and only the write
+       *  — where the seam sits — is timed. */
+      const timedReadThenWrite = async (through: typeof persistence, blob: string): Promise<number> => {
+        await through.sessions.get("s6-2");
+        const startedAt = performance.now();
+        await through.sessions.put(row(blob));
+        return performance.now() - startedAt;
+      };
 
       // The same read/write pair, this time with a configured, non-zero pause — establishing that
       // this measurement method is sensitive to the seam at all before trusting it reported "0" as
       // meaningfully different from "absent".
       const pausedOpened = await openDurableStore(
-        configurationFor(schema.schema, { readWritePauseMs: 200 }),
+        configurationFor(schema.schema, { readWritePauseMs: pauseMs }),
         ENGINE_VERSION_UNDER_TEST,
       );
       if (!pausedOpened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(pausedOpened.error)}`);
       try {
         const pausedPersistence = pausedOpened.value.persistenceForRequest();
-        await pausedPersistence.sessions.get("s6-2");
-        const pausedStartedAt = performance.now();
-        await pausedPersistence.sessions.put({
-          sessionId: "s6-2",
-          blob: '{"updatedAgain":true}',
-          audience: "player",
-          attemptCounter: 0,
-          replayCompatible: true,
-          createdAt: "2026-01-01T00:00:00.000Z" as unknown as string,
-          updatedAt: "2026-01-01T00:00:00.000Z" as unknown as string,
-        });
-        const elapsedWithPause = performance.now() - pausedStartedAt;
+        const atDefault: number[] = [];
+        const withPause: number[] = [];
+        for (let i = 0; i < samples; i++) {
+          atDefault.push(await timedReadThenWrite(persistence, JSON.stringify({ atDefault: i })));
+          withPause.push(await timedReadThenWrite(pausedPersistence, JSON.stringify({ withPause: i })));
+        }
+        const fastestAtDefault = Math.min(...atDefault);
+        const fastestWithPause = Math.min(...withPause);
 
-        expect(elapsedAtDefault).toBeLessThan(100);
-        expect(elapsedWithPause).toBeGreaterThanOrEqual(200);
+        // Sensitive: every paused write took at least the pause it was configured with.
+        expect(fastestWithPause).toBeGreaterThanOrEqual(pauseMs);
+        // Inert: the defaulted write falls short of the paused one by most of the pause — the
+        // half-pause margin absorbs round-trip jitter between the two fastest samples.
+        expect(fastestAtDefault).toBeLessThan(fastestWithPause - pauseMs / 2);
       } finally {
         await pausedOpened.value.close();
       }
