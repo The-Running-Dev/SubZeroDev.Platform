@@ -1051,6 +1051,10 @@ means writing its record first.
 binds renders `—`, the *enforced by nothing* case, rather than hiding it — this is currently every
 row, because no module has a unit record yet.
 
+Each is written so it could become an assertion. **"Code" means a build check, a startup check, a
+type, or a store constraint — the only ones a reader may trust without checking.** "Instruction"
+means this document is the only thing holding it, and a reviewer is the enforcement.
+
 <!-- invariants:start -->
 | | Statement | Held by | Enforcement | Evidence |
 |---|---|---|---|---|

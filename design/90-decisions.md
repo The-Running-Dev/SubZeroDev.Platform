@@ -33,8 +33,34 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
   token lifetime. *Alternatives* § 10 rejected claims-derived grants for handing revocation delay to the
   issuer, and never weighed the mirror handing it to the consumer's sync job. A `/design` correction
   comes before contract Unresolved item 3 closes.
+- **A provider that cannot answer still reaches the caller as forbidden** — the 2026-09-28 entry below.
+  The code changes to match the documents: `/spec` declares the decision's provider-failure member, then
+  `/plan` slices the change. The slice's test makes a provider unavailable and asserts what the caller
+  receives, not the error type.
 
 ---
+
+### 2026-09-28 — A provider that cannot answer reaches the caller as a retryable failure, not as forbidden
+
+Context: `/align` over the tree at f4822a5. `20-contract.md` *Public surface* § 3 ("a denial the caller
+may retry") and *Error semantics* § 2 (`ProviderUnavailable`: retryable, "return a retryable failure;
+the denial stands for this request"), and `10-design.md` *Failure modes*, the database ("A denial from
+an unreachable store returns a retryable error code"), all promise a retryable answer. The evaluator
+(`src/SubZeroDev.Platform.Core/Authorization.cs`) discards a provider's error and counts that provider as
+having granted nothing, and `AuthorizationDecision` has nowhere to carry the error, so the Hosting
+pipeline answers `PermissionDenied`/403 while the Organizations store is unreachable. D5-S4's test
+asserts `ProviderUnavailable.IsRetryable` on the error alone, never what a caller receives.
+Chosen: the code changes to match the documents. When a denial is reached with at least one provider
+unable to answer, the decision carries that provider's error, in the shape `AuditFailure` already takes,
+and Hosting and Mcp answer it the way they already answer `AuditFailure`: a retryable failure, not
+forbidden. The denial still stands for the request, so failing closed is unchanged. The member is a
+public-surface addition: `/spec` declares it and `/plan` slices it.
+Rejected: rewriting the documents to make a provider failure an ordinary forbidden — it tells every
+client that an outage is a missing permission, records a policy denial no policy made, and withdraws
+"fails closed and still retryable" (*Error semantics* § 2); `EvaluateAsync` returning a failure result —
+breaks "returns a decision, never a failure result" (*Public surface* § 3) and every call site's return
+type.
+Reversibility: cheap until a consumer reads the new member; moderate after, since it is public surface.
 
 ### 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
 
