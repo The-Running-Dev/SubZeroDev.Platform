@@ -1,7 +1,7 @@
 # Design state — index
 
 The corpus-wide facts a single record cannot state alone: the unit table of contents, and the
-four reverse edges `design/10-design.md` § *Derived* forbids writing onto a record
+four reverse edges AgentKit's `design/10-design.md` § *Derived* forbids writing onto a record
 (`Invariant.BoundBy`, `Contract.Consumers`, `Decision.Affects`, `Question.Affects`). Every
 table below is a **projected** marked region (`AGENTS.md` § *Marked regions*) — rendered by
 `tools/Update-DesignProjection.ps1` from `design/state/`, and overwritten on every
@@ -182,6 +182,7 @@ true.
 | decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | `unit/document/10-design` |
 | decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | `unit/document/10-design` |
 | decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/90-decisions` |
+| decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
