@@ -33,12 +33,34 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
   token lifetime. *Alternatives* § 10 rejected claims-derived grants for handing revocation delay to the
   issuer, and never weighed the mirror handing it to the consumer's sync job. A `/design` correction
   comes before contract Unresolved item 3 closes.
-- **A provider that cannot answer still reaches the caller as forbidden** — the 2026-09-28 entry below.
-  The code changes to match the documents: `/spec` declares the decision's provider-failure member, then
-  `/plan` slices the change. The slice's test makes a provider unavailable and asserts what the caller
-  receives, not the error type.
+- **A provider that cannot answer still reaches the caller as forbidden** — the 2026-09-28 entries below.
+  The code changes to match the documents. `/spec` has declared `AuthorizationDecision.ProviderFailure`
+  (`20-contract.md` *Types* § 2, I-A11, I-A12), and `/plan` now slices the change. The slice's test makes
+  a provider unavailable and asserts what the caller receives, not the error type.
 
 ---
+
+### 2026-09-28 — A provider failure is carried normalised, first-registered, and behind an audit failure
+
+Context: `/spec`, declaring the member the entry below routes to it. That entry fixes that a denial
+carries a provider's error in the shape `AuditFailure` takes and is answered as a retryable failure. It
+leaves open what the member carries when a provider returns a variant other than `ProviderUnavailable`,
+which provider it names when several fail, and which answer wins when the same denial also carries an
+`AuditFailure`.
+Chosen: the member is `ProviderFailure`, named like `AuditFailure`. It is always `ProviderUnavailable`
+naming the provider as the registry knows it, whatever the provider returned. It names the first
+provider in registry order that could not answer. Where both are set, `AuditFailure` decides the answer.
+`PermissionDenied` now requires that every provider answered, and a provider returns an error only when
+it could not answer.
+Rejected: carrying the provider's error as returned. A provider returning `PermissionDenied` would then
+reach the caller as a non-retryable error that the caller must still answer as retryable. A provider
+could also name another provider in a decision. *Error semantics* § 4 already settles the same shape for
+the audit sink, where the class decides, not the sink. Rejected: a collection of every failing
+provider. The caller's answer is the same for one failure or many, and a list reads as an inventory of
+the outage, which the decision does not claim to be. It also departs from the `AuditFailure` shape the
+entry below chose. Rejected: `ProviderFailure` deciding when both are set. Answering with the provider's
+code drops a `Required` write's failure from the response, which § 4 forbids.
+Reversibility: cheap until the slice lands; moderate after, since a consumer may read the member.
 
 ### 2026-09-28 — A provider that cannot answer reaches the caller as a retryable failure, not as forbidden
 

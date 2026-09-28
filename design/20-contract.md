@@ -65,6 +65,14 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 declared in the same project, materialised by S3 because `AuditEvent` needs it ahead of the rest of
 this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 
+One member of `AuthorizationDecision` is not in the tree yet, and is scaffolded here until the slice
+that materialises it replaces this block with the pointer above
+([`90-decisions.md`](90-decisions.md), 2026-09-28):
+
+```csharp
+public AuthorizationError? ProviderFailure { get; init; }
+```
+
 **What the declarations cannot say.**
 
 - **`Sources` is non-empty when and only when `Outcome` is `Allowed`.** The evaluator takes a union
@@ -78,6 +86,24 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
   § 4. The HTTP pipeline answers 503 with the `AuditError` code; Mcp answers a tool result saying the
   call could not be audited and may be retried. A denial that cannot be recorded is not answered as
   though it were.
+- **`ProviderFailure` is set when and only when the outcome is `Denied` and at least one registered
+  provider returned an error** (I-A11). A denial reached that way is not the policy's answer, only the
+  absence of one. An allowed decision never carries it: the union means any provider's grant allows, and
+  one provider's outage does not make another's grant less valid.
+- **`ProviderFailure` is always `ProviderUnavailable`, naming the provider as the registry knows it**,
+  whatever variant the provider returned. The fact the caller acts on is that a provider could not
+  answer, not what it said about itself — the same reason *Error semantics* § 4 has the class, not the
+  sink, decide the response. A provider cannot name another provider in a decision.
+- **Where more than one provider could not answer, `ProviderFailure` names the first in the provider
+  registry's order.** It says the denial may not be the policy's answer. It is not a list of the
+  providers that failed, and a caller must not read it as one.
+- **A decision carrying `ProviderFailure` is answered as a retryable failure, never as forbidden or
+  not found** (I-A12, *Error semantics* § 2). The HTTP pipeline answers 503 with the error's code. Mcp
+  answers a tool result saying the permission could not be checked and may be retried. The denial still
+  stands for this request: the caller does not proceed, so the check still fails closed.
+- **Where a decision carries both, `AuditFailure` decides the answer.** Both answers are retryable, so
+  the caller's next move is the same either way. Answering with the provider's code would drop a
+  `Required` write's failure from the response, which *Error semantics* § 4 forbids.
 - **A `PermissionName` reaching the evaluator unregistered is a startup-detectable defect, never a
   runtime denial.** A typo that silently denies is indistinguishable from a policy that denies — I-A3.
 - **`PermissionName.Value` must not acquire a parser, a wildcard, a hierarchy or a prefix match.** It
@@ -492,8 +518,13 @@ provider are declared in
   at one call.
 - **`EvaluateAsync` returns a decision, never a failure result.** A denial is a decision. A provider
   that could not answer returns `AuthorizationError` to the evaluator, which turns it into a denial
-  the caller may retry — *Error semantics*, § 2.
+  carrying `ProviderFailure` (*Types* § 2) that the caller may retry — *Error semantics*, § 2.
 - **`GrantsAsync` returning an error denies; it never grants.** An unreachable store fails closed.
+- **A provider returns an error only when it could not answer.** A provider that answered and grants
+  nothing returns an empty set. `PermissionDenied` and `ResourceNotVisible` are how a refusing caller
+  answers a decision; a provider never returns them. If one does, the evaluator records it as
+  `ProviderUnavailable` (*Types* § 2), and the caller answers with a retryable failure, not the answer
+  that variant names.
 - **A provider must not audit.** The evaluator audits a denial once, so a union across three
   providers does not write three records. An allowed decision is not itself an audited fact: the
   writer performing the action audits it, inside that action's transaction.
@@ -824,9 +855,9 @@ what the caller does about it will not.
 
 | Variant | Raised when | Retryable | The caller is expected to |
 |---|---|---|---|
-| `PermissionDenied` | no provider granted, and the principal can see the resource | no | return **forbidden** |
+| `PermissionDenied` | no provider granted, **every provider answered**, and the principal can see the resource | no | return **forbidden** |
 | `ResourceNotVisible` | the resource is in another tenant, or the principal may not know it exists | no | return **not found** |
-| `ProviderUnavailable` | a provider could not answer — typically an unreachable store | **yes** | return a retryable failure; the denial stands for this request |
+| `ProviderUnavailable` | a provider could not answer — typically an unreachable store. Carried on `AuthorizationDecision.ProviderFailure`, never returned by `EvaluateAsync` | **yes** | return a retryable failure — 503 on HTTP, a retryable tool result on Mcp; the denial stands for this request |
 
 **`PermissionDenied` and `ResourceNotVisible` are not interchangeable, and the difference is a
 security property rather than a style choice.** *Forbidden* confirms the resource exists. A
@@ -836,6 +867,9 @@ because there the existence is already known and pretending otherwise only obscu
 
 **`ProviderUnavailable` is retryable and still denies.** Failing closed and being retryable are not in
 tension: the request is denied now, and a caller who retries after the store returns is right to.
+**A denial with a provider unable to answer is never answered as `PermissionDenied`, and never as
+`ResourceNotVisible`.** Either would tell the client an outage is a missing permission or a missing
+resource, and would record as a policy denial one that no policy made.
 
 ### 3. `EntitlementError` — `SubZeroDev.Platform.Abstractions`
 
@@ -974,6 +1008,7 @@ like any other.
 | tool registered but not exposed | **unknown tool — the same answer** | no |
 | arguments fail the declared schema | invalid arguments | no |
 | authorization denies | forbidden, or not found where the resource is not visible, per § 2 | no |
+| authorization denies, and a permission provider could not answer | a tool result saying the permission could not be checked, per § 2 | **yes** |
 | entitlement refuses | not entitled, per § 3 | no |
 | the connection drops mid-invocation | cancelled through the existing cancellation plumbing | n/a |
 
@@ -1068,6 +1103,8 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
 | **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | — |
 | **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | instruction | — |
+| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider returned an error, and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) Enforced by code — evaluator construction. | — | code | — |
+| **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
 | **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | — |
 | **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | — |

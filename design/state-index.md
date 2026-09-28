@@ -45,6 +45,8 @@ true.
 | I-A8 | — |
 | I-A9 | — |
 | I-A10 | — |
+| I-A11 | — |
+| I-A12 | — |
 | I-B1 | — |
 | I-B2 | — |
 | I-B3 | — |
@@ -182,7 +184,8 @@ true.
 | decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | `unit/document/10-design` |
 | decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | `unit/document/10-design` |
 | decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/90-decisions` |
-| decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/90-decisions` |
+| decision/2026-09-28-provider-failure-carried-normalised-first-registered | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/20-contract`, `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
