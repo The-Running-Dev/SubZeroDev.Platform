@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
 Grace comes from the document, defaulting to 30 days; it is never a deployment setting (Owner: Licensing.) Enforced by code — no such option exists.

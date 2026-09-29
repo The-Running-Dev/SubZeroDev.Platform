@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/IdentityTests.cs
 
 ## Statement
 Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types.

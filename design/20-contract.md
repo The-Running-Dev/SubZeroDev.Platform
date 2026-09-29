@@ -1093,95 +1093,95 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 <!-- invariants:start -->
 | | Statement | Held by | Enforcement | Evidence |
 |---|---|---|---|---|
-| **I-A1** | `AuthorizationDecision.Sources` is non-empty **iff** `Outcome == Allowed` (Owner: Core.) Enforced by code — evaluator construction. | — | code | — |
+| **I-A1** | `AuthorizationDecision.Sources` is non-empty **iff** `Outcome == Allowed` (Owner: Core.) Enforced by code — evaluator construction. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A2** | The evaluator takes the union of every registered provider and consults no other source (Owner: Core.) | — | instruction | — |
-| **I-A3** | Every `PermissionName` reaching the evaluator is declared by some `IPermissionCatalog`; an undeclared one fails **startup**, never a request (Owner: Core.) Enforced by code — startup validation. | — | code | — |
-| **I-A4** | Two modules never declare the same `PermissionName` (Owner: Core.) Enforced by code — startup validation. | — | code | — |
-| **I-A5** | A provider returning an error denies and never grants (Owner: Core.) Enforced by code — the evaluator. | — | code | — |
-| **I-A6** | The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider, plus a sample scenario. | — | code | — |
-| **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) Enforced by code — the provider. | — | code | — |
+| **I-A3** | Every `PermissionName` reaching the evaluator is declared by some `IPermissionCatalog`; an undeclared one fails **startup**, never a request (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A4** | Two modules never declare the same `PermissionName` (Owner: Core.) Enforced by code — startup validation. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A5** | A provider returning an error denies and never grants (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A6** | The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
-| **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | — |
+| **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
 | **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | instruction | — |
-| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider returned an error, and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) Enforced by code — evaluator construction. | — | code | — |
+| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider returned an error, and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | instruction | — |
 | **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
-| **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | — |
-| **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | — |
-| **I-B4** | Entitlement is never stored by Billing; it is derived from plan, state and `IClock` (Owner: Billing.) Enforced by code — no entitlement table exists. | — | code | — |
+| **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |
+| **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |
+| **I-B4** | Entitlement is never stored by Billing; it is derived from plan, state and `IClock` (Owner: Billing.) Enforced by code — no entitlement table exists. | — | code | tests/SubZeroDev.Platform.Tests/BillingTests.cs |
 | **I-B5** | A unit of work carries the decision that admitted it; nothing re-evaluates during execution (Owner: consumers.) Enforced by code — in the sample's scenario; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-B6** | No billing provider is contacted on the request path, at startup, or on readiness (Owner: Billing.) Enforced by code — the offline CI run. | — | code | — |
-| **I-B7** | A redelivered provider event is idempotent (Owner: Billing.) Enforced by code — a unique receipt key. | — | code | — |
-| **I-C1** | `Operated` with no authentication provider fails startup (Owner: Core.) | — | code | — |
-| **I-C2** | `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback (Owner: Core.) | — | code | — |
-| **I-C3** | `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup (Owner: Core.) | — | code | — |
-| **I-C4** | The composition profile and the contributor set are inside the settings-fingerprint input (Owner: Core.) Enforced by code — see `SettingsFingerprint.cs`. | — | code | — |
-| **I-C5** | The local host has no package or project reference to Identity, Organizations, Billing or Licensing (Owner: the sample.) Enforced by code — a dependency-graph assertion. | — | code | — |
-| **I-C6** | No framework package references a module (Owner: all.) Enforced by code — an architecture test over the resolved package graph, which must fail against a deliberately broken graph before it counts. | — | code | — |
-| **I-C7** | No module references another module (Owner: all.) Enforced by code — the same test, second direction. | — | code | — |
-| **I-C8** | Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test. | — | code | — |
-| **I-C9** | Every startup check fails the host and names the registration that caused it; none degrades (Owner: Core, Hosting.) | — | code | — |
-| **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) Enforced by code — a non-nullable type. | — | code | — |
+| **I-B6** | No billing provider is contacted on the request path, at startup, or on readiness (Owner: Billing.) | — | instruction | — |
+| **I-B7** | A redelivered provider event is idempotent (Owner: Billing.) Enforced by code — a unique receipt key. | — | code | tests/SubZeroDev.Platform.Tests/BillingTests.cs |
+| **I-C1** | `Operated` with no authentication provider fails startup (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C2** | `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C3** | `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C4** | The composition profile and the contributor set are inside the settings-fingerprint input (Owner: Core.) Enforced by code — see `SettingsFingerprint.cs`. | — | code | tests/SubZeroDev.Platform.Tests/SettingsFingerprintTests.cs |
+| **I-C5** | The local host has no package or project reference to Identity, Organizations, Billing or Licensing (Owner: the sample.) Enforced by code — a dependency-graph assertion. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs, tests/SubZeroDev.Platform.Tests/LocalHostProofTests.cs |
+| **I-C6** | No framework package references a module (Owner: all.) Enforced by code — an architecture test over the resolved package graph, which must fail against a deliberately broken graph before it counts. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-C7** | No module references another module (Owner: all.) Enforced by code — the same test, second direction. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-C8** | Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-C9** | Every startup check fails the host and names the registration that caused it; none degrades (Owner: Core, Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) | — | instruction | tests/SubZeroDev.Platform.Tests/OperationScopeTests.cs, tests/SubZeroDev.Platform.Tests/PrincipalTests.cs |
 | **I-I2** | `PrincipalId.Issuer` and `.Subject` are never parsed, normalised, trimmed or case-folded by Platform (Owner: Abstractions.) | — | instruction | — |
 | **I-I3** | `PrincipalId.ToString()` is never split to recover the pair; anywhere the pair is stored it is two columns (Owner: Abstractions, Audit store, Organizations.) Enforced by code — in each schema; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | — |
+| **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
 | **I-I5** | A `Delegated` principal is never treated as an `Account` with missing fields (Owner: every consumer.) | — | instruction | — |
 | **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | instruction | — |
-| **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | — |
-| **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | — |
-| **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | — |
-| **I-L4** | An `Invalid` document never grants a tier (Owner: Licensing.) | — | code | — |
-| **I-L5** | Revocation is consulted on no path — not the request path, not startup, not readiness (Owner: Licensing.) Enforced by code — the offline CI run with outbound network unavailable. | — | code | — |
-| **I-L6** | Grace comes from the document, defaulting to 30 days; it is never a deployment setting (Owner: Licensing.) Enforced by code — no such option exists. | — | code | — |
-| **I-L7** | Accepted signing keys are supplied by the consumer as an ordered set; none is compiled into Platform (Owner: Licensing.) Enforced by code — a required option. | — | code | — |
-| **I-L8** | After grace, new paid-feature work is denied while accepted, running and scheduled work continues and existing data stays readable and exportable (Owner: Licensing, consumers.) Enforced by code — sample scenario. | — | code | — |
-| **I-L9** | Verification never fails startup and never fails a request (Owner: Licensing.) | — | code | — |
-| **I-M1** | The tool catalogue is frozen after startup; nothing registers, unregisters or re-exposes at runtime (Owner: Mcp.) | — | code | — |
-| **I-M2** | No registered tool's schema names a parameter matching the redaction marker set; a match fails **startup** (Owner: Mcp.) Enforced by code — startup validation. | — | code | — |
-| **I-M3** | Exposure is default closed; a registered but unexposed tool is neither listed nor callable (Owner: Mcp.) | — | code | — |
-| **I-M4** | Unregistered and unexposed produce the identical answer (Owner: Mcp.) | — | code | — |
-| **I-M5** | Authentication happens at the connection and never at a call (Owner: Mcp.) Enforced by code — no per-call credential parameter exists. | — | code | — |
-| **I-M6** | Authorization runs before any producer code is reached (Owner: Mcp.) Enforced by code — invocation order. | — | code | — |
-| **I-M7** | Both producers — manifest projection and a product-owned fixed table — register through the same surface, and neither is privileged (Owner: Mcp.) Enforced by code — sample scenario. | — | code | — |
-| **I-M8** | An invocation is audited with no arguments (Owner: Mcp.) Enforced by code — see I-U1. | — | code | — |
-| **I-M9** | No SDK type appears in Platform's public surface; `ModelContextProtocol.*` is referenced by `SubZeroDev.Platform.Mcp` and by nothing else (Owner: Mcp.) Enforced by code — an architecture test over the resolved package graph, alongside I-C6 and I-C7. | — | code | — |
-| **I-M10** | `IToolCatalogue` offers no route to an unexposed registration — no `All`, no exposure-ignoring lookup (Owner: Mcp.) Enforced by code — the interface. | — | code | — |
+| **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L4** | An `Invalid` document never grants a tier (Owner: Licensing.) | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L5** | Revocation is consulted on no path — not the request path, not startup, not readiness (Owner: Licensing.) Enforced by code — no path calls a registered revocation check. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L6** | Grace comes from the document, defaulting to 30 days; it is never a deployment setting (Owner: Licensing.) Enforced by code — no such option exists. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L7** | Accepted signing keys are supplied by the consumer as an ordered set; none is compiled into Platform (Owner: Licensing.) Enforced by code — a required option. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L8** | After grace, new paid-feature work is denied while accepted, running and scheduled work continues and existing data stays readable and exportable (Owner: Licensing, consumers.) | — | instruction | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L9** | Verification never fails startup and never fails a request (Owner: Licensing.) | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-M1** | The tool catalogue is frozen after startup; nothing registers, unregisters or re-exposes at runtime (Owner: Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs |
+| **I-M2** | No registered tool's schema names a parameter matching the redaction marker set; a match fails **startup** (Owner: Mcp.) Enforced by code — startup validation. | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs |
+| **I-M3** | Exposure is default closed; a registered but unexposed tool is neither listed nor callable (Owner: Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
+| **I-M4** | Unregistered and unexposed produce the identical answer (Owner: Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
+| **I-M5** | Authentication happens at the connection and never at a call (Owner: Mcp.) | — | instruction | tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
+| **I-M6** | Authorization runs before any producer code is reached (Owner: Mcp.) Enforced by code — invocation order. | — | code | tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
+| **I-M7** | Both producers — manifest projection and a product-owned fixed table — register through the same surface, and neither is privileged (Owner: Mcp.) | — | instruction | tests/SubZeroDev.Platform.Tests/McpTests.cs |
+| **I-M8** | An invocation is audited with no arguments (Owner: Mcp.) Enforced by code — see I-U1. | — | code | tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-M9** | No SDK type appears in Platform's public surface; `ModelContextProtocol.*` is referenced by `SubZeroDev.Platform.Mcp` and by nothing else (Owner: Mcp.) Enforced by code — an architecture test over the resolved package graph, alongside I-C6 and I-C7. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-M10** | `IToolCatalogue` offers no route to an unexposed registration — no `All`, no exposure-ignoring lookup (Owner: Mcp.) Enforced by code — the interface. | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs |
 | **I-M11** | Platform's permission evaluator is the only authorization authority on this surface; the SDK's authorization-metadata path is not used (Owner: Mcp.) Enforced by code — the sample's unknown-tool scenario; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-O1** | Creating an organization mints the tenant, writes the organization and writes the owner's membership in one transaction with its audit row (Owner: Organizations.) | — | code | — |
-| **I-O2** | Two organizations never share a tenant (Owner: Organizations.) Enforced by code — a unique constraint. | — | code | — |
-| **I-O3** | One invitation token creates at most one membership (Owner: Organizations.) Enforced by code — a conditional update. | — | code | — |
-| **I-O4** | The invitation token is stored only as a hash and is readable exactly once, at mint (Owner: Organizations.) Enforced by code — schema and API. | — | code | — |
-| **I-O5** | Expired, already-redeemed and never-existed are indistinguishable to a caller (Owner: Organizations.) Enforced by code — one error variant. | — | code | — |
-| **I-O6** | Membership is keyed by `PrincipalId` and never by a user row (Owner: Organizations.) Enforced by code — schema. | — | code | — |
-| **I-O7** | A non-member cannot switch into or administer an organization, and is told not found (Owner: Organizations.) Enforced by code — sample scenario. | — | code | — |
-| **I-O8** | The framework never learns that a tenant has an owner (Owner: all.) Enforced by code — see I-C6. | — | code | — |
-| **I-OB1** | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work (Owner: Observability, Hosting.) Enforced by code — standalone and hosted configuration tests, plus the existing blocked-export test. | — | code | — |
-| **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | — |
-| **I-R2** | Tenant resolution precedes authorization (Owner: Hosting, Mcp.) | — | code | — |
-| **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) Enforced by code — the scope. | — | code | — |
-| **I-R4** | The local host takes the same path with no step skipped and no branch taken (Owner: Hosting.) Enforced by code — sample scenario. | — | code | — |
+| **I-O1** | Creating an organization mints the tenant, writes the organization and writes the owner's membership in one transaction with its audit row (Owner: Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O2** | Two organizations never share a tenant (Owner: Organizations.) Enforced by code — a unique constraint. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedProofTests.cs |
+| **I-O3** | One invitation token creates at most one membership (Owner: Organizations.) Enforced by code — a conditional update. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedProofTests.cs |
+| **I-O4** | The invitation token is stored only as a hash and is readable exactly once, at mint (Owner: Organizations.) | — | instruction | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O5** | Expired, already-redeemed and never-existed are indistinguishable to a caller (Owner: Organizations.) Enforced by code — one error variant. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O6** | Membership is keyed by `PrincipalId` and never by a user row (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O7** | A non-member cannot switch into or administer an organization, and is told not found (Owner: Organizations.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
+| **I-O8** | The framework never learns that a tenant has an owner (Owner: all.) | — | instruction | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-OB1** | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work (Owner: Observability, Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/TelemetryOptionsTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryExportTests.cs |
+| **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
+| **I-R2** | Tenant resolution precedes authorization (Owner: Hosting, Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
+| **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-R4** | The local host takes the same path with no step skipped and no branch taken (Owner: Hosting.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
 | **I-R5** | Only an endpoint admitting new paid-feature work is entitlement-gated (Owner: consumers.) | — | instruction | — |
-| **I-R6** | Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source. | — | code | — |
+| **I-R6** | Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 | **I-R7** | The pipeline's authorization check is never resource-scoped; a per-resource check is the handler's own second call (Owner: Hosting, consumers.) | — | instruction | — |
-| **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) Enforced by code — the scope is read-only and a write inside it throws. | — | code | — |
-| **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) Enforced by code — the consumer's own query code, consulting `ISharedReadScopeFactory.IsOpenFor<TEntity>()` at model build. | — | code | — |
-| **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | — |
-| **I-T4** | Opening a shared-read scope emits exactly one audit record, never one per row (Owner: Persistence.) Enforced by code — scope construction. | — | code | — |
+| **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
+| **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
+| **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
+| **I-T4** | Opening a shared-read scope emits exactly one audit record, never one per row (Owner: Persistence.) Enforced by code — scope construction. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T5** | `SharedAt` is written only by a permissioned, audited, tenant-scoped write by the owning tenant (Owner: Persistence.) Enforced by code — for the permission check; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-T6** | With no resolver registered, `ICurrentTenant.Current` is `TenantId.Implicit` (Owner: Core.) Enforced by code — resolver chain. | — | code | — |
-| **I-T7** | The tenant identifier, primary keys and implicit-tenant representation are unchanged from D3 and G2 (Owner: Persistence.) Enforced by code — existing migrations unmodified. | — | code | — |
-| **I-T8** | A resolver never denies; it answers or defers (Owner: Core.) Enforced by code — the return type carries no decision. | — | code | — |
-| **I-U1** | `AuditEvent` has no payload, changed-field list or free-form detail field (Owner: Abstractions.) Enforced by code — the type. | — | code | — |
+| **I-T6** | With no resolver registered, `ICurrentTenant.Current` is `TenantId.Implicit` (Owner: Core.) Enforced by code — resolver chain. | — | code | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-T7** | The tenant identifier, primary keys and implicit-tenant representation are unchanged from D3 and G2 (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-T8** | A resolver never denies; it answers or defers (Owner: Core.) Enforced by code — the return type carries no decision. | — | code | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-U1** | `AuditEvent` has no payload, changed-field list or free-form detail field (Owner: Abstractions.) Enforced by code — the type. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
 | **I-U2** | Authorization denials, shared-resource escapes, membership and ownership changes, entitlement and licence transitions and MCP invocations are `Required`; everything else is `Recorded` (Owner: each writer.) | — | instruction | — |
-| **I-U3** | A successful action that wrote state writes its audit row in the same transaction (Owner: each writer.) Enforced by code — the ambient transaction. | — | code | — |
-| **I-U4** | A denial, a read, or a failure that wrote nothing writes its row in its own transaction after the outcome is known (Owner: each writer.) | — | code | — |
-| **I-U5** | `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink. | — | code | — |
-| **I-U6** | No secret value or payload reaches a stored record or a log line, through **any** audited input surface (Owner: all.) Enforced by code — the brief's representative-secret tests. | — | code | — |
-| **I-U7** | Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.) Enforced by code — schema and API. | — | code | — |
+| **I-U3** | A successful action that wrote state writes its audit row in the same transaction (Owner: each writer.) Enforced by code — the ambient transaction. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-U4** | A denial, a read, or a failure that wrote nothing writes its row in its own transaction after the outcome is known (Owner: each writer.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-U5** | `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-U6** | No secret value or payload reaches a stored record or a log line, through **any** audited input surface (Owner: all.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryRedactionTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
+| **I-U7** | Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs |
 | **I-U8** | Audit rows are not totally ordered across hosts and nothing relies on the opposite (Owner: all.) | — | instruction | — |
-| **I-U9** | An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) Enforced by code — the detection sites. | — | code | — |
-| **I-U10** | Audit-write failure degrades readiness in both classes (Owner: Core.) Enforced by code — `platform.audit.sink`. | — | code | — |
-| **I-W1** | The shell holds no server-side state and reaches the system only over the public HTTP API; **no backend package references it, and it has no privileged endpoint of its own** (Owner: the shell.) Enforced by code — the package graph, plus an assertion that every endpoint the shell calls is callable without it. | — | code | — |
+| **I-U9** | An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-U10** | Audit-write failure degrades readiness in both classes (Owner: Core.) Enforced by code — `platform.audit.sink`. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-W1** | The shell holds no server-side state and reaches the system only over the public HTTP API; **no backend package references it, and it has no privileged endpoint of its own** (Owner: the shell.) | — | instruction | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 <!-- invariants:end -->
 
 ---

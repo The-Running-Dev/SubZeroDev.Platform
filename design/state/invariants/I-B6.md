@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-B6
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -13,4 +13,4 @@ Work:
 Evidence:
 
 ## Statement
-No billing provider is contacted on the request path, at startup, or on readiness (Owner: Billing.) Enforced by code — the offline CI run.
+No billing provider is contacted on the request path, at startup, or on readiness (Owner: Billing.)

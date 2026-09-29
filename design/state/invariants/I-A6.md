@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs
 
 ## Statement
-The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider, plus a sample scenario.
+The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider.

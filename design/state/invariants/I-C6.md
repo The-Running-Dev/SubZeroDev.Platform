@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs
 
 ## Statement
 No framework package references a module (Owner: all.) Enforced by code — an architecture test over the resolved package graph, which must fail against a deliberately broken graph before it counts.

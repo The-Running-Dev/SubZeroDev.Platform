@@ -270,7 +270,7 @@ internal sealed class CreateBillingTablesMigration : IModuleMigration
             """, cancellationToken).ConfigureAwait(false);
 
         // Unique on tenant: one tenant holds at most one subscription, enforced by the store rather
-        // than by a check in code (I-O8, S11.8). No entitlement column exists here — entitlement is
+        // than by a check in code (S11.8). No entitlement column exists here — entitlement is
         // derived from plan_key, state and the clock (I-B4).
         await ExecuteAsync(connection, transaction, $"""
             CREATE TABLE subscription (

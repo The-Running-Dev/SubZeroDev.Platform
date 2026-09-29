@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs
 
 ## Statement
 Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source.

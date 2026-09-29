@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs
 
 ## Statement
 `Operated` with no authentication provider fails startup (Owner: Core.)

@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/SharedReadTests.cs
 
 ## Statement
 Opening a shared-read scope emits exactly one audit record, never one per row (Owner: Persistence.) Enforced by code — scope construction.

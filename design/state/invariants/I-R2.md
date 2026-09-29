@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs
 
 ## Statement
 Tenant resolution precedes authorization (Owner: Hosting, Mcp.)

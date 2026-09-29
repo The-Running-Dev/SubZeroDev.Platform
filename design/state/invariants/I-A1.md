@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs
 
 ## Statement
 `AuthorizationDecision.Sources` is non-empty **iff** `Outcome == Allowed` (Owner: Core.) Enforced by code — evaluator construction.

@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/SharedReadTests.cs
 
 ## Statement
 A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter.

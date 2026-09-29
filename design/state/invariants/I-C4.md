@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/SettingsFingerprintTests.cs
 
 ## Statement
 The composition profile and the contributor set are inside the settings-fingerprint input (Owner: Core.) Enforced by code — see `SettingsFingerprint.cs`.

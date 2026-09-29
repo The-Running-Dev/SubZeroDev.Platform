@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs
 
 ## Statement
 Expired, already-redeemed and never-existed are indistinguishable to a caller (Owner: Organizations.) Enforced by code — one error variant.
