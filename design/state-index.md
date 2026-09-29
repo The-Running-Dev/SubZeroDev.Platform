@@ -224,6 +224,10 @@ commit the mirror was taken at; check it against `git log` before trusting an en
 | 25 | #68 | Development-environment automatic migration application is promised and was never built | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 187 | #187 | Audit retention is deferred out of D5 and the table grows without bound | 1, 2 | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 224 | #224 | Re-enable McpInvocationTests.A_cancelled_call_writes_no_audit_record_and_never_completes_the_invoker once the SDK ships the cancellation fix | — | `4943900bd936ddd5ae4ce7f093d71caf09d30b32` |
+| 260 | #260 | Test the uncovered part of 21 invariants held by instruction | — | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 263 | #263 | Red-team F2 is a brief conflict between 10-design.md and #92's own criteria | 1, 2 | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 264 | #264 | Red-team F3 is a defect: the next-request revocation promise does not hold for mirrored issuer roles | 1, 2, 3 | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 265 | #265 | A provider that cannot answer still reaches the caller as forbidden | 1, 2 | `a1fa59377986e0d2e823dddd30080e138d787518` |
 | milestone/5 | #80 | Decide which slice set the public site's roadmap page renders | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #81 | Settle the @subzerodev registry reservations — only signing in settles it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #85 | The engine writes the mutated blob to memory before persistence on two of its four write paths, and the four disagree with each other | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
