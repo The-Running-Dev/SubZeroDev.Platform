@@ -62,7 +62,7 @@ public sealed record Plan(
 /// <summary>A tenant's subscription. <c>design/20-contract.md</c>, Types §8. Entitlement is derived
 /// from <see cref="Plan"/> and <see cref="State"/> against <see cref="IClock"/> — never stored (I-B4).</summary>
 /// <param name="Id">The subscription's identity.</param>
-/// <param name="Tenant">The subscribed tenant. At most one subscription per tenant (I-O8, S11.8).</param>
+/// <param name="Tenant">The subscribed tenant. At most one subscription per tenant (S11.8).</param>
 /// <param name="Plan">The subscribed plan's key.</param>
 /// <param name="State">The subscription's state.</param>
 /// <param name="PeriodStart">When the current period started.</param>

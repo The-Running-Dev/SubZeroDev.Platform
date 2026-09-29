@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/McpTests.cs
 
 ## Statement
 The tool catalogue is frozen after startup; nothing registers, unregisters or re-exposes at runtime (Owner: Mcp.)

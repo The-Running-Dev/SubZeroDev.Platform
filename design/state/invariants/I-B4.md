@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/BillingTests.cs
 
 ## Statement
 Entitlement is never stored by Billing; it is derived from plan, state and `IClock` (Owner: Billing.) Enforced by code — no entitlement table exists.

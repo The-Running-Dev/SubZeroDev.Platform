@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs
 
 ## Statement
 Creating an organization mints the tenant, writes the organization and writes the owner's membership in one transaction with its audit row (Owner: Organizations.)

@@ -23,6 +23,12 @@ true.
 | `unit/document/20-contract` | document | `design/20-contract.md` |
 | `unit/document/30-slices` | document | `design/30-slices.md` |
 | `unit/document/90-decisions` | document | `design/90-decisions.md` |
+| `unit/document/agent` | document | `agent.md` |
+| `unit/document/AGENTS` | document | `AGENTS.md` |
+| `unit/document/codex-PROFILES` | document | `codex/PROFILES.md` |
+| `unit/document/issue-template-bug` | document | `.github/ISSUE_TEMPLATE/bug.md` |
+| `unit/document/issue-template-story` | document | `.github/ISSUE_TEMPLATE/story.md` |
+| `unit/document/README` | document | `README.md` |
 | `unit/document/state-index` | document | `design/state-index.md` |
 | `unit/script/read-designstate` | script | `tools/Read-DesignState.ps1` |
 | `unit/script/test-designdrift` | script | `tools/Test-DesignDrift.ps1` |
@@ -186,6 +192,7 @@ true.
 | decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/90-decisions` |
 | decision/2026-09-28-provider-failure-carried-normalised-first-registered | `unit/document/20-contract`, `unit/document/90-decisions` |
 | decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-29-untested-invariants-held-by-instruction | `unit/document/20-contract`, `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered

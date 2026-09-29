@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/BillingTests.cs
 
 ## Statement
 A redelivered provider event is idempotent (Owner: Billing.) Enforced by code — a unique receipt key.

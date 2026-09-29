@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs
 
 ## Statement
 Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test.

@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-U7
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs
 
 ## Statement
-Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.) Enforced by code — schema and API.
+Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.)

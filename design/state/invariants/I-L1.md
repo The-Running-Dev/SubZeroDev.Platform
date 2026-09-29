@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
 Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key.

@@ -40,6 +40,23 @@ _(previously tracked out of this section: issue [#187](https://github.com/The-Ru
 
 ---
 
+### 2026-09-29 — Twenty-one invariants without a whole-statement test are held by instruction, not code
+
+Context: `/align`. The #245 bootstrap copied each invariant's "Enforced by" prose into
+`Enforcement: code` without naming a test, so seventy-three rows failed the design-state check for
+missing Evidence. A row is `code` only when a test evidences the whole statement. Tests cover the whole
+statement for fifty-two rows. For nineteen they cover part of it. I-B6 has code and no test, and nothing
+implements I-A11 yet.
+Chosen: the fifty-two keep `code` and name their tests as Evidence. The other twenty-one become
+`instruction` and lose their "Enforced by code" clause. The nineteen partly tested rows name those
+tests as Evidence. Each row flips back to `code` in the change that adds the test covering the rest of
+its statement, and one tracker issue lists the gaps. I-A6 and I-L5 keep `code`, and their clauses stop
+citing a sample scenario and an offline CI run that do not exist.
+Rejected: keeping `code` and citing the partial tests, because the check would then pass on rows
+nothing fully proves. Rejected: `code, instruction` for the partly tested rows. It is true for most of
+them, but it hides which part lacks a test. The tracker issue says which part.
+Reversibility: cheap. Each row is one field.
+
 ### 2026-09-28 — A provider failure is carried normalised, first-registered, and behind an audit failure
 
 Context: `/spec`, declaring the member the entry below routes to it. That entry fixes that a denial

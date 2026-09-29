@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs
 
 ## Statement
 `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback (Owner: Core.)

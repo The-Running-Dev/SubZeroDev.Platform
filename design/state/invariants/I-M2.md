@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/McpTests.cs
 
 ## Statement
 No registered tool's schema names a parameter matching the redaction marker set; a match fails **startup** (Owner: Mcp.) Enforced by code — startup validation.
