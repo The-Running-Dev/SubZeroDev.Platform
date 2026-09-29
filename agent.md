@@ -61,6 +61,16 @@ and preferences belong in `AGENTS.md`.
   underneath it, unnoticed. **Cost: a later reconcile re-derived the whole physical-type
   question from the DDL, and found the tenant/payload divergence by reading SQL rather than the
   log.** A decision that overrides a table is not finished until the table says so.
+- **A new invariant starts as `Enforcement: instruction` and becomes `code` only in the commit
+  that adds its test.** "Enforced by code" in a statement records where the mechanism is meant
+  to live, not that a test proves it. `Test-DesignState.ps1` requires Evidence on every `code`
+  row, and a row is `code` only when a test evidences the *whole* statement. The #245 bootstrap
+  copied each statement's "Enforced by" prose into `Enforcement: code` with no Evidence. #259
+  then declared I-A11 as `code` before anything implemented it. **Cost: the checker failed on
+  seventy-three rows. Reconciling them (#261) found nineteen that were only partly tested, one
+  with no test at all, and one that was not implemented. Five statements cited a sample scenario
+  or an offline CI run that do not exist.** Declare the invariant as `instruction`, and flip it in
+  the change whose test covers it.
 
 ## Documentation site
 
