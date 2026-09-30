@@ -75,6 +75,14 @@ true.
 | I-I4 | — |
 | I-I5 | — |
 | I-I6 | — |
+| I-I7 | — |
+| I-I8 | — |
+| I-I9 | — |
+| I-I10 | — |
+| I-I11 | — |
+| I-I12 | — |
+| I-I13 | — |
+| I-I14 | — |
 | I-L1 | — |
 | I-L2 | — |
 | I-L3 | — |
@@ -193,6 +201,8 @@ true.
 | decision/2026-09-28-provider-failure-carried-normalised-first-registered | `unit/document/20-contract`, `unit/document/90-decisions` |
 | decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/20-contract`, `unit/document/90-decisions` |
 | decision/2026-09-29-untested-invariants-held-by-instruction | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-30-generic-bearer-path-configuration-schema | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-30-generic-path-settings-defect-is-configuration-error | `unit/document/20-contract`, `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered

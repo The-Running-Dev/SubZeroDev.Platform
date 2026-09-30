@@ -354,6 +354,70 @@ introduces no .NET declaration.
 
 The shell's contract is therefore a constraint rather than a type, and it is I-W1.
 
+### 12. The generic bearer path — `SubZeroDev.Platform.Identity`
+
+**No public .NET type, and none may be added.** The generic path's public contract is its
+configuration schema ([`10-design.md`](10-design.md) § *Data model* 10). A vendor configuration package
+writes these keys without referencing a Platform package, so a C# settings type would be a second
+contract that no vendor package could compile against. The keys and their meanings are the contract.
+The values they bind to are internal to Identity. The choices below that go past the design are in
+[`90-decisions.md`](90-decisions.md), 2026-09-30.
+
+**One provider per child section of `Platform:Identity:Bearer`.** When the host registers the Identity
+module, every child section `Platform:Identity:Bearer:<name>` becomes one generic-path provider.
+`<name>` is its `IAuthenticationProvider.Name`. With no child section there is no generic-path provider
+and no key fetch. The provider is registered like any other authentication provider, so two providers
+sharing a name raise `DuplicateProviderName` (*Error semantics* § 9). Configuration keys compare
+case-insensitively, so two sections whose names differ only in case are one section.
+
+| Key under `<name>` | Required | Meaning and constraint |
+|---|---|---|
+| `Issuer` | exactly one of `Issuer` and `IssuerPattern` | The expected `iss`, compared ordinally. An absolute URI. |
+| `IssuerPattern` | exactly one of `Issuer` and `IssuerPattern` | An issuer string containing the placeholder `{tenantid}` exactly once. The placeholder matches one or more characters, none of them `/`. Every other character matches itself ordinally. For an issuer that mints one issuer string per customer tenant. |
+| `Discovery` | exactly one of `Discovery` and `SigningKeys` | The issuer's OpenID Connect discovery address: an absolute `https` URI. The key set is found through it. |
+| `SigningKeys` | exactly one of `Discovery` and `SigningKeys` | A fixed JSON Web Key Set document, given inline as one string, for an issuer with no discovery. Only public keys. A key with private members is malformed. |
+| `Audiences` | yes | A non-empty array of non-empty strings. A token must name at least one of them in `aud`. |
+| `Algorithms` | no | An array drawn from `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384` and `ES512`. Default `[RS256]`. Any other value is malformed, including every `HS*` value and `none`. A shared secret stays the test-grade provider's (I-I7). |
+| `ClockTolerance` | no | The skew allowed on `exp` and `nbf`: a non-negative duration of at most `00:05:00`. Default `00:01:00`. |
+| `SubjectClaim` | no | The claim whose string value becomes `PrincipalId.Subject`. Default `sub`. |
+| `DisplayNameClaim` | no | The claim whose string value becomes `Principal.DisplayName`. When absent, there is no display name. |
+| `KeyRefreshInterval` | no | Only valid with `Discovery`. At least `00:00:30` and at most `1.00:00:00`. Default `00:05:00`. |
+
+**What the table cannot say.**
+
+- **The key set is the whole contract, and a key outside it fails startup.** Any key under
+  `Platform:Identity:Bearer:<name>` that the table does not name is unrecognised. The same holds for a
+  value where the table expects a section, and a section where it expects a value. The host fails
+  startup (*Error semantics* § 9). An unrecognised key is most often a vendor dialect the generic path
+  does not yet express. Ignoring it would validate tokens against settings the operator did not write.
+  The fix is a generic-path capability, never a workaround in a vendor package.
+- **Keys are added and never withdrawn or redefined.** Once a vendor package writes a key, the key is
+  public contract. A key's meaning never narrows. Its default never changes in a way that accepts a
+  token the old default rejected.
+- **Identity does not know which configuration source wrote a key.** A key written by a vendor
+  configuration package and the same key in a settings file are the same setting. Where both write it,
+  the host's configuration precedence decides, as it does for any other key. Identity adds no
+  precedence of its own (I-I14).
+- **The principal is `Account`.** Its `PrincipalId` is the validated `iss`, as the token carries it,
+  paired with the value of the configured subject claim, also as the token carries it. For an
+  `IssuerPattern` provider the validated `iss` is the concrete string the token carried, never the
+  pattern, so two customer tenants of one issuer are two issuers (I-I11). Neither half is trimmed or
+  case-folded (I-I2). A missing, empty or non-string subject claim rejects the credential.
+- **The display-name claim is the only other claim the provider reads into a named field.** The rest
+  stay in `Principal.Claims`, which no Platform decision reads (I-I6).
+- **With `Issuer` and `Discovery`, the discovery document's `issuer` must equal `Issuer` ordinally.**
+  With `IssuerPattern`, it must equal the pattern string ordinally. A document that names another
+  issuer is a failed fetch. OpenID Connect Discovery requires the match, and the check is what stops a
+  misdirected discovery address from supplying keys for an issuer it does not speak for.
+- **`SigningKeys` is never fetched and never refreshed.** Its provider has key material from startup,
+  and its readiness check always reports healthy. Rotation for such an issuer is a configuration change
+  and a restart.
+- **A `Discovery` provider fetches, holds and refreshes its own key set**, per instance and never on
+  the request path (*Public surface* § 10).
+- **No `Microsoft.IdentityModel.*` type appears in Platform's public surface** (I-I12). The libraries
+  are referenced by `SubZeroDev.Platform.Identity` and by nothing else, on the same terms, and for the
+  same reason, as the MCP SDK (*Types* § 10).
+
 ---
 
 ## Persisted schemas
@@ -496,9 +560,10 @@ registry and the chain that runs registered providers in registration order are 
 - **`AuthenticateAsync` distinguishes "no credential presented" from "a credential was presented and
   failed to validate".** No credential is success carrying `Principal.Anonymous`; a bad credential is
   a failure. Collapsing them makes an absent token indistinguishable from a forged one.
-- **It must never block on a network fetch.** Key material is fetched at startup and cached; a request
-  arriving when no key is cached fails with `AuthenticationError.KeyMaterialUnavailable`, which is an
-  authentication failure and **never a server error**.
+- **It must never block on a network fetch.** Key material is fetched at startup and cached, and the
+  generic path refreshes it off the request path (*Types* § 12). A request arriving when no key is
+  cached fails with `AuthenticationError.KeyMaterialUnavailable`, which is an authentication failure
+  and **never a server error**.
 - **Platform retries nothing here.** `PlatformError.IsRetryable` is the caller's signal, not an
   instruction Platform follows itself.
 - **`IAuthenticationRequest` is the transport's credential surface, and it exposes headers and nothing
@@ -648,9 +713,9 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
   D3 decision that made it fixed rather than configurable is unchanged, and a redaction boundary a
   consumer could replace is not a boundary. Abstractions is not the destination — it exposes contracts
   only and acquires no implementation.
-- **Startup validation is stated as I-C1 to I-C4 and I-A3 to I-A4**, and every one fails the host with
-  a named error rather than degrading it. **A host that cannot state its own composition does not
-  serve**, because every guarantee in this document is stated relative to a composition.
+- **Startup validation is stated as I-C1 to I-C4, I-A3 to I-A4 and I-I10**, and every one fails the
+  host with a named error rather than degrading it. **A host that cannot state its own composition
+  does not serve**, because every guarantee in this document is stated relative to a composition.
 
 ### 9. Testing — `SubZeroDev.Platform.Testing`
 
@@ -688,6 +753,72 @@ The getter-only effective composition profile is declared on `IPlatformTestHost`
   delete an audit row is a test helper that can be used to prove the wrong thing.
 
 ### 10. Modules
+
+**Identity** exposes authentication providers and the generic bearer path's configuration schema
+(*Types* § 12). A host registers the module and writes configuration. No registration call exists per
+issuer, and no method chains off the module for a vendor. It owns no rows. Its semantics:
+
+- **Settings are validated before any key is fetched, and before the host serves** — path 2, step 8.
+  A settings defect fails startup, names the full key, and leaves no state behind (I-I10). No fetch has
+  been attempted and no provider has been registered, so the host never served.
+- **The key fetch never fails startup** (I-I10). Each `Discovery` provider attempts its first fetch at
+  step 8. A provider whose first fetch fails starts with no keys, answers every credential it claims
+  with `KeyMaterialUnavailable`, reports not-ready, and keeps trying on its refresh schedule.
+- **Every fetch is bounded by a fixed 30-second timeout, which is not a setting.** A fetch that times
+  out is a failed fetch. This applies to the first fetch, which startup waits on, and to every refresh.
+- **Key refresh is background work, and the only background work D5 adds.** Each `Discovery` provider
+  registers one `IBackgroundWork` named `platform.identity.key-refresh:<name>`. It runs at the
+  provider's `KeyRefreshInterval` in both host roles, with `RequiresLease` false. It writes nothing
+  durable. Each instance validates against its own cache, so each must refresh its own, and a lease
+  would leave every other instance's cache stale (I-I9).
+- **A successful refresh replaces the whole cached set in one atomic swap.** A request reading
+  concurrently sees the whole old set or the whole new one, never a mix (I-I9). Instances may hold
+  different sets for up to one interval.
+- **A failed refresh keeps the previous set, logs, and degrades readiness. It never empties the
+  cache** (I-I9). An issuer outage shorter than its own key lifetime is invisible to callers.
+- **The interval is a promise the operator makes about the issuer.** A token signed with a newly
+  published key is rejected until the next refresh, so the interval must be shorter than the lead time
+  the issuer gives between publishing a key and signing with it. A key the issuer withdraws stays
+  accepted until the next successful refresh. The interval bounds how long.
+- **Readiness is one check per `Discovery` provider**, `platform.identity.key-set:<name>`, of kind
+  `Readiness` and criticality `Required`. It reads the cache and the latest fetch outcome, and never
+  fetches:
+
+  | Condition | Status |
+  |---|---|
+  | no key set cached yet | `Unhealthy` |
+  | a set is cached, and the latest fetch failed | `Degraded` |
+  | a set is cached, and the latest fetch succeeded | `Healthy` |
+- **A provider defers on a credential it does not claim.** A bearer token whose `iss` does not match
+  the provider's `Issuer` or `IssuerPattern` is success carrying `Principal.Anonymous`, so the chain
+  moves to the next provider. This is exactly how the test-grade provider already behaves, and it is
+  what makes one provider per trusted issuer chain. A token the provider claims is validated in full
+  and answered by *Error semantics* § 1.
+
+**A vendor configuration package** sits outside both tiers and outside the package graph
+([`10-design.md`](10-design.md) § *Module boundaries* 3 and 4). It is not a Platform package. This
+contract binds its shape because Identity is what reads its output:
+
+- **It is a configuration source**, the same kind of thing a settings file is. It depends on the host's
+  configuration abstraction (`Microsoft.Extensions.Configuration.Abstractions`) and on no Platform
+  package. The fifth build check fails the build if it references one (I-I13). A package that cannot
+  see `IAuthenticationProvider` cannot implement one, so "sugar over the generic path, never a parallel
+  implementation" is a property of what the package can reach.
+- **It exposes one method per protocol surface the vendor offers.** Each method is an extension on the
+  host's configuration builder. It takes the provider name the caller chooses, and writes keys under
+  `Platform:Identity:Bearer:<that name>`. A caller can therefore trust two issuers of one vendor. A
+  hosted and a self-hosted deployment are one method only when the same keys, with different values,
+  describe both. Otherwise they are two methods, and each states in its documentation what the issuer
+  must have switched on (self-hosted Supabase's `GOTRUE_OAUTH_SERVER_ENABLED`, for example).
+- **It writes only keys *Types* § 12 names.** A key the table does not name fails startup exactly as
+  it would from a settings file. A quirk configuration cannot express becomes a generic-path
+  capability first: a new row in that table, and a new decision.
+- **None is built in D5.** The mechanism is proven without one. A configuration source built the way a
+  vendor package would build it lives in a project of its own that references no Platform package, and
+  the fifth build check runs over it. The check must fail against a deliberately broken reference
+  before it counts. The same keys and values, supplied once by that source and once by an in-memory
+  settings file, must yield equal validated settings, and providers that accept and reject the same
+  tokens (I-I14).
 
 **Organizations** exposes the organization API — create, invite, redeem, revoke, switch active
 organization, list an organization's memberships — plus an `ITenantResolver` and an
@@ -850,6 +981,29 @@ what the caller does about it will not.
 | `ProviderFailed` | the provider itself faulted | no | return unauthenticated and degrade readiness |
 
 **No credential presented is not in this table.** It is success carrying `Principal.Anonymous`.
+
+**On the generic bearer path** (*Types* § 12), a provider claims a bearer token whose `iss` matches its
+`Issuer` or `IssuerPattern`, and defers on any other (*Public surface* § 10). A token whose `iss`
+cannot be read at all is `CredentialRejected`. For a token the provider claims, the variants are fixed
+as follows:
+
+| Condition | Variant |
+|---|---|
+| no key set is cached yet | `KeyMaterialUnavailable` |
+| the header's `alg` is not in the provider's `Algorithms`, including `none` and every `HS*` value | `CredentialRejected` |
+| the token names a key id the cached set does not hold | `CredentialRejected` — **never a fetch** (I-I8) |
+| the token names no key id, and no cached key of an accepted algorithm verifies it | `CredentialRejected` — never a fetch |
+| the signature does not verify | `CredentialRejected` |
+| `exp` or `nbf` is outside the provider's `ClockTolerance`, or `exp` is absent | `CredentialRejected` |
+| `aud` names none of the provider's `Audiences` | `CredentialRejected` |
+| the subject claim is missing, empty or not a string | `CredentialRejected` |
+| the validation library faults on anything other than the token's own content | `ProviderFailed` |
+
+**`KeyMaterialUnavailable` is decided before the token is examined further.** With no keys there is
+nothing to validate against, and answering `CredentialRejected` would tell the caller its token was bad
+when the provider could not check it. **An unknown key id is never a reason to fetch.** A request-path
+fetch keyed on an attacker-chosen key id is an amplifier pointed at the issuer, and the cost of
+refusing it is the rotation bound stated in *Public surface* § 10.
 
 ### 2. `AuthorizationError` — `SubZeroDev.Platform.Abstractions`
 
@@ -1043,6 +1197,20 @@ retryable — a misconfigured installation does not resolve itself.**
 | `UnregisteredPermission` | a tool, an endpoint, or any registration requires a `PermissionName` no catalog declares — its own code, carrying `PermissionCatalogError.UnregisteredPermission` as the inner error |
 | `SensitiveToolParameter` | a registered tool's schema names a parameter matching the redaction marker set |
 | `UndeclaredEndpointRequirement` | a mapped endpoint carries neither a requirement nor an exemption |
+| `Configuration` | a generic-path provider's settings are defective (*Types* § 12). The inner error is `ConfigurationError`, and the variant depends on the defect — see below |
+
+**A generic-path settings defect is a `ConfigurationError`, not a new code.** The error names the full
+key, `Platform:Identity:Bearer:<name>:<setting>`, so it names the provider and the setting in one
+string, on the `Detail` convention `ConfigurationError` already follows:
+
+| Defect | `ConfigurationError` variant |
+|---|---|
+| `Audiences` is absent; neither `Issuer` nor `IssuerPattern` is present; neither `Discovery` nor `SigningKeys` is present | `MissingRequiredSetting` |
+| `Issuer` and `IssuerPattern` are both present; `Discovery` and `SigningKeys` are both present; `KeyRefreshInterval` is present with `SigningKeys` | `InconsistentSettings` |
+| a value breaks its row's constraint; a key is one the table does not name; a value stands where a section belongs, or a section where a value belongs | `InvalidSetting` |
+
+**A defect fails startup before any fetch** (I-I10). A key-fetch failure is not in this section. It
+never fails startup, and it degrades readiness instead (*Public surface* § 10).
 
 **Each names the profile, the offending registration and which of the two it disagrees with**, on the
 `Detail` convention `ModuleGraphError` and `ConfigurationError` already follow. Each describes a
@@ -1127,6 +1295,14 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
 | **I-I5** | A `Delegated` principal is never treated as an `Account` with missing fields (Owner: every consumer.) | — | instruction | — |
 | **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | instruction | — |
+| **I-I7** | The generic bearer path accepts asymmetric signature algorithms only: a shared-secret algorithm or `none` in its settings fails startup, and a token whose header names an algorithm outside the provider's set is rejected (Owner: Identity.) | — | instruction | — |
+| **I-I8** | No key material is fetched on the request path; a token naming a key id the cached set does not hold is `CredentialRejected` and never triggers a fetch (Owner: Identity.) | — | instruction | — |
+| **I-I9** | A key-set refresh takes no lease, writes nothing durable, and replaces the cached set in one atomic swap; a failed refresh keeps the previous set and degrades readiness, and never empties the cache (Owner: Identity.) | — | instruction | — |
+| **I-I10** | A generic-path settings defect — missing, inconsistent, malformed or unrecognised key — fails startup naming the full key, before any key fetch; a key-fetch failure never fails startup (Owner: Identity.) | — | instruction | — |
+| **I-I11** | A generic-path principal is `Account`, and its `PrincipalId` is the concrete validated `iss` paired with the configured subject claim's value, both exactly as the token carries them — never an issuer pattern (Owner: Identity.) | — | instruction | — |
+| **I-I12** | No `Microsoft.IdentityModel.*` type appears in Platform's public surface; those libraries are referenced by `SubZeroDev.Platform.Identity` and by nothing else (Owner: Identity.) | — | instruction | — |
+| **I-I13** | A vendor configuration package references no Platform package (Owner: each vendor configuration package.) | — | instruction | — |
+| **I-I14** | Identity reads the generic path's settings without knowing which configuration source wrote them: the same keys and values from a vendor configuration source and from a settings file yield equal validated settings (Owner: Identity.) | — | instruction | — |
 | **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
@@ -1214,21 +1390,16 @@ providers. **This blocks** any contract sentence forbidding permissions or roles
 `IPermissionProvider` implementations, or an explicit statement that a consumer provider's grant
 source is the consumer's own concern.
 
-**Item 4 — a per-vendor escape hatch for sign-in providers that depart from the standard.**
-([#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94); deferred by
-[ADR-009](../docs/docs/adr/ADR-009-identity-package.md), *Not decided here*, together with a
-production-grade bearer provider.) `10-design.md` does not determine a surface, so this contract
-declares none. Three things are missing upstream of any signature:
-
-1. The repository owner's direction on #94 (2026-08-09) — a named provider package per vendor, each
-   one sugar over the generic path and never a parallel implementation, rather than a raw
-   callback — is recorded only on the issue, not in `10-design.md`.
-2. That direction leaves open whether a hosted and a self-hosted deployment of one vendor are one
-   method with a discriminator or two methods.
-3. There is no generic path to be sugar over. Identity ships one test-grade bearer provider and one
-   upstream-proxy provider behind `IAuthenticationProvider`, and no interactive sign-in or sign-out
-   method. #94's sign-out criterion therefore presupposes a method D5 never designed.
-
-**This blocks** any vendor-package or hook signature on `SubZeroDev.Platform.Identity`, the sign-out
-proof against a non-conforming provider, and the documentation that reaching for the escape hatch is
-expected. A `/design` pass that settles all three comes first.
+Item 4 (a per-vendor escape hatch for sign-in providers that depart from the standard,
+[#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94)) was resolved **for the
+validation half only**. The generic bearer path, its configuration schema and the vendor configuration
+package's shape are in *Types* § 12 and *Public surface* § 10. They follow
+[`90-decisions.md`](90-decisions.md), 2026-09-25, which settled the three questions this item was
+waiting on, and 2026-09-30, which settled the choices the design left to this document. **#94 is not
+satisfied by this contract.** Its first, third and fourth done-when criteria are a hook per configured
+sign-in method, sign-out proven against a non-conforming provider, and documentation that reaching for
+the hook is expected. They describe a sign-in method Platform does not have, and D5 does not deliver
+them ([`90-decisions.md`](90-decisions.md), 2026-09-26, an accepted risk). Its second criterion holds
+in validation terms only: a vendor configuration package adjusts the generic path's values without
+hand-wiring the rest of it. A vendor's sign-in and sign-out quirks stay with each client
+([`10-design.md`](10-design.md) § *Control flow*, path 4).
