@@ -16,6 +16,28 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-01 — A credential no provider claims ends the chain rejected, not anonymous
+
+Context: the `/spec` #94 closing review. A provider answers `Principal.Anonymous` for a well-formed
+bearer token from an issuer it does not trust, so a token every registered provider declines ends the
+chain `Anonymous`. The test-grade provider already behaves this way, and the generic bearer path was
+specified the same way. `10-design.md` *Control flow*, path 1, step 1 says a bad token is rejected at
+the transport and only an absent one continues as `Anonymous`. The owner ruled that the chain end
+rejects.
+Chosen: a provider that sees a credential of its kind it does not claim answers a new variant,
+`AuthenticationError.CredentialNotClaimed`. The chain treats it as a pass and moves to the next
+provider. If no provider establishes a principal and none rejects, the chain answers
+`CredentialRejected`, naming the first provider in registry order that answered `CredentialNotClaimed`.
+`CredentialNotClaimed` never leaves the chain (I-I15). The test-grade provider and the generic bearer
+path both answer this way, and `/plan` slices the code change.
+Rejected: the chain reading the `Authorization` header itself, because Core would then know every
+credential format. Rejected: changing `IAuthenticationProvider`'s return type to a three-way result,
+which breaks every provider's signature for one case an error variant can carry. Rejected: keeping
+`Anonymous`, because a token from an untrusted issuer would succeed at being ignored, which path 1
+forbids.
+Reversibility: cheap until the slice lands. Moderate after, because a host's callers then see
+unauthenticated where they saw an anonymous answer.
+
 ### 2026-09-30 — A generic-path settings defect is a `ConfigurationError` naming the full key
 
 Context: `/spec` #94. Path 2, step 8 requires a malformed or unrecognised generic-path setting to fail

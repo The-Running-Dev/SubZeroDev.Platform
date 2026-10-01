@@ -555,11 +555,29 @@ a consumer ships costs the consumer.**
 registry and the chain that runs registered providers in registration order are declared in
 [`Authentication.cs`](../src/SubZeroDev.Platform.Core/Authentication.cs).
 
+One variant of `AuthenticationError` is not in the tree yet, and is scaffolded here until the slice
+that materialises it replaces this block with the pointer above
+([`90-decisions.md`](90-decisions.md), 2026-10-01):
+
+```csharp
+public static AuthenticationError CredentialNotClaimed(string provider);
+```
+
 **What the declaration cannot say.**
 
 - **`AuthenticateAsync` distinguishes "no credential presented" from "a credential was presented and
   failed to validate".** No credential is success carrying `Principal.Anonymous`; a bad credential is
   a failure. Collapsing them makes an absent token indistinguishable from a forged one.
+- **A provider that sees a credential of its kind it does not claim answers `CredentialNotClaimed`,
+  never `Principal.Anonymous`.** A bearer token naming an issuer the provider does not trust is a
+  presented credential, not an absent one. The chain moves to the next provider, exactly as it does
+  on `Principal.Anonymous`, so one provider per trusted issuer still chains.
+- **A chain that ends with a credential no provider claimed answers `CredentialRejected`, never
+  `Principal.Anonymous`** (I-I15). The chain ends there only when no provider established a principal
+  and none rejected. The rejection names the first provider, in registry order, that answered
+  `CredentialNotClaimed`. **`CredentialNotClaimed` never leaves the chain**: the chain consumes it, and
+  no caller ever receives it. A provider that rejects still ends the chain at once, and a chain in
+  which every provider saw no credential of its kind still answers `Principal.Anonymous`.
 - **It must never block on a network fetch.** Key material is fetched at startup and cached, and the
   generic path refreshes it off the request path (*Types* § 12). A request arriving when no key is
   cached fails with `AuthenticationError.KeyMaterialUnavailable`, which is an authentication failure
@@ -789,11 +807,11 @@ issuer, and no method chains off the module for a vendor. It owns no rows. Its s
   | no key set cached yet | `Unhealthy` |
   | a set is cached, and the latest fetch failed | `Degraded` |
   | a set is cached, and the latest fetch succeeded | `Healthy` |
-- **A provider defers on a credential it does not claim.** A bearer token whose `iss` does not match
-  the provider's `Issuer` or `IssuerPattern` is success carrying `Principal.Anonymous`, so the chain
-  moves to the next provider. This is exactly how the test-grade provider already behaves, and it is
-  what makes one provider per trusted issuer chain. A token the provider claims is validated in full
-  and answered by *Error semantics* § 1.
+- **A provider passes on a credential it does not claim.** A bearer token whose `iss` does not match
+  the provider's `Issuer` or `IssuerPattern` is `CredentialNotClaimed`, so the chain moves to the next
+  provider. A token no registered provider claims ends the chain `CredentialRejected` (*Public
+  surface* § 2, I-I15). The test-grade provider answers the same way. A token the provider claims is
+  validated in full and answered by *Error semantics* § 1.
 
 **A vendor configuration package** sits outside both tiers and outside the package graph
 ([`10-design.md`](10-design.md) § *Module boundaries* 3 and 4). It is not a Platform package. This
@@ -979,13 +997,16 @@ what the caller does about it will not.
 | `CredentialRejected` | a credential was presented and failed to validate | no | return unauthenticated; **do not fall back to `Anonymous`** |
 | `KeyMaterialUnavailable` | no signing key is cached and none may be fetched on the request path | no | return **unauthenticated**, never a server error, and never block on a fetch |
 | `ProviderFailed` | the provider itself faulted | no | return unauthenticated and degrade readiness |
+| `CredentialNotClaimed` | a provider saw a credential of its kind that it does not claim, such as a bearer token whose `iss` it does not trust | no | **never received**: the chain consumes it, and if no provider claims the credential the chain answers `CredentialRejected` (I-I15) |
 
-**No credential presented is not in this table.** It is success carrying `Principal.Anonymous`.
+**No credential presented is not in this table.** It is success carrying `Principal.Anonymous`. **A
+credential nobody claims is not "no credential"**: it reaches the caller as `CredentialRejected`, and
+the caller does not fall back to `Anonymous` for it either.
 
 **On the generic bearer path** (*Types* § 12), a provider claims a bearer token whose `iss` matches its
-`Issuer` or `IssuerPattern`, and defers on any other (*Public surface* § 10). A token whose `iss`
-cannot be read at all is `CredentialRejected`. For a token the provider claims, the variants are fixed
-as follows:
+`Issuer` or `IssuerPattern`, and answers any other `CredentialNotClaimed` (*Public surface* § 10). A
+token whose `iss` cannot be read at all is `CredentialRejected`. For a token the provider claims, the
+variants are fixed as follows:
 
 | Condition | Variant |
 |---|---|
@@ -1303,6 +1324,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-I12** | No `Microsoft.IdentityModel.*` type appears in Platform's public surface; those libraries are referenced by `SubZeroDev.Platform.Identity` and by nothing else (Owner: Identity.) | — | instruction | — |
 | **I-I13** | A vendor configuration package references no Platform package (Owner: each vendor configuration package.) | — | instruction | — |
 | **I-I14** | Identity reads the generic path's settings without knowing which configuration source wrote them: the same keys and values from a vendor configuration source and from a settings file yield equal validated settings (Owner: Identity.) | — | instruction | — |
+| **I-I15** | A request presenting a credential that no registered provider claims ends the authentication chain `CredentialRejected`, never `Principal.Anonymous`; `CredentialNotClaimed` is consumed by the chain and never reaches a caller (Owner: Core, every authentication provider.) | — | instruction | — |
 | **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |

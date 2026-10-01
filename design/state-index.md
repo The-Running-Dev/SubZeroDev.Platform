@@ -83,6 +83,7 @@ true.
 | I-I12 | — |
 | I-I13 | — |
 | I-I14 | — |
+| I-I15 | — |
 | I-L1 | — |
 | I-L2 | — |
 | I-L3 | — |
@@ -203,6 +204,7 @@ true.
 | decision/2026-09-29-untested-invariants-held-by-instruction | `unit/document/20-contract`, `unit/document/90-decisions` |
 | decision/2026-09-30-generic-bearer-path-configuration-schema | `unit/document/20-contract`, `unit/document/90-decisions` |
 | decision/2026-09-30-generic-path-settings-defect-is-configuration-error | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-10-01-unclaimed-credential-ends-chain-rejected | `unit/document/20-contract`, `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
