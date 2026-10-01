@@ -16,6 +16,75 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-01 — A credential no provider claims ends the chain rejected, not anonymous
+
+Context: the `/spec` #94 closing review. A provider answers `Principal.Anonymous` for a well-formed
+bearer token from an issuer it does not trust, so a token every registered provider declines ends the
+chain `Anonymous`. The test-grade provider already behaves this way, and the generic bearer path was
+specified the same way. `10-design.md` *Control flow*, path 1, step 1 says a bad token is rejected at
+the transport and only an absent one continues as `Anonymous`. The owner ruled that the chain end
+rejects.
+Chosen: a provider that sees a credential of its kind it does not claim answers a new variant,
+`AuthenticationError.CredentialNotClaimed`. The chain treats it as a pass and moves to the next
+provider. If no provider establishes a principal and none rejects, the chain answers
+`CredentialRejected`, naming the first provider in registry order that answered `CredentialNotClaimed`.
+`CredentialNotClaimed` never leaves the chain (I-I15). The test-grade provider and the generic bearer
+path both answer this way, and `/plan` slices the code change.
+Rejected: the chain reading the `Authorization` header itself, because Core would then know every
+credential format. Rejected: changing `IAuthenticationProvider`'s return type to a three-way result,
+which breaks every provider's signature for one case an error variant can carry. Rejected: keeping
+`Anonymous`, because a token from an untrusted issuer would succeed at being ignored, which path 1
+forbids.
+Reversibility: cheap until the slice lands. Moderate after, because a host's callers then see
+unauthenticated where they saw an anonymous answer.
+
+### 2026-09-30 — A generic-path settings defect is a `ConfigurationError` naming the full key
+
+Context: `/spec` #94. Path 2, step 8 requires a malformed or unrecognised generic-path setting to fail
+startup and name both the provider and the key. It does not say which error carries the failure.
+Chosen: `HostStartupError.Configuration`, carrying the existing `ConfigurationError` variant that fits
+the defect. `MissingRequiredSetting` covers a required key that is absent. `InconsistentSettings`
+covers two keys that exclude each other. `InvalidSetting` covers a bad value, an unrecognised key, and
+a value or section in the wrong place. The key is reported in full, as
+`Platform:Identity:Bearer:<name>:<setting>`, so one string names the provider and the setting.
+Rejected: a new `HostStartupError` code for the same fault. A settings defect is already a
+`ConfigurationError` everywhere else in the host, and a second code would give operators two things to
+search for. Rejected: carrying the provider name and the setting as separate fields. The full key is
+exactly what the operator searches their configuration for.
+Reversibility: cheap before a consumer ships. A new variant could be added later without removing
+these.
+
+### 2026-09-30 — The generic bearer path's configuration schema: one section per provider, fixed keys, bounded defaults
+
+Context: `/spec` #94. `10-design.md` *Data model* § 10 names the generic path's settings and makes
+their configuration schema public contract. It leaves the key names, the pattern syntax, the key
+formats, the defaults, the bounds and the refresh mechanics to this contract.
+Chosen: each child section `Platform:Identity:Bearer:<name>` is one provider, and `<name>` is its
+name. The keys are `Issuer` or `IssuerPattern`, `Discovery` or `SigningKeys`, `Audiences`,
+`Algorithms`, `ClockTolerance`, `SubjectClaim`, `DisplayNameClaim` and `KeyRefreshInterval`. A pattern
+carries `{tenantid}` exactly once and it matches one or more characters other than `/`, which is
+Entra's own template syntax. `Discovery` must be `https`, and `SigningKeys` is an inline JSON Web Key
+Set of public keys. Algorithms come from `RS*`, `PS*` and `ES*`, with a default of `RS256`, the one
+algorithm OpenID Connect requires every provider to support. `ClockTolerance` defaults to one minute
+and is capped at five. `KeyRefreshInterval` defaults to five minutes and lies between 30 seconds and
+one day. Every fetch has a fixed 30-second timeout, and the discovery document's `issuer` must equal
+the configured issuer or pattern ordinally. The background work is
+`platform.identity.key-refresh:<name>` and the readiness check is `platform.identity.key-set:<name>`. A
+token naming no key id is tried against the cached keys and never causes a fetch. Registering the
+Identity module and writing configuration is the whole registration, and a vendor method takes the
+provider name as an argument.
+Rejected: a regular-expression pattern, because one that matches too much accepts any issuer and no
+reviewer sees it. Rejected: a tenant list, which is configuration no issuer publishes. Rejected: JWK
+members spelled as configuration keys, because JOSE's own member names would collide with the rule
+that an unrecognised key fails startup. Rejected: plain-`http` discovery, because the test-grade
+provider already serves development. Rejected: the token library's own defaults, a five-minute
+tolerance and a twelve-hour refresh, under which a failed startup fetch leaves the host not-ready for
+twelve hours. Rejected: a configurable fetch timeout, one more public key with no requirement behind
+it. Rejected: a registration call per issuer, which makes a vendor package chain off Identity, as
+*Alternatives* § 12 refuses.
+Reversibility: moderate. Keys are public once a vendor package writes them. Keys can be added but never
+withdrawn, and a default never moves in the accepting direction.
+
 ### 2026-09-29 — Twenty-one invariants without a whole-statement test are held by instruction, not code
 
 Context: `/align`. The #245 bootstrap copied each invariant's "Enforced by" prose into
