@@ -226,6 +226,106 @@ public sealed class AuthenticationTests
         }
     }
 
+    /// <summary>S19.2 and S19.3 (chain) — when every provider that saw a credential of its kind
+    /// declines to claim it, the chain answers <c>CredentialRejected</c> naming the first (registry
+    /// order) not-claiming provider, never <see cref="Principal.Anonymous"/>, and never the
+    /// provider-level <c>CredentialNotClaimed</c>.</summary>
+    [Fact]
+    public async Task A_credential_no_provider_claims_ends_the_chain_rejected_naming_the_first_decliner()
+    {
+        var chain = Chain(
+            new StubAuthenticationProvider("first", NotClaimed("first")),
+            new StubAuthenticationProvider("second", NotClaimed("second")),
+            new StubAuthenticationProvider("third"));
+
+        var authenticated = await chain.AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", "Bearer foreign")), CancellationToken.None);
+
+        Assert.False(authenticated.IsSuccess);
+        Assert.Equal(nameof(AuthenticationError.CredentialRejected), authenticated.Error.Code);
+        Assert.NotEqual(nameof(AuthenticationError.CredentialNotClaimed), authenticated.Error.Code);
+        Assert.Contains("'first'", authenticated.Error.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("'second'", authenticated.Error.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>S19.4, first half — a provider that does not claim the credential defers to the
+    /// next, and a later provider that claims it establishes the principal: one provider per trusted
+    /// issuer still chains, and nothing of the earlier decline survives.</summary>
+    [Fact]
+    public async Task A_later_provider_that_claims_the_credential_wins_over_an_earlier_decliner()
+    {
+        var established = new Principal(
+            new PrincipalId("issuer", "subject"), PrincipalKind.Account, "Subject", null);
+
+        var chain = Chain(
+            new StubAuthenticationProvider("first", NotClaimed("first")),
+            new StubAuthenticationProvider(
+                "second", _ => Result<Principal, AuthenticationError>.Success(established)));
+
+        var authenticated = await chain.AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", "Bearer mine")), CancellationToken.None);
+
+        Assert.True(authenticated.IsSuccess);
+        Assert.Equal(established, authenticated.Value);
+    }
+
+    /// <summary>S19.4, second half — a rejecting provider after a decliner still ends the chain at
+    /// once, with its own rejection and before any later provider runs.</summary>
+    [Fact]
+    public async Task A_rejecting_provider_after_a_decliner_still_ends_the_chain_at_once()
+    {
+        var wouldDefer = new StubAuthenticationProvider("third");
+        var chain = Chain(
+            new StubAuthenticationProvider("first", NotClaimed("first")),
+            new StubAuthenticationProvider(
+                "second",
+                _ => Result<Principal, AuthenticationError>.Failure(
+                    AuthenticationError.CredentialRejected("second"))),
+            wouldDefer);
+
+        var authenticated = await chain.AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", "Bearer forged")), CancellationToken.None);
+
+        Assert.False(authenticated.IsSuccess);
+        Assert.Equal(nameof(AuthenticationError.CredentialRejected), authenticated.Error.Code);
+        Assert.Contains("'second'", authenticated.Error.Detail, StringComparison.Ordinal);
+        Assert.Equal(0, wouldDefer.CallCount);
+    }
+
+    /// <summary>S19.3 (pipeline) and S19.4 — a credential no provider claims is refused at the
+    /// transport as unauthorized with the chain's <c>CredentialRejected</c> code, and the
+    /// provider-level <c>CredentialNotClaimed</c> never reaches the response.</summary>
+    [Fact]
+    public async Task A_credential_no_provider_claims_is_refused_at_the_transport_as_rejected()
+    {
+        var (app, client) = await WebHostUnderTest.StartAsync(services => services.AddSingleton<IAuthenticationProvider>(
+            new StubAuthenticationProvider(
+                "under-test",
+                request => request.Headers.ContainsKey("Authorization")
+                    ? NotClaimed("under-test")(request)
+                    : Result<Principal, AuthenticationError>.Success(Principal.Anonymous))));
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/");
+            request.Headers.Add("Authorization", "Bearer foreign");
+
+            using var response = await client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains(nameof(AuthenticationError.CredentialRejected), body, StringComparison.Ordinal);
+            Assert.DoesNotContain(nameof(AuthenticationError.CredentialNotClaimed), body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    private static Func<IAuthenticationRequest, Result<Principal, AuthenticationError>> NotClaimed(string provider) =>
+        _ => Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialNotClaimed(provider));
+
     private static AuthenticationChain Chain(params IAuthenticationProvider[] providers)
     {
         var registry = new AuthenticationProviderRegistry();

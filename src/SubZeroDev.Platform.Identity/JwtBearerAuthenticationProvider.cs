@@ -52,10 +52,12 @@ public sealed class JwtBearerAuthenticationProvider(string name, string issuer, 
         if (!string.Equals(tokenIssuer, issuer, StringComparison.Ordinal))
         {
             // Well formed, but asserting an issuer this instance does not trust -- not mine.
-            // Deferring, rather than rejecting, is what lets a deployment trusting several issuers
+            // Declining, rather than rejecting, is what lets a deployment trusting several issuers
             // register one provider per issuer without the first one reached ending the chain for
-            // every other.
-            return Task.FromResult(Result<Principal, AuthenticationError>.Success(Principal.Anonymous));
+            // every other. It is not "no credential": the chain rejects the request if no provider
+            // claims the token, rather than letting it proceed as anonymous.
+            return Task.FromResult(Result<Principal, AuthenticationError>.Failure(
+                AuthenticationError.CredentialNotClaimed(name)));
         }
 
         if (signingKey is null)
