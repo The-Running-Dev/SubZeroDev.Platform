@@ -81,4 +81,17 @@ public sealed record AuthenticationError : PlatformError
     /// <returns>The error.</returns>
     public static AuthenticationError ProviderFailed(string provider) =>
         new(nameof(ProviderFailed), $"Authentication provider '{provider}' failed.");
+
+    /// <summary>A provider saw a credential of its kind that it does not claim, such as a bearer
+    /// token whose issuer it does not trust. The chain moves to the next provider, exactly as it does
+    /// on <see cref="Principal.Anonymous"/>, so one provider per trusted issuer still chains. <b>No
+    /// caller ever receives this</b>: the chain consumes it, and when no provider claims the
+    /// credential the chain answers <see cref="CredentialRejected"/> rather than
+    /// <see cref="Principal.Anonymous"/>.</summary>
+    /// <param name="provider">The provider that did not claim the credential.</param>
+    /// <returns>The error.</returns>
+    public static AuthenticationError CredentialNotClaimed(string provider) =>
+        new(
+            nameof(CredentialNotClaimed),
+            $"Authentication provider '{provider}' does not claim the presented credential.");
 }

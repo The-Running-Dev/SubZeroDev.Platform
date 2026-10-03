@@ -555,14 +555,6 @@ a consumer ships costs the consumer.**
 registry and the chain that runs registered providers in registration order are declared in
 [`Authentication.cs`](../src/SubZeroDev.Platform.Core/Authentication.cs).
 
-One variant of `AuthenticationError` is not in the tree yet, and is scaffolded here until the slice
-that materialises it replaces this block with the pointer above
-([`90-decisions.md`](90-decisions.md), 2026-10-01):
-
-```csharp
-public static AuthenticationError CredentialNotClaimed(string provider);
-```
-
 **What the declaration cannot say.**
 
 - **`AuthenticateAsync` distinguishes "no credential presented" from "a credential was presented and
@@ -1324,7 +1316,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-I12** | No `Microsoft.IdentityModel.*` type appears in Platform's public surface; those libraries are referenced by `SubZeroDev.Platform.Identity` and by nothing else (Owner: Identity.) | — | instruction | — |
 | **I-I13** | A vendor configuration package references no Platform package (Owner: each vendor configuration package.) | — | instruction | — |
 | **I-I14** | Identity reads the generic path's settings without knowing which configuration source wrote them: the same keys and values from a vendor configuration source and from a settings file yield equal validated settings (Owner: Identity.) | — | instruction | — |
-| **I-I15** | A request presenting a credential that no registered provider claims ends the authentication chain `CredentialRejected`, never `Principal.Anonymous`; `CredentialNotClaimed` is consumed by the chain and never reaches a caller (Owner: Core, every authentication provider.) | — | instruction | — |
+| **I-I15** | A request presenting a credential that no registered provider claims ends the authentication chain `CredentialRejected`, never `Principal.Anonymous`; `CredentialNotClaimed` is consumed by the chain and never reaches a caller (Owner: Core, every authentication provider.) | — | code | tests/SubZeroDev.Platform.Tests/AuthenticationTests.cs, tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
 | **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
