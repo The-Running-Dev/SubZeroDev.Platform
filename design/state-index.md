@@ -240,6 +240,11 @@ commit the mirror was taken at; check it against `git log` before trusting an en
 | 263 | #263 | Red-team F2 is a brief conflict between 10-design.md and #92's own criteria | 1, 2 | `a1fa59377986e0d2e823dddd30080e138d787518` |
 | 264 | #264 | Red-team F3 is a defect: the next-request revocation promise does not hold for mirrored issuer roles | 1, 2, 3 | `a1fa59377986e0d2e823dddd30080e138d787518` |
 | 265 | #265 | A provider that cannot answer still reaches the caller as forbidden | 1, 2 | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 270 | #270 | D5-S19 — An untrusted credential is refused, not ignored | S19.1, S19.2, S19.3, S19.4, S19.5, S19.6, S19.7, S19.8 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
+| 271 | #271 | D5-S20 — An issuer with fixed keys is trusted from configuration alone | S20.1, S20.2, S20.3, S20.4, S20.5, S20.6, S20.7, S20.8, S20.9, S20.10, S20.11, S20.12 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
+| 272 | #272 | D5-S21 — Keys are found through discovery and kept fresh | S21.1, S21.2, S21.3, S21.4, S21.5, S21.6, S21.7, S21.8, S21.9, S21.10 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
+| 273 | #273 | D5-S22 — One issuer serves many customer tenants | S22.1, S22.2, S22.3, S22.4, S22.5, S22.6 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
+| 274 | #274 | D5-S23 — A vendor's settings arrive as a configuration source | S23.1, S23.2, S23.3, S23.4, S23.5, S23.6 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
 | milestone/5 | #80 | Decide which slice set the public site's roadmap page renders | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #81 | Settle the @subzerodev registry reservations — only signing in settles it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #85 | The engine writes the mutated blob to memory before persistence on two of its four write paths, and the four disagree with each other | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
