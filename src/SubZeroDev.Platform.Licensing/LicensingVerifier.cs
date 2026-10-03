@@ -116,23 +116,12 @@ internal sealed class LicenceVerifier(
             reading.ExpiresAt?.AddDays(reading.GraceDays),
             now);
 
-        // The monotonic guard (I-L3, S12.8). Compared and written inside one transaction so two hosts
-        // racing on the one row cannot both read "mine is newer".
+        // The monotonic guard (I-L3, S12.8). Compared and written in one conditional statement, not a
+        // read followed by a write, so two hosts racing on the one row cannot both read "mine is
+        // newer" — see LicensingStore.TryWriteNewerAsync.
         var written = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
-            async ct =>
-            {
-                var current = await store.FindAsync(ct).ConfigureAwait(false);
-                if (current is not null && claims.VerifiedAt <= current.Claims.VerifiedAt)
-                {
-                    return false;
-                }
-
-                await store
-                    .WriteAsync(new VerifiedLicenceRecord(claims, reading.Fingerprint, reading.KeyId), ct)
-                    .ConfigureAwait(false);
-                return true;
-            },
+            ct => store.TryWriteNewerAsync(new VerifiedLicenceRecord(claims, reading.Fingerprint, reading.KeyId), ct),
             cancellationToken).ConfigureAwait(false);
 
         if (!written.IsSuccess)

@@ -101,12 +101,87 @@ public sealed class OperatedProofTests(PostgresContainerFixture fixture) : IClas
         // The older host's own re-read after the race must agree that the newer stamp won, whether
         // its own concurrent verification landed first (then lost the row to the newer write) or
         // second (then observed the newer stamp already stored and refused to regress it).
-        if (!olderResult.IsSuccess)
+        if (olderResult.IsSuccess)
+        {
+            Assert.Equal(LicenceVerificationOutcome.Verified, olderResult.Value);
+        }
+        else
         {
             Assert.Equal(nameof(LicensingError.SupersededByNewerVerification), olderResult.Error.Code);
         }
 
         Assert.Equal(new LicenceTier("Enterprise"), newer.Services.GetRequiredService<ILicenceState>().Tier);
+    }
+
+    /// <summary>S17.2, with the overlap forced rather than hoped for. <see cref="Task.WhenAll{TResult}(Task{TResult}[])"/>
+    /// alone usually lets one verification commit before the other reads, which is how a
+    /// read-then-write guard passed the proof above most of the time and failed it in CI. Here a third
+    /// session holds an uncommitted insert of the installation's row, so both verifications read
+    /// "no row" and then queue behind that key; rolling it back releases both writes into each other.
+    /// Whichever lands first, the later stamp must win and the earlier must answer
+    /// <see cref="LicensingError.SupersededByNewerVerification"/> — never a primary-key collision
+    /// reported as <see cref="LicenceVerificationOutcome.Unavailable"/>.</summary>
+    [Fact]
+    public async Task S17_2_Overlapping_licence_writes_from_two_hosts_converge_on_the_later_stamp()
+    {
+        var connectionString = await AcquireConnectionStringAsync();
+
+        using var signer = new PostgresTestLicenceSigner("key-2026-postgres");
+        var olderDocument = WriteDocument(signer, tier: "Studio", features: ["paid-simulation"]);
+        var newerDocument = WriteDocument(signer, tier: "Enterprise", features: ["paid-export"]);
+
+        await using var older = await StartLicensingHostAsync(connectionString, signer.Options(olderDocument));
+        await using var newer = await StartLicensingHostAsync(connectionString, signer.Options(newerDocument));
+
+        await MigrateAsync(older);
+
+        older.Clock.Advance(TimeSpan.FromHours(1));
+        newer.Clock.Advance(TimeSpan.FromHours(2));
+
+        await using var gate = new NpgsqlConnection(connectionString);
+        await gate.OpenAsync();
+        await using var hold = await gate.BeginTransactionAsync();
+        await using (var claimKey = gate.CreateCommand())
+        {
+            claimKey.Transaction = hold;
+            claimKey.CommandText = """
+                INSERT INTO verified_licence
+                    (installation_key, tier, features, issued_at, verified_at, document_fingerprint, key_id)
+                VALUES ('installation', 'gate', '', '', '', '', '');
+                """;
+            await claimKey.ExecuteNonQueryAsync();
+        }
+
+        var verifications = new[] { VerifyAsync(older), VerifyAsync(newer) };
+        await WaitForBlockedSessionsAsync(gate, 2);
+
+        await hold.RollbackAsync();
+
+        var results = await Task.WhenAll(verifications);
+        var olderResult = results[0];
+        var newerResult = results[1];
+
+        Assert.True(newerResult.IsSuccess);
+        Assert.Equal(LicenceVerificationOutcome.Verified, newerResult.Value);
+
+        // Written first, the older verification succeeds and is then overwritten; written second, it
+        // is refused by the guard. Either way it never fails for any other reason.
+        if (olderResult.IsSuccess)
+        {
+            Assert.Equal(LicenceVerificationOutcome.Verified, olderResult.Value);
+        }
+        else
+        {
+            Assert.Equal(nameof(LicensingError.SupersededByNewerVerification), olderResult.Error.Code);
+        }
+
+        Assert.Equal(new LicenceTier("Enterprise"), newer.Services.GetRequiredService<ILicenceState>().Tier);
+
+        // The stored row is the newer one: the older host re-verifying now is refused and converges.
+        var reverified = await VerifyAsync(older);
+        Assert.False(reverified.IsSuccess);
+        Assert.Equal(nameof(LicensingError.SupersededByNewerVerification), reverified.Error.Code);
+        Assert.Equal(new LicenceTier("Enterprise"), older.Services.GetRequiredService<ILicenceState>().Tier);
     }
 
     /// <summary>S17.2 / S17.4: Alice creates an organization and mints one invitation; Bob presents
@@ -184,6 +259,26 @@ public sealed class OperatedProofTests(PostgresContainerFixture fixture) : IClas
 
     private static Task<Result<LicenceVerificationOutcome, LicensingError>> VerifyAsync(IPlatformTestHost host) =>
         host.Services.GetRequiredService<ILicenceVerifier>().VerifyOnceAsync(CancellationToken.None);
+
+    /// <summary>Waits until <paramref name="count"/> sessions on <paramref name="probe"/>'s database
+    /// are waiting on a lock — the observable point at which both verifications have read the stored
+    /// state and are attempting their writes.</summary>
+    private static async Task WaitForBlockedSessionsAsync(NpgsqlConnection probe, int count)
+    {
+        await using var command = probe.CreateCommand();
+        command.CommandText = """
+            SELECT count(DISTINCT l.pid) FROM pg_locks l
+            JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE NOT l.granted AND a.datname = current_database();
+            """;
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while ((long)(await command.ExecuteScalarAsync())! < count)
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {count} blocked session(s).");
+            await Task.Delay(10);
+        }
+    }
 
     private static Task<IPlatformTestHost> StartOrganizationsHostAsync(string connectionString) =>
         PlatformTestHost.CreateBuilder()
