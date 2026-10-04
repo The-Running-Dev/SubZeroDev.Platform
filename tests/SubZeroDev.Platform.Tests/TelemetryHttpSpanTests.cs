@@ -27,7 +27,11 @@ public sealed class TelemetryHttpSpanTests
             // process-wide, so a concurrently-running test's own server spans (in a different xUnit
             // collection) can land in the same capture. This request's trace id is exactly the
             // correlation the response reported, which is the assertion that matters.
-            var serverSpan = capture.Stopped.First(a => a.Kind == ActivityKind.Server && a.TraceId.ToString() == correlation);
+            //
+            // Waited for rather than read immediately: the server activity stops after the response
+            // is flushed, which can be after the client has already read the body.
+            var serverSpan = await capture.WaitForStoppedAsync(
+                a => a.Kind == ActivityKind.Server && a.TraceId.ToString() == correlation);
 
             Assert.True(serverSpan.Recorded);
         }
