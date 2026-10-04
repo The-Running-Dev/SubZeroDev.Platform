@@ -11,7 +11,7 @@ namespace SubZeroDev.Platform.Identity;
 /// schema is the configuration keys, and no public type may carry it (<c>20-contract.md</c> § 12).</summary>
 internal sealed record BearerSettings(
     string Name,
-    string Issuer,
+    string? Issuer,
     JsonWebKeySet? SigningKeys,
     IReadOnlyList<string> Audiences,
     IReadOnlyList<string> Algorithms,
@@ -19,9 +19,14 @@ internal sealed record BearerSettings(
     string SubjectClaim,
     string? DisplayNameClaim,
     Uri? Discovery = null,
-    TimeSpan KeyRefreshInterval = default)
+    TimeSpan KeyRefreshInterval = default,
+    string? IssuerPattern = null)
 {
     internal const string SectionPath = "Platform:Identity:Bearer";
+
+    /// <summary>The placeholder an <c>IssuerPattern</c> carries exactly once. It stands for one or
+    /// more characters, none of them <c>/</c>.</summary>
+    internal const string TenantPlaceholder = "{tenantid}";
 
     private const string Source = "the Platform:Identity:Bearer section of configuration";
     private static readonly TimeSpan MaximumTolerance = TimeSpan.FromMinutes(5);
@@ -34,11 +39,10 @@ internal sealed record BearerSettings(
         "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512",
     ];
 
-    // IssuerPattern is deliberately absent until S22: an unrecognised key fails startup rather than
-    // being ignored.
+    // An unrecognised key fails startup rather than being ignored.
     private static readonly HashSet<string> Recognised = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Issuer", "SigningKeys", "Audiences", "Algorithms", "ClockTolerance", "SubjectClaim", "DisplayNameClaim",
+        "Issuer", "IssuerPattern", "SigningKeys", "Audiences", "Algorithms", "ClockTolerance", "SubjectClaim", "DisplayNameClaim",
         "Discovery", "KeyRefreshInterval",
     };
 
@@ -90,14 +94,33 @@ internal sealed record BearerSettings(
             return Fail(issuerError);
         }
 
-        if (issuer is null)
+        var issuerPattern = Scalar(section, "IssuerPattern", Key("IssuerPattern"), out var patternError);
+        if (patternError is not null)
         {
-            return Fail(ConfigurationError.MissingRequiredSetting(Key("Issuer"), Source));
+            return Fail(patternError);
         }
 
-        if (!Uri.TryCreate(issuer, UriKind.Absolute, out _))
+        if (issuer is not null && issuerPattern is not null)
+        {
+            return Fail(ConfigurationError.InconsistentSettings(
+                Key("Issuer"), Key("IssuerPattern"), "a provider trusts one issuer or a pattern of issuers, not both"));
+        }
+
+        if (issuer is null && issuerPattern is null)
+        {
+            return Fail(ConfigurationError.MissingRequiredSetting(
+                $"{Key("Issuer")} or {Key("IssuerPattern")}", Source));
+        }
+
+        if (issuer is not null && !Uri.TryCreate(issuer, UriKind.Absolute, out _))
         {
             return Fail(ConfigurationError.InvalidSetting(Key("Issuer"), "it must be an absolute URI"));
+        }
+
+        if (issuerPattern is not null && CountOccurrences(issuerPattern, TenantPlaceholder) != 1)
+        {
+            return Fail(ConfigurationError.InvalidSetting(
+                Key("IssuerPattern"), $"it must contain {TenantPlaceholder} exactly once"));
         }
 
         var signingKeysJson = Scalar(section, "SigningKeys", Key("SigningKeys"), out var keysError);
@@ -237,7 +260,49 @@ internal sealed record BearerSettings(
 
         return Result<BearerSettings, ConfigurationError>.Success(new BearerSettings(
             name, issuer, keySet, audiences, algorithms, tolerance, subjectClaim ?? "sub", displayNameClaim,
-            discovery, refresh));
+            discovery, refresh, issuerPattern));
+    }
+
+    /// <summary>Whether <paramref name="issuer"/> is one this provider trusts: the configured
+    /// <c>Issuer</c> exactly, or an issuer the <c>IssuerPattern</c> matches. Everything outside the
+    /// placeholder is compared ordinally, and the placeholder matches one or more characters, none
+    /// of them <c>/</c>.</summary>
+    internal bool Claims(string issuer)
+    {
+        if (IssuerPattern is null)
+        {
+            return string.Equals(issuer, Issuer, StringComparison.Ordinal);
+        }
+
+        var at = IssuerPattern.IndexOf(TenantPlaceholder, StringComparison.Ordinal);
+        var prefix = IssuerPattern.AsSpan(0, at);
+        var suffix = IssuerPattern.AsSpan(at + TenantPlaceholder.Length);
+
+        if (issuer.Length < prefix.Length + suffix.Length + 1
+            || !issuer.AsSpan().StartsWith(prefix, StringComparison.Ordinal)
+            || !issuer.AsSpan().EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return !issuer.AsSpan(prefix.Length, issuer.Length - prefix.Length - suffix.Length).Contains('/');
+    }
+
+    /// <summary>What a discovery document's <c>issuer</c> must equal ordinally: the configured
+    /// <c>Issuer</c>, or for a pattern provider the pattern string itself.</summary>
+    internal string DiscoveryIssuer => Issuer ?? IssuerPattern!;
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(value, StringComparison.Ordinal);
+             at >= 0;
+             at = text.IndexOf(value, at + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     /// <summary>A setting that holds a value. Absent is <see langword="null"/>; a section where the

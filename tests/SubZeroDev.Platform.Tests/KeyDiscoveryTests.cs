@@ -198,6 +198,41 @@ public sealed class KeyDiscoveryTests
         Assert.DoesNotContain(JwksUrl, fake.Requested);
     }
 
+    // S22.5 -------------------------------------------------------------------------------------
+
+    /// <summary>S22.5 — for a pattern provider the discovery document's <c>issuer</c> must equal the
+    /// pattern string itself, and then its keys are cached.</summary>
+    [Fact]
+    public async Task S22_5_A_document_naming_the_pattern_is_accepted()
+    {
+        var fake = FakeDiscovery.Serving(Rsa, "key-1", IssuerPatternTests.Pattern);
+        var cache = new KeySetCache();
+
+        await KeyFetcher.RefreshAsync(PatternedSettings(), cache, fake.Transport, CancellationToken.None);
+
+        Assert.Equal(["key-1"], Kids(cache));
+        Assert.False(cache.LastFetchFailed);
+    }
+
+    /// <summary>S22.5 — any other <c>issuer</c> is a failed fetch (S21.4), including a concrete
+    /// issuer the pattern would match.</summary>
+    [Theory]
+    [InlineData("https://acme.issuer.test")]
+    [InlineData("https://{TENANTID}.issuer.test")]
+    [InlineData("https://{tenantid}.issuer.test/")]
+    [InlineData("https://elsewhere.test")]
+    public async Task S22_5_A_document_naming_anything_else_caches_nothing(string documentIssuer)
+    {
+        var fake = FakeDiscovery.Serving(Rsa, "key-1", documentIssuer);
+        var cache = new KeySetCache();
+
+        await KeyFetcher.RefreshAsync(PatternedSettings(), cache, fake.Transport, CancellationToken.None);
+
+        Assert.Null(cache.Current);
+        Assert.True(cache.LastFetchFailed);
+        Assert.DoesNotContain(JwksUrl, fake.Requested);
+    }
+
     // S21.5 -------------------------------------------------------------------------------------
 
     /// <summary>S21.5 — a discovery provider registers one refresh work item, named for it, in both
@@ -413,6 +448,14 @@ public sealed class KeyDiscoveryTests
     };
 
     private static BearerSettings Settings() => ConfiguredBearerTests.ReadSettings(Discovered());
+
+    private static BearerSettings PatternedSettings()
+    {
+        var settings = Discovered();
+        settings.Remove($"{Section}:Issuer");
+        settings[$"{Section}:IssuerPattern"] = IssuerPatternTests.Pattern;
+        return ConfiguredBearerTests.ReadSettings(settings);
+    }
 
     private static string[] Kids(KeySetCache cache) =>
         cache.Current!.Keys.Select(key => key.Kid).Order().ToArray();

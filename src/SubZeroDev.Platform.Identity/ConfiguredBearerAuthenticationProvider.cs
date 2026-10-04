@@ -6,7 +6,7 @@ using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Identity;
 
-/// <summary>The generic bearer path's provider: one trusted issuer, validated with asymmetric keys
+/// <summary>The generic bearer path's provider: one trusted issuer or issuer pattern, validated with asymmetric keys
 /// held from startup. Built from <see cref="BearerSettings"/>, never constructed by a consumer
 /// (<c>20-contract.md</c> § 12), so no <c>Microsoft.IdentityModel</c> type crosses a public
 /// surface (I-I12).</summary>
@@ -32,7 +32,9 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         _parameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
-            ValidIssuer = settings.Issuer,
+            IssuerValidator = (issuer, _, _) => settings.Claims(issuer)
+                ? issuer
+                : throw new SecurityTokenInvalidIssuerException("the issuer is not one this provider trusts"),
             ValidateAudience = true,
             ValidAudiences = settings.Audiences,
             ValidateLifetime = true,
@@ -81,7 +83,7 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
             return Rejected();
         }
 
-        if (!string.Equals(parsed.Issuer, _settings.Issuer, StringComparison.Ordinal))
+        if (!_settings.Claims(parsed.Issuer))
         {
             return Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialNotClaimed(Name));
         }
