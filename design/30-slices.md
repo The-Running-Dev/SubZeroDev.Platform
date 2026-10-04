@@ -61,64 +61,18 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Outstanding
 
-S19 to S23 deliver the generic bearer path that issue
+S20 to S23 deliver the rest of the generic bearer path that issue
 [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for (`20-contract.md`
-*Types* § 12, *Modules* § 10 Identity), and the chain-end rule decided on 2026-10-01 (I-I15). The
-riskiest assumption here is that a provider can be produced from configuration alone. That means
-validated before anything is fetched, registered without a per-issuer call, and built on IdentityModel
-without the library leaking into Platform's surface. S20 exercises that assumption. S19 goes first only
-because it is small, and because S20 cannot answer a foreign issuer correctly until the variant S19
-adds exists. Key discovery (S21), tenant-shaped issuers (S22) and the vendor configuration source
-(S23) each add keys to a schema S20 has already proved. Each slice before them treats those keys as
-unrecognised, so every interim state fails closed and no slice ever removes a key.
-
-## S19 — An untrusted credential is refused, not ignored
-**Status:** in progress
-
-Delivers: a caller who presents a credential that no configured sign-in trusts is turned away as
-unauthenticated, instead of being let through as an anonymous visitor. A caller who presents no
-credential at all is still treated as anonymous.
-
-Touches:
-- **[`Authentication.cs`](../src/SubZeroDev.Platform.Abstractions/Authentication.cs)** (Abstractions):
-  the new authentication error variant
-- **[`Authentication.cs`](../src/SubZeroDev.Platform.Core/Authentication.cs)** (Core): the end of the
-  chain
-- **[`JwtBearerAuthenticationProvider.cs`](../src/SubZeroDev.Platform.Identity/JwtBearerAuthenticationProvider.cs)**:
-  how it answers a token from an issuer it does not trust
-- **[`20-contract.md`](20-contract.md)**: the *Public surface* § 2 scaffold, and the I-I15 record
-- **`tests/`**
-
-Depends on: none. S1 to S18 have landed.
-
-Acceptance:
-- **S19.1** `AuthenticationError.CredentialNotClaimed(string provider)` exists exactly as the contract
-  declares it. The *Public surface* § 2 scaffold block is replaced by the pointer the contract names, in
-  the same change.
-- **S19.2** A chain in which no provider establishes a principal or rejects, and at least one answers
-  `CredentialNotClaimed`, answers `CredentialRejected`. The rejection names the first provider, in
-  registry order, that answered `CredentialNotClaimed`.
-- **S19.3** No caller of the chain ever receives `CredentialNotClaimed`. This is asserted at the chain
-  and at the request pipeline.
-- **S19.4** A chain in which every provider saw no credential of its kind still answers
-  `Principal.Anonymous`. A provider that rejects still ends the chain at once, before any later
-  provider runs.
-- **S19.5** The test-grade bearer provider answers `CredentialNotClaimed` for a well-formed token whose
-  `iss` it does not trust, where today it answers `Principal.Anonymous`. It still answers
-  `Principal.Anonymous` when no bearer header is present.
-- **S19.6** Two test-grade providers for two issuers still chain: a token from either issuer
-  authenticates through the chain. S9.2's behaviour survives the change.
-- **S19.7** End to end through an operated host: a request bearing a token from an untrusted issuer is
-  refused as unauthenticated, never as a server error. A request bearing no credential reaches an
-  anonymous-permitted endpoint as anonymous.
-- **S19.8** I-I15's record moves from `instruction` to `code`, citing the tests that enforce it, in the
-  same change as the code. An invariant is code only once its test lands.
-
-Out of scope: the generic bearer path itself (S20), and any change to the upstream-proxy provider,
-which has no foreign-credential case.
+*Types* § 12, *Modules* § 10 Identity), after S19 landed the chain-end rule decided on 2026-10-01
+(I-I15). The riskiest assumption here is that a provider can be produced from configuration alone. That
+means validated before anything is fetched, registered without a per-issuer call, and built on
+IdentityModel without the library leaking into Platform's surface. S20 exercises that assumption. Key
+discovery (S21), tenant-shaped issuers (S22) and the vendor configuration source (S23) each add keys to
+a schema S20 has already proved. Each slice before them treats those keys as unrecognised, so every
+interim state fails closed and no slice ever removes a key.
 
 ## S20 — An issuer with fixed keys is trusted from configuration alone
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator trusts a new token issuer by writing configuration and restarting the host,
 with no code and no rebuild. A mistake in that configuration stops the host at startup with a message
@@ -311,6 +265,10 @@ are #94's sign-in hook, its sign-out proof and the hook documentation, which D5 
 ---
 
 ## Landed
+
+| Slice | Name | Issue | Criteria | Body complete at |
+|---|---|---|---|---|
+| **S19** | An untrusted credential is refused, not ignored | [#270](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/270), closed | S19.1–S19.8 | `c00c2af` |
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
   [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via
