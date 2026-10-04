@@ -61,81 +61,18 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Outstanding
 
-S20 to S23 deliver the rest of the generic bearer path that issue
+S21 to S23 deliver the rest of the generic bearer path that issue
 [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for (`20-contract.md`
 *Types* § 12, *Modules* § 10 Identity), after S19 landed the chain-end rule decided on 2026-10-01
-(I-I15). The riskiest assumption here is that a provider can be produced from configuration alone. That
+(I-I15) and S20 landed fixed-key providers from configuration. The riskiest assumption here is that a provider can be produced from configuration alone. That
 means validated before anything is fetched, registered without a per-issuer call, and built on
-IdentityModel without the library leaking into Platform's surface. S20 exercises that assumption. Key
+IdentityModel without the library leaking into Platform's surface. S20 exercised that assumption. Key
 discovery (S21), tenant-shaped issuers (S22) and the vendor configuration source (S23) each add keys to
-a schema S20 has already proved. Each slice before them treats those keys as unrecognised, so every
+a schema S20 has proved. Each slice before them treats those keys as unrecognised, so every
 interim state fails closed and no slice ever removes a key.
 
-## S20 — An issuer with fixed keys is trusted from configuration alone
-**Status:** in progress
-
-Delivers: an operator trusts a new token issuer by writing configuration and restarting the host,
-with no code and no rebuild. A mistake in that configuration stops the host at startup with a message
-naming the exact setting to fix, instead of surfacing later as refused sign-ins.
-
-Touches:
-- **`src/SubZeroDev.Platform.Identity/`**: the module's registration, the configured provider, settings
-  binding and validation, and the project's IdentityModel references
-- **[`PackageGraphTests.cs`](../tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs)**: the I-I12
-  guard
-- **[`20-contract.md`](20-contract.md)**: the I-I7, I-I10, I-I11 and I-I12 records
-- **`tests/`**
-
-Depends on: S19.
-
-Acceptance:
-- **S20.1** A host that registers the Identity module and writes one child section under
-  `Platform:Identity:Bearer` with `Issuer`, `SigningKeys` and `Audiences` gets one provider named after
-  that section. The section needs no other key and no registration call. Several child sections give
-  several providers, which chain in registry order.
-- **S20.2** An `Operated` host whose only authentication provider comes from configuration starts. I-C1
-  is satisfied by a configured provider.
-- **S20.3** `Algorithms` (`RS*`, `PS*` and `ES*` only, default `RS256`), `ClockTolerance` (at most five
-  minutes, default one minute), `SubjectClaim` (default `sub`) and `DisplayNameClaim` (optional) bind,
-  and each takes its default when absent.
-- **S20.4** Every settings defect in the contract's *Error semantics* § 9 table that falls within this
-  slice's keys fails startup as `HostStartupError.Configuration`, naming the full key
-  `Platform:Identity:Bearer:<name>:<setting>`. That covers `MissingRequiredSetting` (no `Audiences`, no
-  `Issuer`, no `SigningKeys`), `InvalidSetting` (a malformed value, a shared-secret algorithm, `none`,
-  a tolerance over five minutes, an unrecognised key, a value where a section belongs or a section
-  where a value belongs). One test covers each row. A section whose name clashes with another
-  authentication provider's name fails startup as the registry's `DuplicateProviderName` inside
-  `Registration`, not as a configuration error.
-- **S20.5** Until S21 and S22 land, `Discovery`, `KeyRefreshInterval` and `IssuerPattern` are
-  unrecognised keys and fail startup as `InvalidSetting`. When the later slice lands it removes this
-  criterion's test rather than inverting it.
-- **S20.6** A settings defect fails startup before any provider is registered or any key is read. The
-  host never serves, and nothing is left behind (I-I10, settings half).
-- **S20.7** Every token outcome in *Error semantics* § 1 that applies to a fixed-key provider holds, one
-  test each. `CredentialRejected` covers: an algorithm outside the set, an unknown `kid`, no `kid` with
-  no cached key verifying, a bad signature, `exp` or `nbf` outside tolerance, `exp` absent, an audience
-  mismatch, a subject that is missing, empty or not a string, and an unreadable `iss`. A token whose `iss`
-  is not this provider's `Issuer` gets `CredentialNotClaimed`. A fault inside the validation library
-  gets `ProviderFailed`.
-- **S20.8** An accepted token gives an `Account` principal. Its `PrincipalId` pairs the validated `iss`
-  with the subject claim's value, neither trimmed nor case-folded. Two subjects differing only in case
-  give two principals (I-I11, I-I2). The display-name claim is used when it is configured and present,
-  and every other claim is carried in `Principal.Claims` (I-I6).
-- **S20.9** End to end through an operated host: a token signed by a configured issuer authenticates,
-  and a token from an issuer no section names is refused as unauthenticated (S19).
-- **S20.10** `Microsoft.IdentityModel.JsonWebTokens` and `Microsoft.IdentityModel.Protocols.OpenIdConnect`
-  are referenced by `SubZeroDev.Platform.Identity` and by no other Platform project, and no
-  `Microsoft.IdentityModel.*` type appears in any Platform package's public surface. The guard is shown
-  failing against a deliberately broken fixture before it is shown passing (I-I12).
-- **S20.11** No public .NET type carries these settings. The schema is the configuration keys.
-- **S20.12** The I-I7, I-I10, I-I11 and I-I12 records move to `code`, citing their tests, in the same
-  change. I-I10 records which half is enforced and leaves the fetch half for S21.
-
-Out of scope: key discovery and refresh (S21), issuer patterns (S22), the vendor configuration source
-and the operator documentation (S23), and switching the sample hosts off the test-grade provider.
-
 ## S21 — Keys are found through discovery and kept fresh
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator names an issuer's discovery address instead of pasting its keys. The host
 fetches the keys itself and keeps them current. An issuer outage that is shorter than the issuer's own
@@ -269,6 +206,7 @@ are #94's sign-in hook, its sign-out proof and the hook documentation, which D5 
 | Slice | Name | Issue | Criteria | Body complete at |
 |---|---|---|---|---|
 | **S19** | An untrusted credential is refused, not ignored | [#270](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/270), closed | S19.1–S19.8 | `c00c2af` |
+| **S20** | An issuer with fixed keys is trusted from configuration alone | [#271](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/271), closed | S20.1–S20.12 | `bca2535` |
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
   [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via
