@@ -170,17 +170,12 @@ public sealed class IdentityTests
     }
 
     /// <summary>S8.10, completed — with the real provider wired through the full request pipeline
-    /// and no key cached, the request fails as unauthenticated rather than as a server error, and
-    /// the module holds nothing capable of issuing the outbound call S8.10 forbids: the Identity
-    /// assembly carries no reference to <c>System.Net.Http</c> at all, so there is no client left to
-    /// reach for one, cached or not.</summary>
+    /// and no key cached, the request fails as unauthenticated rather than as a server error. That
+    /// no key is fetched while a request is authenticated is asserted by observing outbound
+    /// fetches (S21.8, <c>KeyDiscoveryTests</c>), not by inspecting assembly references.</summary>
     [Fact]
-    public async Task S8_10_No_cached_key_fails_end_to_end_with_no_outbound_call_capability()
+    public async Task S8_10_No_cached_key_fails_end_to_end_as_unauthenticated()
     {
-        var identityAssembly = typeof(JwtBearerAuthenticationProvider).Assembly;
-        var referenced = identityAssembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
-        Assert.DoesNotContain("System.Net.Http", referenced);
-
         var (app, client) = await WebHostUnderTest.StartAsync(services => services.AddSingleton<IAuthenticationProvider>(
             new JwtBearerAuthenticationProvider("test-issuer-a", IssuerA, signingKey: null)));
 

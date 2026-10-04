@@ -19,12 +19,12 @@ namespace SubZeroDev.Platform.Tests;
 /// type to construct.</summary>
 public sealed class ConfiguredBearerTests
 {
-    private const string Issuer = "https://issuer.test";
-    private const string Audience = "platform-api";
+    internal const string Issuer = "https://issuer.test";
+    internal const string Audience = "platform-api";
     private const string Section = "Platform:Identity:Bearer:corp";
 
-    private static readonly RSA Rsa = RSA.Create(2048);
-    private static readonly string Jwks = PublicJwks(Rsa, "key-1");
+    internal static readonly RSA Rsa = RSA.Create(2048);
+    internal static readonly string Jwks = PublicJwks(Rsa, "key-1");
 
     // S20.1 -------------------------------------------------------------------------------------
 
@@ -164,8 +164,6 @@ public sealed class ConfiguredBearerTests
         { "unrecognised key", "Colour", "blue", "Colour" },
         { "section where a value belongs", "Issuer:Nested", "x", "Issuer" },
         { "value where a section belongs", "Audiences", "platform-api", "Audiences" },
-        { "Discovery before S21", "Discovery", "https://issuer.test/.well-known/openid-configuration", "Discovery" },
-        { "KeyRefreshInterval before S21", "KeyRefreshInterval", "00:05:00", "KeyRefreshInterval" },
         { "IssuerPattern before S22", "IssuerPattern", "https://{tenantid}.issuer.test", "IssuerPattern" },
     };
 
@@ -418,7 +416,7 @@ public sealed class ConfiguredBearerTests
 
     // helpers -----------------------------------------------------------------------------------
 
-    private static Dictionary<string, string?> Valid(string name, string? jwks = null, string issuer = Issuer) => new()
+    internal static Dictionary<string, string?> Valid(string name, string? jwks = null, string issuer = Issuer) => new()
     {
         [$"Platform:Identity:Bearer:{name}:Issuer"] = issuer,
         [$"Platform:Identity:Bearer:{name}:SigningKeys"] = jwks ?? Jwks,
@@ -443,7 +441,7 @@ public sealed class ConfiguredBearerTests
         }
     }
 
-    private static IConfiguration Configure(IDictionary<string, string?> settings) =>
+    internal static IConfiguration Configure(IDictionary<string, string?> settings) =>
         new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
 
     private static ServiceCollection Register(IDictionary<string, string?> settings)
@@ -454,7 +452,7 @@ public sealed class ConfiguredBearerTests
         return services;
     }
 
-    private static BearerSettings ReadSettings(IDictionary<string, string?> settings)
+    internal static BearerSettings ReadSettings(IDictionary<string, string?> settings)
     {
         var read = BearerSettings.ReadAll(Configure(settings));
         Assert.True(read.IsSuccess);
@@ -464,10 +462,10 @@ public sealed class ConfiguredBearerTests
     private static ConfiguredBearerAuthenticationProvider Provider(IDictionary<string, string?> settings) =>
         new(ReadSettings(settings));
 
-    private static StubAuthenticationRequest Request(string token) =>
+    internal static StubAuthenticationRequest Request(string token) =>
         new(("Authorization", $"Bearer {token}"));
 
-    private static string PublicJwks(AsymmetricAlgorithm key, string kid) => Jwk(key, kid, includePrivate: false);
+    internal static string PublicJwks(AsymmetricAlgorithm key, string kid) => Jwk(key, kid, includePrivate: false);
 
     private static string PrivateJwks(AsymmetricAlgorithm key, string kid) => Jwk(key, kid, includePrivate: true);
 
@@ -492,7 +490,7 @@ public sealed class ConfiguredBearerTests
         }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull })}]}}";
     }
 
-    private static string Mint(
+    internal static string Mint(
         AsymmetricAlgorithm key,
         string? kid = "key-1",
         string issuer = Issuer,

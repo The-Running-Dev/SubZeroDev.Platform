@@ -10,8 +10,8 @@ namespace SubZeroDev.Platform.Identity;
 /// held from startup. Built from <see cref="BearerSettings"/>, never constructed by a consumer
 /// (<c>20-contract.md</c> § 12), so no <c>Microsoft.IdentityModel</c> type crosses a public
 /// surface (I-I12).</summary>
-/// <remarks>Never fetches key material, on or off the request path: a fixed key set is held from
-/// construction.</remarks>
+/// <remarks>Never fetches key material while authenticating (I-I8): keys are fixed at construction or
+/// read from a cache that only startup and the refresh work item fill.</remarks>
 internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationProvider
 {
     private const string AuthorizationHeader = "Authorization";
@@ -20,10 +20,13 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
     private readonly BearerSettings _settings;
     private readonly JsonWebTokenHandler _handler;
     private readonly TokenValidationParameters _parameters;
+    private readonly KeySetCache? _cache;
 
-    internal ConfiguredBearerAuthenticationProvider(BearerSettings settings, JsonWebTokenHandler? handler = null)
+    internal ConfiguredBearerAuthenticationProvider(
+        BearerSettings settings, JsonWebTokenHandler? handler = null, KeySetCache? cache = null)
     {
         _settings = settings;
+        _cache = cache;
         _handler = handler ?? new JsonWebTokenHandler();
 
         _parameters = new TokenValidationParameters
@@ -42,9 +45,10 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
             // against every held key. Never "any key will do" for a kid that matches nothing.
             TryAllIssuerSigningKeys = false,
             IssuerSigningKeyResolver = (_, _, kid, _) =>
-                string.IsNullOrEmpty(kid)
-                    ? settings.SigningKeys.GetSigningKeys()
-                    : settings.SigningKeys.GetSigningKeys().Where(key => key.KeyId == kid).ToList(),
+            {
+                var keys = (settings.SigningKeys ?? _cache?.Current)?.GetSigningKeys() ?? [];
+                return string.IsNullOrEmpty(kid) ? keys : keys.Where(key => key.KeyId == kid).ToList();
+            },
         };
     }
 
@@ -80,6 +84,11 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         if (!string.Equals(parsed.Issuer, _settings.Issuer, StringComparison.Ordinal))
         {
             return Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialNotClaimed(Name));
+        }
+
+        if (_settings.SigningKeys is null && _cache?.Current is null)
+        {
+            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.KeyMaterialUnavailable(Name));
         }
 
         TokenValidationResult validated;
