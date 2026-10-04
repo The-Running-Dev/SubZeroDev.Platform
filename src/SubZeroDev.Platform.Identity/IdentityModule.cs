@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Hosting;
 
@@ -42,9 +44,27 @@ public sealed class IdentityModule : IPlatformModule
             throw new PlatformStartupException(HostStartupError.Configuration(settings.Error));
         }
 
+        var discovered = new List<(BearerSettings Settings, KeySetCache Cache)>();
         foreach (var provider in settings.Value)
         {
-            services.AddSingleton<IAuthenticationProvider>(new ConfiguredBearerAuthenticationProvider(provider));
+            var cache = provider.Discovery is null ? null : new KeySetCache();
+            services.AddSingleton<IAuthenticationProvider>(
+                new ConfiguredBearerAuthenticationProvider(provider, cache: cache));
+            services.AddSingleton<IHealthCheck>(new KeySetHealthCheck(provider.Name, cache));
+
+            if (cache is not null)
+            {
+                discovered.Add((provider, cache));
+                services.AddSingleton<IBackgroundWork>(sp => new KeyRefreshWork(
+                    provider, cache, sp.GetRequiredService<DiscoveryTransport>()));
+            }
+        }
+
+        if (discovered.Count > 0)
+        {
+            services.TryAddSingleton(DiscoveryTransport.Default);
+            services.AddSingleton<IHostedService>(sp =>
+                new KeyDiscoveryStartup(discovered, sp.GetRequiredService<DiscoveryTransport>()));
         }
     }
 }

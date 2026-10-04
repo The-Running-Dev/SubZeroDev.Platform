@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-I9
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/KeyDiscoveryTests.cs
 
 ## Statement
 A key-set refresh takes no lease, writes nothing durable, and replaces the cached set in one atomic swap; a failed refresh keeps the previous set and degrades readiness, and never empties the cache (Owner: Identity.)

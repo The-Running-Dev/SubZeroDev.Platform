@@ -12,28 +12,34 @@ namespace SubZeroDev.Platform.Identity;
 internal sealed record BearerSettings(
     string Name,
     string Issuer,
-    JsonWebKeySet SigningKeys,
+    JsonWebKeySet? SigningKeys,
     IReadOnlyList<string> Audiences,
     IReadOnlyList<string> Algorithms,
     TimeSpan ClockTolerance,
     string SubjectClaim,
-    string? DisplayNameClaim)
+    string? DisplayNameClaim,
+    Uri? Discovery = null,
+    TimeSpan KeyRefreshInterval = default)
 {
     internal const string SectionPath = "Platform:Identity:Bearer";
 
     private const string Source = "the Platform:Identity:Bearer section of configuration";
     private static readonly TimeSpan MaximumTolerance = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MinimumRefresh = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaximumRefresh = TimeSpan.FromDays(1);
+    private static readonly TimeSpan DefaultRefresh = TimeSpan.FromMinutes(5);
 
     private static readonly string[] PermittedAlgorithms =
     [
         "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512",
     ];
 
-    // Discovery, KeyRefreshInterval and IssuerPattern are deliberately absent until S21 and S22:
-    // an unrecognised key fails startup rather than being ignored.
+    // IssuerPattern is deliberately absent until S22: an unrecognised key fails startup rather than
+    // being ignored.
     private static readonly HashSet<string> Recognised = new(StringComparer.OrdinalIgnoreCase)
     {
         "Issuer", "SigningKeys", "Audiences", "Algorithms", "ClockTolerance", "SubjectClaim", "DisplayNameClaim",
+        "Discovery", "KeyRefreshInterval",
     };
 
     /// <summary>Reads and validates every child section of <c>Platform:Identity:Bearer</c>, before
@@ -100,15 +106,63 @@ internal sealed record BearerSettings(
             return Fail(keysError);
         }
 
-        if (signingKeysJson is null)
+        var discoveryText = Scalar(section, "Discovery", Key("Discovery"), out var discoveryError);
+        if (discoveryError is not null)
         {
-            return Fail(ConfigurationError.MissingRequiredSetting(Key("SigningKeys"), Source));
+            return Fail(discoveryError);
         }
 
-        var keySet = ParseKeySet(signingKeysJson, out var keySetProblem);
-        if (keySet is null)
+        var refreshText = Scalar(section, "KeyRefreshInterval", Key("KeyRefreshInterval"), out var refreshError);
+        if (refreshError is not null)
         {
-            return Fail(ConfigurationError.InvalidSetting(Key("SigningKeys"), keySetProblem));
+            return Fail(refreshError);
+        }
+
+        if (discoveryText is not null && signingKeysJson is not null)
+        {
+            return Fail(ConfigurationError.InconsistentSettings(
+                Key("Discovery"), Key("SigningKeys"), "a provider finds its keys one way, not both"));
+        }
+
+        if (refreshText is not null && discoveryText is null)
+        {
+            return Fail(signingKeysJson is not null
+                ? ConfigurationError.InconsistentSettings(
+                    Key("KeyRefreshInterval"), Key("SigningKeys"), "fixed keys are never refreshed")
+                : ConfigurationError.MissingRequiredSetting(Key("Discovery"), Source));
+        }
+
+        if (discoveryText is null && signingKeysJson is null)
+        {
+            return Fail(ConfigurationError.MissingRequiredSetting(
+                $"{Key("Discovery")} or {Key("SigningKeys")}", Source));
+        }
+
+        JsonWebKeySet? keySet = null;
+        if (signingKeysJson is not null)
+        {
+            keySet = ParseKeySet(signingKeysJson, out var keySetProblem);
+            if (keySet is null)
+            {
+                return Fail(ConfigurationError.InvalidSetting(Key("SigningKeys"), keySetProblem));
+            }
+        }
+
+        Uri? discovery = null;
+        if (discoveryText is not null
+            && (!Uri.TryCreate(discoveryText, UriKind.Absolute, out discovery) || discovery.Scheme != Uri.UriSchemeHttps))
+        {
+            return Fail(ConfigurationError.InvalidSetting(Key("Discovery"), "it must be an absolute https address"));
+        }
+
+        var refresh = DefaultRefresh;
+        if (refreshText is not null
+            && (!TimeSpan.TryParse(refreshText, CultureInfo.InvariantCulture, out refresh)
+                || refresh < MinimumRefresh
+                || refresh > MaximumRefresh))
+        {
+            return Fail(ConfigurationError.InvalidSetting(
+                Key("KeyRefreshInterval"), "it must be a duration between 00:00:30 and 1.00:00:00"));
         }
 
         var audiences = StringArray(section, "Audiences", Key("Audiences"), out var audiencesError);
@@ -182,7 +236,8 @@ internal sealed record BearerSettings(
         }
 
         return Result<BearerSettings, ConfigurationError>.Success(new BearerSettings(
-            name, issuer, keySet, audiences, algorithms, tolerance, subjectClaim ?? "sub", displayNameClaim));
+            name, issuer, keySet, audiences, algorithms, tolerance, subjectClaim ?? "sub", displayNameClaim,
+            discovery, refresh));
     }
 
     /// <summary>A setting that holds a value. Absent is <see langword="null"/>; a section where the
@@ -232,7 +287,7 @@ internal sealed record BearerSettings(
         return values;
     }
 
-    private static JsonWebKeySet? ParseKeySet(string json, out string problem)
+    internal static JsonWebKeySet? ParseKeySet(string json, out string problem)
     {
         problem = "";
         JsonWebKeySet keySet;
