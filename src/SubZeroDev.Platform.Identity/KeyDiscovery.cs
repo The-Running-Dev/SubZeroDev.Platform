@@ -71,7 +71,7 @@ internal static class KeyFetcher
             if (root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("issuer", out var issuer)
                 || issuer.ValueKind != JsonValueKind.String
-                || !string.Equals(issuer.GetString(), settings.Issuer, StringComparison.Ordinal)
+                || !string.Equals(issuer.GetString(), settings.DiscoveryIssuer, StringComparison.Ordinal)
                 || !root.TryGetProperty("jwks_uri", out var jwksUri)
                 || jwksUri.ValueKind != JsonValueKind.String
                 || !Uri.TryCreate(jwksUri.GetString(), UriKind.Absolute, out var jwks)
