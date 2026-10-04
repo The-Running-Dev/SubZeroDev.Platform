@@ -61,71 +61,18 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Outstanding
 
-S21 to S23 deliver the rest of the generic bearer path that issue
+S22 and S23 deliver the rest of the generic bearer path that issue
 [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for (`20-contract.md`
 *Types* § 12, *Modules* § 10 Identity), after S19 landed the chain-end rule decided on 2026-10-01
-(I-I15) and S20 landed fixed-key providers from configuration. The riskiest assumption here is that a provider can be produced from configuration alone. That
+(I-I15), and S20 and S21 landed fixed-key and discovered-key providers from configuration. The riskiest assumption here is that a provider can be produced from configuration alone. That
 means validated before anything is fetched, registered without a per-issuer call, and built on
 IdentityModel without the library leaking into Platform's surface. S20 exercised that assumption. Key
-discovery (S21), tenant-shaped issuers (S22) and the vendor configuration source (S23) each add keys to
+discovery (S21, landed), tenant-shaped issuers (S22) and the vendor configuration source (S23) each add keys to
 a schema S20 has proved. Each slice before them treats those keys as unrecognised, so every
 interim state fails closed and no slice ever removes a key.
 
-## S21 — Keys are found through discovery and kept fresh
-**Status:** in progress
-
-Delivers: an operator names an issuer's discovery address instead of pasting its keys. The host
-fetches the keys itself and keeps them current. An issuer outage that is shorter than the issuer's own
-key lifetime is invisible to callers, and readiness tells the operator when the keys are stale or
-missing.
-
-Touches:
-- **`src/SubZeroDev.Platform.Identity/`**: settings for discovery, the startup fetch, the key cache,
-  the refresh background work and the readiness check
-- **[`IdentityTests.cs`](../tests/SubZeroDev.Platform.Tests/IdentityTests.cs)**: the S8.10 test
-- **[`20-contract.md`](20-contract.md)**: the I-I8, I-I9 and I-I10 records
-
-Depends on: S20.
-
-Acceptance:
-- **S21.1** `Discovery` and `KeyRefreshInterval` become recognised keys, and S20.5's test for them is
-  removed. `KeyRefreshInterval` binds only with `Discovery`: it must be between 30 seconds and one day,
-  and defaults to five minutes.
-- **S21.2** The settings defects for these keys fail startup as `HostStartupError.Configuration` naming
-  the full key, one test each. That covers `InconsistentSettings` for both `Discovery` and `SigningKeys`,
-  or for `KeyRefreshInterval` with `SigningKeys`; `MissingRequiredSetting` for neither `Discovery` nor
-  `SigningKeys`; and `InvalidSetting` for a malformed address or an interval out of range.
-- **S21.3** Each `Discovery` provider makes its first fetch at startup step 8, bounded by a fixed
-  30-second timeout that is not a setting. A failed or timed-out first fetch never fails startup: the
-  provider starts with no keys and answers every credential it claims with `KeyMaterialUnavailable`
-  (I-I10, fetch half).
-- **S21.4** A discovery document whose `issuer` does not equal the provider's `Issuer` is a failed
-  fetch. No key from it is cached.
-- **S21.5** Each `Discovery` provider registers one background work item,
-  `platform.identity.key-refresh:<name>`. It runs at the provider's interval in both host roles, takes
-  no lease, and writes nothing durable. A `SigningKeys` provider registers none (I-I9).
-- **S21.6** A successful refresh replaces the whole cached set in one swap. A concurrent reader sees the
-  whole old set or the whole new one, never a mix. A failed refresh keeps the previous set and never
-  empties the cache (I-I9).
-- **S21.7** Each `Discovery` provider registers the readiness check `platform.identity.key-set:<name>`
-  as a required readiness check. It is Unhealthy with no cached set, Degraded with a cached set whose
-  last fetch failed, and Healthy with a cached set whose last fetch succeeded. A `SigningKeys` provider
-  is always healthy.
-- **S21.8** No key material is fetched while a request is being authenticated. A token naming a `kid`
-  that the cached set does not hold is `CredentialRejected` and issues no fetch. This is asserted by
-  observing outbound fetches, not by inspecting assembly references (I-I8).
-- **S21.9** S8.10's assertion that the Identity assembly references no `System.Net.Http` is replaced by
-  S21.8's request-path assertion. The contract mandates a startup and refresh fetch, so the old
-  assertion cannot hold once discovery exists. Its end-to-end half, no cached key failing as
-  `KeyMaterialUnavailable` and never as a server error, is kept.
-- **S21.10** The I-I8 and I-I9 records move to `code` citing their tests, and I-I10's record is
-  completed, in the same change.
-
-Out of scope: issuer patterns (S22), and any request-path or on-demand fetch, which the contract
-forbids.
-
 ## S22 — One issuer serves many customer tenants
-**Status:** queued
+**Status:** in progress
 
 Delivers: an operator trusts a multi-tenant issuer, one that signs each customer tenant's tokens under
 that tenant's own issuer address, with a single configuration entry. Users in two different customer
@@ -207,6 +154,7 @@ are #94's sign-in hook, its sign-out proof and the hook documentation, which D5 
 |---|---|---|---|---|
 | **S19** | An untrusted credential is refused, not ignored | [#270](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/270), closed | S19.1–S19.8 | `c00c2af` |
 | **S20** | An issuer with fixed keys is trusted from configuration alone | [#271](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/271), closed | S20.1–S20.12 | `bca2535` |
+| **S21** | Keys are found through discovery and kept fresh | [#272](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/272), closed | S21.1–S21.10 | `60d4167` |
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
   [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via
