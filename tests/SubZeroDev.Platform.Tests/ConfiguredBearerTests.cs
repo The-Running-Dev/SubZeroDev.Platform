@@ -164,7 +164,6 @@ public sealed class ConfiguredBearerTests
         { "unrecognised key", "Colour", "blue", "Colour" },
         { "section where a value belongs", "Issuer:Nested", "x", "Issuer" },
         { "value where a section belongs", "Audiences", "platform-api", "Audiences" },
-        { "IssuerPattern before S22", "IssuerPattern", "https://{tenantid}.issuer.test", "IssuerPattern" },
     };
 
     /// <summary>S20.4, S20.5 — each settings defect fails startup as
