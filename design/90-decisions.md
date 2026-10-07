@@ -16,6 +16,20 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-07 — Platform hosts an optional sign-in module so #94's hook has a method to attach to (reverses 2026-09-26) [PROPOSED — owner to ratify]
+
+Context: [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94). The 2026-09-26 entry accepted red-team F1: with Platform a resource server (`10-design.md` *Alternatives* § 11), #94's first, third and fourth criteria — a hook per configured sign-in method, sign-out proven against a provider without the standard one, documentation that reaching for the hook is expected — describe a sign-in method Platform does not have. The owner ruled to reverse that choice rather than amend #94 down to the validation half.
+Chosen: [DECISION TO BE MADE BY THE OWNER — the three points below are the ones the 2026-09-25 entries and #94's thread say must be settled, with the reading most consistent with them.]
+1. **Placement.** Sign-in is a separate optional module, an ordinary client of Platform's authentication seam, as § 11's reversibility note already allows. The core stays protocol-only and a resource server. It references no vendor package (ADR-006 rule 1) and absence is invisible.
+2. **The hook.** The module exposes the underlying OpenID Connect options and events for each configured scheme through a post-configure callback: configuration binds first and the hook adjusts after, so the configuration path stays authoritative. Three quirk classes are in scope: non-standard endpoint construction (Auth0 `/v2/logout`), extra authorize-request parameters (`audience`), and nothing else. Scheme forcing behind a proxy is a deployment concern for `ForwardedHeaders` and is documented as out of the hook's scope.
+3. **Vendor packages.** The 2026-09-25 rule stands: a vendor package is a configuration source over the generic path, never a parallel implementation, and references no Platform package. `UseAuth0()` and its siblings write the module's settings, including the vendor's logout URL, once. Supabase Cloud and self-hosted Supabase are two methods that do not pretend to be one (self-hosted is not an OIDC provider until `GOTRUE_OAUTH_SERVER_ENABLED` is set; ADR-004).
+Consequences for the design: the authentication seam is not widened — the module owns the request, query and cookie surface and the session; the session is durable state, so Identity's "no rows" must be amended or the module must hold its own store; § 11's *Rejected* reasons are answered by that placement, not removed. The web shell is static assets, so the module's host is a separate decision.
+Rejected: widening the seam to carry cookies and queries (it widens it for Mcp too); a raw callback with no vendor package (invites vendor code in each consumer's host, the BlueLionheart failure #94 came from); amending #94 to the validation half (the owner's ruling).
+Reversibility: cheap to add as a module; expensive to withdraw once consumers hold sessions on it (§ 11).
+Supersedes: 2026-09-26 (accepted risk) — a later `/design` pass edits `10-design.md` § 11 and the contract's Unresolved item 4; this entry does not edit them.
+
+Open for the owner before this is ratified: (a) whether the session store is a new module-owned table or the module is stateless (signed cookie); (b) which host serves the callback given D5 ships only static assets; (c) which vendor package is first.
+
 ### 2026-10-07 — The retained `Principal.Claims` stands; #92's criteria are amended to match
 
 Context: [#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263), red-team F2. `10-design.md` retains the public `Principal.Claims` and states the no-permission-data rule as a contract obligation on a consumer's provider, not a structural guarantee. [#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92)'s first criterion asks that the principal carry no permission data and that the mistake be structurally impossible. The two cannot both hold. The owner ruled.
