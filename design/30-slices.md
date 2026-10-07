@@ -61,55 +61,8 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Outstanding
 
-S23 delivers the rest of the generic bearer path that issue
-[#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for (`20-contract.md`
-*Types* § 12, *Modules* § 10 Identity), after S19 landed the chain-end rule decided on 2026-10-01
-(I-I15), and S20, S21 and S22 landed fixed-key, discovered-key and tenant-shaped providers from configuration. The riskiest assumption here is that a provider can be produced from configuration alone. That
-means validated before anything is fetched, registered without a per-issuer call, and built on
-IdentityModel without the library leaking into Platform's surface. S20 exercised that assumption. Key
-discovery (S21, landed), tenant-shaped issuers (S22) and the vendor configuration source (S23) each add keys to
-a schema S20 has proved. Each slice before them treats those keys as unrecognised, so every
-interim state fails closed and no slice ever removes a key.
-
-## S23 — A vendor's settings arrive as a configuration source
-**Status:** in progress
-
-Delivers: a vendor ships its issuer's settings as a small package that the operator adds to the host's
-configuration. The host treats those settings exactly as if the operator had typed them, the package
-cannot depend on Platform, and an operator has written instructions for configuring any issuer.
-
-Touches:
-- **`tests/` fixtures**: a vendor-shaped configuration-source project that references no Platform
-  package
-- **[`PackageGraphTests.cs`](../tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs)**: the fifth
-  build check
-- **[`commercial-guide.md`](../docs/docs/commercial-guide.md)**: the operator's guide to the schema
-- **[`20-contract.md`](20-contract.md)**: the I-I13 and I-I14 records
-
-Depends on: S22.
-
-Acceptance:
-- **S23.1** A fixture project, built the way a vendor configuration package would be, contributes
-  `Platform:Identity:Bearer:<name>:*` keys through a standard configuration source and references no
-  Platform package.
-- **S23.2** The fifth build check fails the build when a vendor configuration package references any
-  Platform package. It is shown failing against a deliberately broken fixture before it is shown passing
-  (I-I13).
-- **S23.3** The same keys and values, supplied once through the fixture's source and once through an
-  in-memory settings file, give equal validated settings. The same tokens give identical accept and
-  reject results under both (I-I14).
-- **S23.4** A key the fixture writes that Identity does not recognise fails startup as
-  `InvalidSetting`, naming the full key, exactly as it would from a settings file.
-- **S23.5** The commercial guide documents the schema: every key, its default, its constraint, and the
-  error a defect produces. It shows a fixed-key, a discovery and a pattern example. It explains where a
-  vendor quirk belongs, in that vendor's configuration source and never in Platform. It replaces the
-  hand-registered provider example as the recommended path. The documentation build passes with no
-  broken link.
-- **S23.6** The I-I13 and I-I14 records move to `code` citing their tests, in the same change.
-
-Out of scope: building or publishing any real vendor package, since D5 builds none. Also out of scope
-are #94's sign-in hook, its sign-out proof and the hook documentation, which D5 does not deliver
-([`90-decisions.md`](90-decisions.md), 2026-09-26).
+None. Every slice in this plan has landed; S23 was the last, closing the generic bearer path that issue
+[#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for.
 
 ---
 
@@ -121,6 +74,7 @@ are #94's sign-in hook, its sign-out proof and the hook documentation, which D5 
 | **S20** | An issuer with fixed keys is trusted from configuration alone | [#271](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/271), closed | S20.1–S20.12 | `bca2535` |
 | **S21** | Keys are found through discovery and kept fresh | [#272](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/272), closed | S21.1–S21.10 | `60d4167` |
 | **S22** | One issuer serves many customer tenants | [#273](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/273), closed | S22.1–S22.6 | `c00c2af` |
+| **S23** | A vendor's settings arrive as a configuration source | [#274](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/274), closed | S23.1–S23.6 | `c00c2af` |
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
   [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via
