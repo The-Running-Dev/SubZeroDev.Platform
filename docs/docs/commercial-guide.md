@@ -51,13 +51,14 @@ For example, an operated host with Identity and durable audit registers:
 ```csharp
 builder.Services.AddSingleton<IPlatformModule, IdentityModule>();
 builder.Services.AddSingleton<IPlatformModule, AuditModule>();
-builder.Services.AddSingleton<IAuthenticationProvider>(authenticationProvider);
 builder.AddPlatformWebHost();
 builder.Services.AddPlatformPersistence();
 ```
 
-Here `authenticationProvider` is the deployment's implementation of `IAuthenticationProvider`.
-Import the Abstractions, Identity, Audit, Hosting and Persistence namespaces and Microsoft DI
+Identity registers a provider for each issuer the operator lists in configuration, so no
+authentication provider is registered by hand; see [Trusting an issuer](#trusting-an-issuer-from-configuration).
+A deployment whose issuer the schema below cannot describe still registers its own
+`IAuthenticationProvider`. Import the Abstractions, Identity, Audit, Hosting and Persistence namespaces and Microsoft DI
 extensions. Supply the required Platform settings before composing the host; the runnable
 [operated sample](https://github.com/The-Running-Dev/SubZeroDev.Platform/tree/main/samples/SubZeroDev.Platform.Sample.Web)
 shows the complete entry point and configuration, including migrations.
@@ -108,6 +109,74 @@ restart delivery. These are local sample commands, not deployment instructions.
 The operated sample uses a deterministic test issuer and deliberately permissive permissions
 for its diagnostic surface. Its licence document is absent and it starts at Community. Those
 fixtures demonstrate composition; they are not production authentication keys or permission policy.
+
+## Trusting an issuer from configuration
+
+An operator trusts a token issuer by writing settings under `Platform:Identity:Bearer:<name>`,
+where `<name>` is a name the operator chooses for that provider. Each child section becomes one
+authentication provider, validated before anything is fetched. A settings file, environment
+variables and a vendor's configuration package all write the same keys, and Identity cannot tell
+which wrote them; where two write one key, the host's configuration precedence decides.
+
+| Key under `<name>` | Required | Default | Constraint |
+|---|---|---|---|
+| `Issuer` | exactly one of `Issuer` and `IssuerPattern` | none | The expected `iss`, compared ordinally. An absolute URI. |
+| `IssuerPattern` | exactly one of `Issuer` and `IssuerPattern` | none | An issuer string containing `{tenantid}` exactly once. The placeholder matches one or more characters, none of them `/`; every other character matches ordinally. |
+| `Discovery` | exactly one of `Discovery` and `SigningKeys` | none | The issuer's OpenID Connect discovery address: an absolute `https` URI. |
+| `SigningKeys` | exactly one of `Discovery` and `SigningKeys` | none | A fixed JSON Web Key Set, inline as one string. Public keys only. |
+| `Audiences` | yes | none | A non-empty array of non-empty strings; a token must name one in `aud`. |
+| `Algorithms` | no | `[RS256]` | Drawn from `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`. Never `HS*` or `none`. |
+| `ClockTolerance` | no | `00:01:00` | A non-negative duration of at most `00:05:00`. |
+| `SubjectClaim` | no | `sub` | The claim that becomes the principal's subject. |
+| `DisplayNameClaim` | no | none | The claim that becomes the display name. |
+| `KeyRefreshInterval` | no | `00:05:00` | Only with `Discovery`. From `00:00:30` to `1.00:00:00`. |
+
+A defect fails startup naming the full key, `Platform:Identity:Bearer:<name>:<setting>`, before any
+key is fetched. A missing required key, or neither of an either-or pair, is `MissingRequiredSetting`.
+Two keys that exclude each other, or `KeyRefreshInterval` beside `SigningKeys`, are
+`InconsistentSettings`. A value that breaks its constraint, and any key not in the table, are
+`InvalidSetting`. A failed key fetch never fails startup; it degrades readiness and the provider
+refuses tokens until keys arrive.
+
+**An issuer with fixed keys.**
+
+```json
+{ "Platform": { "Identity": { "Bearer": { "corp": {
+  "Issuer": "https://login.example.com",
+  "SigningKeys": "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"key-1\",\"n\":\"…\",\"e\":\"AQAB\"}]}",
+  "Audiences": [ "platform-api" ]
+} } } } }
+```
+
+**An issuer found through discovery.** The keys are fetched in the background and refreshed on
+`KeyRefreshInterval`, never on the request path.
+
+```json
+{ "Platform": { "Identity": { "Bearer": { "corp": {
+  "Issuer": "https://login.example.com",
+  "Discovery": "https://login.example.com/.well-known/openid-configuration",
+  "Audiences": [ "platform-api" ]
+} } } } }
+```
+
+**A multi-tenant issuer.** One entry trusts every customer tenant's issuer string. The principal's
+issuer is the concrete `iss` the token carries, so two tenants presenting the same subject are two
+principals. With `Discovery`, the discovery document's `issuer` must equal the pattern string itself.
+
+```json
+{ "Platform": { "Identity": { "Bearer": { "saas": {
+  "IssuerPattern": "https://{tenantid}.login.example.com",
+  "Discovery": "https://login.example.com/.well-known/openid-configuration",
+  "Audiences": [ "platform-api" ]
+} } } } }
+```
+
+**Where a vendor's quirk belongs.** A vendor ships its settings as a configuration source: a small
+package with one extension method on `IConfigurationBuilder` per protocol surface, taking the provider
+name and writing the keys above. It depends on the configuration abstraction and on no Platform
+package, so it cannot implement a parallel provider. A quirk the keys cannot express is not handled in
+Platform and not worked around in the vendor's package: it becomes a new generic-path key first, and a
+key the table does not name fails startup exactly as it would from a settings file.
 
 ## Security defaults and failures
 

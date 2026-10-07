@@ -72,6 +72,12 @@
     <PackageReference Include="SubZeroDev.Platform.Mcp" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
+  <!-- D5-S23: a vendor-shaped configuration source. It references no Platform package (I-I13), so it is
+       referenced unconditionally, with or without UsePlatformPackages. -->
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.VendorConfigFixture\SubZeroDev.Platform.VendorConfigFixture.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

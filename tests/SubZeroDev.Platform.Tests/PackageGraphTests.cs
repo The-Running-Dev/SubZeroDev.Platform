@@ -242,6 +242,53 @@ public sealed class PackageGraphTests
             violations);
     }
 
+    // S23.2 ------------------------------------------------------------------------------------
+
+    private const string VendorFixture = "SubZeroDev.Platform.VendorConfigFixture";
+
+    /// <summary>I-I13: a vendor configuration package references no Platform package. The compiler drops
+    /// a reference nothing uses, so the project file is read as well as the built assembly.</summary>
+    [Fact]
+    public void I_I13_the_vendor_configuration_fixture_references_no_Platform_package()
+    {
+        var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
+        var project = Path.Combine(repositoryRoot, "tests", VendorFixture, $"{VendorFixture}.csproj");
+        var assembly = typeof(Vendor.ConfigurationFixture.VendorConfigurationExtensions).Assembly;
+
+        var graph = new Dictionary<string, IReadOnlySet<string>>
+        {
+            [$"{VendorFixture} (assembly)"] = ReferencedAssemblyNames(assembly.Location),
+            [$"{VendorFixture} (project file)"] = VendorPackageGuard.ProjectFileReferences(File.ReadAllText(project)),
+        };
+
+        Assert.Empty(VendorPackageGuard.PlatformReferences(graph));
+        Assert.Contains("Microsoft.Extensions.Configuration.Abstractions", graph[$"{VendorFixture} (project file)"]);
+    }
+
+    [Fact]
+    public void S23_2_the_vendor_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var brokenProject = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+                <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
+                <PackageReference Include="SubZeroDev.Platform.Core" Version="1.0.0" />
+              </ItemGroup>
+            </Project>
+            """;
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["Vendor.Broken"] = VendorPackageGuard.ProjectFileReferences(brokenProject),
+        };
+
+        var violations = VendorPackageGuard.PlatformReferences(broken);
+
+        Assert.Equal(
+            ["Vendor.Broken -> SubZeroDev.Platform.Core", "Vendor.Broken -> SubZeroDev.Platform.Identity"],
+            violations.Order(StringComparer.Ordinal));
+    }
+
     /// <summary>Every assembly outside Billing that is built alongside this test run: the six
     /// framework assemblies plus every other module. Billing itself is deliberately absent — I-C8
     /// bounds what may reference its types from <em>outside</em> it, not from within.</summary>
@@ -667,4 +714,33 @@ internal static class SdkTypeSurfaceGuard
             }
         }
     }
+}
+
+/// <summary>The checking logic behind I-I13, over an abstracted reference graph so the same function is
+/// proved against a broken fixture before it is trusted against the real one (S23.2).</summary>
+internal static class VendorPackageGuard
+{
+    private const string PlatformPrefix = "SubZeroDev.Platform.";
+
+    private static readonly System.Text.RegularExpressions.Regex ReferenceItem = new(
+        @"<(?:ProjectReference|PackageReference)\s[^>]*Include=""([^""]+)""",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>The names a project file's <c>ProjectReference</c> and <c>PackageReference</c> items
+    /// include, with the path and <c>.csproj</c> extension stripped from a project reference.</summary>
+    internal static IReadOnlySet<string> ProjectFileReferences(string projectXml) =>
+        ReferenceItem.Matches(projectXml)
+            .Select(match => match.Groups[1].Value.Replace('\\', '/'))
+            .Select(include => include[(include.LastIndexOf('/') + 1)..])
+            .Select(name => name.EndsWith(".csproj", StringComparison.Ordinal) ? name[..^".csproj".Length] : name)
+            .ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>I-I13: a vendor package may not reference any <c>SubZeroDev.Platform.*</c> package.</summary>
+    internal static IReadOnlyList<string> PlatformReferences(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> graph) =>
+        [
+            .. graph.SelectMany(entry => entry.Value
+                .Where(reference => reference.StartsWith(PlatformPrefix, StringComparison.Ordinal))
+                .Select(reference => $"{entry.Key} -> {reference}")),
+        ];
 }
