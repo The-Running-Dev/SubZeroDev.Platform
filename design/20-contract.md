@@ -1389,20 +1389,14 @@ at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprin
 [`90-decisions.md`](90-decisions.md), 2026-09-03. The format version inside `SettingsFingerprint`
 changed in the same commit, per what the item determined either way.
 
-**Item 3 — may a consumer-registered permission provider derive a grant from token claims?**
-([#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92); deferred by
-[ADR-009](../docs/docs/adr/ADR-009-identity-package.md), *Not decided here*.) The Platform half is
-stated: `Principal` carries no permission data (Types § 1), no Platform decision reads `Claims`
-(I-I6), the evaluator consults only registered providers (I-A2), and no grant outlives the request
-that derived it (I-A10). What is not determined is the consumer half. `10-design.md` keeps the raw
-authentication result "for consumers that want claims" (*Alternatives considered*, § 5) and names
-a consumer-registered third provider as the extension point for custom roles (§ 3; Types § 2 here),
-yet nothing says whether that provider may read a role from `Principal.Claims`. A provider that
-does would make revocation wait for token expiry, which I-A10 forbids only for Platform's own
-providers. **This blocks** any contract sentence forbidding permissions or roles in a login token for all providers, and so
-#92's third done-when criterion. It needs a `10-design.md` decision first — a rule on
-`IPermissionProvider` implementations, or an explicit statement that a consumer provider's grant
-source is the consumer's own concern.
+Item 3 (may a consumer-registered permission provider derive a grant from token claims?,
+[#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92)) was resolved by the grant-source
+rule in [`10-design.md`](10-design.md) *Data model* § 3 — claims and the raw authentication result are never
+a grant source for any provider — recorded at [`90-decisions.md`](90-decisions.md), 2026-09-25. The rule is
+structural for Platform's providers (I-I6, I-A2, I-A10) and a contract obligation for a consumer's, with the
+revoke-then-deny test shipped in `Platform.Testing` as a harness. `Principal.Claims` stays public, and
+#92's criteria were amended to match, per the owner's ruling of 2026-10-07 ([#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263),
+[`90-decisions.md`](90-decisions.md), 2026-10-07).
 
 Item 4 (a per-vendor escape hatch for sign-in providers that depart from the standard,
 [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94)) was resolved **for the
