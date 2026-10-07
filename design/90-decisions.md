@@ -16,6 +16,13 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-07 — The retained `Principal.Claims` stands; #92's criteria are amended to match
+
+Context: [#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263), red-team F2. `10-design.md` retains the public `Principal.Claims` and states the no-permission-data rule as a contract obligation on a consumer's provider, not a structural guarantee. [#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92)'s first criterion asks that the principal carry no permission data and that the mistake be structurally impossible. The two cannot both hold. The owner ruled.
+Chosen: the design stands and #92 gives way. `Principal` keeps `Claims`, which is the raw authentication result and never a grant source. For Platform's own providers the rule is structural (I-I6, I-A2, I-A10 and the revoke-then-deny test). For a consumer's provider it is a contract obligation, with the same test shipped in `Platform.Testing` as a harness, as 2026-09-25 recorded. #92's criteria are reworded to say this. Contract Unresolved item 3 is closed.
+Rejected: removing or filtering `Claims` so that a token claim cannot grant, which would make the rule structural for consumers too. It is breaking at 0.x and cuts against `10-design.md` *Alternatives* § 5. It also does not hold while the raw authentication result stays reachable through DI, so it would promise more than it delivers. It would also be a contract and schema amendment, which is a `/spec` change and not a decision-log entry.
+Reversibility: cheap to relax, expensive to tighten, as 2026-09-25 recorded.
+
 ### 2026-10-06 — Remove the per-repository SessionEnd cost hook
 Context: `.claude/settings.json` ran `pwsh … tools/Measure-Session.ps1` on `SessionEnd`, but that script no longer exists — it left this repository when the kit moved to a single home install, and the kit later ported it to Node as `measure-session.ts` — so the hook failed at the end of every session. The kit's setup installs one global `SessionEnd` hook in `~/.claude/settings.json` that logs every project.
 Chosen: remove this repository's `hooks.SessionEnd` entry, in the AgentKit sync to `v2026.10.06.1`. Nothing else in `settings.json` changes.
