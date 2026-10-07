@@ -218,6 +218,15 @@ Configure their responses before registering them through the existing seams. Mu
 need distinct names. Entitlement contributors use the keyed DI slot
 `EntitlementContributorRegistration.ServiceKey`; ordinary callers use the evaluator.
 
+A permission provider you register must take its grants from a source that can be revoked while the
+caller's credential is still valid, and never from the token. `PermissionProviderHarness` checks both
+against your own provider. `AssertRevokedGrantDeniesNextRequestAsync` takes your provider, a principal,
+the permission, and two callbacks that grant and revoke in the provider's own source; it fails if the
+provider still answers with the permission on the next request. `AssertTokenClaimsGrantNothingAsync`
+fails a provider that grants from a token's role or permission claims. `Principal.Claims` is public as
+the raw authentication result, so Platform cannot stop a provider reading it; these two checks are how
+the rule is held.
+
 Construct `AuditInspector` with the host's `FakeDurableAuditSink`. Its `Records` property returns
 read-only snapshots in arrival order. It cannot write or clear records and is not a durable-store
 query. The sink's in-memory records are scoped to the test's process. Testing has no fake organization,

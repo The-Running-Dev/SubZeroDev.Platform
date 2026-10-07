@@ -732,7 +732,15 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
 Fakes for the framework seams only, beside the existing ones in
 [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs): a fake principal of each of the four kinds,
 a fake tenant resolver, a fake entitlement contributor, a fake permission provider, an audit
-inspector, and the composition profile on the test host.
+inspector, the composition profile on the test host, and `PermissionProviderHarness`.
+
+**`PermissionProviderHarness`** ([`PermissionProviderHarness.cs`](../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs))
+is the grant-source rule of *Public surface* § 3 as a test a consumer runs against its own
+`IPermissionProvider` (#92). `AssertRevokedGrantDeniesNextRequestAsync` grants, checks the provider
+answers with the permission, revokes, and checks the next answer for the same principal object no
+longer includes it. `AssertTokenClaimsGrantNothingAsync` asks about a principal whose token asserts
+roles and the permission itself, with nothing granted in the provider's own source, and expects
+nothing. Each throws `InvalidOperationException` naming the breach, so any test framework reports it.
 
 The helper declarations are implemented in [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs).
 The getter-only effective composition profile is declared on `IPlatformTestHost` in
@@ -1283,7 +1291,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
 | **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
-| **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | instruction | — |
+| **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
 | **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider returned an error, and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | instruction | — |
 | **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
@@ -1307,7 +1315,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-I3** | `PrincipalId.ToString()` is never split to recover the pair; anywhere the pair is stored it is two columns (Owner: Abstractions, Audit store, Organizations.) Enforced by code — in each schema; enforced by instruction otherwise. | — | code, instruction | — |
 | **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
 | **I-I5** | A `Delegated` principal is never treated as an `Account` with missing fields (Owner: every consumer.) | — | instruction | — |
-| **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | instruction | — |
+| **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | code | tests/SubZeroDev.Platform.Tests/PermissionGrantSourceTests.cs |
 | **I-I7** | The generic bearer path accepts asymmetric signature algorithms only: a shared-secret algorithm or `none` in its settings fails startup, and a token whose header names an algorithm outside the provider's set is rejected (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/ConfiguredBearerTests.cs |
 | **I-I8** | No key material is fetched on the request path; a token naming a key id the cached set does not hold is `CredentialRejected` and never triggers a fetch (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/KeyDiscoveryTests.cs |
 | **I-I9** | A key-set refresh takes no lease, writes nothing durable, and replaces the cached set in one atomic swap; a failed refresh keeps the previous set and degrades readiness, and never empties the cache (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/KeyDiscoveryTests.cs |
