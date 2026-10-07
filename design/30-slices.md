@@ -61,53 +61,18 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Outstanding
 
-S22 and S23 deliver the rest of the generic bearer path that issue
+S23 delivers the rest of the generic bearer path that issue
 [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for (`20-contract.md`
 *Types* § 12, *Modules* § 10 Identity), after S19 landed the chain-end rule decided on 2026-10-01
-(I-I15), and S20 and S21 landed fixed-key and discovered-key providers from configuration. The riskiest assumption here is that a provider can be produced from configuration alone. That
+(I-I15), and S20, S21 and S22 landed fixed-key, discovered-key and tenant-shaped providers from configuration. The riskiest assumption here is that a provider can be produced from configuration alone. That
 means validated before anything is fetched, registered without a per-issuer call, and built on
 IdentityModel without the library leaking into Platform's surface. S20 exercised that assumption. Key
 discovery (S21, landed), tenant-shaped issuers (S22) and the vendor configuration source (S23) each add keys to
 a schema S20 has proved. Each slice before them treats those keys as unrecognised, so every
 interim state fails closed and no slice ever removes a key.
 
-## S22 — One issuer serves many customer tenants
-**Status:** in progress
-
-Delivers: an operator trusts a multi-tenant issuer, one that signs each customer tenant's tokens under
-that tenant's own issuer address, with a single configuration entry. Users in two different customer
-tenants are never mistaken for one another, even when their subjects match.
-
-Touches:
-- **`src/SubZeroDev.Platform.Identity/`**: settings for the issuer pattern, issuer matching, and the
-  discovery issuer check
-- **`tests/`**
-
-Depends on: S21.
-
-Acceptance:
-- **S22.1** `IssuerPattern` becomes a recognised key, and S20.5's test is removed. Supplying both
-  `Issuer` and `IssuerPattern` is `InconsistentSettings`, and supplying neither is
-  `MissingRequiredSetting`, each naming the full key.
-- **S22.2** A pattern that does not contain `{tenantid}` exactly once is `InvalidSetting`, naming the
-  full key.
-- **S22.3** The placeholder matches one or more characters, none of them `/`. Every other character
-  matches ordinally. A token whose `iss` matches is claimed, and one that does not match is
-  `CredentialNotClaimed`. Table tests cover an empty segment, a segment containing `/`, case
-  differences outside the placeholder, and the placeholder at the start, in the middle and at the end.
-- **S22.4** The principal's issuer is the concrete validated `iss`, never the pattern. Two tenants of
-  one pattern presenting the same subject give two different principals (I-I11).
-- **S22.5** For a `Discovery` provider with a pattern, the discovery document's `issuer` must equal the
-  pattern string itself. Anything else is a failed fetch (S21.4).
-- **S22.6** End to end through an operated host: tokens from two tenants of one configured pattern each
-  authenticate as distinct principals, and a token from an issuer outside the pattern is refused as
-  unauthenticated.
-
-Out of scope: mapping an issuer tenant to a Platform tenant. Tenant resolution stays S5's, and nothing
-here resolves a `TenantId` from a token.
-
 ## S23 — A vendor's settings arrive as a configuration source
-**Status:** queued
+**Status:** in progress
 
 Delivers: a vendor ships its issuer's settings as a small package that the operator adds to the host's
 configuration. The host treats those settings exactly as if the operator had typed them, the package
@@ -155,6 +120,7 @@ are #94's sign-in hook, its sign-out proof and the hook documentation, which D5 
 | **S19** | An untrusted credential is refused, not ignored | [#270](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/270), closed | S19.1–S19.8 | `c00c2af` |
 | **S20** | An issuer with fixed keys is trusted from configuration alone | [#271](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/271), closed | S20.1–S20.12 | `bca2535` |
 | **S21** | Keys are found through discovery and kept fresh | [#272](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/272), closed | S21.1–S21.10 | `60d4167` |
+| **S22** | One issuer serves many customer tenants | [#273](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/273), closed | S22.1–S22.6 | `c00c2af` |
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
   [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via
