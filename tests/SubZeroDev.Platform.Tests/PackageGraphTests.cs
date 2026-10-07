@@ -244,7 +244,7 @@ public sealed class PackageGraphTests
 
     // S23.2 ------------------------------------------------------------------------------------
 
-    private const string VendorFixture = "SubZeroDev.Platform.VendorConfigFixture";
+    private const string VendorFixture = "Vendor.ConfigurationFixture";
 
     /// <summary>I-I13: a vendor configuration package references no Platform package. The compiler drops
     /// a reference nothing uses, so the project file is read as well as the built assembly.</summary>

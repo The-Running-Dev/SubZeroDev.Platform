@@ -75,7 +75,7 @@
   <!-- D5-S23: a vendor-shaped configuration source. It references no Platform package (I-I13), so it is
        referenced unconditionally, with or without UsePlatformPackages. -->
   <ItemGroup>
-    <ProjectReference Include="..\SubZeroDev.Platform.VendorConfigFixture\SubZeroDev.Platform.VendorConfigFixture.csproj" />
+    <ProjectReference Include="..\Vendor.ConfigurationFixture\Vendor.ConfigurationFixture.csproj" />
   </ItemGroup>
 
   <ItemGroup>
