@@ -61,6 +61,20 @@ public sealed record PlatformOptions
 
     /// <summary>Audit retention. Read only when the Audit module is composed.</summary>
     public AuditOptions Audit { get; init; } = new();
+
+    /// <summary>How stale a mirrored permission provider may be before it stops granting.</summary>
+    public AuthorizationOptions Authorization { get; init; } = new();
+}
+
+/// <summary>Bounds on authorization sources. Bound from <c>Platform:Authorization</c>.</summary>
+public sealed record AuthorizationOptions
+{
+    /// <summary><c>Platform:Authorization:MirrorMaximumAge</c>. An
+    /// <c>IMirroredPermissionProvider</c> whose last sync is older than this by the evaluating host's
+    /// clock grants nothing and is recorded as unavailable. Between 30 seconds and one day; there is
+    /// no unbounded value (I-A13).</summary>
+    [Fingerprinted]
+    public TimeSpan MirrorMaximumAge { get; init; } = TimeSpan.FromMinutes(15);
 }
 
 /// <summary>Audit retention. Absent by default: audit rows are kept forever, as they always were.</summary>

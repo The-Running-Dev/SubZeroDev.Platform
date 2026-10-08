@@ -848,31 +848,13 @@ permission-provider registry, the permission-catalog registry, the evaluator and
 provider are declared in
 [`Authorization.cs`](../src/SubZeroDev.Platform.Core/Authorization.cs).
 
-One interface and one options record are not in the tree yet, and are scaffolded here until the slice
-that materialises them replaces this block with the pointers above
-([`90-decisions.md`](90-decisions.md), 2026-10-08). The interface is declared in Abstractions, beside
-`IPermissionProvider`:
-
-```csharp
-public interface IMirroredPermissionProvider : IPermissionProvider
-{
-    Task<Result<DateTimeOffset?, AuthorizationError>> LastSyncedAsync(TenantId tenant, CancellationToken cancellationToken);
-}
-```
-
-The options record is declared in Core, beside the rest of `PlatformOptions`, and bound from
-`Platform:Authorization`:
-
-```csharp
-public sealed record AuthorizationOptions
-{
-    [Fingerprinted]
-    public TimeSpan MirrorMaximumAge { get; init; } = TimeSpan.FromMinutes(15);
-}
-
-// on PlatformOptions
-public AuthorizationOptions Authorization { get; init; } = new();
-```
+`IMirroredPermissionProvider` is declared beside `IPermissionProvider` in
+[`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs) (S39).
+`AuthorizationOptions` and `PlatformOptions.Authorization` are declared in
+[`PlatformOptions.cs`](../src/SubZeroDev.Platform.Core/PlatformOptions.cs) and bound from
+`Platform:Authorization` by
+[`PlatformOptionsBinder.cs`](../src/SubZeroDev.Platform.Core/PlatformOptionsBinder.cs).
+`MirrorMaximumAge` is `[Fingerprinted]`.
 
 | Key | Required | Constraint |
 |---|---|---|
@@ -2204,7 +2186,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
 | **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider could not answer — returned an error, or is a mirror past `MirrorMaximumAge` (I-A13) — and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | code | tests/SubZeroDev.Platform.Tests/ProviderFailureHttpTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
-| **I-A13** | A registered `IMirroredPermissionProvider` whose `LastSyncedAsync` is null, errs, or is older than `Platform:Authorization:MirrorMaximumAge` by the evaluating host's clock contributes no grant, is not asked for grants, and is recorded as `ProviderUnavailable` naming it; no configuration makes the maximum unbounded (Owner: Core.) | — | instruction | — |
+| **I-A13** | A registered `IMirroredPermissionProvider` whose `LastSyncedAsync` is null, errs, or is older than `Platform:Authorization:MirrorMaximumAge` by the evaluating host's clock contributes no grant, is not asked for grants, and is recorded as `ProviderUnavailable` naming it; no configuration makes the maximum unbounded (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/MirroredProviderTests.cs |
 | **I-A14** | A mirror's last-synced instant is the instant its most recent successful sync began reading the issuer, written with the rows that read produced; a failed or partial issuer read advances neither (Owner: each consumer's mirror sync. Checked in part by `PermissionProviderHarness.AssertIssuerRevocationDeniesWithinBoundAsync`.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
 | **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |

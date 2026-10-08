@@ -64,6 +64,11 @@ internal static class PlatformOptionsBinder
 
         var auditRetentionDays = reader.OptionalInt32("Audit:RetentionDays", Between(1, 36_500));
 
+        var mirrorMaximumAge = reader.TimeSpan(
+            "Authorization:MirrorMaximumAge",
+            TimeSpan.FromMinutes(15),
+            Between(TimeSpan.FromSeconds(30), TimeSpan.FromDays(1)));
+
         if (reader.Error is { } error)
         {
             return Result<PlatformOptions, ConfigurationError>.Failure(error);
@@ -156,6 +161,7 @@ internal static class PlatformOptionsBinder
                 OtlpEndpoint = otlpEndpoint,
             },
             Audit = new AuditOptions { RetentionDays = auditRetentionDays },
+            Authorization = new AuthorizationOptions { MirrorMaximumAge = mirrorMaximumAge },
         });
     }
 
@@ -178,6 +184,9 @@ internal static class PlatformOptionsBinder
 
     private static Func<int, (bool, string)> Between(int minimum, int maximum) =>
         value => (value >= minimum && value <= maximum, $"must be between {minimum} and {maximum}");
+
+    private static Func<TimeSpan, (bool, string)> Between(TimeSpan minimum, TimeSpan maximum) =>
+        value => (value >= minimum && value <= maximum, $"must be between {minimum:c} and {maximum:c}");
 
     private static Func<double, (bool, string)> GreaterThan(double minimum) =>
         value => (value > minimum, $"must be greater than {minimum}");

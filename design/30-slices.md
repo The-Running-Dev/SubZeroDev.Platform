@@ -524,8 +524,8 @@ Acceptance:
 Out of scope: an opt-in or opt-out setting; seeding at start; changing migrate mode; retrying on `Unavailable`.
 
 ## S39 — A role removed at the identity provider stops granting within a limit the operator sets
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: an operator whose roles live in Entra or Keycloak, and reach a Platform-hosted service through
 a consumer's mirror, knows the longest a removed role can keep granting. A caller whose only grant comes
@@ -581,7 +581,7 @@ between requests; any sync, mirror table or vendor adapter inside Platform; the 
 (S40). None of these is in the contract.
 
 ## S40 — A consumer can prove its mirrored roles are revoked within the limit by revoking at the identity provider
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a consumer that mirrors issuer roles runs one test that removes a role where it really lives,

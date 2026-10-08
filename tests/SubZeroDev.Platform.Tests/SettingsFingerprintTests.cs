@@ -25,16 +25,19 @@ public sealed class SettingsFingerprintTests
     public void Matches_the_byte_exact_specification_against_a_hand_computed_vector()
     {
         // Computed independently against System.Security.Cryptography.SHA256 over the exact byte
-        // layout design/20-contract.md specifies: "szdfp4", then each of the eleven
+        // layout design/20-contract.md specifies: "szdfp4", then each of the twelve
         // currently-[Fingerprinted] entries (D5-S1 adds CompositionProfile, D5-S32 adds
-        // Audit:RetentionDays), path-sorted ordinally, length-prefixed. D5-S8 bumped the version when
+        // Audit:RetentionDays, D5-S39 adds Authorization:MirrorMaximumAge under the same version),
+        // path-sorted ordinally, length-prefixed. D5-S8 bumped the version when
         // the entitlement contributor set joined the input; with no contributor registered it
         // contributes no entry. D5-S32's entry is present even when the value is absent — a 0x00
         // marker — so this vector differs from the szdfp3 one (82d01318…, reproduced by the same
-        // independent computation before the change) in the version bytes and that one entry.
+        // independent computation before the change) in the version bytes and that one entry. The same
+        // computation reproduced the eleven-entry szdfp4 vector (c4b398ab…) before D5-S39 added its
+        // entry.
         var fingerprint = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline(), []);
 
-        Assert.Equal("c4b398abfc5a2c2828db1272cb34b71a4862974fff354e9e60683c8281e40d98", fingerprint);
+        Assert.Equal("55b6e53e974446b3037cfa57a6fd32d3638206515adcb5ac0968b6c1ef953822", fingerprint);
     }
 
     [Fact]
@@ -112,7 +115,7 @@ public sealed class SettingsFingerprintTests
 
         Assert.NotEqual(absent, thirty);
         Assert.NotEqual(thirty, thirtyOne);
-        Assert.Equal("5c72dafc104d4339ffde640a03098610fa1983dfff638574b3ff63a1f44f2f0d", thirty);
+        Assert.Equal("63e37fbcf888a683a1731251bf5dc4e6ee3ec8d8d9957b48f9bbeb933357955f", thirty);
     }
 
     [Fact]
