@@ -25,8 +25,9 @@ public interface IMigrationLock : IAsyncDisposable
 /// <see cref="PoisonedOutboxRows"/> both live in <c>platform_outbox</c> — the poisoned target also
 /// removes discarded rows, since the predicate table prunes both on the poison window.
 /// <see cref="DeadHostRegistrations"/> is the third retention window, in
-/// <c>platform_host_registration</c>. One registration — <c>PlatformBackgroundWork.Prune</c> —
-/// covers all three.</summary>
+/// <c>platform_host_registration</c>. <see cref="OrphanedInboxRecords"/> has no window of its own: an
+/// inbox record goes once the outbox row it guards is gone. One registration —
+/// <c>PlatformBackgroundWork.Prune</c> — covers all four.</summary>
 public enum PruneTarget
 {
     /// <summary>Rows in <c>platform_outbox</c> with <c>processed_at</c> set and <c>poisoned_at</c>
@@ -40,6 +41,10 @@ public enum PruneTarget
     /// <summary>Rows in <c>platform_host_registration</c> whose heartbeat is older than
     /// <c>HostRegistration:RetentionWindow</c>.</summary>
     DeadHostRegistrations,
+
+    /// <summary>Rows in <c>platform_inbox</c> whose <c>platform_outbox</c> row no longer exists,
+    /// recorded before the prune's <c>olderThan</c> instant.</summary>
+    OrphanedInboxRecords,
 }
 
 /// <summary>Everything the two providers must do differently to produce the same observable
@@ -174,6 +179,16 @@ internal static class PruneSql
                 SELECT role, instance FROM platform_host_registration
                 WHERE heartbeat_at < @olderThan
                 ORDER BY heartbeat_at
+                LIMIT @batchSize
+            );
+            """,
+        PruneTarget.OrphanedInboxRecords => """
+            DELETE FROM platform_inbox
+            WHERE (message_id, consumer) IN (
+                SELECT i.message_id, i.consumer FROM platform_inbox i
+                WHERE i.processed_at < @olderThan
+                    AND NOT EXISTS (SELECT 1 FROM platform_outbox o WHERE o.id = i.message_id)
+                ORDER BY i.processed_at
                 LIMIT @batchSize
             );
             """,

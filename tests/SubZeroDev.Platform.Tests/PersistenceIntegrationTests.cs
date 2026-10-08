@@ -1510,6 +1510,139 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         Assert.True(written.IsSuccess);
     }
 
+    // S34 ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S34_1_One_prune_pass_deletes_only_the_record_whose_outbox_row_is_gone()
+    {
+        await using var host = await StartPruneWorkerAsync();
+        var now = host.Clock.UtcNow;
+
+        var orphaned = OutboxMessageId.Create(now);
+        var processed = await InsertRawOutboxRowAtAsync(host, now - TimeSpan.FromMinutes(1), null, null);
+        var pending = await InsertRawOutboxRowAtAsync(host, null, null, null);
+        foreach (var id in new[] { orphaned, processed, pending })
+        {
+            await InsertInboxRecordsAsync(host, now - TimeSpan.FromMinutes(1), id);
+        }
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        Assert.Equal(0, await CountInboxRecordsAsync(host, orphaned));
+        Assert.Equal(1, await CountInboxRecordsAsync(host, processed));
+        Assert.Equal(1, await CountInboxRecordsAsync(host, pending));
+    }
+
+    [Fact]
+    public async Task S34_2_Orphans_are_deleted_at_most_a_batch_per_statement_and_one_pass_leaves_none()
+    {
+        await using var host = await StartPruneWorkerAsync(pruneBatchSize: 10);
+        var now = host.Clock.UtcNow;
+        var orphans = Enumerable.Range(0, 25).Select(_ => OutboxMessageId.Create(now)).ToArray();
+        await InsertInboxRecordsAsync(host, now - TimeSpan.FromMinutes(1), orphans);
+
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var first = await capability.DeleteBoundedAsync(
+            PruneTarget.OrphanedInboxRecords, now, batchSize: 10, CancellationToken.None);
+        Assert.True(first.IsSuccess);
+        Assert.Equal(10, first.Value);
+        Assert.Equal(15, await CountInboxRecordsAsync(host));
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        Assert.Equal(0, await CountInboxRecordsAsync(host));
+    }
+
+    [Fact]
+    public async Task S34_3_Once_the_processed_prune_removes_an_outbox_row_the_next_pass_removes_its_inbox_record()
+    {
+        await using var host = await StartPruneWorkerAsync();
+        var now = host.Clock.UtcNow;
+        var id = await InsertRawOutboxRowAtAsync(host, now - TimeSpan.FromHours(2), null, null);
+        await InsertInboxRecordsAsync(host, now - TimeSpan.FromHours(2), id);
+
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var outboxPruned = await capability.DeleteBoundedAsync(
+            PruneTarget.ProcessedOutboxRows, now - TimeSpan.FromHours(1), batchSize: 500, CancellationToken.None);
+        Assert.Equal(1, outboxPruned.Value);
+        Assert.Null(await ReadOutboxRowAsync(_connectionString, capability, id));
+        Assert.Equal(1, await CountInboxRecordsAsync(host, id));
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        Assert.Equal(0, await CountInboxRecordsAsync(host, id));
+    }
+
+    private async Task<IPlatformTestHost> StartPruneWorkerAsync(int pruneBatchSize = 500)
+    {
+        var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", _connectionString)
+            .WithSetting("Outbox:ProcessedRetention", "01:00:00")
+            .WithSetting("Outbox:PoisonedRetention", "02:00:00")
+            .WithSetting("Outbox:PruneBatchSize", pruneBatchSize.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .WithRole(HostRole.Worker)
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        return host;
+    }
+
+    /// <summary>Writes one <c>test.event</c> record per message, as the dispatcher would have.</summary>
+    private static async Task InsertInboxRecordsAsync(
+        IPlatformTestHost host, DateTimeOffset processedAt, params OutboxMessageId[] ids)
+    {
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var written = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                var current = ambient.Current!;
+                foreach (var id in ids)
+                {
+                    await using var insert = current.Connection.CreateCommand();
+                    insert.Transaction = current.Transaction;
+                    insert.CommandText =
+                        "INSERT INTO platform_inbox (message_id, consumer, tenant, processed_at) "
+                        + "VALUES (@id, @consumer, @tenant, @processedAt);";
+                    AddParameter(insert, "@id", capability.EncodeIdentifier(id.Value));
+                    AddParameter(insert, "@consumer", "test.event");
+                    AddParameter(insert, "@tenant", TenantId.Implicit.ToString());
+                    AddParameter(insert, "@processedAt", capability.FormatInstant(processedAt));
+                    await insert.ExecuteNonQueryAsync(token);
+                }
+            },
+            CancellationToken.None);
+        Assert.True(written.IsSuccess);
+    }
+
+    private static async Task<long> CountInboxRecordsAsync(IPlatformTestHost host, OutboxMessageId? id = null)
+    {
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        long count = -1;
+        var read = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var command = current.Connection.CreateCommand();
+                command.Transaction = current.Transaction;
+                command.CommandText = id is null
+                    ? "SELECT COUNT(*) FROM platform_inbox;"
+                    : "SELECT COUNT(*) FROM platform_inbox WHERE message_id = @id;";
+                if (id is { } message)
+                {
+                    AddParameter(command, "@id", capability.EncodeIdentifier(message.Value));
+                }
+
+                count = Convert.ToInt64(await command.ExecuteScalarAsync(token));
+            },
+            CancellationToken.None);
+        Assert.True(read.IsSuccess);
+        return count;
+    }
+
     // S27.3 -----------------------------------------------------------------------------------
 
     /// <summary>The migrations Platform registered at D5's baseline commit (<c>d6daabf</c>, the

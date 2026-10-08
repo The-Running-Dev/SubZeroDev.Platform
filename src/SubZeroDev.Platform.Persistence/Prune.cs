@@ -6,7 +6,8 @@ namespace SubZeroDev.Platform.Persistence;
 
 /// <summary>Deletes past their retention window, under a lease, in bounded batches. One
 /// registration — <c>PlatformBackgroundWork.Prune</c> — covers all three windows: processed outbox
-/// rows, poisoned (and discarded) outbox rows, and dead host registrations.</summary>
+/// rows, poisoned (and discarded) outbox rows, and dead host registrations — and then the inbox
+/// records whose outbox row is gone.</summary>
 internal sealed class PruneWork(
     IOutboxStore outboxStore,
     ILeaseManager leaseManager,
@@ -47,15 +48,28 @@ internal sealed class PruneWork(
             .ConfigureAwait(false);
         await PruneOneAsync(PruneTarget.DeadHostRegistrations, now - options.HostRegistration.RetentionWindow, cancellationToken)
             .ConfigureAwait(false);
+
+        // Last, so the records of the outbox rows pruned above go in this same pass. Drained until a
+        // short batch: orphans appear only when this leased work deletes outbox rows, so none are
+        // added while the loop runs and it ends. A record whose outbox row still exists — pending,
+        // processed or poisoned — could still be redelivered and is never touched.
+        while (await PruneOneAsync(PruneTarget.OrphanedInboxRecords, now, cancellationToken).ConfigureAwait(false)
+            == options.Outbox.PruneBatchSize)
+        {
+        }
     }
 
-    private async Task PruneOneAsync(PruneTarget target, DateTimeOffset olderThan, CancellationToken cancellationToken)
+    /// <summary>One bounded statement. Returns how many rows it deleted, or null when it failed.</summary>
+    private async Task<int?> PruneOneAsync(PruneTarget target, DateTimeOffset olderThan, CancellationToken cancellationToken)
     {
         var pruned = await outboxStore.PruneAsync(target, olderThan, options.Outbox.PruneBatchSize, cancellationToken)
             .ConfigureAwait(false);
         if (!pruned.IsSuccess)
         {
             logger.LogWarning("Prune of {Target} failed: {Code}.", target, pruned.Error.Code);
+            return null;
         }
+
+        return pruned.Value;
     }
 }

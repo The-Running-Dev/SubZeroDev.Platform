@@ -404,8 +404,8 @@ Acceptance:
 Out of scope: a public inbox API, or deduplication for webhooks or other inbound messages (Unresolved 5). Making external side effects idempotent. Pruning, which is S34.
 
 ## S34 — Inbox records are removed once the message they guard is gone, so the table cannot grow without bound
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an operator, the inbox stays as small as the outbox. Its records disappear on the outbox's
 own retention, with no new setting, and a record is never removed while its message could still be
@@ -420,7 +420,7 @@ Acceptance:
 Out of scope: a separate inbox retention setting. Foreign keys or `PRAGMA foreign_keys`. Pruning anything by tenant.
 
 ## S35 — Two hosts writing the same row no longer silently overwrite each other
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As a product developer on Automator or BarStrad, I mark a table as versioned and write

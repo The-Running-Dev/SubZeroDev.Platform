@@ -75,6 +75,39 @@ public sealed class PruneLoggingTests
             entry => entry.Level == LogLevel.Warning && entry.Message.Contains(id.ToString(), StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task S34_4_A_failed_orphan_prune_logs_in_the_existing_targets_format_naming_OrphanedInboxRecords()
+    {
+        var logger = new CapturingLogger<PruneWork>();
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(PersistenceProvider.Sqlite)
+            .WithSetting("Outbox:ProcessedRetention", "00:30:00")
+            .WithSetting("Outbox:PoisonedRetention", "01:00:00")
+            .WithRole(HostRole.Worker)
+            .WithServices(services => services.AddSingleton<ILogger<PruneWork>>(logger))
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        // Only the inbox statement can fail: its table is gone, the other three targets' are not.
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var dropped = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                await using var drop = ambient.Current!.Connection.CreateCommand();
+                drop.Transaction = ambient.Current.Transaction;
+                drop.CommandText = "DROP TABLE platform_inbox;";
+                await drop.ExecuteNonQueryAsync(token);
+            },
+            CancellationToken.None);
+        Assert.True(dropped.IsSuccess);
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.Prune, CancellationToken.None);
+
+        var warning = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Matches(@"^Prune of OrphanedInboxRecords failed: [A-Za-z]+\.$", warning.Message);
+    }
+
     private static void AddParameter(DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();
