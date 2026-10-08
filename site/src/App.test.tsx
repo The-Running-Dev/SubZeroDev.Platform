@@ -9,10 +9,24 @@ const siteRoot = dirname(fileURLToPath(import.meta.url)).replace(
   /[\\/]src$/,
   "",
 );
-const slicesDoc = readFileSync(
-  join(siteRoot, "..", "design", "d3", "30-slices.md"),
-  "utf8",
-);
+// The names the platform's own source declares: its well-known health
+// checks and its options. The demo may cite nothing the code never built.
+const declaredNames = [
+  join(
+    siteRoot,
+    "..",
+    "src",
+    "SubZeroDev.Platform.Abstractions",
+    "WellKnownNames.cs",
+  ),
+  join(siteRoot, "..", "src", "SubZeroDev.Platform.Core", "PlatformOptions.cs"),
+]
+  .map((file) => readFileSync(file, "utf8"))
+  .join("\n");
+const declares = (name: string) =>
+  new RegExp(`\\bpublic\\s+(?:static\\s+)?[\\w<>?]+\\s+${name}\\s*\\{`).test(
+    declaredNames,
+  );
 
 describe("landing page", () => {
   it("renders one page-level heading carrying the live status pill", () => {
@@ -71,7 +85,7 @@ describe("landing page", () => {
     ).toBeInTheDocument();
   });
 
-  it("every name in the readiness-probe example exists in design/d3/30-slices.md", () => {
+  it("every name in the readiness-probe example is declared in the platform's source", () => {
     render(<App />);
     const pre = document.querySelector(".readiness-example code");
     expect(pre).not.toBeNull();
@@ -80,9 +94,10 @@ describe("landing page", () => {
     ].map((m) => m[1]);
     expect(namesInExample.length).toBeGreaterThan(0);
     for (const name of namesInExample) {
-      expect(slicesDoc.includes(name)).toBe(true);
+      expect(declares(name), name).toBe(true);
     }
-    expect(slicesDoc.includes("PeerAbsenceGrace")).toBe(true);
+    expect(declares("PeerAbsenceGrace")).toBe(true);
+    expect(declares("NotAPlatformName")).toBe(false);
   });
 
   it("declines and accepts lists render as real lists, not pills alone", () => {
