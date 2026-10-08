@@ -358,6 +358,139 @@ public sealed class BillingTests
         Assert.NotNull(checks);
     }
 
+    // S29.4 -----------------------------------------------------------------------------------
+
+    /// <summary>The billing providers' API hosts the platform's documentation names. A call to any of
+    /// them from a host under test is the I-B6 violation the tripwire exists to catch.</summary>
+    private static readonly HashSet<string> ProviderHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "api.paddle.com",
+        "sandbox-api.paddle.com",
+        "api.stripe.com",
+    };
+
+    /// <summary>S29.4 (I-B6): with an outbound handler on every client the container can build that
+    /// fails any call to a billing provider's host, startup, the billing request path and a readiness
+    /// probe each complete without reaching it. The tripwire is proven live at the end — a client
+    /// built from the same container does trip it — so the earlier silence is not a handler that was
+    /// never installed.</summary>
+    [Fact]
+    public async Task S29_4_Startup_the_request_path_and_readiness_complete_with_no_call_to_a_billing_provider()
+    {
+        var tripwire = new ProviderTripwire();
+        var sink = new RecordingAuditSink(isDurable: true);
+
+        // Startup — composition, module registration and migration.
+        await using var host = await StartHostAsync(sink, services =>
+            services.ConfigureHttpClientDefaults(client => client.AddHttpMessageHandler(() => new ProviderTripwireHandler(tripwire))));
+        Assert.Empty(tripwire.Calls);
+
+        // The request path — everything Billing does inside an operation scope: a transition, an
+        // inbound provider event, and the entitlement decision a request asks for.
+        var api = host.Services.GetRequiredService<IBillingApi>();
+        var evaluator = host.Services.GetRequiredService<IEntitlementEvaluator>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        await api.RegisterPlanAsync(ProKey, "Pro", new HashSet<FeatureName> { PremiumReports }, CancellationToken.None);
+
+        var tenant = new TenantId(Guid.NewGuid());
+        using (scopeFactory.Begin(tenant, Operator))
+        {
+            var transitioned = await api.TransitionAsync(
+                tenant, ProKey, SubscriptionState.Trialing, host.Clock.UtcNow, host.Clock.UtcNow.AddDays(30),
+                host.Clock.UtcNow.AddDays(14), "ref-s29", CancellationToken.None);
+            Assert.True(transitioned.IsSuccess);
+
+            var handled = await api.HandleProviderEventAsync(
+                new ProviderEvent(
+                    "paddle", "evt-s29", tenant, ProKey, SubscriptionState.Active,
+                    host.Clock.UtcNow, host.Clock.UtcNow.AddDays(30), null, "ref-s29"),
+                CancellationToken.None);
+            Assert.True(handled.IsSuccess);
+
+            Assert.True((await evaluator.EvaluateAsync(PremiumReports, CancellationToken.None)).Granted);
+        }
+
+        Assert.Empty(tripwire.Calls);
+
+        // Readiness.
+        var report = await host.ProbeAsync(HealthCheckKind.Readiness, CancellationToken.None);
+        Assert.Equal(HealthStatus.Healthy, report.Aggregate);
+        Assert.Empty(tripwire.Calls);
+
+        // Calibration: the tripwire is wired into the container's clients and does trip.
+        using var client = host.Services.GetRequiredService<IHttpClientFactory>().CreateClient();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(new Uri("https://api.paddle.com/subscriptions")));
+        Assert.Equal(["api.paddle.com"], tripwire.Calls);
+    }
+
+    /// <summary>S29.4's other half: the tripwire sees every client the container builds, so the
+    /// remaining way to reach a provider is a client Billing constructs for itself. Billing's
+    /// assembly references no type from the networking namespaces, so it cannot. Calibrated against
+    /// this test assembly, which does use <see cref="HttpClient"/>.</summary>
+    [Fact]
+    public void S29_4_Billing_references_no_networking_type_so_it_cannot_build_a_client_of_its_own()
+    {
+        Assert.Empty(NetworkingTypesReferencedBy(typeof(BillingModule).Assembly));
+        Assert.Contains("System.Net.Http.HttpClient", NetworkingTypesReferencedBy(typeof(BillingTests).Assembly));
+    }
+
+    private static List<string> NetworkingTypesReferencedBy(System.Reflection.Assembly assembly)
+    {
+        using var stream = File.OpenRead(assembly.Location);
+        using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+        var metadata = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+
+        return metadata.TypeReferences
+            .Select(handle => metadata.GetTypeReference(handle))
+            .Select(reference => $"{metadata.GetString(reference.Namespace)}.{metadata.GetString(reference.Name)}")
+            .Where(name => name.StartsWith("System.Net.Http.", StringComparison.Ordinal)
+                || name.StartsWith("System.Net.Sockets.", StringComparison.Ordinal)
+                || name.StartsWith("System.Net.WebSockets.", StringComparison.Ordinal)
+                || name is "System.Net.WebClient" or "System.Net.WebRequest" or "System.Net.HttpWebRequest")
+            .ToList();
+    }
+
+    /// <summary>What the tripwire saw: the provider hosts any client tried to call.</summary>
+    private sealed class ProviderTripwire
+    {
+        private readonly List<string> calls = [];
+
+        public IReadOnlyList<string> Calls
+        {
+            get
+            {
+                lock (calls)
+                {
+                    return [.. calls];
+                }
+            }
+        }
+
+        public void Record(string host)
+        {
+            lock (calls)
+            {
+                calls.Add(host);
+            }
+        }
+    }
+
+    /// <summary>Fails any request to a billing provider's host without touching the network; any
+    /// other request passes through unchanged.</summary>
+    private sealed class ProviderTripwireHandler(ProviderTripwire tripwire) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri is { } uri && ProviderHosts.Contains(uri.Host))
+            {
+                tripwire.Record(uri.Host);
+                throw new InvalidOperationException($"I-B6: a billing provider was called: {uri}");
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
     // S11.10 ----------------------------------------------------------------------------------
 
     [Fact]

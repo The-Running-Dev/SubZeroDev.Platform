@@ -1,8 +1,12 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Testing;
@@ -143,6 +147,125 @@ public sealed class TelemetryExportTests
         finally
         {
             File.Delete(blockingFile);
+        }
+    }
+
+    /// <summary>S29.2 (I-OB1) — with no OTLP endpoint configured, the started host's built service
+    /// provider holds no exporter instance on any signal. Observed by walking the providers the
+    /// container built, not inferred from the absence of traffic; the walk is calibrated by the next
+    /// test, which finds one exporter per signal on the same path once an endpoint is set.</summary>
+    [Fact]
+    public async Task S29_2_With_no_OtlpEndpoint_the_started_host_holds_no_exporter_instance()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
+
+        Assert.Empty(ExportersIn(host.Services));
+    }
+
+    /// <summary>S29.2's calibration: the same walk over a host given an endpoint finds the trace,
+    /// metric and log exporters. Without this, a walk that could not see an exporter at all would
+    /// pass the test above for the wrong reason.</summary>
+    [Fact]
+    public async Task S29_2_With_an_OtlpEndpoint_the_same_walk_finds_one_exporter_per_signal()
+    {
+        var collector = new GatedCollector();
+        collector.Release();
+        using var listener = collector.Start();
+
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithSetting("Telemetry:OtlpEndpoint", collector.Endpoint.ToString())
+            .StartAsync(CancellationToken.None);
+
+        Assert.Equal(
+            ["OtlpLogExporter", "OtlpMetricExporter", "OtlpTraceExporter"],
+            ExportersIn(host.Services).Select(exporter => exporter.GetType().Name).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>Every <see cref="BaseExporter{T}"/> reachable from the tracer, meter and logger
+    /// providers the container holds. OpenTelemetry keeps its processors, readers and exporters in
+    /// non-public fields, so the walk reads fields: it follows only OpenTelemetry's own types and
+    /// the arrays and collections they hold, which keeps it inside the telemetry graph.</summary>
+    private static List<object> ExportersIn(IServiceProvider services)
+    {
+        var roots = new List<object?>
+        {
+            services.GetService<TracerProvider>(),
+            services.GetService<MeterProvider>(),
+        };
+        roots.AddRange(services.GetServices<ILoggerProvider>());
+        var loggerProvider = typeof(TracerProvider).Assembly.GetType("OpenTelemetry.Logs.LoggerProvider")
+            ?? typeof(BaseExporter<>).Assembly.GetType("OpenTelemetry.Logs.LoggerProvider");
+        if (loggerProvider is not null)
+        {
+            roots.Add(services.GetService(loggerProvider));
+        }
+
+        Assert.NotNull(roots[0]);
+        Assert.NotNull(roots[1]);
+
+        var exporters = new List<object>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<object>(roots.OfType<object>());
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!seen.Add(current))
+            {
+                continue;
+            }
+
+            var type = current.GetType();
+            if (IsExporter(type))
+            {
+                exporters.Add(current);
+            }
+
+            if (current is System.Collections.IEnumerable items and not string
+                && (type.IsArray || type.Namespace?.StartsWith("System.Collections", StringComparison.Ordinal) == true))
+            {
+                foreach (var item in items)
+                {
+                    if (item is not null && !item.GetType().IsValueType)
+                    {
+                        pending.Push(item);
+                    }
+                }
+
+                continue;
+            }
+
+            if (type.Assembly.GetName().Name?.StartsWith("OpenTelemetry", StringComparison.Ordinal) != true)
+            {
+                continue;
+            }
+
+            for (var declaring = type; declaring is not null && declaring != typeof(object); declaring = declaring.BaseType)
+            {
+                foreach (var field in declaring.GetFields(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (!field.FieldType.IsValueType && field.GetValue(current) is { } value)
+                    {
+                        pending.Push(value);
+                    }
+                }
+            }
+        }
+
+        return exporters;
+
+        static bool IsExporter(Type type)
+        {
+            for (var candidate = type; candidate is not null; candidate = candidate.BaseType)
+            {
+                if (candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(BaseExporter<>))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 
