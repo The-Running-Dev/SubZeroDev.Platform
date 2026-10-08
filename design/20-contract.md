@@ -428,8 +428,8 @@ schema is public contract, like § 12's.
 | `Issuer` | yes | names a configured generic-path provider's issuer; a name that matches none fails startup |
 | `ClientId` | yes | non-empty |
 | `RedirectPath` | yes | a relative path beginning with `/` |
-| `Scopes` | no | defaults to `openid` |
-| `EndSessionTemplate` | no | placeholders limited to `{client_id}`, `{return_to}`, `{id_token_hint}`; any other fails startup |
+| `Scopes` | no | defaults to `openid`; must include `openid` |
+| `EndSessionTemplate` | no | placeholders limited to `{client_id}`, `{return_to}`, `{id_token_hint}`; any other fails startup. `{id_token_hint}` expands to an empty string, as no id token is kept (decision 2026-10-08, #94: id token) |
 | `ExtraAuthorizeParameters` | no | name and value pairs. A name that is one of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method` fails startup |
 | `PostSignOutPath` | no | a relative path, `/` by default |
 
@@ -1021,8 +1021,9 @@ public sealed class SignInHooks
 }
 ```
 
-Endpoints per method, under `/signin/<method>`: `begin` (GET), `callback` (GET), `token` (POST, requires the
-anti-forgery header), `signout` (POST).
+Endpoints per method: `begin` (GET), `token` (POST, requires the anti-forgery header) and `signout` (POST)
+under `/signin/<method>`, and `callback` (GET) at the method's `RedirectPath`; two methods may not share a
+`RedirectPath` (decision 2026-10-08, #94: callback path).
 
 - **A caller may rely on** the callback creating a session only after the state matched (I-S1), and on
   the session carrying no more than issuer, subject, access token and its expiry.
