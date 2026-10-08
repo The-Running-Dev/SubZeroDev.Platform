@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence: tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs
+Evidence: tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs
 
 ## Statement
-Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.)
+Audit records are never updated, and no surface exposes an update or a delete; the only delete is the retention prune, which removes whole rows by age (Owner: Audit store.)

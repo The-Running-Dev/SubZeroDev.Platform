@@ -54,8 +54,9 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 - **`Delegated` is not a degraded `Account`.** No account will ever exist for BarStrad's customer-side
   principal ([`application-modules.md`](../docs/docs/application-modules.md) §2). A consumer must not
   treat a `Delegated` principal as one with missing fields.
-- **Nothing here is a user entity, and none may be added.** Platform owns no directory: federation,
-  account linking and a shared user store are brief non-goals.
+- **Nothing here is a user entity, and none may be added.** Platform owns no directory and no federation.
+  The one account concept is Identity's optional, per-host account store (§ 16). It lives in a module, it is
+  keyed on this pair, and nothing in this section or any framework package names it (I-C6).
 
 ### 2. Authorization — `SubZeroDev.Platform.Abstractions`
 
@@ -87,7 +88,8 @@ public AuthorizationError? ProviderFailure { get; init; }
   call could not be audited and may be retried. A denial that cannot be recorded is not answered as
   though it were.
 - **`ProviderFailure` is set when and only when the outcome is `Denied` and at least one registered
-  provider returned an error** (I-A11). A denial reached that way is not the policy's answer, only the
+  provider could not answer** — returned an error, or is a mirror past `MirrorMaximumAge` (*Public
+  surface* § 3, I-A13) (I-A11). A denial reached that way is not the policy's answer, only the
   absence of one. An allowed decision never carries it: the union means any provider's grant allows, and
   one provider's outage does not make another's grant less valid.
 - **`ProviderFailure` is always `ProviderUnavailable`, naming the provider as the registry knows it**,
@@ -163,7 +165,9 @@ needs it.
   through the redaction boundary before storage and before logging.** That is not the sink's choice.
 - **`Class` is a property of the action, decided by the writer, not by the sink.** The sink does not
   reclassify. The classification is I-U2.
-- **Audit rows are append-only at the contract.** No update, no delete, and no sink may expose one.
+- **Audit rows are append-only at the contract.** No update and no delete, and no sink may expose one.
+  The one delete is the Audit store's own retention prune, which removes whole rows by age and only when
+  an operator has set a retention (*Public surface* § 6). It is not a surface.
 - **Ordering across hosts is deliberately weak and nothing may rely on the opposite.** `OccurredAt`
   comes from `IClock`; two hosts with skewed clocks can write rows whose stored order disagrees with
   real time. `Correlation` is what makes a trail reconstructible; a global ordering is not guaranteed,
@@ -209,6 +213,26 @@ and nothing else to the storage shape — `IShareable` is declared in
   consumer needing it states its own semantics for rows another tenant has already read.
 - **Declaring `IShareable` changes nothing about a query outside a shared-read scope.** The filter
   stays `tenant equals current`, unconditionally, for shareable and non-shareable types alike.
+
+### 6a. Versioned rows — `SubZeroDev.Platform.Persistence`
+
+A new opt-in column marker beside `ISoftDeletable` in
+[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs), on the same terms: a declaration, not
+a mechanism — the consumer adds the column in its own migration and writes its own SQL.
+
+```csharp
+/// <summary>Opt-in: the row carries a store-owned version a guarded write asserts and advances.</summary>
+public interface IVersioned
+{
+    /// <summary>1 on insert; advanced by exactly 1 by each guarded write that lands.</summary>
+    long Version { get; }
+}
+```
+
+- **The version is the store's.** It is never supplied by a caller, never chosen by the engine or
+  domain code, and never carried in a Platform response — engine-hosting-contract § 6.1.
+- **It is not a timestamp and not a token.** Ordering and "advanced by exactly the guarded write" are
+  both checkable on a counter and neither is on the alternatives.
 
 ### 7. Organizations — `SubZeroDev.Platform.Organizations`
 
@@ -442,11 +466,139 @@ public sealed record EndSessionContext(string Method, Uri Address);
 
 ---
 
+### 14. The edge's streamed routes — `SubZeroDev.Platform.GameEdge`
+
+The edge's contract is G1's (`g1/20-contract.md`, *Edge — options, forwarding, and readiness*), as
+amended by G2. This section declares only what #110 adds. It **amends** G1's `GameEdgeOptions` with
+one optional property, and adds two types.
+
+Settings, read from configuration under `GameEdge:StreamingRoutes`, a list. The schema is public
+contract.
+
+| Key | Required | Rule |
+|---|---|---|
+| `StreamingRoutes` | no | absent or empty means no route streams, which is G1's edge unchanged |
+| `StreamingRoutes:<n>:PathPrefix` | yes, per entry | begins with `/`; is not `/` alone; has no trailing `/`, `?` or `#`; is not equal to, or a segment-prefix of, another entry's prefix (ordinal) |
+| `StreamingRoutes:<n>:FirstByteTimeout` | yes, per entry | greater than zero and no greater than `ForwardTimeout`; no default |
+
+A breach fails startup with the edge's existing configuration failure, naming the full key (for
+example `GameEdge:StreamingRoutes:0:FirstByteTimeout`).
+
+```csharp
+public sealed class GameEdgeOptions
+{
+    // G1 and G2 members unchanged: WorkloadBaseAddress, ForwardTimeout, ReadinessTimeout.
+    public IReadOnlyList<StreamingRoute> StreamingRoutes { get; init; } = [];
+}
+
+public sealed class StreamingRoute
+{
+    public required string PathPrefix { get; init; }
+    public required TimeSpan FirstByteTimeout { get; init; }
+}
+
+public sealed record StreamedResponse(int StatusCode, string? ContentType, Stream Body) : IAsyncDisposable
+{
+    public ValueTask DisposeAsync();
+}
+```
+
+`StreamedResponse.Body` owns the upstream response. Disposing it releases the workload connection,
+which is how a caller's disconnect reaches the workload.
+
+---
+
+### 15. Runtime settings — `SubZeroDev.Platform.RuntimeSettings`
+
+```csharp
+public readonly record struct SettingName(string Value);   // non-empty; ordinal; never parsed; Platform. prefix reserved
+
+public enum SettingLayer { Global, Tenant, User }
+
+public abstract class SettingDefinition
+{
+    private protected SettingDefinition(SettingName name, IReadOnlySet<SettingLayer> layers);
+    public SettingName Name { get; }
+    public IReadOnlySet<SettingLayer> Layers { get; }
+
+    public static SettingDefinition<bool> Boolean(SettingName name, bool defaultValue, IReadOnlySet<SettingLayer> layers);
+    public static SettingDefinition<long> Integer(SettingName name, long defaultValue, IReadOnlySet<SettingLayer> layers, Func<long, bool>? isValid = null);
+    public static SettingDefinition<string> Text(SettingName name, string defaultValue, IReadOnlySet<SettingLayer> layers, Func<string, bool>? isValid = null);
+}
+
+public sealed class SettingDefinition<T> : SettingDefinition where T : notnull
+{
+    public T Default { get; }
+    public bool IsValid(T value);
+}
+
+public interface ISettingCatalog
+{
+    IReadOnlyCollection<SettingDefinition> Declares { get; }
+}
+
+public sealed record ResolvedSetting<T>(T Value, SettingLayer? From) where T : notnull;   // From null: the declared default
+
+public static class RuntimeSettingsPermissions
+{
+    public static PermissionName WriteGlobal { get; }   // "Platform.RuntimeSettings.WriteGlobal"
+    public static PermissionName WriteTenant { get; }   // "Platform.RuntimeSettings.WriteTenant"
+}
+
+public static class RuntimeSettingsAuditActions
+{
+    public static AuditAction SettingSet { get; }       // "platform.runtime-settings.set"
+    public static AuditAction SettingCleared { get; }   // "platform.runtime-settings.cleared"
+}
+```
+
+**What the declarations cannot say.**
+
+- **A setting of any type other than `bool`, `long` or `string`.** The base constructor is
+  `private protected`, and only the three factories construct a definition.
+- **A user value for a principal that is not an `Account`.** The layer does not exist for it (I-ST1).
+- **A secret.** A name matching the redaction marker set fails startup (I-ST2). Secrets are startup
+  configuration.
+- **A grant.** No type here is a permission provider or an entitlement contributor (I-ST6).
+
+---
+
+### 16. Accounts — `SubZeroDev.Platform.Identity`
+
+Present only when the host registers `IdentityAccountsModule` (*Public surface* § 19).
+
+```csharp
+public readonly record struct AccountId(string Value)
+{
+    public const string PrincipalIssuer = "platform.account";
+    public PrincipalId ToPrincipalId();
+}
+
+public sealed record LinkedIdentity(PrincipalId Identity, DateTimeOffset LinkedAt);
+
+public sealed record Account(AccountId Id, DateTimeOffset CreatedAt, IReadOnlyList<LinkedIdentity> Identities);
+```
+
+**What the declarations cannot say.**
+
+- **`AccountId.Value` is opaque.** Identity mints it as 32 lowercase hexadecimal characters from 128 random
+  bits. Nothing parses it, and nothing derives it from a claim. `ToPrincipalId()` is
+  `new PrincipalId(PrincipalIssuer, Value)`. Identity finds an account from a principal by ordinal equality on
+  both halves, never by parsing (I-I2).
+- **An account principal is kind `Account` with issuer `platform.account`.** Both conditions are needed. A
+  `Delegated` principal never has that issuer (I-I21). A provider-established principal carrying that issuer is
+  rejected, so no issuer can impersonate the account namespace.
+- **`Account` carries no email, no display name, no profile and no claim, and none may be added.** The
+  display name on an account principal comes from the credential presented on the request (I-I17).
+- **`Identities` is ordered by `LinkedAt`, then by issuer and subject ordinally, and is never empty** (I-I19).
+
+---
+
 ## Persisted schemas
 
-Nothing in the framework's D5 additions is persisted except audit, and audit's storage is a module. A
+Nothing in the framework's D5 additions is persisted except audit, whose storage is a module, and Persistence's inbox record (§ 8). A
 host with no Identity, Organizations, Billing or Licensing package has no table those capabilities
-would own and no migration to skip — that property is what the brief's local shape forces, and it is
+would own and no migration to skip, and a host that takes Identity without `IdentityAccountsModule` has no Identity table — that property is what the brief's local shape forces, and it is
 the most consequential thing in this section.
 
 **The migration story for every table below is the same and is stated once: none.** Each is created by
@@ -464,16 +616,17 @@ pair (*Types*, § 1).
   is written *about* a tenant and is not owned by one, and a tenant-keyed audit table would turn the
   cross-tenant queries an operator needs into a cross-partition scan.
 - **Indexes:** tenant with instant, correlation, and actor subject with instant. Those are the three
-  reads the brief's Audit criterion and the shell's audit view perform. Nothing else is indexed,
+  reads the brief's Audit criterion and the shell's audit view perform. A fourth, **instant alone**,
+  serves the retention prune, which otherwise scans the table on every tick. Nothing else is indexed,
   because every index is a write cost on the path every security-sensitive action takes.
 - **Constraints:** every column non-null except the two resource columns, which are null together or
   present together. **No unique constraint spans hosts** — appends must not contend.
-- **Append-only, enforced by the schema having no update or delete path in the module's surface.**
-- **Migration story: none, and the absence of a retention migration is deliberate.** D5 selects no
-  retention (brief, *Environment and operating assumptions*), so **the table grows without bound and
-  no pruning job is registered even though [`Prune`](../src/SubZeroDev.Platform.Persistence/Prune.cs)
-  exists.** That is a real accepted cost; the first party to notice will be an operator rather than a
-  reviewer, and it is tracked under [`90-decisions.md`](90-decisions.md) § *Open*.
+- **Append-only, enforced by the module's surface having no update or delete path.** The retention
+  prune (*Public surface* § 6) deletes whole rows by age. It is background work, not a surface.
+- **Migration story: one additive migration, `0002_index_audit_event_occurred_at`**, creating the
+  instant-only index on both providers. It is unconditional: the schema does not depend on whether
+  retention is set. **Retention itself is not a migration.** It is a setting read at startup, so turning
+  it on, changing it or turning it off needs no schema change. Rows already pruned are not recoverable.
 
 ### 2. Organizations — `SubZeroDev.Platform.Organizations`
 
@@ -545,6 +698,103 @@ Platform today, so the migration cost was zero at the time this was decided
 - **`ModifiedBy` and `DeletedBy` stay nullable**, because their null means "not yet modified" and
   "not deleted", which is a different fact from "no actor".
 
+### 7. The version column — `SubZeroDev.Platform.Persistence`
+
+Not a Platform table. A **consumer's** entity type declaring `IVersioned` acquires a `version` column in
+that consumer's own migration.
+
+| Column | SQLite | PostgreSQL | Constraint |
+|---|---|---|---|
+| `version` | `INTEGER NOT NULL DEFAULT 1` | `BIGINT NOT NULL DEFAULT 1` | ≥ 1; written only by a guarded write |
+
+- **Migration story for an existing consumer table adopting `IVersioned`: an added non-null column
+  defaulting to `1`, no backfill**, in a **new** migration — no existing migration is modified (I-T7).
+  Every existing row starts at version 1, which is correct: no reader holds an older one.
+- **Platform ships no migration for it.** No migration crosses a module boundary.
+
+### 8. `platform_inbox` — `SubZeroDev.Platform.Persistence`
+
+Platform's own table, beside `platform_outbox`, created by the Platform module's migration
+**`0004_create_inbox`** appended to `PlatformMigrationSource` after `0003_create_background_work_lease`.
+`0001`–`0003` are not modified (I-T7).
+
+| Column | SQLite | PostgreSQL | Meaning |
+|---|---|---|---|
+| `message_id` | `BLOB NOT NULL` | `BYTEA NOT NULL` | the outbox message's `OutboxMessageId`, 16 bytes, network byte order — the outbox's identifier encoding |
+| `consumer` | `TEXT NOT NULL` | `TEXT NOT NULL` | the handling registration's `EventTypeName` |
+| `tenant` | `TEXT NOT NULL` | `TEXT NOT NULL` | the message's tenant, in `platform_outbox.tenant`'s encoding; the implicit tenant's sentinel when the message carries it |
+| `processed_at` | `TEXT NOT NULL` | `TEXT NOT NULL` | the commit-side instant, fixed-width ISO-8601 UTC, written by `IProviderCapability.FormatInstant` |
+|  | `PRIMARY KEY (message_id, consumer)` | `PRIMARY KEY (message_id, consumer)` | |
+
+- **No payload, no handler output, no error text.** The record is a fact that a commit happened.
+- **The tenant is recorded, not keyed.** The message id is unique without it; it is there so a
+  tenant's records can be found and erased with the tenant's other rows.
+- **Not `ITenantOwned`.** No consumer query reads it; it is Platform-internal, like `platform_outbox`.
+- **No foreign key to `platform_outbox`.** Orphans are pruned instead (*Public surface* § 14).
+- **Migration story: none.** A new table; the dispatcher already holds while any module has pending
+  migrations, so no dispatch runs against a schema without it.
+
+---
+
+### 9. Runtime settings — `SubZeroDev.Platform.RuntimeSettings`
+
+One table, created by the module's migration source (module `RuntimeSettings`, migration
+`0001_create_runtime_settings`), with the same text on SQLite and PostgreSQL. **No existing migration
+changes** (I-T7).
+
+| Column | Type | Rule |
+|---|---|---|
+| `tenant` | TEXT NOT NULL | `TenantId.ToString()`. A global row holds `TenantId.Implicit`'s, the all-zero tenant |
+| `layer` | TEXT NOT NULL | one of `global`, `tenant`, `user` |
+| `name` | TEXT NOT NULL | `SettingName.Value` |
+| `principal_issuer` | TEXT NOT NULL | the account's issuer on a user row; `''` otherwise |
+| `principal_subject` | TEXT NOT NULL | the account's subject on a user row; `''` otherwise |
+| `value` | TEXT NOT NULL | `true`/`false`; an invariant-culture integer; or the text as given |
+
+```sql
+PRIMARY KEY (tenant, layer, name, principal_issuer, principal_subject),
+CHECK (layer IN ('global', 'tenant', 'user')),
+CHECK ((layer = 'user') = (principal_issuer <> '')),
+CHECK ((layer = 'user') = (principal_subject <> '')),
+CHECK (layer <> 'global' OR tenant = '00000000-0000-0000-0000-000000000000')
+```
+
+- **`''` is unambiguous** because neither half of a `PrincipalId` is ever empty, and the pair is stored
+  as two columns and never as `ToString()`.
+- **A global row is the installation's**, like the verified-licence row (§ 4). Tenant and user rows are
+  read and written only with the current tenant (I-ST5).
+- **A read is one statement**: `name = @name AND ((layer = 'global') OR (layer = 'tenant' AND tenant =
+  @current) OR (layer = 'user' AND tenant = @current AND principal_issuer = @issuer AND
+  principal_subject = @subject))`. The branches for layers that do not exist are omitted.
+- **A write is `INSERT … ON CONFLICT (…) DO UPDATE SET value = excluded.value`** on both providers. A
+  clear is a `DELETE` of the one row.
+- **No column records who or when.** The audit record is that history.
+
+---
+
+### 10. Accounts — `SubZeroDev.Platform.Identity`
+
+Two tables, `identity_account` and `identity_account_link`, created by the `IdentityAccounts` module's migration
+`0001_create_accounts`. That migration is in the module's own sequence, and only a host that registers the
+module runs it.
+
+- **Keys:** `identity_account` by `id`, text. `identity_account_link` by **(`issuer`, `subject`)**: two text
+  columns, the pair as the token carried it, never `ToString()` (I-I3), with `account` referencing
+  `identity_account(id)` and indexed.
+- **The link's primary key is what makes one identity belong to at most one account** — I-I16. Linking an
+  identity that is already linked fails at the store. Two concurrent creates or links of the same identity cannot
+  both commit.
+- **Columns are exactly** `identity_account(id, created_at)` and
+  `identity_account_link(issuer, subject, account, linked_at)`, all non-null. **No email, profile, credential,
+  token or claim column, and none may be added** — I-I4, I-I17.
+- **No tenant column.** An account is per host and not tenant-owned. Neither table is `ITenantOwned`, and no
+  tenant filter applies.
+- **Unlink takes the account row's write lock before it counts the account's links**, so two concurrent unlinks
+  cannot leave an account with none — I-I19.
+- **Migration story: none, and enabling the store later is not free.** A host that runs without the store and adds
+  it later keeps every existing principal as its raw pair until each identity creates or joins an account. Nothing
+  re-keys rows already written under the raw pair.
+
 ---
 
 ## Public surface
@@ -592,7 +842,8 @@ registry and the chain that runs registered providers in registration order are 
   `CredentialNotClaimed`. **`CredentialNotClaimed` never leaves the chain**: the chain consumes it, and
   no caller ever receives it. A provider that rejects still ends the chain at once, and a chain in
   which every provider saw no credential of its kind still answers `Principal.Anonymous`.
-- **It must never block on a network fetch.** Key material is fetched at startup and cached, and the
+- **It must never block on a fetch from an issuer.** The one store read on this path is Identity's account lookup
+  (§ 19), and it exists only when the host registers the account store. Key material is fetched at startup and cached, and the
   generic path refreshes it off the request path (*Types* § 12). A request arriving when no key is
   cached fails with `AuthenticationError.KeyMaterialUnavailable`, which is an authentication failure
   and **never a server error**.
@@ -608,6 +859,36 @@ registry and the chain that runs registered providers in registration order are 
 permission-provider registry, the permission-catalog registry, the evaluator and the composition
 provider are declared in
 [`Authorization.cs`](../src/SubZeroDev.Platform.Core/Authorization.cs).
+
+One interface and one options record are not in the tree yet, and are scaffolded here until the slice
+that materialises them replaces this block with the pointers above
+([`90-decisions.md`](90-decisions.md), 2026-10-08). The interface is declared in Abstractions, beside
+`IPermissionProvider`:
+
+```csharp
+public interface IMirroredPermissionProvider : IPermissionProvider
+{
+    Task<Result<DateTimeOffset?, AuthorizationError>> LastSyncedAsync(TenantId tenant, CancellationToken cancellationToken);
+}
+```
+
+The options record is declared in Core, beside the rest of `PlatformOptions`, and bound from
+`Platform:Authorization`:
+
+```csharp
+public sealed record AuthorizationOptions
+{
+    [Fingerprinted]
+    public TimeSpan MirrorMaximumAge { get; init; } = TimeSpan.FromMinutes(15);
+}
+
+// on PlatformOptions
+public AuthorizationOptions Authorization { get; init; } = new();
+```
+
+| Key | Required | Constraint |
+|---|---|---|
+| `Platform:Authorization:MirrorMaximumAge` | no | At least `00:00:30` and at most `1.00:00:00`. Default `00:15:00`. **Unset means the default; no value means unbounded.** |
 
 - **`EvaluateAsync` takes no principal and no tenant.** Both come from the ambient operation scope,
   which fixed them for the request's lifetime. A parameter for either would let a call site evaluate
@@ -627,6 +908,27 @@ provider are declared in
   writer performing the action audits it, inside that action's transaction.
 - **`IPermissionProvider.Name` must be unique**, and two providers sharing a name is a startup
   failure: a decision naming its source is worthless if two sources share a name.
+- **A provider whose grants are a copy of a source someone else revokes implements
+  `IMirroredPermissionProvider`.** Roles mirrored from an issuer — Entra app roles, Keycloak realm roles —
+  are the case. A provider over a store the operator writes directly does not, and neither of D5's two
+  providers does. Not declaring a mirror is a breach of the grant-source rule, undetectable at runtime,
+  as reading the token is.
+- **`LastSyncedAsync` returns the instant the tenant's most recent successful sync began reading the
+  issuer**, taken from `IClock`, or null before the first. The consumer's sync writes it in the same
+  transaction as the rows that read produced; a sync whose issuer read failed or was partial writes
+  neither (I-A14). It reads the provider's own store and never the issuer: like key material, it is
+  never a network fetch on the request path. An error means the provider could not answer.
+- **The evaluator reads a mirrored provider's `LastSyncedAsync` before its `GrantsAsync`, and skips
+  `GrantsAsync` when the mirror is stale** (I-A13). Stale means null, or older than
+  `MirrorMaximumAge` by the evaluating host's `IClock` — strictly older; at exactly the maximum it still
+  answers. A stale mirror or a `LastSyncedAsync` error is a provider that could not answer: it
+  contributes nothing and is recorded as `ProviderUnavailable` naming it, under every rule *Types* § 2
+  states for `ProviderFailure`, registry order included. Reading the stamp first means a sync landing
+  between the two reads only makes the grants fresher than the stamp says.
+- **The revocation promise for a mirrored role is "within `MirrorMaximumAge` of its removal at the
+  issuer"**, plus any clock skew between the host that wrote the stamp and the host evaluating, and any
+  lag in the issuer's own reads. Every other grant keeps I-A10's next-request promise. There is one
+  maximum per host, it is `[Fingerprinted]`, and **no setting makes it unbounded.**
 - **D5 ships exactly two providers, and neither is a role-assignment table:** the composition provider
   and the Organizations provider. The composition provider grants **every permission to the `System`
   kind in the `Local` profile, nothing to `Anonymous` in either profile, and nothing at all in
@@ -699,6 +1001,72 @@ Persistence installs in place of Core's default is
   `platform.audit.sink` joins
   [`PlatformHealthChecks`](../src/SubZeroDev.Platform.Abstractions/WellKnownNames.cs).
 
+**Retention — `SubZeroDev.Platform.Audit`, setting bound in `SubZeroDev.Platform.Core`.** Off by default.
+One setting, one piece of background work, and no new public type in the Audit package.
+
+```csharp
+namespace SubZeroDev.Platform.Core;
+
+public sealed record PlatformOptions
+{
+    // existing members unchanged
+    public AuditOptions Audit { get; init; } = new();
+}
+
+public sealed record AuditOptions
+{
+    /// Platform:Audit:RetentionDays. Null: rows are kept forever and no prune is registered.
+    [Fingerprinted]
+    public int? RetentionDays { get; init; }
+}
+```
+
+```csharp
+namespace SubZeroDev.Platform.Audit;
+
+// internal: registered by AuditModule.Register only when PlatformOptions.Audit.RetentionDays has a value
+internal sealed class AuditPruneWork(
+    IProviderCapability capability,
+    ILeaseManager leaseManager,
+    PlatformOptions options,
+    IClock clock,
+    ILogger<AuditPruneWork> logger) : IBackgroundWork
+{
+    public BackgroundWorkName Name { get; }   // "platform.audit.prune"
+    public HostRoles Roles { get; }           // HostRoles.Worker
+    public TimeSpan Interval { get; }         // 1 hour, not a setting
+    public bool RequiresLease { get; }        // true
+    public Task TickAsync(CancellationToken cancellationToken);
+}
+```
+
+| Setting | Default | Validation |
+|---|---|---|
+| `Platform:Audit:RetentionDays` | absent: keep forever | absent, empty or whitespace is absent; otherwise a whole number from 1 to 36500 inclusive. Anything else is `ConfigurationError.InvalidSetting` naming the key (*Error semantics* § 9) |
+
+- **Absent means today's behaviour, exactly.** No work is registered, no lease row is written, and nothing
+  deletes an audit row (I-U11).
+- **Set to *N*, the Audit store module registers `platform.audit.prune`.** It runs in the Worker role,
+  hourly, under the lease of that name. Each tick computes one cutoff, `IClock.UtcNow − N days`, from the
+  worker's clock. It then deletes rows with `OccurredAt` earlier than the cutoff, oldest first, **at most
+  500 rows per statement**, each statement in its own write transaction and never in an ambient one. It
+  stops when a statement deletes fewer than 500 rows, after 100 statements, or on cancellation (I-U12).
+  Neither number is a setting.
+- **A held lease ends the tick silently**, and any other lease error ends it with a warning. A failed
+  statement ends the tick with a warning, and the next tick is the retry. **Readiness is not affected.**
+- **Pruning is not audited.** A tick that deletes rows logs the count and the cutoff at Information. It
+  writes no `AuditEvent`.
+- **The read API is unchanged.** A read over a range older than the cutoff returns the rows that remain
+  and raises no error. A read that overlaps a running prune may see a range whose oldest rows are already
+  gone.
+- **Scope.** Installation-wide, across every tenant and both classes. It governs only the Audit store's
+  table. A consumer's own durable sink keeps its own policy. Setting the value in a host that does not
+  compose the Audit module is not an error, and nothing is pruned. **Archival and export are not provided.**
+- **Consumers.** All four get the same setting, and none of it depends on the principal kind. The
+  Automator's self-hosted operator chooses a value or leaves it unset. Game Engine as a Service and
+  BarStrad, both hosted, can bound a table that grows with every player action or table session.
+  SkyNet HR keeps rows forever unless its operator sets a value.
+
 ### 7. Shared-read scope — `SubZeroDev.Platform.Persistence`
 
 `ISharedReadScopeFactory` is declared in
@@ -730,7 +1098,13 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
 
 ### 8. Composition and startup — `SubZeroDev.Platform.Core`
 
-- **`PlatformOptions` gains the composition profile, marked `[Fingerprinted]`.**
+- **`PlatformOptions` gains the composition profile, marked `[Fingerprinted]`, and an `Audit` record
+  whose `RetentionDays` is `[Fingerprinted]`** (§ 6), **and an `Authorization` record whose
+  `MirrorMaximumAge` is `[Fingerprinted]`** (§ 3). Retention is fingerprinted because two workers
+  disagreeing on it change which rows they share survive; the mirror maximum is, because two hosts
+  disagreeing on it answer the same request differently. Adding the members changes the fingerprint's
+  format version, `szdfp3` → `szdfp4`, so a rolling deploy reports a mismatch until every host runs the
+  new build.
 - **Five registries close at startup**, on the shape
   [`Registries.cs`](../src/SubZeroDev.Platform.Core/Registries.cs) already establishes — `Register`
   returning a `Result`, `Registered` in registration order, a one-way `Freeze`: permission providers,
@@ -764,6 +1138,36 @@ longer includes it. `AssertTokenClaimsGrantNothingAsync` asks about a principal 
 roles and the permission itself, with nothing granted in the provider's own source, and expects
 nothing. Each throws `InvalidOperationException` naming the breach, so any test framework reports it.
 
+`AssertIssuerRevocationDeniesWithinBoundAsync` is the same rule for an `IMirroredPermissionProvider`,
+revoking where the role lives — at the issuer — rather than in the mirror (#264). It is not in the tree
+yet, and is scaffolded here until the slice that materialises it replaces this block:
+
+```csharp
+public static Task AssertIssuerRevocationDeniesWithinBoundAsync(
+    IPlatformTestHost host,
+    IMirroredPermissionProvider provider,
+    Principal principal,
+    TenantId tenant,
+    ResourceRef? resource,
+    PermissionName permission,
+    Func<Task> grantAtIssuer,
+    Func<Task> revokeAtIssuer,
+    Func<Task> sync,
+    CancellationToken cancellationToken = default)
+```
+
+It evaluates through the host's own evaluator in an operation scope for `principal` and `tenant`, and
+moves only `host.Clock`. `provider` is the instance registered in `host`, and `sync` runs the consumer's
+real sync against the fake issuer the two other callbacks change, stamping from the host's `IClock`. It
+grants at the issuer, syncs, and expects `Allowed` with `provider` among the sources. It revokes at the
+issuer **without syncing**, advances the clock past the host's `MirrorMaximumAge` by one tick, and
+expects `Denied` with `ProviderFailure` naming `provider`. It syncs again and expects `Denied` with no
+`ProviderFailure`: the sync carried the revocation and advanced the stamp. It throws
+`InvalidOperationException` naming the breach — no grant after grant and sync, a grant surviving past the
+maximum, a stamp that advanced without a sync, a revocation the sync did not carry — and names any other
+provider that granted the permission, since a grant from elsewhere would prove nothing. A mirrored
+provider runs both this and `AssertRevokedGrantDeniesNextRequestAsync`.
+
 The helper declarations are implemented in [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs).
 The getter-only effective composition profile is declared on `IPlatformTestHost` in
 [`PlatformTestHost.cs`](../src/SubZeroDev.Platform.Testing/PlatformTestHost.cs).
@@ -796,7 +1200,7 @@ The getter-only effective composition profile is declared on `IPlatformTestHost`
 
 **Identity** exposes authentication providers and the generic bearer path's configuration schema
 (*Types* § 12). A host registers the module and writes configuration. No registration call exists per
-issuer, and no method chains off the module for a vendor. It owns no rows. Its semantics:
+issuer, and no method chains off the module for a vendor. It owns no rows unless the host also registers `IdentityAccountsModule` (§ 19). Its semantics:
 
 - **Settings are validated before any key is fetched, and before the host serves** — path 2, step 8.
   A settings defect fails startup, names the full key, and leaves no state behind (I-I10). No fetch has
@@ -806,7 +1210,8 @@ issuer, and no method chains off the module for a vendor. It owns no rows. Its s
   with `KeyMaterialUnavailable`, reports not-ready, and keeps trying on its refresh schedule.
 - **Every fetch is bounded by a fixed 30-second timeout, which is not a setting.** A fetch that times
   out is a failed fetch. This applies to the first fetch, which startup waits on, and to every refresh.
-- **Key refresh is background work, and the only background work D5 adds.** Each `Discovery` provider
+- **Key refresh is background work. D5 adds one other, the Audit store's retention prune, and only when
+  it is configured (§ 6).** Each `Discovery` provider
   registers one `IBackgroundWork` named `platform.identity.key-refresh:<name>`. It runs at the
   provider's `KeyRefreshInterval` in both host roles, with `RequiresLease` false. It writes nothing
   durable. Each instance validates against its own cache, so each must refresh its own, and a lease
@@ -882,7 +1287,9 @@ the current `LicenceClaims` for the shell's licence view. **It exposes no verify
 request path.**
 
 **Audit store** exposes an `IAuditSink` with `IsDurable == true` and a read API scoped by tenant,
-instant range, actor and correlation. **It exposes no update and no delete.**
+instant range, actor and correlation. **It exposes no update and no delete.** When
+`Platform:Audit:RetentionDays` is set, it registers the retention prune as internal background work
+(§ 6). That work is not a surface, and no caller can invoke it or choose its rows.
 
 **Mcp** exposes tool producer registration and exposure configuration, and consumes the principal,
 permission, entitlement and audit seams. It adopts the official MCP C# SDK for the transport and
@@ -907,6 +1314,10 @@ projects to it at the boundary (*Types*, § 10); its semantics are:
   reached.**
 - **The invocation is audited with the tool as the action and no arguments**, which the audit schema
   makes structural rather than a rule this module has to remember.
+
+**RuntimeSettings** exposes a setting reader and writer and nothing over HTTP (*Public surface* § 18).
+It consumes the principal, tenant, permission and audit seams, and **contributes no permission
+provider and no entitlement contributor.**
 
 **Web shell** exposes nothing on the server — I-W1.
 
@@ -1039,6 +1450,393 @@ under `/signin/<method>`, and `callback` (GET) at the method's `RedirectPath`; t
 - **Proof without a vendor package:** a fixture issuer whose discovery document has no end-session
   endpoint; sign-out sends the person to the template's address built from the fixture's values.
 
+### 14. Guarded writes and the inbox — `SubZeroDev.Platform.Persistence`
+
+#### The version guard
+
+```csharp
+/// <summary>Executes a consumer's compare-and-swap write on the ambient transaction and judges it.
+/// Platform builds no SQL: the command is the consumer's own.</summary>
+public interface IVersionGuard
+{
+    /// <summary>Runs <paramref name="guardedWrite"/> on the ambient Write transaction.</summary>
+    /// <param name="guardedWrite">An UPDATE or DELETE whose predicate includes the row's key, the
+    /// tenant, and <c>version = @expected</c>, and whose UPDATE sets <c>version = @expected + 1</c>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>Success when exactly one row matched; <see cref="TransactionError.StaleVersion"/> when
+    /// none did, after which the unit of work is doomed.</returns>
+    /// <exception cref="PlatformContractViolationException">No ambient transaction, or one opened
+    /// <see cref="TransactionIntent.ReadOnly"/> (<c>GuardedWriteOutsideWriteTransaction</c>); or more
+    /// than one row matched (<c>GuardedWriteNotSingleRow</c>).</exception>
+    Task<Result<TransactionError>> ExecuteAsync(DbCommand guardedWrite, CancellationToken cancellationToken);
+}
+```
+
+Registered by Persistence's composition alongside `IUnitOfWork`.
+
+- **The guard enlists the command** on the ambient connection and transaction; the consumer does not.
+- **Matched rows are the judgement**, and both providers report UPDATE and DELETE matched rows the same
+  way, so there is no provider branch and nothing on `IProviderCapability`.
+- **Zero rows dooms the unit of work.** `IUnitOfWork.ExecuteAsync` checks the doom before flushing
+  staged outbox messages and audit events: a doomed unit rolls back everything — the consumer's other
+  writes, staged outbox rows, staged audit — and returns `TransactionError.StaleVersion`, **even if the
+  work ignored the guard's result and returned normally**. A unit whose work throws after a doom is
+  classified as today; the exception is the newer fact.
+- **One answer for gone, changed, and another tenant's.** Zero rows cannot tell them apart and must not
+  try: distinguishing "changed" from "not yours" would disclose existence across tenants.
+- **Provider behaviour, stated once.** PostgreSQL READ COMMITTED: a concurrent guarded write on the same
+  row blocks, then re-evaluates its predicate against the committed version and matches zero rows.
+  SQLite: write transactions begin immediate and serialize, so the second reads the advanced version.
+- **Inserts are not guarded.** A new row is written with `version = 1`.
+
+#### The inbox
+
+The inbox is the outbox dispatcher's guarantee, not a callable seam: there is no public inbox type.
+Its one public change is a prune target, added to
+[`ProviderCapability.cs`](../src/SubZeroDev.Platform.Persistence/ProviderCapability.cs):
+
+```csharp
+public enum PruneTarget
+{
+    ProcessedOutboxRows,
+    PoisonedOutboxRows,
+    DeadHostRegistrations,
+
+    /// <summary>Rows in <c>platform_inbox</c> whose <c>platform_outbox</c> row no longer exists,
+    /// recorded before the prune's <c>olderThan</c> instant.</summary>
+    OrphanedInboxRecords,
+}
+```
+
+Internal, stated so the slice introduces nothing unlisted:
+
+```csharp
+internal sealed class InboxStore
+{
+    /// <summary>INSERT … ON CONFLICT (message_id, consumer) DO NOTHING on the ambient transaction.
+    /// True when the record was inserted; false when one already existed.</summary>
+    internal Task<bool> TryRecordAsync(
+        OutboxMessageId message, EventTypeName consumer, TenantId tenant, DateTimeOffset at,
+        CancellationToken cancellationToken);
+}
+```
+
+- **Dispatch order, inside the handler's one write transaction:** record, then — only if the record
+  was inserted — invoke the handler. A handler failure rolls the record back with everything else, so
+  a retry is not mistaken for a duplicate.
+- **A conflicting insert is a duplicate.** The handler is not invoked; the transaction commits having
+  written nothing; the row is marked processed as on any success; no attempt is consumed; one
+  Information log line names the message id and consumer, never the payload.
+- **Concurrency.** PostgreSQL: a second dispatcher's insert blocks on the first's uncommitted key, then
+  does nothing if the first commits, or inserts and runs if the first rolled back. SQLite: the second
+  cannot begin until the first commits.
+- **Statement text is identical on both providers** (SQLite ≥ 3.24 upsert), so it is a store's, not a
+  capability member. The prune's bounded delete joins `PruneSql`'s identical text:
+  `DELETE … WHERE (message_id, consumer) IN (SELECT … FROM platform_inbox i WHERE i.processed_at < @olderThan AND NOT EXISTS (SELECT 1 FROM platform_outbox o WHERE o.id = i.message_id) LIMIT @batch)`.
+  `PruneWork` runs it hourly under its existing lease with `olderThan` = now and `PruneBatchSize`; no
+  new setting.
+- **Exactly-once is for database effects only.** A handler's external side effect — an e-mail, a call to
+  a provider — is not inside the transaction, and the handler stays responsible for its idempotency.
+- **The lost-claim warning changes wording**, because a lost claim no longer re-applies database effects:
+  `"Outbox state write for {MessageId} lost its claim; the message may be dispatched again and the inbox will skip it."`
+
+### 15. Module lifecycle hooks — `SubZeroDev.Platform.Abstractions`
+
+Two members are added to [`IPlatformModule`](../src/SubZeroDev.Platform.Abstractions/Modules.cs). Both
+are default interface members, so a module that declares neither compiles and behaves as before. Hosting
+runs them. Nothing else calls them.
+
+```csharp
+namespace SubZeroDev.Platform.Abstractions;
+
+public interface IPlatformModule
+{
+    ModuleName Name { get; }
+    IReadOnlyCollection<ModuleName> DependsOn { get; }
+    void Register(IServiceCollection services);
+
+    Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    Task ShutdownAsync(IServiceProvider services, CancellationToken cancellationToken) => Task.CompletedTask;
+}
+```
+
+`HostStartupError` ([`StartupFailure.cs`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs)) gains one
+variant:
+
+```csharp
+namespace SubZeroDev.Platform.Hosting;
+
+public sealed record HostStartupError
+{
+    public static HostStartupError ModuleInitialization(ModuleName module, string detail);
+}
+```
+
+**Semantics.**
+
+- **When the hooks run.** `InitializeAsync` runs once per host start, on both roles and in the test host,
+  after every registry has frozen and every `StartingAsync` check has passed, and before the first
+  background tick and the first request. It runs in the topological order module composition resolved,
+  one module at a time; a module's hook starts only after its dependencies' hooks have completed.
+  **Migrate mode never runs either hook.**
+- **The provider.** Each call receives the provider of a fresh service scope, disposed when the call
+  returns. No ambient operation scope is open. A hook that writes opens one through
+  `IOperationScopeFactory.Begin`, stating its tenant, as any originating code does.
+- **Registration is closed.** A hook resolves services; it cannot register them, and the registries are
+  already frozen.
+- **Shutdown.** `ShutdownAsync` runs in exact reverse order, after background work and the listener have
+  stopped. Its token is bounded by the host's graceful drain window. It runs **exactly once** for each
+  module whose `InitializeAsync` completed, by whichever comes first: the host stopping, or the host
+  being disposed after a later startup step failed. It never runs for a module whose `InitializeAsync`
+  threw or never ran. A `ShutdownAsync` that throws is logged, and the remaining shutdowns still run.
+- **Initialization failure.** An `InitializeAsync` that throws is logged with its exception. The modules
+  that already initialized are shut down in reverse, and the host fails with `ModuleInitialization`. Its
+  `Detail` names the module and the exception's type, never its message.
+- **Concurrency.** Every instance of every role runs every hook, concurrently with the others, including
+  an old and a new instance overlapping during a restart. **A hook must not assume it is the only
+  process.** Once-per-installation work belongs in a migration or a seeder (§ 16).
+
+### 16. Migration application and seeding — `SubZeroDev.Platform.Persistence`
+
+`IMigrationRunner`, `IModuleMigration`, `IModuleMigrationSource` and migrate mode are declared in the tree,
+in [`Migrations.cs`](../src/SubZeroDev.Platform.Persistence/Migrations.cs) and
+[`MigrateMode.cs`](../src/SubZeroDev.Platform.Persistence/MigrateMode.cs). This section adds a seeder
+contract beside the runner, and states the development-environment application the D3 design promised
+(D3 contract, *Unresolved* 8).
+
+```csharp
+namespace SubZeroDev.Platform.Persistence;
+
+public interface ISeeder
+{
+    ModuleName Module { get; }
+    string Name { get; }
+    Task SeedAsync(CancellationToken cancellationToken);
+}
+```
+
+`MigrationError` ([`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs)) gains one variant:
+
+```csharp
+namespace SubZeroDev.Platform.Persistence;
+
+public sealed record MigrationError
+{
+    public static MigrationError SeedFailed(ModuleName module, string seeder, string detail);
+}
+```
+
+**Migrate mode.** `RunPlatformMigrateModeAsync`'s signature is unchanged, and it is still the operator's
+explicit operation. In order, it:
+
+1. binds settings, as today;
+2. registers the Core ambient defaults a host registers (operation scope, accessors, clock), then
+   Persistence;
+3. **resolves the module graph and calls each module's `Register` in topological order**. That is what
+   `IPlatformModule.Register` already promises. A graph error prints `<code>: <detail>` and exits 1;
+4. applies migrations through `IMigrationRunner.ApplyAsync`;
+5. **on success, including when nothing was pending, runs every registered `ISeeder`.**
+
+Exit codes are `0` when every migration and seeder succeeded, `2` for `Locked` (no seeder runs), and `1`
+for anything else.
+
+**Seeders.**
+
+- **Registration.** A module registers a seeder from `Register`, through
+  `TryAddEnumerable(ServiceDescriptor.Singleton<ISeeder, T>())`, the route `IModuleMigrationSource` uses.
+  Migrate mode resolves `IEnumerable<ISeeder>` once per run from a service scope it creates. A host
+  composes seeders and never invokes them.
+- **Order.**
+  - Seeders run grouped by `Module`, in the composed modules' topological order.
+  - Groups whose `Module` names no composed module run after those groups, ordered by module name,
+    ordinally. These are an application's own seeders.
+  - Within a group, seeders run in registration order.
+  - `Name` is for reporting, and uniqueness is not checked.
+- **Tenancy.** Migrate mode opens **no** operation scope. A seeder writes only inside a scope it opened
+  through `IOperationScopeFactory.Begin(tenant, Principal.LocalSystem)`, naming the tenant explicitly.
+  A write without one is the existing `NoAmbientOperationScope` violation, which migrate mode reports as
+  `SeedFailed`.
+  - A seeder covers data that exists when migrate mode runs.
+  - Data that a tenant needs when it is created belongs to the handler of that creation, not to a
+    seeder.
+- **Transactions.** A seeder runs its own transactions through `IUnitOfWork`. Migrate mode wraps none,
+  so atomicity is per seeder transaction, not per run.
+- **Idempotency.** A seeder runs on every migrate mode run, outside the migration lock, and possibly
+  concurrently with another run. **It must converge**: any number of runs, sequential or concurrent,
+  leave the rows one run leaves. It writes insert-if-absent against a store constraint, not
+  read-then-insert.
+- **Failure.** A seeder that throws stops the run. Later seeders do not run, and migrations and earlier
+  seeders' commits stay. Migrate mode prints `SeedFailed: <detail>` and exits 1.
+
+**Development-environment application.**
+
+- **Owner and trigger.** `AddPlatformPersistence` adds an internal lifecycle service, idempotently. In
+  `StartingAsync`, after `PersistenceStartupCheck`, it calls `IMigrationRunner.ApplyAsync`, **if and only
+  if** `PlatformOptions.Environment` equals `Development`, ordinal and ignoring case.
+  - That is the same derived, non-bindable notion `PeerHostHealthCheck` uses.
+  - No setting enables or disables it, and it has no public surface.
+  - It runs on both roles.
+- **Lock.** It takes the provider-native migration lock, because it calls the runner and nothing else.
+  **There is one path that writes migration history.**
+- **Failure behaviour** is stated in *Error semantics* § 13.
+- **Phase.** It completes before any `StartAsync` runs. So it completes before module initialization
+  (§ 15), the first background tick and the listener.
+- **No seeding.** It applies migrations only.
+
+---
+
+### 17. The edge's streamed routes — `SubZeroDev.Platform.GameEdge`
+
+**Amends** G1's `IGameWorkloadForwarder` (*The edge — .NET*) with one method. `ForwardAsync`,
+`ForwardedRequest` and `ForwardedResponse` are unchanged.
+
+```csharp
+public interface IGameWorkloadForwarder
+{
+    // G1's ForwardAsync unchanged.
+    Task<Result<StreamedResponse, EdgeError>> ForwardStreamingAsync(
+        ForwardedRequest request, TimeSpan firstByteTimeout, CancellationToken cancellationToken);
+}
+```
+
+`MapGameWorkloadForwarding` keeps its signature. For a request whose path matches a listed prefix
+(*Types* § 14), it calls `ForwardStreamingAsync` with that entry's `FirstByteTimeout`. Every other
+request takes `ForwardAsync`.
+
+- **A caller may rely on:**
+  - the workload's status and `Content-Type` being sent when the workload's headers arrive, before any
+    body byte;
+  - each piece of the workload's body being flushed to it as it arrives (I-E2);
+  - an incomplete response, never a clean end, when the workload fails mid-stream (I-E3);
+  - a route not listed behaving exactly as G1 declares (I-E1).
+- **A caller must never:**
+  - expect an edge-authored status, envelope or frame after headers;
+  - expect `ForwardTimeout` to end a streamed response;
+  - expect a retry or a resumed stream (I-E4).
+- **Matching** is ordinal, case-sensitive and on segment boundaries, against the request path only. The
+  method and the query string do not take part. The matcher and the configuration check are `internal`
+  and are not surface.
+- **Observability.** Event `1101` `EdgeStreamAborted`, at `Warning`, in category
+  `SubZeroDev.Platform.GameEdge`. It carries the matched prefix, the correlation id, the code, bytes
+  forwarded, milliseconds since headers and the exception's type name. It never carries the request
+  path, query, body or the exception's message. Counter `subzerodev.edge.stream.aborts` (`{abort}`) on
+  meter `PlatformTelemetry.MeterName`, tagged `route` (the prefix) and `code`. A caller disconnect is
+  neither logged above `Debug` nor counted (I-E5).
+- **Proof without SkyNet HR:** the test fake workload emits a body incrementally on a route the test
+  host lists, then destroys its socket.
+
+---
+
+### 18. Runtime settings — `SubZeroDev.Platform.RuntimeSettings`
+
+```csharp
+public interface ISettingReader
+{
+    Task<Result<ResolvedSetting<T>, SettingError>> GetAsync<T>(
+        SettingDefinition<T> setting, CancellationToken cancellationToken) where T : notnull;
+}
+
+public interface ISettingWriter
+{
+    Task<Result<SettingError>> SetAsync<T>(
+        SettingDefinition<T> setting, SettingLayer layer, T value, CancellationToken cancellationToken) where T : notnull;
+
+    Task<Result<SettingError>> ClearAsync(
+        SettingDefinition setting, SettingLayer layer, CancellationToken cancellationToken);
+}
+
+public sealed class RuntimeSettingsModule : IPlatformModule;   // Name "RuntimeSettings"; depends on no module
+```
+
+A host composes the module with `services.AddSingleton<IPlatformModule, RuntimeSettingsModule>()`, as
+it composes Organizations, and registers each catalogue with
+`services.AddSingleton<ISettingCatalog, TCatalog>()`. Registration adds the reader and writer, the
+module's `IPermissionCatalog` declaring the two names, the migration source, and the hosted lifecycle
+service that builds the catalogue.
+
+- **The catalogue is built in `StartingAsync` and frozen** before any hosted service's `StartAsync` and
+  before the host serves (I-ST2). Its defects are in *Error semantics* § 9.
+- **The definition passed is looked up by name in the frozen catalogue**, and the catalogue's default,
+  layers and rule are the ones applied. A name the catalogue lacks, or declares with another type, is
+  `NotDeclared`.
+- **`GetAsync` resolves user, then tenant, then global, then the default**, over the layers that both
+  exist (*10-design* *Data model* § 13) and are admitted by the declaration (I-ST1). `From` names the
+  layer that answered, or is null for the default. It reads through every time (I-ST7).
+- **`SetAsync` and `ClearAsync` check in this order**, and stop at the first failure: declared; layer
+  admitted; layer exists; value valid (set only); permission (global and tenant only, evaluated by
+  `IAuthorizationEvaluator` with `ResourceRef("RuntimeSetting", <name>)`); then one transaction holding
+  the upsert or delete and its audit record (I-ST3, I-ST4).
+- **A user-layer write needs no permission** and reaches only the ambient `Account`'s own row.
+- **The audit record is `Required`**, with action `SettingSet` or `SettingCleared` and resource
+  `ResourceRef("RuntimeSetting", "<layer>/<name>")`, where the layer is lowercase. It carries no value.
+  A clear that found no row succeeds and writes no record.
+- **A caller may rely on** a committed write being seen by the next read on any instance (I-ST7), and
+  on no setting changing a permission, an entitlement or a startup option (I-ST6, I-ST8).
+- **A caller must never** store a secret in a setting, expect a setting to appear in the fingerprint,
+  or expect an HTTP endpoint from this module. The product maps its own, under its own requirements.
+
+---
+
+### 19. Accounts — `SubZeroDev.Platform.Identity`
+
+```csharp
+public sealed class IdentityAccountsModule : IPlatformModule
+{
+    public ModuleName Name { get; }                              // "IdentityAccounts"
+    public IReadOnlyCollection<ModuleName> DependsOn { get; }    // ["Identity"]
+    public void Register(IServiceCollection services);
+}
+
+public interface IAccountApi
+{
+    Task<Result<Account, AccountError>> CreateAccountAsync(CancellationToken cancellationToken);
+    Task<Result<Account, AccountError>> GetCurrentAccountAsync(CancellationToken cancellationToken);
+    Task<Result<Account, AccountError>> LinkAsync(string secondCredential, CancellationToken cancellationToken);
+    Task<Result<Account, AccountError>> UnlinkAsync(PrincipalId identity, CancellationToken cancellationToken);
+}
+
+public static class IdentityAuditActions
+{
+    public static AuditAction AccountCreated { get; }    // "platform.identity.account-created"
+    public static AuditAction IdentityLinked { get; }    // "platform.identity.identity-linked"
+    public static AuditAction IdentityUnlinked { get; }  // "platform.identity.identity-unlinked"
+}
+```
+
+Registering `IdentityAccountsModule` without `IdentityModule` fails startup through the module graph. No setting is
+added: `Platform:Identity` gains no key, and Identity still exposes no settings type.
+
+- **Mapping.** With the store registered, every principal the generic path or the test-grade provider establishes
+  is looked up by its (issuer, subject) after validation. A linked identity's principal is its account's
+  (*Types* § 16). An unlinked identity's principal is unchanged. The upstream-proxy provider and any provider
+  the consumer registers are never mapped. The lookup is not cached. A store failure answers
+  `AuthenticationError.ProviderFailed`, **never the unlinked pair** (I-I20).
+- **`CreateAccountAsync`** is for an ambient `Account` principal that an Identity provider established and that no
+  account links. It creates an account whose one identity is that pair. The account row, the link row and the
+  `Required` audit row share one transaction. **The caller's principal changes from the next request on.** Rows
+  the identity wrote under its raw pair are not re-keyed, so a consumer creates the account before writing
+  anything it wants the account to own.
+- **`LinkAsync`** requires the ambient principal to be an account principal. `secondCredential` is a compact
+  bearer token. The host reads it from a request header, never from a body, on the terms of § 2. Identity
+  validates it with its own `Account`-producing providers, with mapping off, and **also requires its `iat` to be
+  no earlier than five minutes before the call** (the provider's `ClockTolerance` applies either side). A token
+  without `iat` is refused. The five minutes is fixed and is not a setting. The validated pair is linked to the
+  caller's account in one transaction with its `Required` audit row. Linking a pair the account already holds
+  succeeds and writes nothing. **This is the only way a second identity joins an account** (I-I18).
+- **`UnlinkAsync`** removes one pair from the caller's account, unless it is the last (I-I19). It may remove the
+  pair the caller is presenting, and that credential is its raw pair from the next request on.
+- **`GetCurrentAccountAsync`** answers the caller's account and its identities.
+- **The sign-in module is unchanged.** It is how a person usually obtains `secondCredential`: they begin method B
+  while signed in to the host through method A, and take B's token from B's token endpoint (`10-design.md`
+  *Data model* § 11, § 14). The module never references Identity (I-C7).
+- **A caller may rely on** two identities that share every claim but their subject pair being two principals until
+  `LinkAsync` joins them (I-I17).
+- **A caller must never** create, find or link an account by email or any other claim, or expect an account to
+  span hosts.
+- **No permission is declared.** The API acts only on the caller's own account. The host's endpoint declares the
+  permission its composition grants an authenticated caller.
+
 ---
 
 ## Error semantics
@@ -1090,7 +1888,7 @@ refusing it is the rotation bound stated in *Public surface* § 10.
 |---|---|---|---|
 | `PermissionDenied` | no provider granted, **every provider answered**, and the principal can see the resource | no | return **forbidden** |
 | `ResourceNotVisible` | the resource is in another tenant, or the principal may not know it exists | no | return **not found** |
-| `ProviderUnavailable` | a provider could not answer — typically an unreachable store. Carried on `AuthorizationDecision.ProviderFailure`, never returned by `EvaluateAsync` | **yes** | return a retryable failure — 503 on HTTP, a retryable tool result on Mcp; the denial stands for this request |
+| `ProviderUnavailable` | a provider could not answer — typically an unreachable store, or a mirrored provider never synced or whose last sync is older than `Platform:Authorization:MirrorMaximumAge` (I-A13). Carried on `AuthorizationDecision.ProviderFailure`, never returned by `EvaluateAsync` | **yes** | return a retryable failure — 503 on HTTP, a retryable tool result on Mcp; the denial stands for this request |
 
 **`PermissionDenied` and `ResourceNotVisible` are not interchangeable, and the difference is a
 security property rather than a style choice.** *Forbidden* confirms the resource exists. A
@@ -1274,9 +2072,14 @@ retryable — a misconfigured installation does not resolve itself.**
 | `DuplicatePermissionName` | two modules declare the same `PermissionName` — `PermissionCatalogError`, inside `Registration` |
 | `DuplicateProviderName` | two permission providers, authentication providers, tenant resolvers or audit sinks share a name — each registry's own error, inside `Registration`; two entitlement contributors sharing a name raise `DuplicateContributorName` there instead |
 | `UnregisteredPermission` | a tool, an endpoint, or any registration requires a `PermissionName` no catalog declares — its own code, carrying `PermissionCatalogError.UnregisteredPermission` as the inner error |
+| `DuplicateSettingName` | two setting catalogues declare the same `SettingName` — `SettingCatalogError`, inside `Registration` |
+| `InvalidSettingDefault` | a declared default fails the setting's own validation rule — `SettingCatalogError`, inside `Registration` |
+| `SettingWithoutLayers` | a setting declares no layer — `SettingCatalogError`, inside `Registration` |
+| `SensitiveSettingName` | a setting name matches the redaction marker set — `SettingCatalogError`, inside `Registration` |
 | `SensitiveToolParameter` | a registered tool's schema names a parameter matching the redaction marker set |
 | `UndeclaredEndpointRequirement` | a mapped endpoint carries neither a requirement nor an exemption |
-| `Configuration` | a generic-path provider's settings are defective (*Types* § 12). The inner error is `ConfigurationError`, and the variant depends on the defect — see below |
+| `Configuration` | a generic-path provider's settings are defective (*Types* § 12), or `Platform:Audit:RetentionDays` is present and is not a whole number from 1 to 36500 (*Public surface* § 6). The inner error is `ConfigurationError`, and the variant depends on the defect — see below |
+| `ModuleInitialization` | a module's `InitializeAsync` threw (*Public surface* § 15). Names the module and the exception's type; the modules already initialized were shut down first |
 
 **A generic-path settings defect is a `ConfigurationError`, not a new code.** The error names the full
 key, `Platform:Identity:Bearer:<name>:<setting>`, so it names the provider and the setting in one
@@ -1291,18 +2094,30 @@ string, on the `Detail` convention `ConfigurationError` already follows:
 **A defect fails startup before any fetch** (I-I10). A key-fetch failure is not in this section. It
 never fails startup, and it degrades readiness instead (*Public surface* § 10).
 
+**`Platform:Authorization:MirrorMaximumAge` outside its row's constraint is `InvalidSetting`** naming that
+full key, raised by the options binder as every `Platform:` setting is, before any provider is consulted.
+Zero, a negative value and an infinite value are outside it. An absent key is not a defect: it binds the
+default (*Public surface* § 3).
+
+**An invalid retention value is `ConfigurationError.InvalidSetting("Platform:Audit:RetentionDays", …)`**,
+with the constraint `must be a whole number` or `must be between 1 and 36500`. It is raised when options
+are bound, so in both roles and before any module composes (I-U13). An absent, empty or whitespace value
+is not a defect: it means keep forever.
+
 **Each names the profile, the offending registration and which of the two it disagrees with**, on the
 `Detail` convention `ModuleGraphError` and `ConfigurationError` already follow. Each describes a
 deployment that would otherwise run and be wrong quietly.
 
 ### 10. `ContractViolation` — `SubZeroDev.Platform.Abstractions`
 
-One variant is added to the existing set in
+Three variants are added to the existing set in
 [`Results.cs`](../src/SubZeroDev.Platform.Abstractions/Results.cs):
 
 | Variant | Raised when |
 |---|---|
 | `WriteInsideSharedReadScope` | a write was attempted while a shared-read scope was open |
+| `GuardedWriteOutsideWriteTransaction` | `IVersionGuard.ExecuteAsync` was called with no ambient transaction, or inside one opened `ReadOnly` |
+| `GuardedWriteNotSingleRow` | a guarded write matched more than one row — its key predicate is wrong |
 
 It **throws** rather than returning, on the same terms as `NoAmbientTransaction`: a defect in the
 caller, not a runtime condition.
@@ -1321,7 +2136,120 @@ The Platform-host path continues to wrap the same configuration error in `Platfo
 The wrapper type differs because the package graph forbids Observability from referencing Hosting;
 the setting, constraint and non-retryable meaning are identical.
 
+### 12. `TransactionError.StaleVersion` — `SubZeroDev.Platform.Persistence`
+
+One variant is added to `TransactionError` in
+[`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs):
+
+```csharp
+/// <summary>A guarded write matched no row: the row changed or is gone since it was read.
+/// The whole unit of work was rolled back.</summary>
+/// <returns>The error.</returns>
+public static TransactionError StaleVersion() =>
+    new(nameof(StaleVersion), isRetryable: false, "The guarded write matched no row: the row changed or is gone since it was read.");
+```
+
+| Variant | Raised when | Retryable | The caller is expected to |
+|---|---|---|---|
+| `StaleVersion` | a guarded write matched zero rows | **no** | re-read the row and decide; **never merge**, never re-run with the same expected version |
+| `Conflict` *(existing)* | the provider aborted for serialization or deadlock | yes | re-run the unit unchanged |
+
+**`StaleVersion` cannot reach Hosting or Mcp as a type** — neither package references Persistence.
+The product code that called the unit of work owns the answer, and it is fixed here:
+
+| Surface | Answer | Discloses |
+|---|---|---|
+| HTTP endpoint | **409**, `ErrorEnvelope("StaleVersion", correlation)` | nothing but the code and correlation |
+| MCP tool, via the product's `IToolInvoker` | `ToolInvocationResult.Failure("The resource changed since it was read; read it again before repeating the call.")` | nothing |
+| the product lets it escape as an exception | today's 500 `UnhandledRequestFailure` or the adapter's "The tool failed to complete." | nothing — and it is a defect in the product |
+
+**No answer carries a version, current or expected** (engine-hosting-contract § 6.1). Whether a
+product exposes a version on its own wire is the product's decision, outside this contract.
+
+**A duplicate inbox delivery is not an error.** It is a success that invoked nothing (*Public surface*,
+§ 14), and no `DispatchError` variant is added.
+
 ---
+
+### 13. Migrate mode and development application — `SubZeroDev.Platform.Persistence`, surfaced as `MigrationError`
+
+| Variant | Migrate mode | Development host start |
+|---|---|---|
+| `Failed` | exit 1; the whole run rolled back; no seeder runs | fails startup with `PersistenceStartupException` |
+| `HistoryTableCollision` | exit 1; nothing applied; no seeder runs | fails startup with `PersistenceStartupException` |
+| `Locked` | exit 2; no seeder runs | waits one second and retries, logging each wait, until the result is not `Locked` or startup is cancelled |
+| `Unavailable` | exit 1 | starts with a warning; readiness reports it through the existing database and pending-migrations checks; no retry in this process |
+| `SeedFailed` | exit 1; committed migrations and earlier seeders' writes stay; later seeders do not run | never raised: a host does not seed |
+
+**`SeedFailed` is not retryable.** A seeder that throws on one run throws on the next unless something
+changed. Its `Detail` names the module, the seeder's `Name` and the exception's type and message, on the
+`Failed` convention. `PersistenceStartupException`'s message carries the `MigrationError`'s `Detail`, as it
+already does for `ConfigurationError`.
+
+---
+
+### 14. `EdgeError` on a streamed route — `SubZeroDev.Platform.GameEdge`
+
+G1's `EdgeError` table (*The edge — `EdgeError`*) stands, with two rows **amended**. #106's
+after-headers clause is scoped to buffered routes, and the timeout row names the first-byte budget. No
+variant is added.
+
+| Error | HTTP | Raised when | Retryable | The caller is expected to |
+|---|---|---|---|---|
+| `EdgeError.WorkloadUnreachable` | `503` | **Buffered route:** the forward fails before or after response headers arrive. **Streamed route:** the forward fails before response headers arrive. Either: the readiness probe cannot reach the workload | no | treat the workload as down; retry at the caller's discretion |
+| `EdgeError.WorkloadTimeout` | `504` | **Buffered route:** the forward exceeds `ForwardTimeout`. **Streamed route:** the workload's response headers have not arrived within the route's `FirstByteTimeout` | no | treat the workload as slow; retry at the caller's discretion |
+
+G1's sentence *"The edge produces no other error"* holds, with one addition. **On a streamed route,
+after the workload's headers are sent, a workload failure is not an error the caller receives.** It is
+an aborted response:
+- HTTP/1.1: no terminating chunk, and the connection closes;
+- HTTP/2: `RST_STREAM`.
+
+No `PlatformError` crosses to the caller, and `ErrorEnvelopeMiddleware` never sees it. The edge records
+it as code `workload_unreachable` in its log and counter only.
+
+---
+
+### 15. `SettingError` — `SubZeroDev.Platform.RuntimeSettings`
+
+`SettingError` and `SettingCatalogError` are `PlatformError` subtypes on `OrganizationError`'s shape:
+a private constructor, a static factory per variant, and a `Detail` that names the setting and the
+layer and **never a value**.
+
+| Variant | Raised when | Retryable | The caller is expected to |
+|---|---|---|---|
+| `NotDeclared` | the name is not in the catalogue, or is declared with another type | no | fix the code; this is a defect |
+| `LayerNotAdmitted` | the declaration does not admit the layer written | no | write a layer the setting admits |
+| `LayerUnavailable` | a user-layer write by a principal that is not an `Account`, or a tenant- or user-layer write under the implicit tenant | no | write the global layer, or act as an account in a tenant |
+| `InvalidValue` | the value fails the setting's rule | no | supply a valid value |
+| `PermissionDenied` | the evaluator denied `WriteGlobal` or `WriteTenant`; the denial is already audited | no | not retry; obtain the grant |
+| `AuthorizationUnavailable` | the decision carried a provider or audit failure | yes | retry |
+| `StoredValueInvalid` | a stored value fails to parse or validate under the current declaration (read only) | no | set or clear that layer |
+| `StoreUnavailable` | the store, or the audit write inside the change's transaction, failed | yes | retry |
+
+**`StoredValueInvalid` is never replaced by a lower layer or the default** (I-ST9), and
+`StoreUnavailable` is never replaced by the default.
+
+---
+
+### 16. `AccountError` — `SubZeroDev.Platform.Identity`
+
+A `PlatformError`, declared as `OrganizationError` is: private constructor, one static factory per variant, `Detail`.
+
+| Variant | Raised when | Retryable | The caller is expected to |
+|---|---|---|---|
+| `NotEligible` | `CreateAccountAsync` from a principal that is not an Identity-established, unlinked `Account`: `Anonymous`, `Delegated`, `System`, a consumer provider's principal, or an account principal | no | return forbidden |
+| `NotAnAccount` | `LinkAsync`, `UnlinkAsync` or `GetCurrentAccountAsync` from a principal that is not an account principal | no | return forbidden, or offer to create one |
+| `SecondCredentialRejected` | `secondCredential` is not claimed, fails validation, has no `iat`, or was issued more than five minutes before the call | no | have the person sign in with the second method again |
+| `IdentityAlreadyLinked` | the pair to link, or to create an account for, is linked to another account, **including by a concurrent call that won the primary key** | no | tell the person that sign-in belongs to another account; **never merge** |
+| `LastIdentity` | `UnlinkAsync` names the account's only identity | no | refuse; there is no account deletion |
+| `IdentityNotLinked` | `UnlinkAsync` names a pair this account does not hold, **whether or not another account holds it** | no | return not found |
+| `StoreUnavailable` | the account store could not complete the operation | **yes** | retry |
+
+**`IdentityNotLinked` deliberately covers "linked elsewhere".** An unlink request is not a way to learn which pairs
+other accounts hold. **`SecondCredentialRejected` collapses its causes**, and the specific cause goes to the log.
+**At authentication, a store failure is not an `AccountError`.** It is `AuthenticationError.ProviderFailed`
+(§ 1), and never the unlinked pair.
 
 ## Invariants
 
@@ -1350,8 +2278,10 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
 | **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
 | **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
-| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider returned an error, and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | instruction | — |
+| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider could not answer — returned an error, or is a mirror past `MirrorMaximumAge` (I-A13) — and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | instruction | — |
 | **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | instruction | — |
+| **I-A13** | A registered `IMirroredPermissionProvider` whose `LastSyncedAsync` is null, errs, or is older than `Platform:Authorization:MirrorMaximumAge` by the evaluating host's clock contributes no grant, is not asked for grants, and is recorded as `ProviderUnavailable` naming it; no configuration makes the maximum unbounded (Owner: Core.) | — | instruction | — |
+| **I-A14** | A mirror's last-synced instant is the instant its most recent successful sync began reading the issuer, written with the rows that read produced; a failed or partial issuer read advances neither (Owner: each consumer's mirror sync. Checked in part by `PermissionProviderHarness.AssertIssuerRevocationDeniesWithinBoundAsync`.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
 | **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |
 | **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |
@@ -1368,10 +2298,19 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-C7** | No module references another module (Owner: all.) Enforced by code — the same test, second direction. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
 | **I-C8** | Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
 | **I-C9** | Every startup check fails the host and names the registration that caused it; none degrades (Owner: Core, Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C10** | Module `InitializeAsync` hooks run once per host start, in topological order, one at a time, after every registry has frozen and every `StartingAsync` check has passed, and complete before the first background tick or request; `ShutdownAsync` hooks run in reverse after background work and the listener stop (Owner: Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-C11** | `ShutdownAsync` runs exactly once for each module whose `InitializeAsync` completed — on stop, or on disposal after a later startup step failed — and never for one whose `InitializeAsync` threw or never ran (Owner: Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-C12** | A throwing `InitializeAsync` fails the host with `ModuleInitialization` naming the module, never degrades it, and its `Detail` carries no exception message (Owner: Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-C13** | No lifecycle hook assumes it is the only process: every instance of every role runs every hook, and migrate mode runs none (Owner: Hosting; each module for its own hooks.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-E1** | A request whose path matches no `GameEdge:StreamingRoutes` prefix is forwarded buffered, under one `ForwardTimeout`, with G1's answers including #106's after-headers `503`; with no route listed the edge is G1's edge unchanged (Owner: GameEdge.) | — | instruction | — |
+| **I-E2** | On a streamed route the edge commits the workload's status and `Content-Type` when the workload's headers arrive and flushes each piece of the body as it is read, never coalescing; `ForwardTimeout` does not apply and no edge deadline follows the headers (Owner: GameEdge.) | — | instruction | — |
+| **I-E3** | After a streamed route's headers are sent, a workload failure aborts the caller's response — no terminating chunk on HTTP/1.1, a reset stream on HTTP/2 — and the edge writes no byte of its own after headers: no status, envelope, frame or trailer (Owner: GameEdge.) | — | instruction | — |
+| **I-E4** | A streamed forward is exactly one attempt to the workload: the edge never retries it, before or after headers, and never resumes a stream (Owner: GameEdge.) | — | instruction | — |
+| **I-E5** | Each aborted stream is logged once as `EdgeStreamAborted` at `Warning` and counted once on `subzerodev.edge.stream.aborts`, carrying the configured prefix and never the request path, query, body or exception message; a caller disconnect is neither counted nor logged above `Debug` (Owner: GameEdge.) | — | instruction | — |
 | **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) | — | instruction | tests/SubZeroDev.Platform.Tests/OperationScopeTests.cs, tests/SubZeroDev.Platform.Tests/PrincipalTests.cs |
 | **I-I2** | `PrincipalId.Issuer` and `.Subject` are never parsed, normalised, trimmed or case-folded by Platform (Owner: Abstractions.) | — | instruction | — |
 | **I-I3** | `PrincipalId.ToString()` is never split to recover the pair; anywhere the pair is stored it is two columns (Owner: Abstractions, Audit store, Organizations.) Enforced by code — in each schema; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
+| **I-I4** | Platform declares no user entity and no directory. The optional account store holds an account id, its creation instant and its linked (issuer, subject) pairs, and nothing else, and exists only in a host that registers it (Owner: Identity.) Enforced by code — an architecture check over the module's types and its migration's columns. | — | code, instruction | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
 | **I-I5** | A `Delegated` principal is never treated as an `Account` with missing fields (Owner: every consumer.) | — | instruction | — |
 | **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | code | tests/SubZeroDev.Platform.Tests/PermissionGrantSourceTests.cs |
 | **I-I7** | The generic bearer path accepts asymmetric signature algorithms only: a shared-secret algorithm or `none` in its settings fails startup, and a token whose header names an algorithm outside the provider's set is rejected (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/ConfiguredBearerTests.cs |
@@ -1383,6 +2322,12 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-I13** | A vendor configuration package references no Platform package (Owner: each vendor configuration package.) | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
 | **I-I14** | Identity reads the generic path's settings without knowing which configuration source wrote them: the same keys and values from a vendor configuration source and from a settings file yield equal validated settings (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/VendorConfigurationSourceTests.cs |
 | **I-I15** | A request presenting a credential that no registered provider claims ends the authentication chain `CredentialRejected`, never `Principal.Anonymous`; `CredentialNotClaimed` is consumed by the chain and never reaches a caller (Owner: Core, every authentication provider.) | — | code | tests/SubZeroDev.Platform.Tests/AuthenticationTests.cs, tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
+| **I-I16** | One (issuer, subject) is linked to at most one account (Owner: Identity.) Enforced by code once S46.8 lands — the link table's primary key. | — | instruction | — |
+| **I-I17** | No account is created, found or linked from an email or any claim other than the subject pair; two identities sharing every other claim are two principals until linked (Owner: Identity.) | — | instruction | — |
+| **I-I18** | A pair joins an existing account only through `LinkAsync`, called by that account's principal, with a second credential an Identity provider validates in the same call and that was issued within five minutes (Owner: Identity.) | — | instruction | — |
+| **I-I19** | An account always has at least one linked identity; unlinking the last is refused, including under concurrent unlinks (Owner: Identity.) | — | instruction | — |
+| **I-I20** | With the account store registered, a store failure while mapping a principal fails authentication and never yields the unlinked pair (Owner: Identity.) | — | instruction | — |
+| **I-I21** | A `Delegated`, `Anonymous` or `System` principal is never mapped to or made into an account, and a host without `IdentityAccountsModule` has no account table and unchanged principals (Owner: Identity.) | — | instruction | — |
 | **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
@@ -1412,6 +2357,17 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-O7** | A non-member cannot switch into or administer an organization, and is told not found (Owner: Organizations.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 | **I-O8** | The framework never learns that a tenant has an owner (Owner: all.) | — | instruction | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
 | **I-OB1** | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work (Owner: Observability, Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/TelemetryOptionsTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryExportTests.cs |
+| **I-P1** | A guarded write commits only when it matched exactly one row; zero rows rolls back the whole unit of work — consumer writes, staged outbox rows and staged audit — and returns `StaleVersion`, whether or not the work read the guard's result (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
+| **I-P2** | Every guarded write predicates on `version = @expected` and the tenant, and an UPDATE sets `version = @expected + 1`; no other statement writes `version` (Owner: each consumer declaring `IVersioned`.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
+| **I-P3** | No answer to a stale version — HTTP, MCP, log or audit — carries a version value, and gone, changed and another tenant's row get the same answer (Owner: Persistence, each consumer.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
+| **I-P4** | A handler is never invoked for a (message id, consumer) whose earlier invocation committed (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs |
+| **I-P5** | The inbox record commits in the same transaction as the handler's effects, and a handler failure leaves no record (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs |
+| **I-P6** | An inbox record is pruned only once its outbox row no longer exists (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
+| **I-P7** | Migrations are applied automatically only when the derived environment is `Development`; no setting can enable it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
+| **I-P8** | `IMigrationRunner.ApplyAsync` is the only path that writes migration history; development application and migrate mode both take the provider-native lock through it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
+| **I-P9** | Seeders run only in migrate mode, only after `ApplyAsync` succeeded, grouped in composed-module topological order and registration order within a module (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
+| **I-P10** | A seeder converges: any number of sequential or concurrent runs leave the rows one run leaves (Owner: each seeder's module.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
+| **I-P11** | Migrate mode opens no operation scope for a seeder; a seeder writes only inside a scope it opened naming its tenant, as `Principal.LocalSystem` (Owner: Persistence for the first half; each seeder's module for the second.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
 | **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
 | **I-R2** | Tenant resolution precedes authorization (Owner: Hosting, Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
 | **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
@@ -1422,6 +2378,15 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-S1** | The sign-in module creates a session only after the callback's state equals the state it stored for that begin, and the session holds no more than the issuer, the subject, the access token and its expiry; the module owns no row and does not change the authentication seam (Owner: SignIn.) | — | instruction | — |
 | **I-S2** | Sign-out clears the session and redirects to the issuer, and never claims to revoke an access token already issued; such a token stays valid at Platform until it expires (Owner: SignIn.) | — | instruction | — |
 | **I-S3** | A host-registered sign-in hook runs after configuration binds and cannot change which issuer, key source, audience or algorithm Platform trusts; the trust root is the generic path's settings alone (Owner: SignIn.) | — | instruction | — |
+| **I-ST1** | A runtime setting resolves user, then tenant, then global, then its declared default, over the layers its declaration admits; the user layer exists only for an `Account` principal in a non-implicit tenant, and the tenant layer only for a non-implicit tenant (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST2** | Every runtime setting is declared once in a catalogue frozen before the host serves; a duplicate name, a default its own rule rejects, an empty layer set, or a name matching the redaction marker set fails startup (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST3** | A global or tenant write is authorized against `Platform.RuntimeSettings.WriteGlobal` or `WriteTenant`, scoped to the setting, before the store is touched; a user write reaches only the ambient account's own row (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST4** | Every change to a setting writes exactly one `Required` audit record in the change's transaction, naming the layer and setting and never the value; if the record cannot be written the change does not commit (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST5** | Tenant and user setting rows are read and written only with the current tenant; a global row belongs to the installation and is stored under the implicit tenant with layer `global` (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST6** | No runtime setting grants a permission or a feature: the module registers no permission provider and no entitlement contributor, and no authorization or entitlement decision reads a setting (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST7** | The module holds no in-process copy of a stored value, so a committed write is seen by the next read on every instance of every role (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST8** | Runtime settings and their catalogue are not inputs to the settings fingerprint, and no runtime setting overrides a startup option (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST9** | A stored value that fails to parse or validate under the current declaration is answered `StoredValueInvalid`, never replaced by a lower layer or the default (Owner: RuntimeSettings.) | — | instruction | — |
 | **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
@@ -1436,10 +2401,14 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-U4** | A denial, a read, or a failure that wrote nothing writes its row in its own transaction after the outcome is known (Owner: each writer.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
 | **I-U5** | `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
 | **I-U6** | No secret value or payload reaches a stored record or a log line, through **any** audited input surface (Owner: all.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryRedactionTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
-| **I-U7** | Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs |
+| **I-U7** | Audit records are never updated, and no surface exposes an update or a delete; the only delete is the retention prune, which removes whole rows by age (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs |
 | **I-U8** | Audit rows are not totally ordered across hosts and nothing relies on the opposite (Owner: all.) | — | instruction | — |
 | **I-U9** | An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-U10** | Audit-write failure degrades readiness in both classes (Owner: Core.) Enforced by code — `platform.audit.sink`. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-U11** | With `Platform:Audit:RetentionDays` absent, no audit-prune work is registered and nothing deletes an audit row (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs |
+| **I-U12** | With `Platform:Audit:RetentionDays` set to N, the retention prune runs only in the Worker role under its lease, deletes only rows whose `OccurredAt` is earlier than the worker's now minus N days, and deletes at most 500 rows per statement, each in its own transaction (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs |
+| **I-U13** | A present `Platform:Audit:RetentionDays` that is not a whole number from 1 to 36500 fails startup in both roles with `HostStartupError.Configuration` carrying `ConfigurationError.InvalidSetting` naming the key (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs |
+| **I-U14** | Two hosts whose `Platform:Audit:RetentionDays` differ, including set against absent, compute different settings fingerprints (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/SettingsFingerprintTests.cs |
 | **I-W1** | The shell holds no server-side state and reaches the system only over the public HTTP API; **no backend package references it, and it has no privileged endpoint of its own** (Owner: the shell.) | — | instruction | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 <!-- invariants:end -->
 
@@ -1465,7 +2434,13 @@ a grant source for any provider — recorded at [`90-decisions.md`](90-decisions
 structural for Platform's providers (I-I6, I-A2, I-A10) and a contract obligation for a consumer's, with the
 revoke-then-deny test shipped in `Platform.Testing` as a harness. `Principal.Claims` stays public, and
 #92's criteria were amended to match, per the owner's ruling of 2026-10-07 ([#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263),
-[`90-decisions.md`](90-decisions.md), 2026-10-07).
+[`90-decisions.md`](90-decisions.md), 2026-10-07). **Its revocation half was reopened for roles mirrored
+from an issuer** by red-team F3 ([#264](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/264)):
+the next-request promise did not hold for them, and the mirror's delay was unbounded. It is resolved by
+the owner's ruling of 2026-10-08 and the `10-design.md` correction landing in the same change: a mirror
+older than `Platform:Authorization:MirrorMaximumAge` cannot answer, a mirrored role's revocation takes
+effect within that maximum (*Public surface* § 3; I-A13, I-A14), and a second harness proves it by
+revoking at the issuer ([`90-decisions.md`](90-decisions.md), 2026-10-08).
 
 **Item 4 was reopened and resolved by the 2026-10-08 design, and the paragraph below is superseded for
 a host that takes the sign-in module.** #94's first, third and fourth criteria now have a sign-in method
@@ -1487,3 +2462,24 @@ them ([`90-decisions.md`](90-decisions.md), 2026-09-26, an accepted risk). Its s
 in validation terms only: a vendor configuration package adjusts the generic path's values without
 hand-wiring the rest of it. A vendor's sign-in and sign-out quirks stay with each client
 ([`10-design.md`](10-design.md) § *Control flow*, path 4).
+
+Item 5 (a public inbox for inbound messages that do not come from the outbox — webhooks, a future
+transport) is **deliberately not offered** by #62's design. Billing records its provider-event receipts
+itself, and no second consumer has asked; the extraction guard says the second consumer earns the
+abstraction. When one does, the `platform_inbox` table's `(message_id, consumer)` key is the shape it
+would extend, and the decision must also name stable handler identities if one-handler-per-type is
+relaxed.
+
+Item 8 of the D3 contract ([`d3/20-contract.md`](d3/20-contract.md), *Unresolved*: development-environment
+automatic migration) was resolved by the owner's ruling of 2026-10-08
+([#68](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/68)). It is built, and its four questions
+are answered in *Public surface* § 16 and *Error semantics* § 13:
+
+- **Owner:** Persistence.
+- **Trigger:** automatic in the derived `Development` environment only.
+- **Lock:** the provider-native lock, through the runner.
+- **Failure:** `Failed` fails startup, `Locked` waits, `Unavailable` starts not-ready.
+
+Recorded at [`90-decisions.md`](90-decisions.md), 2026-10-08. The seeder that D3's `NoAmbientOperationScope`
+remedy names now exists, as `ISeeder` (§ 16,
+[#61](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/61)).

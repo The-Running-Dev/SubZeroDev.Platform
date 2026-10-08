@@ -184,8 +184,11 @@ Built-in defaults
 → environment variables
 → external secret/config providers
 → command-line overrides
-→ runtime overrides
 ```
+
+Runtime settings are not a configuration source and are not in this chain. They are read from the
+RuntimeSettings module at the point of use, layered user over tenant over global over a declared
+default, and no runtime setting overrides a startup option (design: *Data model* § 13).
 
 Requirements:
 
@@ -265,7 +268,7 @@ Optional module supporting:
 - invitations
 - ownership
 - tenant isolation
-- tenant-scoped settings
+- tenant-scoped settings come from the RuntimeSettings module's tenant layer, which Organizations does not own
 - tenant-scoped billing
 - tenant-scoped secrets
 - tenant-scoped plugins
@@ -460,7 +463,7 @@ Potential shared shell:
 - user profile
 - organization switcher
 - navigation
-- settings
+- settings — excluded (D5 decision 6): runtime settings have no administration UI; a product maps its own endpoints
 - notifications
 - audit log
 - API keys

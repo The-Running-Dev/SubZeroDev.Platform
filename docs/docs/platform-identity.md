@@ -119,7 +119,7 @@ stale.
 |---|---|---|---|---|
 | Identity | users, API keys, service accounts | player accounts | a table, established by QR link and never an account | an operator, asserted by an upstream proxy and never an account |
 | Organizations / Tenancy | teams | studios, white-label, custom domains | a venue | — |
-| Billing | open-core; agents as the paid dimension | Free / Creator / Studio tiers | undecided — see below | — |
+| Billing | open-core; agents as the paid dimension — audience unsettled, see below | Free / Creator / Studio tiers | a service operated for venues; pricing not set | — |
 | Mcp | brokered plugin tools | the game tool surface | chat commands | — |
 | Storage | execution artifacts | saves, campaign assets | item photography | — |
 | Notifications | execution alerts | session and publication events | orders reaching a staff channel | — |
@@ -135,14 +135,23 @@ contribution**, and it is the only row where the guard was satisfied by somethin
 the G1 edge is one consumer of a capability that has never been packaged, and SkyNet HR is the
 second.
 
-**BarStrad's own status carries two caveats**, stated because a consumer that does not hold up
+**BarStrad's own status carries one caveat**, stated because a consumer that does not hold up
 weakens every row it appears in. It does not run on Platform today, so it is evidence rather than a
-deployed dependent — the diagram in §1 is unchanged deliberately. And its commercial model is
-unsettled, which is why its billing cell is empty rather than guessed: self-hosted and licensed per
-installation contradicts nothing, and a service operated for venues contradicts two binding
-statements in the D3 brief.
+deployed dependent — the diagram in §1 is unchanged deliberately. Its commercial model was a second
+caveat until the owner ruled on 2026-10-08
+([#24](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/24)): BarStrad is a service
+the owner operates for venues, not software a venue installs. The D3 brief's self-host-only
+non-goal it would have contradicted is closed with D3; D5's brief already names operated SaaS as a
+deployment shape. Its principal stays a table, never an account.
 
-**SkyNet HR carries the first of those caveats and not the second.** It does not run on Platform
+**The Automator's audience is unsettled, and is recorded rather than guessed**
+([#99](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/99), 2026-10-08). It is both,
+currently: the tool the owner uses to manage plugins and workflows, and an open-core product
+licensed per installation to outside customers. The first reading leaves Identity with one serious
+human-facing consumer; the second gives it a real multi-user, machine-credential case. Nothing is
+designed on either reading alone.
+
+**SkyNet HR carries the same caveat as BarStrad.** It does not run on Platform
 today either, which is why the §1 diagram stays as it is; it gains its third arm when the workload
 actually runs behind the edge. What makes SkyNet HR's case different from BarStrad's is that a
 decision has been taken to host it — so the gap between evidence and deployed dependent is a

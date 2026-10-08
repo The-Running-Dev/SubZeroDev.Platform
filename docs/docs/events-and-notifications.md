@@ -92,9 +92,11 @@ transaction as the state change, and a relay publishes it afterwards. Without th
 "state committed" and "event published" silently loses the event — the classic dual-write failure,
 and the one that produces bugs nobody can reproduce.
 
-At-least-once delivery means **subscribers must be idempotent**. Platform provides a deduplication
-helper keyed on `eventId`, but the guarantee belongs to the subscriber; a helper cannot make a
-non-idempotent side effect safe.
+Delivery is at-least-once, and Platform's dispatcher makes a handler's **database** effects
+exactly-once: before invoking a handler it records the message id and handler in the same transaction
+the handler writes in, and a message already recorded is skipped. That record cannot make an
+**external** side effect — an e-mail, a provider call — safe to repeat, so handlers that cause one
+must still be idempotent for it.
 
 Distributed buses are future providers behind the same abstraction. In-process plus outbox is the
 Phase One implementation.
@@ -153,6 +155,18 @@ fail a sync.
 
 Delivery is retried with backoff, and a permanently failed notification is recorded and surfaced in
 health rather than retried forever.
+
+**An unreachable channel degrades readiness and never fails the host.** A chat channel is online in
+steady state, which a deployment with no outbound network can never be. The reconciliation is that
+the channel's reachability is a readiness signal, never a startup condition and never a failure of
+the work that triggered the notification. Ruled 2026-10-08
+([#24](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/24)).
+
+**A channel credential never leaves the server.** A webhook URL, bot token or API key is held by the
+host and used by the host. It is never sent to a browser bundle, a client configuration or a
+committed file. This rule is stronger than "a secret appears in no log, span or metric label".
+Ruled 2026-10-08 ([#25](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/25)), from
+a live webhook found committed in another repository.
 
 ## Decisions on previously open points
 

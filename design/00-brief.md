@@ -54,7 +54,7 @@ the following bounded subset:
 | Authorization | Stable named permissions, policy and resource checks, tenant-aware decisions, module-contributed permissions, and audit of security-sensitive decisions | `platform-specification.md:231`; no divergence analysis or canonical consumer row |
 | Organizations | Organizations, memberships, invitations, ownership and active-organization switching; teams and richer organization administration remain outside D5 | `platform-specification.md:254`; three consumers through the combined Organizations / Tenancy row |
 | Tenancy | Request tenant context, enforced tenant-scoped access, and an explicit auditable model for deliberately shared resources, built over the existing tenant identifier | `second-consumer-packages.md:63`; three consumers |
-| Billing | Provider-neutral plans, subscriptions and entitlements sufficient to gate features and apply plan transitions; product code consumes entitlements, never subscription state | `platform-specification.md:275`; `second-consumer-packages.md:121`; BarStrad's model remains undecided |
+| Billing | Provider-neutral plans, subscriptions and entitlements sufficient to gate features and apply plan transitions; product code consumes entitlements, never subscription state | `platform-specification.md:275`; `second-consumer-packages.md:121`; BarStrad is operated for venues (decision 6) |
 | Licensing | Signed offline licence documents, tier and feature claims, expiration and grace, durable last-known verified claims, and optional online revocation as an extension point only | `platform-specification.md:299`; no divergence analysis or canonical consumer row |
 | Audit | A durable audit event contract and sink carrying actor, tenant, action, resource, timestamp, correlation id and outcome, with sensitive-data exclusion | `platform-specification.md:401`; no divergence analysis or canonical consumer row |
 | Shared web UI | A replaceable administration shell proving login/accountless state, organization switching, entitlement/licence state and audit viewing without becoming a backend dependency | `platform-specification.md:455`; no divergence analysis or canonical consumer row |
@@ -98,8 +98,10 @@ while identity-free local mode continues to use the implicit tenant without setu
   no usage-based enforcement is introduced by D5.
 - **Machine activation, seat enforcement, trial issuance or an online revocation service.** Licensing
   exposes claims and the optional revocation seam but does not build these product policies.
-- **Federation, account linking, a shared user directory or shared identity storage.** The Automator
-  and GEaaS retain separate identity stores; Platform provides a common principal contract only.
+- **Federation, account linking across products, a shared user directory or shared identity storage.**
+  The Automator and GEaaS retain separate identity stores; Platform provides a common principal
+  contract, and, by decision 6, an optional per-host account store whose login linking stays inside
+  one host.
 - **Choosing or operating an identity substrate.** D5 defines provider-neutral integration seams;
   an OIDC, proxy, local or other provider belongs to deployment or product policy.
 - **A complete shared administration product.** Settings, notifications, API-key administration,
@@ -224,3 +226,32 @@ paths and architecture gates that a happy-path demonstration cannot prove.
 `design/g1/90-decisions.md:532` holds for this effort. Federation, account linking and shared identity
 storage remain non-goals; opaque stable principal ids preserve a later reversal without requiring it
 now.
+
+**6. Admitted after the nine capabilities shipped. Ben ruled each item on 2026-10-08.** Each owner ruling
+below admits the item into D5 explicitly. Without the ruling it would be an omitted bullet under decision 3,
+and so needs this entry. Each item goes through `/design` or `/spec` before any slice, as usual:
+
+- **Inherited D3 framework promises.** These are module lifecycle hooks
+  ([#63](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/63)), development-time automatic
+  migration ([#68](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/68)), a seeding contract
+  ([#61](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/61)), opt-in optimistic concurrency
+  ([#60](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/60)) and a consumer-side inbox
+  ([#62](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/62)). They are Hosting and
+  Persistence work that D3 promised or implied and D5's packages now depend on.
+- **Runtime settings** ([#58](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/58)): a layered,
+  persisted setting provider, distinct from startup configuration. It has no administration UI, and the
+  shell's Settings exclusion stands.
+- **Streaming routes at the edge** ([#110](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/110)).
+  A route can opt in per route. Buffered routes stay the default.
+- **An optional account store in Identity** ([#93](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/93)).
+  It is keyed on (provider, subject), and a second login is linked by an explicit, authenticated act. Its
+  consumers are the Automator and GEaaS. Hosts with no accounts do not take it. Decision 5 holds: each host
+  keeps its own store, and linking never crosses products. An account stays optional
+  ([#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98)).
+- **BarStrad's commercial model is settled** ([#24](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/24)).
+  It is a service the owner operates for venues. Operated SaaS is already a deployment shape under
+  *Environment*, so nothing above changes.
+
+Audit retention ([#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187)) and the bound on
+mirrored-role revocation ([#264](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/264)) stay
+inside capabilities already in scope and need no entry here.
