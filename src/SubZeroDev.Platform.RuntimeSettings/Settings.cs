@@ -143,6 +143,14 @@ public sealed class SettingDefinition<T> : SettingDefinition
         value = parsed is T typed ? typed : default!;
         return parsed is T;
     }
+
+    /// <summary>The stored text of a value, the inverse of <see cref="TryParse"/>.</summary>
+    internal string Format(T value) => value switch
+    {
+        bool flag => flag ? "true" : "false",
+        long number => number.ToString(CultureInfo.InvariantCulture),
+        _ => (string)(object)value,
+    };
 }
 
 /// <summary>One product's declared runtime settings. A host registers each with

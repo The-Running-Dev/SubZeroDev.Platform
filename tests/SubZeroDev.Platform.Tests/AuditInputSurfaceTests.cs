@@ -11,6 +11,7 @@ using SubZeroDev.Platform.Licensing;
 using SubZeroDev.Platform.Mcp;
 using SubZeroDev.Platform.Organizations;
 using SubZeroDev.Platform.Persistence;
+using SubZeroDev.Platform.RuntimeSettings;
 using SubZeroDev.Platform.Testing;
 
 namespace SubZeroDev.Platform.Tests;
@@ -44,6 +45,7 @@ public sealed class AuditInputSurfaceTests
         ["SubZeroDev.Platform.Mcp.PlatformMcpTool"] = DriveMcpToolAsync,
         ["SubZeroDev.Platform.Organizations.OrganizationApi"] = DriveOrganizationsAsync,
         ["SubZeroDev.Platform.Persistence.SharedReadScopeFactory"] = DriveSharedReadAsync,
+        ["SubZeroDev.Platform.RuntimeSettings.SettingWriter"] = DriveSettingWriterAsync,
     };
 
     public static TheoryData<string> Surfaces
@@ -281,6 +283,33 @@ public sealed class AuditInputSurfaceTests
         using (scopes.Begin(TenantId.Implicit, Alice))
         using (factory.Open<SurfaceRow>().Value)
         {
+        }
+
+        await probe.SealAsync(host.Services);
+    }
+
+    private static async Task DriveSettingWriterAsync(Probe probe)
+    {
+        await using var host = await StartHostAsync(probe, services =>
+        {
+            services.AddSingleton<IPlatformModule, RuntimeSettingsModule>();
+            services.AddSingleton<ISettingCatalog>(new RuntimeSettingsTests.SampleCatalog(RuntimeSettingsTests.Banner));
+        });
+        var writer = host.Services.GetRequiredService<ISettingWriter>();
+        var scopes = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        // The value is the input a write takes (I-ST4): set, replaced, cleared, and refused at a layer
+        // Alice holds no permission for. S44.1 names its own sentinel value.
+        const string sentinel = "SENTINEL-7f3a";
+        probe.Forbidden.Add(sentinel);
+        using (scopes.Begin(RuntimeSettingsTests.T1, Alice))
+        {
+            var banner = RuntimeSettingsTests.Banner;
+            Assert.True((await writer.SetAsync(banner, SettingLayer.User, sentinel, CancellationToken.None)).IsSuccess);
+            Assert.True((await writer.SetAsync(banner, SettingLayer.User, Secret, CancellationToken.None)).IsSuccess);
+            Assert.True((await writer.SetAsync(banner, SettingLayer.User, Payload, CancellationToken.None)).IsSuccess);
+            Assert.True((await writer.ClearAsync(banner, SettingLayer.User, CancellationToken.None)).IsSuccess);
+            Assert.False((await writer.SetAsync(banner, SettingLayer.Global, Secret, CancellationToken.None)).IsSuccess);
         }
 
         await probe.SealAsync(host.Services);

@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-ST5
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/RuntimeSettingsTests.cs
 
 ## Statement
 Tenant and user setting rows are read and written only with the current tenant; a global row belongs to the installation and is stored under the implicit tenant with layer `global` (Owner: RuntimeSettings.)

@@ -5,7 +5,7 @@ using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.RuntimeSettings;
 
-/// <summary>Reads <c>runtime_setting</c> rows. Enlists against the ambient transaction the reader
+/// <summary>Reads and writes <c>runtime_setting</c> rows. Enlists against the ambient transaction the reader
 /// opened through <see cref="IUnitOfWork"/>, never a connection of its own, and holds no copy of what
 /// it read (I-ST7).</summary>
 internal sealed class SettingStore(IAmbientTransactionAccessor ambient)
@@ -67,6 +67,55 @@ internal sealed class SettingStore(IAmbientTransactionAccessor ambient)
         return rows;
     }
 
+    /// <summary>Stores the row's value, replacing any value already there.</summary>
+    internal async Task UpsertAsync(SettingRowKey row, string value, CancellationToken cancellationToken)
+    {
+        await using var command = Enlist(row);
+        command.CommandText = """
+            INSERT INTO runtime_setting (tenant, layer, name, principal_issuer, principal_subject, value)
+            VALUES (@tenant, @layer, @name, @issuer, @subject, @value)
+            ON CONFLICT (tenant, layer, name, principal_issuer, principal_subject)
+            DO UPDATE SET value = excluded.value;
+            """;
+        AddParameter(command, "@value", value);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Removes the row.</summary>
+    /// <returns>Whether there was a row to remove.</returns>
+    internal async Task<bool> DeleteAsync(SettingRowKey row, CancellationToken cancellationToken)
+    {
+        await using var command = Enlist(row);
+        command.CommandText = """
+            DELETE FROM runtime_setting
+            WHERE tenant = @tenant AND layer = @layer AND name = @name
+              AND principal_issuer = @issuer AND principal_subject = @subject;
+            """;
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
+    }
+
+    /// <summary>A command on the ambient transaction carrying the row's five key columns.</summary>
+    private DbCommand Enlist(SettingRowKey row)
+    {
+        var current = ambient.Current
+            ?? throw new PlatformContractViolationException(ContractViolation.NoAmbientTransaction());
+        var command = current.Connection.CreateCommand();
+        command.Transaction = current.Transaction;
+        AddParameter(command, "@tenant", row.Tenant.ToString());
+        AddParameter(command, "@layer", FormatLayer(row.Layer));
+        AddParameter(command, "@name", row.Name.Value);
+        AddParameter(command, "@issuer", row.Principal?.Issuer ?? string.Empty);
+        AddParameter(command, "@subject", row.Principal?.Subject ?? string.Empty);
+        return command;
+    }
+
+    internal static string FormatLayer(SettingLayer layer) => layer switch
+    {
+        SettingLayer.Global => "global",
+        SettingLayer.Tenant => "tenant",
+        _ => "user",
+    };
+
     private static SettingLayer? ParseLayer(string stored) => stored switch
     {
         "global" => SettingLayer.Global,
@@ -83,6 +132,11 @@ internal sealed class SettingStore(IAmbientTransactionAccessor ambient)
         command.Parameters.Add(parameter);
     }
 }
+
+/// <summary>One <c>runtime_setting</c> row's key. A global row lives under the implicit tenant, and only
+/// a user row names a principal.</summary>
+internal readonly record struct SettingRowKey(
+    SettingName Name, SettingLayer Layer, TenantId Tenant, PrincipalId? Principal);
 
 /// <summary>Creates <c>runtime_setting</c>, the module's one table, with the same text on SQLite and
 /// PostgreSQL (<c>design/20-contract.md</c>, Schemas §9). No existing migration changes (I-T7).</summary>
