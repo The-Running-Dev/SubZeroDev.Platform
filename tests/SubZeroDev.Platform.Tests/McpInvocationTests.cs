@@ -382,6 +382,254 @@ public sealed class McpInvocationTests
         Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
     }
 
+    /// <summary>S30.1 (I-M5), structural half: nothing a tool producer or invoker is handed, and nothing
+    /// it hands back, can carry a credential. Every public member of the Mcp assembly is walked — not a
+    /// hand-kept list, so a surface added later is covered — and no parameter, property or field may be
+    /// named like a secret or typed as a credential carrier.</summary>
+    [Fact]
+    public void S30_1_The_Mcp_tool_and_invoker_surface_has_no_credential_carrying_parameter()
+    {
+        Type[] carriers =
+        [
+            typeof(IAuthenticationRequest),
+            typeof(Microsoft.AspNetCore.Http.HttpContext),
+            typeof(Microsoft.AspNetCore.Http.HttpRequest),
+            typeof(Microsoft.AspNetCore.Http.IHeaderDictionary),
+            typeof(System.Security.Claims.ClaimsPrincipal),
+            typeof(System.Net.Http.Headers.AuthenticationHeaderValue),
+        ];
+
+        const System.Reflection.BindingFlags Declared =
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly;
+
+        var publicTypes = typeof(IToolInvoker).Assembly.GetExportedTypes();
+        Assert.Contains(typeof(IToolInvoker), publicTypes);
+        Assert.Contains(typeof(IToolProducer), publicTypes);
+
+        var violations = new List<string>();
+        var inspected = 0;
+
+        void Inspect(string where, string? name, Type type)
+        {
+            inspected++;
+
+            // A cancellation token is named "...Token" by convention and carries no credential.
+            var element = Nullable.GetUnderlyingType(type) ?? (type.IsByRef ? type.GetElementType()! : type);
+            if (element == typeof(CancellationToken))
+            {
+                return;
+            }
+
+            if (Redaction.IsSensitiveKey(name))
+            {
+                violations.Add($"{where} is named like a credential ('{name}').");
+            }
+
+            if (carriers.Any(carrier => carrier.IsAssignableFrom(element)))
+            {
+                violations.Add($"{where} is typed {element.Name}, which carries a credential.");
+            }
+        }
+
+        foreach (var type in publicTypes)
+        {
+            foreach (var method in type.GetMethods(Declared).Cast<System.Reflection.MethodBase>()
+                .Concat(type.GetConstructors(Declared)))
+            {
+                foreach (var parameter in method.GetParameters())
+                {
+                    Inspect($"{type.Name}.{method.Name}({parameter.Name})", parameter.Name, parameter.ParameterType);
+                }
+
+                if (method is System.Reflection.MethodInfo info)
+                {
+                    Inspect($"{type.Name}.{method.Name} (return)", null, info.ReturnType);
+                }
+            }
+
+            foreach (var property in type.GetProperties(Declared))
+            {
+                Inspect($"{type.Name}.{property.Name}", property.Name, property.PropertyType);
+            }
+
+            foreach (var field in type.GetFields(Declared))
+            {
+                Inspect($"{type.Name}.{field.Name}", field.Name, field.FieldType);
+            }
+        }
+
+        Assert.True(inspected > 20, $"Only {inspected} members inspected; the walk is not reaching the surface.");
+        Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
+
+        // Calibration: the same rules flag the request type a credential actually travels on.
+        Assert.Contains(carriers, carrier => carrier.IsAssignableFrom(typeof(IAuthenticationRequest)));
+        Assert.True(Redaction.IsSensitiveKey("bearerToken"));
+    }
+
+    /// <summary>S30.1 (I-M5), behavioural half: a call that presents another principal's credential in
+    /// its arguments is still authorized, invoked and audited as the connection's principal. Arguments
+    /// are data handed to the invoker, never an authentication input.</summary>
+    [Fact]
+    public async Task S30_1_A_credential_presented_in_call_arguments_is_authorized_as_the_connection_principal()
+    {
+        var evaluated = new List<string>();
+        Principal? ambientAtInvoke = null;
+        IDictionary<string, JsonElement>? received = null;
+        Harness? started = null;
+
+        var invoker = new StubToolInvoker("producer", (_, arguments) =>
+        {
+            received = arguments;
+            ambientAtInvoke = started!.Services.GetRequiredService<ICurrentPrincipal>().Current;
+            return ToolInvocationResult.Success("ok");
+        });
+
+        await using var harness = started = await Harness.StartAsync(
+            exposed: [new ToolName("act-as")],
+            extra: [
+                new StubToolProducer("producer",
+                    new ToolDefinition(new ToolName("act-as"), "Acts.", Schema("principal", "credential"), UsePermission, null)),
+                invoker,
+            ],
+            onEvaluate: (principal, _, _) =>
+            {
+                lock (evaluated)
+                {
+                    evaluated.Add(principal.Id.Subject);
+                }
+            });
+
+        await using var client = await harness.ConnectAsync("alice");
+        var result = await client.CallToolAsync(
+            "act-as",
+            new Dictionary<string, object?>
+            {
+                ["principal"] = "bob",
+                ["credential"] = $"{PrincipalHeader}: bob",
+            },
+            cancellationToken: CancellationToken.None);
+
+        Assert.False(result.IsError, TextOf(result));
+        Assert.Equal(1, invoker.CallCount);
+
+        // Authorization saw only the connection's principal.
+        Assert.NotEmpty(evaluated);
+        Assert.All(evaluated, subject => Assert.Equal("alice", subject));
+
+        // The invoker ran as alice, and received bob's credential as plain data.
+        Assert.NotNull(ambientAtInvoke);
+        Assert.Equal("alice", ambientAtInvoke.Id.Subject);
+        Assert.NotNull(received);
+        Assert.Equal("bob", received["principal"].GetString());
+
+        // And the record names alice as the actor.
+        var record = Assert.Single(harness.Audit.Received, e => e.Action == new AuditAction("act-as"));
+        Assert.Equal(new PrincipalId("test", "alice"), record.Actor);
+    }
+
+    /// <summary>S30.2 (I-M7): a producer projecting its tools from a JSON manifest and a product's
+    /// fixed C# table register through the same public surface — <see cref="IToolProducer"/> and
+    /// <see cref="IToolInvoker"/> — in one host. Both are listed, and both answer an allowed and a denied
+    /// caller identically: invoked once and audited Allowed, or never invoked and audited Denied.</summary>
+    [Fact]
+    public async Task S30_2_A_manifest_projected_and_a_fixed_table_producer_are_listed_and_authorized_identically()
+    {
+        var manifestTool = new ToolName("manifest.render-scene");
+        var tableTool = new ToolName("table.count-items");
+
+        async Task<IReadOnlyDictionary<ToolName, (bool IsError, int Calls, AuditOutcome Outcome)>> RunAsync(bool grants)
+        {
+            var manifestInvoker = new StubToolInvoker("manifest", (_, _) => ToolInvocationResult.Success("rendered"));
+            var tableInvoker = new StubToolInvoker("fixed-table", (_, _) => ToolInvocationResult.Success("3"));
+
+            await using var harness = await Harness.StartAsync(
+                exposed: [manifestTool, tableTool],
+                extra: [new ManifestToolProducer(ManifestJson), new FixedTableToolProducer(), manifestInvoker, tableInvoker],
+                grantsPermission: grants);
+
+            await using var client = await harness.ConnectAsync("alice");
+
+            var listed = (await client.ListToolsAsync(cancellationToken: CancellationToken.None))
+                .Select(tool => tool.Name)
+                .Order(StringComparer.Ordinal)
+                .ToList();
+            Assert.Equal([manifestTool.Value, tableTool.Value], listed);
+
+            var outcomes = new Dictionary<ToolName, (bool, int, AuditOutcome)>();
+            foreach (var (tool, invoker) in new[] { (manifestTool, manifestInvoker), (tableTool, tableInvoker) })
+            {
+                var result = await client.CallToolAsync(
+                    tool.Value,
+                    new Dictionary<string, object?> { ["name"] = "x" },
+                    cancellationToken: CancellationToken.None);
+
+                var record = Assert.Single(harness.Audit.Received, e => e.Action == new AuditAction(tool.Value));
+                outcomes[tool] = (result.IsError == true, invoker.CallCount, record.Outcome);
+            }
+
+            return outcomes;
+        }
+
+        var allowed = await RunAsync(grants: true);
+        var denied = await RunAsync(grants: false);
+
+        Assert.Equal((false, 1, AuditOutcome.Allowed), allowed[manifestTool]);
+        Assert.Equal(allowed[manifestTool], allowed[tableTool]);
+
+        Assert.Equal((true, 0, AuditOutcome.Denied), denied[manifestTool]);
+        Assert.Equal(denied[manifestTool], denied[tableTool]);
+    }
+
+    private const string ManifestJson = """
+        {
+          "tools": [
+            {
+              "name": "manifest.render-scene",
+              "description": "Renders a scene named in the manifest.",
+              "permission": "Sample.Tool.Use",
+              "parameters": { "type": "object", "properties": { "name": { "type": "string" } } }
+            }
+          ]
+        }
+        """;
+
+    /// <summary>A producer whose tools are projected from a JSON manifest at production time — the
+    /// shape a workload declaring its tools in data takes.</summary>
+    private sealed class ManifestToolProducer(string manifest) : IToolProducer
+    {
+        public ToolProducerName Name { get; } = new("manifest");
+
+        public ValueTask<IReadOnlyCollection<ToolDefinition>> ProduceAsync(CancellationToken cancellationToken)
+        {
+            using var document = JsonDocument.Parse(manifest);
+            var definitions = document.RootElement.GetProperty("tools").EnumerateArray()
+                .Select(tool => new ToolDefinition(
+                    new ToolName(tool.GetProperty("name").GetString()!),
+                    tool.GetProperty("description").GetString()!,
+                    tool.GetProperty("parameters").Clone(),
+                    new PermissionName(tool.GetProperty("permission").GetString()!),
+                    null))
+                .ToList();
+
+            return ValueTask.FromResult<IReadOnlyCollection<ToolDefinition>>(definitions);
+        }
+    }
+
+    /// <summary>A producer whose tools are a fixed table in the product's own code.</summary>
+    private sealed class FixedTableToolProducer : IToolProducer
+    {
+        private static readonly ToolDefinition[] Table =
+        [
+            new(new ToolName("table.count-items"), "Counts items.", Schema("name"), UsePermission, null),
+        ];
+
+        public ToolProducerName Name { get; } = new("fixed-table");
+
+        public ValueTask<IReadOnlyCollection<ToolDefinition>> ProduceAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyCollection<ToolDefinition>>(Table);
+    }
+
     private static string TextOf(CallToolResult result) =>
         string.Join(" ", result.Content.OfType<TextContentBlock>().Select(block => block.Text));
 
