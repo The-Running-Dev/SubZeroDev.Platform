@@ -372,8 +372,87 @@ public sealed class AuthorizationTests
         Assert.NotNull(decision.ProviderFailure);
     }
 
+    [Fact]
+    public async Task S26_1_The_evaluator_called_directly_refuses_a_name_no_catalog_declares()
+    {
+        // Called directly, not through an endpoint or a tool, so no startup check has seen the name.
+        // The provider would grant it: a refusal here is the evaluator's own, not a coincidence of
+        // nobody granting the name.
+        var undeclared = new PermissionName("Test.Undeclared.Use");
+        var consulted = 0;
+        var sink = new RecordingAuditSink();
+        await using var host = await BuildHostAsync(services =>
+        {
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink));
+            services.AddSingleton<IPermissionProvider>(new StubPermissionProvider(
+                "would-grant",
+                (_, _, _) =>
+                {
+                    consulted++;
+                    return Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(
+                        new HashSet<PermissionName> { undeclared });
+                }));
+        });
+
+        var thrown = await Assert.ThrowsAsync<PlatformContractViolationException>(
+            () => EvaluateAsync(host, FakePrincipals.System, undeclared));
+
+        Assert.Equal(PermissionCatalogError.UnregisteredPermission(undeclared).Code, thrown.Error.Code);
+        Assert.Equal(
+            PermissionCatalogError.UnregisteredPermission(undeclared).Detail,
+            Assert.IsType<PermissionCatalogError>(thrown.Error).Detail);
+        Assert.Equal(0, consulted);
+
+        // Never a runtime denial (I-A3): no decision was reached, so none was audited.
+        Assert.Empty(sink.Received);
+    }
+
+    [Fact]
+    public async Task S26_2_In_Operated_the_composition_provider_grants_nothing_to_Account_or_Delegated()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .StartAsync(CancellationToken.None); // Operated is the test host's default profile.
+
+        var composition = Assert.Single(
+            host.Services.GetServices<IPermissionProvider>(),
+            provider => provider.Name.Value == "Platform.Composition");
+
+        foreach (var principal in new[] { FakePrincipals.Account(), FakePrincipals.Delegated() })
+        {
+            foreach (var resource in new ResourceRef?[] { null, new ResourceRef("Organization", "org-1") })
+            {
+                var granted = await composition.GrantsAsync(principal, TestTenant, resource, CancellationToken.None);
+
+                Assert.True(granted.IsSuccess);
+                Assert.Empty(granted.Value);
+            }
+
+            // And through the evaluator, for every name Platform itself declares.
+            foreach (var permission in new[]
+                     {
+                         PlatformPermissions.ShareResource,
+                         PlatformPermissions.AdministerOrganization,
+                         PlatformPermissions.ReadAudit,
+                     })
+            {
+                var decision = await EvaluateAsync(host, principal, permission);
+
+                Assert.Equal(AuthorizationOutcome.Denied, decision.Outcome);
+                Assert.Empty(decision.Sources);
+            }
+        }
+    }
+
+    // Every test here evaluates `TestPermission`, so every host declares it: an undeclared name
+    // reaching the evaluator is a defect the evaluator refuses (I-A3, S26.1), not a denial.
     private static async Task<IPlatformTestHost> BuildHostAsync(Action<IServiceCollection> configure) =>
-        await PlatformTestHost.CreateBuilder().WithServices(configure).StartAsync(CancellationToken.None);
+        await PlatformTestHost.CreateBuilder()
+            .WithServices(services =>
+            {
+                services.AddSingleton<IPermissionCatalog>(new StubPermissionCatalog(TestPermission));
+                configure(services);
+            })
+            .StartAsync(CancellationToken.None);
 
     private static async Task<AuthorizationDecision> EvaluateAsync(
         IPlatformTestHost host, Principal principal, PermissionName? permission = null)

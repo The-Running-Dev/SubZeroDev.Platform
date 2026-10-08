@@ -248,8 +248,13 @@ internal sealed class CompositionPermissionProvider(
 /// <see cref="AuthorizationError.ProviderUnavailable"/> naming the first such provider in registry
 /// order on <see cref="AuthorizationDecision.ProviderFailure"/>. Audits exactly one <see cref="AuditClass.Required"/> record on a denial, and carries
 /// that write's failure on <see cref="AuthorizationDecision.AuditFailure"/>; an allowed decision is
-/// not itself an audited fact — the writer that performs the action audits it.</remarks>
+/// not itself an audited fact — the writer that performs the action audits it. A name no
+/// registered catalog declares is refused before any provider is asked, by throwing
+/// <see cref="PlatformContractViolationException"/> carrying
+/// <see cref="PermissionCatalogError.UnregisteredPermission"/>: it is a defect in the caller, never
+/// a runtime denial, so nothing is audited and no decision is returned (I-A3).</remarks>
 internal sealed class AuthorizationEvaluator(
+    IPermissionCatalogRegistry catalogs,
     IPermissionProviderRegistry providers,
     ICurrentPrincipal principal,
     ICurrentTenant tenant,
@@ -258,6 +263,15 @@ internal sealed class AuthorizationEvaluator(
     public async Task<AuthorizationDecision> EvaluateAsync(
         PermissionName permission, ResourceRef? resource, CancellationToken cancellationToken)
     {
+        // Startup refuses an undeclared name on every endpoint and tool requirement; this is the
+        // same check for a caller that reaches the evaluator directly. A denial here would be
+        // indistinguishable from a policy that denies.
+        var declared = catalogs.EnsureDeclared(permission);
+        if (!declared.IsSuccess)
+        {
+            throw new PlatformContractViolationException(declared.Error);
+        }
+
         var currentPrincipal = principal.Current;
         var currentTenant = tenant.Current;
         var sources = new List<PermissionProviderName>();

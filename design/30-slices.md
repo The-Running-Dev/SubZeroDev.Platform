@@ -162,8 +162,8 @@ Out of scope: changing `PlatformSampler`'s ratio, or making it configurable. Eit
 surface the contract does not declare. Also out of scope: the other `game-service` tests.
 
 ## S26 — The authorization and request-scope invariants are proven, not assumed
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a maintainer changing the evaluator, the composition provider or the operation scope finds out
 from a failing test, not from production, if they break a promise the contract makes about who may do
@@ -192,7 +192,7 @@ Out of scope: any change to the evaluator's behaviour beyond what a failing test
 (see *Outstanding*).
 
 ## S27 — Tenant isolation is proven for writes and for every entity type
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a product team that stores customer data on Platform can rely on one tenant never writing

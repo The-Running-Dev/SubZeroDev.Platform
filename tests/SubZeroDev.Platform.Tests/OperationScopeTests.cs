@@ -79,6 +79,33 @@ public sealed class OperationScopeTests
     }
 
     [Fact]
+    public async Task S26_3_Setting_the_ambient_principal_to_null_inside_an_open_scope_is_refused_and_a_read_never_yields_null()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
+        var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var accessor = host.Services.GetRequiredService<IOperationScopeAccessor>();
+        var principal = host.Services.GetRequiredService<ICurrentPrincipal>();
+        var account = FakePrincipals.Account();
+
+        using var scope = factory.Begin(TenantId.Implicit, account);
+
+        // Nothing exposes a setter: the only way a principal enters the ambient context is a scope
+        // opened with one.
+        Assert.Null(typeof(ICurrentPrincipal).GetProperty(nameof(ICurrentPrincipal.Current))!.GetSetMethod(nonPublic: true));
+        Assert.Null(typeof(IOperationScope).GetProperty(nameof(IOperationScope.Principal))!.GetSetMethod(nonPublic: true));
+
+        // And opening one with null is refused on both overloads, inside the open scope.
+        Assert.Throws<ArgumentNullException>(() => factory.Begin(TenantId.Implicit, null!));
+        Assert.Throws<ArgumentNullException>(
+            () => factory.Begin(scope.Trace, scope.Correlation, TenantId.Implicit, null!));
+
+        // The refused attempts installed nothing: the open scope, and its principal, still answer.
+        Assert.Same(scope, accessor.Current);
+        Assert.NotNull(principal.Current);
+        Assert.Equal(account, principal.Current);
+    }
+
+    [Fact]
     public void A_malformed_trace_parent_never_parses_and_never_throws()
     {
         foreach (var malformed in new[] { "not-a-traceparent", string.Empty, "00-tooshort-x-01" })
