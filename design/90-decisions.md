@@ -16,6 +16,30 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-08 — #94: the sign-in module's callback is mapped at the method's `RedirectPath`
+Context: the contract (§ 13) lists the module's endpoints under `/signin/<method>` and also requires a configured `RedirectPath`. A callback at `/signin/<method>/callback` would make `RedirectPath` a second, redundant setting.
+Chosen: begin, token and signout are mapped under `/signin/<method>`; the callback is mapped at the configured `RedirectPath`, so the address registered with the provider is the address that serves it. Two methods may not share a `RedirectPath`; that fails startup as `InconsistentSettings`.
+Rejected: a fixed `/signin/<method>/callback` that ignores `RedirectPath`; a prefix-only `RedirectPath`.
+Reversibility: cheap before a host registers a redirect address with a provider; moderate after.
+
+### 2026-10-08 — #94: the id token is read without a signature check, and `{id_token_hint}` is always empty
+Context: the session holds no id token (I-S1), and Platform validates the access token on every request, so the id token's only job here is to name the subject.
+Chosen: the id token received directly from the token endpoint over TLS is decoded unverified, as OpenID Connect Core 3.1.3.7 permits, with `iss`, `aud`, `nonce` and `exp` checked; a failure is the generic sign-in error. `{id_token_hint}` expands to an empty string because no id token is kept. `Scopes` must include `openid`.
+Rejected: verifying the id token's signature (a second validation path beside Identity, and a keys dependency this package must not take, I-I12); keeping the id token in the cookie (widens I-S1 and the cookie size).
+Reversibility: cheap — verification and a hint can be added behind the same settings.
+
+### 2026-10-08 — #94: hooks adjust, and the module re-sets what it owns
+Context: I-S3 says a hook cannot change what Platform trusts; the contract does not say whether a hook may return a protected parameter.
+Chosen: `AdjustAuthorizeRequest` returns the full parameter set, which replaces the module's; the module then re-sets `response_type`, `client_id`, `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge` and `code_challenge_method`. `ReplaceEndSessionAddress` must return an absolute http or https address, or the sign-out fails. The anti-forgery header `X-Platform-SignIn` is required on the token endpoint only. After a successful callback the person is returned to `/`. Discovery-based sign-out appends `client_id` and `post_logout_redirect_uri`. An `http` issuer or endpoint is accepted only on a loopback host.
+Rejected: failing when a hook returns a protected name (an unhelpful failure at the first request); a configurable post-sign-in path (not in #94).
+Reversibility: cheap.
+
+### 2026-10-08 — #94: `SubZeroDev.Platform.SignIn` is the thirteenth package
+Context: the package scripts and `commercial-guide.md` count the checked packages.
+Chosen: SignIn joins the packed, manifest-checked and consumer-graph-checked set; the count moves from twelve to thirteen. It reads the generic path's `Issuer` keys from configuration rather than referencing Identity (I-C7).
+Rejected: shipping it unpacked; referencing Identity to read the issuers.
+Reversibility: cheap.
+
 ### 2026-10-08 — The sign-in module is stateless, hosted on the Identity host, with a hook above vendor configuration
 Context: [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94). The owner ratified the 2026-10-07 proposal below, agreed all six premises of the `/design` pass and chose the minimal approach. The proposal left the session store, the callback host and the hook shape open.
 Chosen: an optional `SubZeroDev.Platform.SignIn` module (`10-design.md` *Data model* § 11, *Alternatives* § 14). The session is an encrypted cookie and the module owns no row. There is no refresh token and no client secret. The client reads its access token from a same-origin, anti-forgery-guarded endpoint, so the authentication seam is not widened. Vendor dialect is two configuration settings, an end-session template and extra authorize parameters, so a vendor package still references no Platform package (I-I13). The hook sits above configuration, is registered by the host, and cannot change what Platform trusts. Sign-out does not revoke an issued token. The endpoints are mapped on the operated host that takes Identity, recorded as a recommendation under *Open questions* 5. The 2026-09-26 accepted risk is superseded for a host that takes the module. Contract Unresolved item 4 is closed against this.

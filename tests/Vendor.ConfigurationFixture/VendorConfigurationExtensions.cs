@@ -51,6 +51,26 @@ public static class VendorConfigurationExtensions
             [$"{Section}:{name}:VendorQuirk"] = "on",
         });
 
+    /// <summary>The vendor's sign-in method: a provider with no end-session endpoint in its discovery
+    /// document and one extra authorize parameter, written under <c>SubZeroDev:SignIn:&lt;name&gt;</c>.</summary>
+    public static IConfigurationBuilder AddFixtureSignInMethod(
+        this IConfigurationBuilder builder,
+        string name,
+        string issuer,
+        string clientId,
+        string redirectPath,
+        string endSessionTemplate,
+        string extraParameterName,
+        string extraParameterValue) =>
+        builder.AddFixtureSource(new Dictionary<string, string?>
+        {
+            [$"SubZeroDev:SignIn:{name}:Issuer"] = issuer,
+            [$"SubZeroDev:SignIn:{name}:ClientId"] = clientId,
+            [$"SubZeroDev:SignIn:{name}:RedirectPath"] = redirectPath,
+            [$"SubZeroDev:SignIn:{name}:EndSessionTemplate"] = endSessionTemplate,
+            [$"SubZeroDev:SignIn:{name}:ExtraAuthorizeParameters:{extraParameterName}"] = extraParameterValue,
+        });
+
     private static IConfigurationBuilder AddFixtureSource(
         this IConfigurationBuilder builder, IReadOnlyDictionary<string, string?> values) =>
         builder.Add(new FixtureSource(values));

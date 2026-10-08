@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- #94: the module is an HTTP client of the issuer and maps endpoints, so it needs ASP.NET Core's
+         routing and data protection and nothing from Microsoft.IdentityModel (I-I12): it reads the
+         id token's claims without validating a signature, as OpenID Connect Core 3.1.3.7 permits for a
+         token received directly from the token endpoint. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SubZeroDev.Platform.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -300,6 +300,7 @@ public sealed class PackageGraphTests
         typeof(SubZeroDev.Platform.Licensing.LicensingModule).Assembly,
         typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
         typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
+        typeof(SubZeroDev.Platform.SignIn.SignInModule).Assembly,
     ];
 
     /// <summary>Every framework assembly plus every module assembly built alongside this test
@@ -313,6 +314,7 @@ public sealed class PackageGraphTests
         typeof(SubZeroDev.Platform.Licensing.LicensingModule).Assembly,
         typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
         typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
+        typeof(SubZeroDev.Platform.SignIn.SignInModule).Assembly,
     ];
 
     private static IReadOnlyCollection<Assembly> FrameworkAssemblies() =>
