@@ -312,8 +312,8 @@ Out of scope: the cancelled-call test that
 `ModelContextProtocol` ships its fix.
 
 ## S31 — The public roadmap shows the work in progress now, not D3's finished plan
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a visitor to the site's roadmap page sees the active effort's slices: what has shipped, what is being built now, what is queued, and D5's real non-goals. Today the page shows a closed effort's finished plan.
 Touches: `site/src/roadmap/roadmapData.ts`, `site/src/roadmap/roadmapData.test.ts`, `site/src/roadmap/RoadmapApp.test.tsx`, `site/src/App.test.tsx`
@@ -328,7 +328,7 @@ Acceptance:
 Out of scope: rendering archived ledgers beside the active one; restyling the roadmap page; generating `nonGoals` from the brief's prose.
 
 ## S32 — An operator can cap how long audit rows are kept, and a host with no value keeps them forever as before
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an operator, I set one retention value in days, and the worker deletes audit rows older than

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -134,32 +134,83 @@ Depends on: S3.
   });
 });
 
-describe("a fully retired ledger", () => {
-  const retired = `# Slices — completed
-
-## Landed
-
-- **S1 — First slice** — shipped:
-  [#1](https://github.com/example/repo/issues/1).
+// Cases: 6 total — 3 positive (a Landed row and a Landed bullet each parse
+// as shipped with no dependency, alongside heading slices; a bullet's PR is
+// the one after 'via'; a Landed bullet outside '## Landed' is not counted)
+// and 3 negative (the same id as a heading and a Landed row, as two Landed
+// bullets, and a ledger with neither headings nor Landed entries — each
+// throws rather than counting a slice twice or returning an empty roadmap).
+describe("the retired forms under '## Landed'", () => {
+  const ledger = `# Slices — commercial (D5)
 
 ## Outstanding
 
-None. All slices have landed.
+S3 is next.
+
+## S3 — Third slice
+**Status:** in progress
+Status: todo
+
+Depends on: none
+
+## Landed
+
+| Slice | Name | Issue | Criteria | Body complete at |
+|---|---|---|---|---|
+| **S2** | Second slice | [#2](https://github.com/example/repo/issues/2), closed | S2.1–S2.3 | \`abc1234\` |
+
+- **S1 — First slice** — shipped:
+  [#1](https://github.com/example/repo/issues/1) via
+  [#11](https://github.com/example/repo/pull/11) and
+  [#12](https://github.com/example/repo/pull/12).
 `;
 
-  it("accepts shipped entries with explicitly no outstanding work", () => {
-    expect(parseSlices(retired)).toEqual([]);
-    expect(() => assertConsistent(parseSlices(retired))).not.toThrow();
+  it("parses a Landed row and a Landed bullet as shipped, with no dependency line and no throw", () => {
+    const result = parseSlices(ledger);
+    expect(result.map((s) => [s.id, s.title, s.status, s.dependsOn])).toEqual([
+      ["S1", "First slice", "shipped", ""],
+      ["S2", "Second slice", "shipped", ""],
+      ["S3", "Third slice", "in-progress", "none"],
+    ]);
+    expect(() => assertConsistent(result)).not.toThrow();
   });
 
-  it.each([
-    retired.replace(/- \*\*S1[^\n]*\n/, ""),
-    retired.replace("## Outstanding", "## Other"),
-    retired + "\n## S2 - malformed\n",
-    retired + "\n### S2 — hidden\n**Status:** queued\n",
-    retired + "\n- S2 still needs implementation.\n",
-  ])("rejects an incomplete or malformed retirement", (broken) => {
-    expect(() => parseSlices(broken)).toThrow(/no 'S<n> — ' slice headings/);
+  it("takes a bullet's pull request from after 'via', not its issue link", () => {
+    const [first, second] = parseSlices(ledger);
+    expect(first.pr).toEqual({
+      number: "11",
+      url: "https://github.com/example/repo/pull/11",
+    });
+    expect(second.pr).toBeUndefined();
+  });
+
+  it("counts Landed entries only under '## Landed'", () => {
+    const elsewhere = ledger.replace(
+      "S3 is next.",
+      "S3 is next.\n\n- **S9 — Mentioned slice** — shipped: elsewhere.",
+    );
+    expect(parseSlices(elsewhere).map((s) => s.id)).toEqual(["S1", "S2", "S3"]);
+  });
+
+  it("throws when an id is both a heading and a Landed row", () => {
+    const twice = ledger.replace(
+      "| **S2** | Second slice",
+      "| **S3** | Third slice",
+    );
+    expect(() => parseSlices(twice)).toThrow(
+      /S3 appears twice — as a heading and as a Landed row/,
+    );
+  });
+
+  it("throws when an id appears as two Landed bullets", () => {
+    const twice = `${ledger}- **S1 — First slice again** — shipped: again.\n`;
+    expect(() => parseSlices(twice)).toThrow(/S1 appears twice/);
+  });
+
+  it("throws on a ledger with neither slice headings nor Landed entries", () => {
+    const empty =
+      "# Slices\n\n## Landed\n\nNothing yet.\n\n## Outstanding\n\nNone.\n";
+    expect(() => parseSlices(empty)).toThrow(/no 'S<n> — ' slice headings/);
   });
 });
 
@@ -220,59 +271,59 @@ describe("assertConsistent — the invariants Test-SliceStatusMarkers.ps1 also c
   });
 });
 
-describe("the archived design/d3/30-slices.md — the ledger the site renders (issue #80)", () => {
-  it("parses without throwing, and every slice carries a recognised status", () => {
-    expect(slices.length).toBeGreaterThan(0);
-    for (const slice of slices) {
-      expect(["shipped", "in-progress", "queued"]).toContain(slice.status);
-    }
-  });
+describe("the active design/30-slices.md — the ledger the site renders", () => {
+  const activeRaw = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)).replace(
+        /[\\/]src[\\/]roadmap$/,
+        "",
+      ),
+      "..",
+      "design",
+      "30-slices.md",
+    ),
+    "utf8",
+  );
 
-  it("keeps its derived counts arithmetically consistent", () => {
+  // One test, so a merge that breaks the count or the markers fails here at
+  // the causing commit. The expected numbers are read from the ledger's text
+  // directly, not from the parser under test.
+  it("counts every slice once, from S1 to the highest id the ledger names, and is consistent", () => {
+    const highest = Math.max(
+      ...[...activeRaw.matchAll(/\bS(\d+)\b/g)].map((m) => Number(m[1])),
+    );
+    const landed = activeRaw.slice(activeRaw.indexOf("\n## Landed"));
+    const shippedInLedger =
+      [...activeRaw.matchAll(/^\*\*Status:\*\*\s*shipped/gm)].length +
+      [...landed.matchAll(/^\|\s*\*\*S\d+\*\*\s*\|/gm)].length +
+      [...landed.matchAll(/^- \*\*S\d+ — .+?\*\* — shipped:/gm)].length;
+
+    expect(totalCount).toBe(highest);
+    expect(slices.map((s) => s.id)).toEqual(
+      Array.from({ length: highest }, (_, i) => `S${i + 1}`),
+    );
+    expect(shippedCount).toBe(shippedInLedger);
     expect(shippedCount).toBe(shippedSlices.length);
     expect(
       shippedSlices.length + (currentSlice ? 1 : 0) + queuedSlices.length,
     ).toBe(totalCount);
-  });
-
-  it("does not throw assertConsistent against its own current state", () => {
+    expect(parseSlices(activeRaw)).toEqual(slices);
     expect(() => assertConsistent(slices)).not.toThrow();
   });
-});
 
-describe("the active design/30-slices.md — the assertion that survives every future merge", () => {
-  // The app imports the archived d3 ledger (issue #80), so import-time
-  // assertions no longer guard the active effort's file. This test does:
-  // a G1 slice edit that drops a status or a 'Depends on:' line fails here,
-  // at the causing commit, instead of surfacing when #80 repoints the import.
-  const activePath = join(
-    dirname(fileURLToPath(import.meta.url)).replace(
-      /[\\/]src[\\/]roadmap$/,
+  it("is the only ledger any module under site/src imports — none reaches into design/d3", () => {
+    const srcRoot = dirname(fileURLToPath(import.meta.url)).replace(
+      /[\\/]roadmap$/,
       "",
-    ),
-    "..",
-    "design",
-    "30-slices.md",
-  );
-
-  // Between the commit that archives a finished effort's set and the
-  // /plan run that writes the next one, the active effort has a brief
-  // and no slices — stage 0 of the pipeline, matching
-  // build/Test-SliceStatusMarkers.ps1's own SKIP for the same absence.
-  if (!existsSync(activePath)) {
-    it.skip("no active slices document — the active effort has no slices yet", () => {});
-  } else {
-    const activeRaw = readFileSync(activePath, "utf8");
-
-    it("parses without throwing, and every slice carries a recognised status", () => {
-      const active = parseSlices(activeRaw);
-      for (const slice of active) {
-        expect(["shipped", "in-progress", "queued"]).toContain(slice.status);
-      }
-    });
-
-    it("does not throw assertConsistent against its current state", () => {
-      expect(() => assertConsistent(parseSlices(activeRaw))).not.toThrow();
-    });
-  }
+    );
+    const offenders = readdirSync(srcRoot, { recursive: true })
+      .map(String)
+      .filter((file) => /\.(ts|tsx)$/.test(file))
+      .filter((file) =>
+        /^\s*import[^;]*["'][^"']*design\/d3\//m.test(
+          readFileSync(join(srcRoot, file), "utf8"),
+        ),
+      );
+    expect(offenders).toEqual([]);
+  });
 });
