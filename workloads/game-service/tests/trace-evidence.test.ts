@@ -89,12 +89,33 @@ function hasCompleteSharedTrace(spans: readonly CollectedSpan[], traceId: string
   return inTrace.some((span) => span.spanId === workloadSpan.parentSpanId);
 }
 
-// The edge's own sampler (`PlatformSampler`) applies a 10% ratio to every genuinely unparented
-// root — which is exactly what a malformed `traceparent` produces, since there is no valid header
-// to adopt. A single such request is only ~10% likely to be recorded at all, so this many attempts
-// are made (each with a fresh, independently-sampled trace id) to make "at least one gets sampled"
-// overwhelmingly likely (1 - 0.9^40 ≈ 98.5%) without touching the sampler itself.
-const MALFORMED_TRACEPARENT_ATTEMPTS = 40;
+// The edge's own sampler (`PlatformSampler`) applies a 10% trace-id ratio to every genuinely
+// unparented root — which is exactly what a malformed `traceparent` produces, since there is no
+// valid header to adopt. That ratio is the one fact this count rests on; the sampler is not changed
+// for the test (S25).
+const EDGE_ROOT_SAMPLING_RATIO = 0.1;
+
+// The largest chance this case may have of failing on a healthy build. Below one in a million the
+// case is not a flake anyone will meet; a red run means pairing broke.
+const MAX_HEALTHY_MISS_PROBABILITY = 1e-6;
+
+// Derivation (S25.1). Each attempt's fresh root carries a new random trace id, and the ratio
+// sampler's decision is a function of that id alone, so the n attempts are n independent draws,
+// each recorded by the edge with probability p = EDGE_ROOT_SAMPLING_RATIO. The case misses only if
+// every draw is unrecorded:
+//
+//   P(miss) = (1 - p)^n ≤ MAX_HEALTHY_MISS_PROBABILITY
+//   ⇔ n ≥ ln(MAX_HEALTHY_MISS_PROBABILITY) / ln(1 - p) = ln(1e-6) / ln(0.9) ≈ 131.1
+//
+// so n = 132, and P(miss) = 0.9^132 ≈ 9.1e-7. (The 40 attempts this replaced missed one run in
+// ~68 — issue #298.)
+//
+// The count only bounds the healthy case. With pairing broken — the edge's span not propagated as
+// the workload's parent — no trace id carries a complete edge→workload pair, whatever the edge
+// samples, so the case fails on every run (S25.2).
+const MALFORMED_TRACEPARENT_ATTEMPTS = Math.ceil(
+  Math.log(MAX_HEALTHY_MISS_PROBABILITY) / Math.log(1 - EDGE_ROOT_SAMPLING_RATIO),
+);
 
 describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
   "S8.1/S8.2/S8.4/S8.6 — requests through the edge, each its own shared trace, in a real collector",
@@ -150,7 +171,9 @@ describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])(
       const completeFreshRoots = [...traceIds].filter((id) => hasCompleteSharedTrace(spans, id));
       expect(
         completeFreshRoots.length,
-        `expected at least one fully-sampled fresh-root trace among ${MALFORMED_TRACEPARENT_ATTEMPTS} attempts; `
+        `expected at least one fully-sampled fresh-root trace among ${MALFORMED_TRACEPARENT_ATTEMPTS} attempts `
+          + `(a healthy build misses with probability below ${MAX_HEALTHY_MISS_PROBABILITY}, so this is a pairing `
+          + `failure, not sampling); `
           + `spans: ${JSON.stringify(spans)}`,
       ).toBeGreaterThan(0);
       for (const freshRootTraceId of completeFreshRoots) {

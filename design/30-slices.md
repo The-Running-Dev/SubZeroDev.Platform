@@ -135,8 +135,8 @@ Out of scope: retrying the provider inside the evaluator, any change to the orde
 consulted in, and caching a provider's last answer. None is in the contract.
 
 ## S25 — Cross-process trace evidence passes or fails on the code, not on a sampling draw
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a contributor whose pull request touches nothing near tracing no longer has CI fail on it at
 random. When CI does fail on the tracing test, the failure means fresh-root tracing really broke.
@@ -162,7 +162,7 @@ Out of scope: changing `PlatformSampler`'s ratio, or making it configurable. Eit
 surface the contract does not declare. Also out of scope: the other `game-service` tests.
 
 ## S26 — The authorization and request-scope invariants are proven, not assumed
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a maintainer changing the evaluator, the composition provider or the operation scope finds out
