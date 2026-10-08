@@ -1637,8 +1637,9 @@ public sealed class RuntimeSettingsModule : IPlatformModule;   // Name "RuntimeS
 A host composes the module with `services.AddSingleton<IPlatformModule, RuntimeSettingsModule>()`, as
 it composes Organizations, and registers each catalogue with
 `services.AddSingleton<ISettingCatalog, TCatalog>()`. Registration adds the reader and writer, the
-module's `IPermissionCatalog` declaring the two names, the migration source, and the hosted lifecycle
-service that builds the catalogue.
+module's `IPermissionCatalog` declaring the two names, the migration source, and the startup
+registration that builds the catalogue, which the platform's own lifecycle service runs (see
+`90-decisions.md`, 2026-10-09, S43).
 
 - **The catalogue is built in `StartingAsync` and frozen** before any hosted service's `StartAsync` and
   before the host serves (I-ST2). Its defects are in *Error semantics* § 9.
@@ -2256,15 +2257,15 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-S1** | The sign-in module creates a session only after the callback's state equals the state it stored for that begin, and the session holds no more than the issuer, the subject, the access token and its expiry; the module owns no row and does not change the authentication seam (Owner: SignIn.) | — | instruction | — |
 | **I-S2** | Sign-out clears the session and redirects to the issuer, and never claims to revoke an access token already issued; such a token stays valid at Platform until it expires (Owner: SignIn.) | — | instruction | — |
 | **I-S3** | A host-registered sign-in hook runs after configuration binds and cannot change which issuer, key source, audience or algorithm Platform trusts; the trust root is the generic path's settings alone (Owner: SignIn.) | — | instruction | — |
-| **I-ST1** | A runtime setting resolves user, then tenant, then global, then its declared default, over the layers its declaration admits; the user layer exists only for an `Account` principal in a non-implicit tenant, and the tenant layer only for a non-implicit tenant (Owner: RuntimeSettings.) | — | instruction | — |
-| **I-ST2** | Every runtime setting is declared once in a catalogue frozen before the host serves; a duplicate name, a default its own rule rejects, an empty layer set, or a name matching the redaction marker set fails startup (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST1** | A runtime setting resolves user, then tenant, then global, then its declared default, over the layers its declaration admits; the user layer exists only for an `Account` principal in a non-implicit tenant, and the tenant layer only for a non-implicit tenant (Owner: RuntimeSettings.) | — | code | tests/SubZeroDev.Platform.Tests/RuntimeSettingsTests.cs |
+| **I-ST2** | Every runtime setting is declared once in a catalogue frozen before the host serves; a duplicate name, a default its own rule rejects, an empty layer set, or a name matching the redaction marker set fails startup (Owner: RuntimeSettings.) | — | code | tests/SubZeroDev.Platform.Tests/RuntimeSettingsTests.cs |
 | **I-ST3** | A global or tenant write is authorized against `Platform.RuntimeSettings.WriteGlobal` or `WriteTenant`, scoped to the setting, before the store is touched; a user write reaches only the ambient account's own row (Owner: RuntimeSettings.) | — | instruction | — |
 | **I-ST4** | Every change to a setting writes exactly one `Required` audit record in the change's transaction, naming the layer and setting and never the value; if the record cannot be written the change does not commit (Owner: RuntimeSettings.) | — | instruction | — |
 | **I-ST5** | Tenant and user setting rows are read and written only with the current tenant; a global row belongs to the installation and is stored under the implicit tenant with layer `global` (Owner: RuntimeSettings.) | — | instruction | — |
-| **I-ST6** | No runtime setting grants a permission or a feature: the module registers no permission provider and no entitlement contributor, and no authorization or entitlement decision reads a setting (Owner: RuntimeSettings.) | — | instruction | — |
-| **I-ST7** | The module holds no in-process copy of a stored value, so a committed write is seen by the next read on every instance of every role (Owner: RuntimeSettings.) | — | instruction | — |
-| **I-ST8** | Runtime settings and their catalogue are not inputs to the settings fingerprint, and no runtime setting overrides a startup option (Owner: RuntimeSettings.) | — | instruction | — |
-| **I-ST9** | A stored value that fails to parse or validate under the current declaration is answered `StoredValueInvalid`, never replaced by a lower layer or the default (Owner: RuntimeSettings.) | — | instruction | — |
+| **I-ST6** | No runtime setting grants a permission or a feature: the module registers no permission provider and no entitlement contributor, and no authorization or entitlement decision reads a setting (Owner: RuntimeSettings.) | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-ST7** | The module holds no in-process copy of a stored value, so a committed write is seen by the next read on every instance of every role (Owner: RuntimeSettings.) | — | code | tests/SubZeroDev.Platform.Tests/RuntimeSettingsTests.cs |
+| **I-ST8** | Runtime settings and their catalogue are not inputs to the settings fingerprint, and no runtime setting overrides a startup option (Owner: RuntimeSettings.) | — | code | tests/SubZeroDev.Platform.Tests/SettingsFingerprintTests.cs |
+| **I-ST9** | A stored value that fails to parse or validate under the current declaration is answered `StoredValueInvalid`, never replaced by a lower layer or the default (Owner: RuntimeSettings.) | — | code | tests/SubZeroDev.Platform.Tests/RuntimeSettingsTests.cs |
 | **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/SharedReadTests.cs, tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs |
 | **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |

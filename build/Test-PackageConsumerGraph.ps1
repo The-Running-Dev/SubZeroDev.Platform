@@ -15,7 +15,7 @@ param(
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 $expected = @('Abstractions', 'Core', 'Hosting', 'Observability', 'Persistence', 'Testing',
-    'Identity', 'Organizations', 'Billing', 'Licensing', 'Audit', 'Mcp', 'SignIn')
+    'Identity', 'Organizations', 'Billing', 'Licensing', 'Audit', 'Mcp', 'SignIn', 'RuntimeSettings')
 $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($file in $AssetsFiles) {
     $assets = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable
@@ -37,4 +37,4 @@ foreach ($name in $expected) {
         throw "Consumer graph did not restore SubZeroDev.Platform.$name."
     }
 }
-Write-Host "All thirteen Platform packages restored at $Version; no Platform source-project fallback."
+Write-Host "All fourteen Platform packages restored at $Version; no Platform source-project fallback."

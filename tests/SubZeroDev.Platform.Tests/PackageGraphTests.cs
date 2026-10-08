@@ -39,6 +39,28 @@ public sealed class PackageGraphTests
     }
 
     [Fact]
+    public void S43_9_the_graph_holds_fourteen_packages_and_RuntimeSettings_references_only_three_and_is_referenced_by_none()
+    {
+        var graph = PackageGraph.Resolve(AllPlatformAssemblies());
+        const string runtimeSettings = "SubZeroDev.Platform.RuntimeSettings";
+
+        Assert.Equal(14, graph.Count);
+        Assert.Equal(
+            ["SubZeroDev.Platform.Abstractions", "SubZeroDev.Platform.Core", "SubZeroDev.Platform.Persistence"],
+            graph[runtimeSettings].Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(graph, entry => entry.Value.Contains(runtimeSettings));
+    }
+
+    [Fact]
+    public void S43_9_RuntimeSettings_implements_no_permission_provider_and_no_entitlement_contributor()
+    {
+        var types = typeof(SubZeroDev.Platform.RuntimeSettings.RuntimeSettingsModule).Assembly.GetTypes();
+
+        Assert.DoesNotContain(types, type => typeof(IPermissionProvider).IsAssignableFrom(type));
+        Assert.DoesNotContain(types, type => typeof(IEntitlementContributor).IsAssignableFrom(type));
+    }
+
+    [Fact]
     public void S1_5_the_first_direction_fails_against_a_deliberately_broken_graph()
     {
         var broken = new Dictionary<string, IReadOnlySet<string>>
@@ -346,6 +368,7 @@ public sealed class PackageGraphTests
         typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
         typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
         typeof(SubZeroDev.Platform.SignIn.SignInModule).Assembly,
+        typeof(SubZeroDev.Platform.RuntimeSettings.RuntimeSettingsModule).Assembly,
     ];
 
     /// <summary>Every framework assembly plus every module assembly built alongside this test
@@ -360,6 +383,7 @@ public sealed class PackageGraphTests
         typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
         typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
         typeof(SubZeroDev.Platform.SignIn.SignInModule).Assembly,
+        typeof(SubZeroDev.Platform.RuntimeSettings.RuntimeSettingsModule).Assembly,
     ];
 
     private static IReadOnlyCollection<Assembly> FrameworkAssemblies() =>

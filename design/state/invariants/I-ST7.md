@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-ST7
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/RuntimeSettingsTests.cs
 
 ## Statement
 The module holds no in-process copy of a stored value, so a committed write is seen by the next read on every instance of every role (Owner: RuntimeSettings.)

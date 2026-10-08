@@ -3,7 +3,7 @@
 .SYNOPSIS
     Restores, builds and tests the S18 sample solution against the CI package artifacts.
 .PARAMETER PackageDirectory
-    Directory containing the thirteen checked nupkg artifacts.
+    Directory containing the fourteen checked nupkg artifacts.
 .PARAMETER Version
     The shared 0.x version produced by Test-PackageManifests.ps1.
 #>
