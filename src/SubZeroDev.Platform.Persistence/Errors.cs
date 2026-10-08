@@ -114,6 +114,15 @@ public sealed record MigrationError : PlatformError
             isRetryable: false,
             $"Modules '{first}' and '{second}' both resolve to migration history table '{table}'. "
             + "Rename one so each module owns its own history.");
+
+    /// <summary>A seeder threw. Not retryable: a seeder that throws on one run throws on the next
+    /// unless something changed. Migrations and earlier seeders' commits stay.</summary>
+    /// <param name="module">The module the seeder declared.</param>
+    /// <param name="seeder">The seeder's name.</param>
+    /// <param name="detail">The exception's type and message.</param>
+    /// <returns>The error.</returns>
+    public static MigrationError SeedFailed(ModuleName module, string seeder, string detail) =>
+        new(nameof(SeedFailed), isRetryable: false, $"Module '{module}' seeder '{seeder}' failed: {detail}");
 }
 
 /// <summary>Why a lease operation did not complete as asked. The lease is an optimisation against
