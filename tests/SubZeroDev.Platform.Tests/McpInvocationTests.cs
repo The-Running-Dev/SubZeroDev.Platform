@@ -18,7 +18,7 @@ namespace SubZeroDev.Platform.Tests;
 /// rather than only unit-testing internal plumbing.</summary>
 public sealed class McpInvocationTests
 {
-    private static readonly PermissionName UsePermission = new("Sample.Tool.Use");
+    internal static readonly PermissionName UsePermission = new("Sample.Tool.Use");
     private const string PrincipalHeader = "X-Test-Principal";
 
     /// <summary>S15.7 — listing returns exposed tools only.</summary>
@@ -166,6 +166,35 @@ public sealed class McpInvocationTests
             cancellationToken: CancellationToken.None);
 
         Assert.Equal(new ResourceRef("read-doc", "doc-42"), seen);
+    }
+
+    /// <summary>S28.1 (I-U4) — an allowed invocation's record is written after the work completes, with
+    /// the outcome known: the invoker sees no record for its own call while it runs.</summary>
+    [Fact]
+    public async Task An_allowed_invocation_is_recorded_once_after_the_invoker_completes()
+    {
+        RecordingAuditSink? audit = null;
+        var recordsDuringInvocation = -1;
+        var invoker = new StubToolInvoker("producer", (_, _) =>
+        {
+            recordsDuringInvocation = audit!.Received.Count(e => e.Action == new AuditAction("ping"));
+            return ToolInvocationResult.Success("ok");
+        });
+        await using var harness = await Harness.StartAsync(
+            exposed: [new ToolName("ping")],
+            extra: [
+                new StubToolProducer("producer",
+                    new ToolDefinition(new ToolName("ping"), "Pings.", Schema(), UsePermission, null)),
+                invoker,
+            ]);
+        audit = harness.Audit;
+
+        await using var client = await harness.ConnectAsync("alice");
+        await client.CallToolAsync("ping", new Dictionary<string, object?>(), cancellationToken: CancellationToken.None);
+
+        Assert.Equal(0, recordsDuringInvocation);
+        var record = Assert.Single(harness.Audit.Received, e => e.Action == new AuditAction("ping"));
+        Assert.Equal(AuditOutcome.Allowed, record.Outcome);
     }
 
     /// <summary>S15.10 — two calls on one long-lived connection carry different correlations.</summary>
@@ -356,7 +385,7 @@ public sealed class McpInvocationTests
     private static string TextOf(CallToolResult result) =>
         string.Join(" ", result.Content.OfType<TextContentBlock>().Select(block => block.Text));
 
-    private static JsonElement Schema(params string[] namesAndOptionalType)
+    internal static JsonElement Schema(params string[] namesAndOptionalType)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -392,18 +421,22 @@ public sealed class McpInvocationTests
 
     /// <summary>Builds and owns one MCP-capable host, plus the ability to connect a real client to
     /// it with a chosen test principal.</summary>
-    private sealed class Harness(WebApplication app, RecordingAuditSink audit, HttpClient httpClient) : IAsyncDisposable
+    internal sealed class Harness(WebApplication app, RecordingAuditSink audit, HttpClient httpClient) : IAsyncDisposable
     {
         internal RecordingAuditSink Audit { get; } = audit;
+
+        internal IServiceProvider Services => app.Services;
 
         internal static async Task<Harness> StartAsync(
             IReadOnlyCollection<ToolName> exposed,
             IReadOnlyCollection<object>? extra = null,
             bool grantsPermission = true,
             Action<Principal, TenantId, ResourceRef?>? onEvaluate = null,
-            AuthorizationError? providerError = null)
+            AuthorizationError? providerError = null,
+            RecordingAuditSink? audit = null,
+            IDictionary<string, string?>? settings = null)
         {
-            var audit = new RecordingAuditSink("mcp-invocation-tests", isDurable: true);
+            audit ??= new RecordingAuditSink("mcp-invocation-tests", isDurable: true);
 
             var (app, client) = await WebHostUnderTest.StartAsync(
                 services =>
@@ -444,6 +477,7 @@ public sealed class McpInvocationTests
 
                     services.AddSingleton<IAuditSink>(audit);
                 },
+                settings,
                 composeOperatedDefaults: false,
                 mapEndpoints: application => application.MapPlatformMcp());
 
@@ -501,7 +535,7 @@ public sealed class McpInvocationTests
     }
 
     /// <summary>Records every call handed to it, and answers a test-chosen result.</summary>
-    private sealed class StubToolInvoker : IToolInvoker
+    internal sealed class StubToolInvoker : IToolInvoker
     {
         private readonly Func<ToolName, IDictionary<string, JsonElement>, CancellationToken, Task<ToolInvocationResult>>? _answer;
 

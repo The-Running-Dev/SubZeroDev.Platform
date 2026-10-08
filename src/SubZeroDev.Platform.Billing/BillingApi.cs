@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.Billing;
@@ -235,11 +236,12 @@ internal sealed class BillingApi(
         if (duplicate)
         {
             // I-B7: a redelivered event is idempotent success, never an error — an ordinary retry
-            // must never look like a fault to the provider.
+            // must never look like a fault to the provider. Both identifiers arrive from outside, so
+            // they pass through redaction like any other input value bound for a log line (I-U6).
             logger.LogInformation(
                 "Provider event '{Provider}'/'{EventId}' already recorded; treating as idempotent success.",
-                providerEvent.Provider,
-                providerEvent.ProviderEventId);
+                Redaction.RedactValue(providerEvent.Provider),
+                Redaction.RedactValue(providerEvent.ProviderEventId));
             return Result<ProviderEventReceipt, BillingError>.Success(receipt);
         }
 

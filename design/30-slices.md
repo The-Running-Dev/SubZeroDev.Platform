@@ -219,8 +219,8 @@ Acceptance:
 Out of scope: any new escape hatch for writes, and any change to the shared-read audit.
 
 ## S28 — Audit's guarantees are proven across every surface that writes it
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a compliance reviewer can point at a test for each audit promise: that a record cannot be
 changed after it is written, that secrets never reach it, and that an allowed action is recorded as
@@ -251,7 +251,7 @@ Out of scope: audit retention, which is the retention slice's
 ([#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187)).
 
 ## S29 — Host startup, telemetry, the shell and billing keep their promises under test
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: an operator deploying a Platform host can trust that a bad configuration stops the host with a

@@ -801,7 +801,7 @@ public sealed class LicensingTests : IDisposable
     }
 
     /// <summary>An accepted key pair and the documents it mints.</summary>
-    private sealed class TestLicenceSigner(string keyId) : IDisposable
+    internal sealed class TestLicenceSigner(string keyId) : IDisposable
     {
         private readonly RSA _key = RSA.Create(2048);
 
