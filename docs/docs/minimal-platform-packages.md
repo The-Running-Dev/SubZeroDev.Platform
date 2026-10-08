@@ -92,6 +92,12 @@ principal and tenant contexts.
 **Refuses** to know what any product does. A route that mentions a game session or a plugin
 execution is in the wrong package.
 
+**Runs** each module's start-up and shut-down work. A module may declare `InitializeAsync` and
+`ShutdownAsync`; the host runs the first in dependency order before it serves anything, and the
+second in reverse after it stops. A module whose start-up completed is always shut down exactly
+once, even when a later start-up step fails, and one whose start-up threw fails the host with
+`ModuleInitialization`. Migrate mode runs neither.
+
 **Done when** a product with one endpoint runs with health, readiness, correlation ids and
 graceful shutdown having been configured by nothing but `AddPlatform()`, and a
 misconfiguration fails startup rather than the first request.

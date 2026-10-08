@@ -444,8 +444,8 @@ Out of scope:
   - ETags or any version on a product wire.
 
 ## S36 — A module can do its start-up and shut-down work in its own two methods, in dependency order, and is always shut down if it started
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As a module author, I can put work that must happen before my host serves, and clean-up that must happen when it stops, in two methods on my module. They run in the order my module's dependencies imply. If anything fails during startup, every module that already started is shut down cleanly.
 Touches:
@@ -471,7 +471,7 @@ Acceptance:
 Out of scope: moving Licensing's, Mcp's or Identity's existing startup hosted services onto the hooks; a role filter, ordering attribute or extra hooks; letting a hook register into a frozen registry.
 
 ## S37 — An operator's `migrate` run also writes each module's seed data, in module order, and re-running it changes nothing
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an operator, when I run `migrate`, each module's installation-wide seed data is written after the schema is current, in the order the modules depend on each other, and running `migrate` again leaves the data unchanged. If a seed step fails, I get a named error and a non-zero exit, and nothing after it runs.

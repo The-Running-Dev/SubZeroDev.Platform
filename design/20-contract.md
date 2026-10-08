@@ -1511,34 +1511,13 @@ The internal store is `InboxStore` in [`Inbox.cs`](../src/SubZeroDev.Platform.Pe
 
 Two members are added to [`IPlatformModule`](../src/SubZeroDev.Platform.Abstractions/Modules.cs). Both
 are default interface members, so a module that declares neither compiles and behaves as before. Hosting
-runs them. Nothing else calls them.
-
-```csharp
-namespace SubZeroDev.Platform.Abstractions;
-
-public interface IPlatformModule
-{
-    ModuleName Name { get; }
-    IReadOnlyCollection<ModuleName> DependsOn { get; }
-    void Register(IServiceCollection services);
-
-    Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken) => Task.CompletedTask;
-
-    Task ShutdownAsync(IServiceProvider services, CancellationToken cancellationToken) => Task.CompletedTask;
-}
-```
+runs them. Nothing else calls them. They are
+`InitializeAsync(IServiceProvider services, CancellationToken cancellationToken)` and
+`ShutdownAsync(IServiceProvider services, CancellationToken cancellationToken)`, each returning `Task` and
+defaulting to `Task.CompletedTask`.
 
 `HostStartupError` ([`StartupFailure.cs`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs)) gains one
-variant:
-
-```csharp
-namespace SubZeroDev.Platform.Hosting;
-
-public sealed record HostStartupError
-{
-    public static HostStartupError ModuleInitialization(ModuleName module, string detail);
-}
-```
+variant, `ModuleInitialization(ModuleName module, string detail)`.
 
 **Semantics.**
 
@@ -1548,7 +1527,10 @@ public sealed record HostStartupError
   one module at a time; a module's hook starts only after its dependencies' hooks have completed.
   **Migrate mode never runs either hook.**
 - **The provider.** Each call receives the provider of a fresh service scope, disposed when the call
-  returns. No ambient operation scope is open. A hook that writes opens one through
+  returns. No ambient operation scope is open. The one exception is a `ShutdownAsync` run by disposal
+  after a failed startup: the container has already marked itself disposed by then, so no scope can be
+  created and the provider resolves nothing. A module that must release something on that path holds
+  it itself. A hook that writes opens one through
   `IOperationScopeFactory.Begin`, stating its tenant, as any originating code does.
 - **Registration is closed.** A hook resolves services; it cannot register them, and the registries are
   already frozen.
@@ -2259,8 +2241,8 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-C8** | Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
 | **I-C9** | Every startup check fails the host and names the registration that caused it; none degrades (Owner: Core, Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
 | **I-C10** | Module `InitializeAsync` hooks run once per host start, in topological order, one at a time, after every registry has frozen and every `StartingAsync` check has passed, and complete before the first background tick or request; `ShutdownAsync` hooks run in reverse after background work and the listener stop (Owner: Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
-| **I-C11** | `ShutdownAsync` runs exactly once for each module whose `InitializeAsync` completed — on stop, or on disposal after a later startup step failed — and never for one whose `InitializeAsync` threw or never ran (Owner: Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
-| **I-C12** | A throwing `InitializeAsync` fails the host with `ModuleInitialization` naming the module, never degrades it, and its `Detail` carries no exception message (Owner: Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-C11** | `ShutdownAsync` runs exactly once for each module whose `InitializeAsync` completed — on stop, or on disposal after a later startup step failed — and never for one whose `InitializeAsync` threw or never ran (Owner: Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-C12** | A throwing `InitializeAsync` fails the host with `ModuleInitialization` naming the module, never degrades it, and its `Detail` carries no exception message (Owner: Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
 | **I-C13** | No lifecycle hook assumes it is the only process: every instance of every role runs every hook, and migrate mode runs none (Owner: Hosting; each module for its own hooks.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
 | **I-E1** | A request whose path matches no `GameEdge:StreamingRoutes` prefix is forwarded buffered, under one `ForwardTimeout`, with G1's answers including #106's after-headers `503`; with no route listed the edge is G1's edge unchanged (Owner: GameEdge.) | — | instruction | — |
 | **I-E2** | On a streamed route the edge commits the workload's status and `Content-Type` when the workload's headers arrive and flushes each piece of the body as it is read, never coalescing; `ForwardTimeout` does not apply and no edge deadline follows the headers (Owner: GameEdge.) | — | instruction | — |

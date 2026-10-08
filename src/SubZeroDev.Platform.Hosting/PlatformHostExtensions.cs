@@ -109,6 +109,10 @@ public static class PlatformHostExtensions
         builder.Services.AddSingleton<ProbeMapping>();
         builder.Services.AddSingleton<IStartupFilter, PlatformStartupFilter>();
         builder.Services.AddHostedService<PlatformRegistryStartup>();
+
+        // Between the two: started after the registries froze and before the first tick, and — since
+        // the host stops in reverse — stopped after background work, with the listener stopped first.
+        builder.Services.AddHostedService<ModuleLifecycleService>();
         builder.Services.AddHostedService<BackgroundWorkService>();
 
         builder.Services.Configure<HostOptions>(host =>
@@ -217,6 +221,7 @@ public static class PlatformHostExtensions
 
         if (modules.Count == 0)
         {
+            services.AddSingleton(new ModuleOrder([]));
             return;
         }
 
@@ -230,6 +235,10 @@ public static class PlatformHostExtensions
         {
             module.Module.Register(services);
         }
+
+        // Kept so the lifecycle hooks run in the order composition resolved, rather than resolving
+        // the graph a second time and risking a second answer.
+        services.AddSingleton(new ModuleOrder([.. resolved.Value.Select(module => module.Module)]));
     }
 
     private static IPlatformModule Instantiate(ServiceDescriptor descriptor)

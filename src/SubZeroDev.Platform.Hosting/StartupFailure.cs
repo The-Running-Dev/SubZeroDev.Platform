@@ -40,6 +40,15 @@ public sealed record HostStartupError : PlatformError
         return new HostStartupError(nameof(ModuleGraph), inner.Detail, inner);
     }
 
+    /// <summary>A module's <see cref="IPlatformModule.InitializeAsync"/> threw. The modules already
+    /// initialized were shut down first. Names the module and the exception's type, never its message:
+    /// a message can carry anything the module was holding.</summary>
+    /// <param name="module">The module whose initialization threw.</param>
+    /// <param name="detail">The exception's type.</param>
+    /// <returns>The error.</returns>
+    public static HostStartupError ModuleInitialization(ModuleName module, string detail) =>
+        new(nameof(ModuleInitialization), $"Module '{module.Value}' failed to initialize: {detail}.", null);
+
     /// <summary>A registry rejected a registration.</summary>
     /// <param name="inner">The registry's error.</param>
     /// <param name="detail">What was being registered.</param>

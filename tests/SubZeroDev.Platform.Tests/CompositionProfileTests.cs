@@ -283,6 +283,13 @@ public sealed class CompositionProfileTests
 
         [nameof(HostStartupError.ProbeBindFailed)] = (WorkerProbeRefusedAsync, "Platform:Hosting:WorkerProbePort"),
 
+        [nameof(HostStartupError.ModuleInitialization)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?>(),
+                services => services.AddSingleton<IPlatformModule>(new FailingInitializationModule("S29.Failing")),
+                composeOperatedDefaults: true),
+            "S29.Failing"),
+
         [nameof(HostStartupError.UndeclaredEndpointRequirement)] = (
             () => RefusedAsync(
                 new Dictionary<string, string?>(),
@@ -379,5 +386,19 @@ public sealed class CompositionProfileTests
         }
 
         throw new InvalidOperationException("The host started; it was expected to refuse.");
+    }
+
+    private sealed class FailingInitializationModule(string name) : IPlatformModule
+    {
+        public ModuleName Name { get; } = new(name);
+
+        public IReadOnlyCollection<ModuleName> DependsOn { get; } = [];
+
+        public void Register(IServiceCollection services)
+        {
+        }
+
+        public Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The module could not start.");
     }
 }
