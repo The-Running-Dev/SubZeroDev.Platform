@@ -10,7 +10,7 @@ try {
     $version = '0.1.0-fixture'
     $libraries = @{}
     foreach ($name in @('Abstractions', 'Core', 'Hosting', 'Observability', 'Persistence', 'Testing',
-            'Identity', 'Organizations', 'Billing', 'Licensing', 'Audit', 'Mcp', 'SignIn')) {
+            'Identity', 'Organizations', 'Billing', 'Licensing', 'Audit', 'Mcp', 'SignIn', 'RuntimeSettings')) {
         $libraries["SubZeroDev.Platform.$name/$version"] = @{ type = 'package' }
     }
     # Source references between consumer projects are legitimate.

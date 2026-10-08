@@ -712,8 +712,8 @@ Out of scope: a counter for streams started or their duration; an idle timeout; 
 I-E1..I-E5 to `code` (that is the reconciliation after both slices merge).
 
 ## S43 — A product declares its runtime settings once and reads the value that applies to whoever is asking
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As a product developer, I declare a setting with a default and the layers it may be set at,
 and a read returns the user's value, else the tenant's, else the global one, else my default. A
@@ -756,7 +756,7 @@ Out of scope: the writer, the permissions' enforcement and the audit (S44); any 
 endpoint or UI.
 
 ## S44 — An administrator changes a setting for the installation, a tenant or themselves, and the change is recorded
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an administrator, I change a setting globally or for my tenant when I hold the grant,

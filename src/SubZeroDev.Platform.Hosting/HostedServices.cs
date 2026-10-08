@@ -22,6 +22,7 @@ internal sealed class PlatformRegistryStartup(
     IEnumerable<ITenantResolver> tenantResolvers,
     [FromKeyedServices(EntitlementContributorRegistration.ServiceKey)] IEnumerable<IEntitlementContributor> entitlementContributors,
     IEnumerable<IAuthenticationProvider> authenticationProviders,
+    IEnumerable<IStartupRegistration> startupRegistrations,
     IHealthCheckRegistry healthChecks,
     IBackgroundWorkRegistry backgroundWork,
     IAuditSinkRegistry auditSinks,
@@ -130,6 +131,17 @@ internal sealed class PlatformRegistryStartup(
                 throw new PlatformStartupException(HostStartupError.Registration(
                     registered.Error,
                     registered.Error.Detail));
+            }
+        }
+
+        // A module's own catalogue (RuntimeSettings' settings, I-ST2) is built and frozen here, beside
+        // the framework's registries, so its defect fails startup the same way theirs does.
+        foreach (var registration in startupRegistrations)
+        {
+            var failure = registration.Complete();
+            if (failure is not null)
+            {
+                throw new PlatformStartupException(HostStartupError.Registration(failure.Error, failure.Detail));
             }
         }
 

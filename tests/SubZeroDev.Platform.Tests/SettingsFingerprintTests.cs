@@ -1,7 +1,11 @@
 using System.Reflection;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
+using SubZeroDev.Platform.Persistence;
+using SubZeroDev.Platform.RuntimeSettings;
+using SubZeroDev.Platform.Testing;
 
 namespace SubZeroDev.Platform.Tests;
 
@@ -212,6 +216,44 @@ public sealed class SettingsFingerprintTests
             .Cast<Enum>()
             .FirstOrDefault(candidate => !candidate.Equals(value))
         ?? throw new NotSupportedException($"Enum '{value.GetType()}' has only one value.");
+
+    /// <summary>S43.10 — runtime settings are not startup configuration: composing the module and
+    /// storing rows changes neither the fingerprint nor any other module's migrations (I-ST8).</summary>
+    [Fact]
+    public async Task S43_10_A_host_composing_RuntimeSettings_with_stored_rows_fingerprints_as_the_same_host_without_it()
+    {
+        await using var without = await PlatformTestHost.CreateBuilder()
+            .WithProvider(PersistenceProvider.Sqlite)
+            .StartAsync(CancellationToken.None);
+        await using var with = await PlatformTestHost.CreateBuilder()
+            .WithProvider(PersistenceProvider.Sqlite)
+            .WithServices(services =>
+            {
+                services.AddSingleton<IPlatformModule, RuntimeSettingsModule>();
+                services.AddSingleton<ISettingCatalog>(new RuntimeSettingsTests.SampleCatalog(RuntimeSettingsTests.MaxConcurrent));
+            })
+            .StartAsync(CancellationToken.None);
+        Assert.True((await with.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        Assert.True(await RuntimeSettingsTests.InsertAsync(
+            with, TenantId.Implicit, "global", RuntimeSettingsTests.MaxConcurrentName.Value, "", "", "8"));
+        Assert.True(await RuntimeSettingsTests.InsertAsync(
+            with, RuntimeSettingsTests.T1, "tenant", RuntimeSettingsTests.MaxConcurrentName.Value, "", "", "6"));
+
+        Assert.Equal(HostFingerprint(without), HostFingerprint(with));
+        Assert.Equal(OtherModulesMigrations(without), OtherModulesMigrations(with));
+    }
+
+    private static string HostFingerprint(IPlatformTestHost host) =>
+        host.Services.GetRequiredService<ISettingsFingerprint>().Compute(
+            host.Services.GetRequiredService<PlatformOptions>(),
+            FingerprintedContributors.Of(host.Services.GetRequiredService<IEntitlementContributorRegistry>()));
+
+    private static IReadOnlyList<string> OtherModulesMigrations(IPlatformTestHost host) =>
+        host.Services.GetServices<IModuleMigrationSource>()
+            .Where(source => source.Module.Value != "RuntimeSettings")
+            .SelectMany(source => source.Migrations.Select(migration => $"{source.Module.Value}/{migration.Name}"))
+            .Order(StringComparer.Ordinal)
+            .ToList();
 
     private static PlatformOptions Baseline() => new()
     {

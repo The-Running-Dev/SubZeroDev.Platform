@@ -38,6 +38,7 @@
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Audit\SubZeroDev.Platform.Audit.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Mcp\SubZeroDev.Platform.Mcp.csproj" />
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.SignIn\SubZeroDev.Platform.SignIn.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.RuntimeSettings\SubZeroDev.Platform.RuntimeSettings.csproj" />
   </ItemGroup>
 
   <!-- D5-S16: the shell's endpoints and permission declarations live in the sample host that backs
@@ -72,6 +73,7 @@
     <PackageReference Include="SubZeroDev.Platform.Audit" Version="$(PlatformPackageVersion)" />
     <PackageReference Include="SubZeroDev.Platform.Mcp" Version="$(PlatformPackageVersion)" />
     <PackageReference Include="SubZeroDev.Platform.SignIn" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.RuntimeSettings" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
   <!-- D5-S23: a vendor-shaped configuration source. It references no Platform package (I-I13), so it is
