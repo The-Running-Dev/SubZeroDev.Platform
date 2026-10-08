@@ -328,8 +328,8 @@ Acceptance:
 Out of scope: rendering archived ledgers beside the active one; restyling the roadmap page; generating `nonGoals` from the brief's prose.
 
 ## S32 — An operator can cap how long audit rows are kept, and a host with no value keeps them forever as before
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an operator, I set one retention value in days, and the worker deletes audit rows older than
 that every hour in small batches, while web hosts keep appending undisturbed. With nothing set, nothing
@@ -386,7 +386,7 @@ Out of scope:
 - adding the audit table to Persistence's `PruneWork`
 
 ## S33 — A handler is no longer run twice when its message is redelivered after it already committed
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an operator of any C# Platform host, when a worker loses its claim after a handler

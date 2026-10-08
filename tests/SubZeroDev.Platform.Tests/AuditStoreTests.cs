@@ -200,10 +200,12 @@ public sealed class AuditStoreTests
             Assert.True(byActor.IsSuccess);
             Assert.Equal("test.two", Assert.Single(byActor.Value).Action.Value);
 
-            // Exactly the three indexes those reads need — nothing else, because every index is a
-            // write cost on the path every security-sensitive action takes (S13.3).
+            // Exactly the three indexes those reads need, plus the one D5-S32's retention prune
+            // deletes through — nothing else, because every index is a write cost on the path every
+            // security-sensitive action takes (S13.3).
             var indexes = await ListIndexesAsync(host);
-            Assert.Equal(3, indexes.Count);
+            Assert.Equal(4, indexes.Count);
+            Assert.Contains(indexes, name => name == "ix_audit_event_occurred_at");
             Assert.Contains(indexes, name => name == "ix_audit_event_tenant_occurred_at");
             Assert.Contains(indexes, name => name == "ix_audit_event_correlation");
             Assert.Contains(indexes, name => name == "ix_audit_event_actor_subject_occurred_at");

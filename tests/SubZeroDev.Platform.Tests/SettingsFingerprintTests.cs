@@ -25,14 +25,16 @@ public sealed class SettingsFingerprintTests
     public void Matches_the_byte_exact_specification_against_a_hand_computed_vector()
     {
         // Computed independently against System.Security.Cryptography.SHA256 over the exact byte
-        // layout design/20-contract.md specifies: "szdfp3", then each of the ten
-        // currently-[Fingerprinted] entries (D5-S1 adds CompositionProfile), path-sorted
-        // ordinally, length-prefixed. D5-S8 bumped the version when the entitlement contributor set
-        // joined the input; with no contributor registered it contributes no entry, so this vector
-        // differs from the szdfp2 one in the six version bytes and nothing else.
+        // layout design/20-contract.md specifies: "szdfp4", then each of the eleven
+        // currently-[Fingerprinted] entries (D5-S1 adds CompositionProfile, D5-S32 adds
+        // Audit:RetentionDays), path-sorted ordinally, length-prefixed. D5-S8 bumped the version when
+        // the entitlement contributor set joined the input; with no contributor registered it
+        // contributes no entry. D5-S32's entry is present even when the value is absent — a 0x00
+        // marker — so this vector differs from the szdfp3 one (82d01318…, reproduced by the same
+        // independent computation before the change) in the version bytes and that one entry.
         var fingerprint = ((ISettingsFingerprint)new SettingsFingerprint()).Compute(Baseline(), []);
 
-        Assert.Equal("82d01318ad2ded8fb954090f8876bc8a99c221b6928b8d565af403da03425dbe", fingerprint);
+        Assert.Equal("c4b398abfc5a2c2828db1272cb34b71a4862974fff354e9e60683c8281e40d98", fingerprint);
     }
 
     [Fact]
@@ -87,13 +89,30 @@ public sealed class SettingsFingerprintTests
     /// change that is not versioned is the silent break the field exists to prevent, so this asserts
     /// the version is inside the hashed input rather than beside it.</summary>
     [Fact]
-    public void The_format_version_is_inside_the_hashed_input_and_is_the_D5_S8_one()
+    public void The_format_version_is_inside_the_hashed_input_and_is_the_D5_S32_one()
     {
         var version = typeof(SettingsFingerprint)
             .GetField("FormatVersion", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetValue(null);
 
-        Assert.Equal("szdfp3", Encoding.UTF8.GetString((byte[])version!));
+        Assert.Equal("szdfp4", Encoding.UTF8.GetString((byte[])version!));
+    }
+
+    /// <summary>S32.10 — two hosts that disagree about audit retention would prune differently, so the
+    /// disagreement surfaces as <c>platform.settings-fingerprint</c> failing: absent differs from a
+    /// value, and one value from another.</summary>
+    [Fact]
+    public void S32_10_Audit_retention_absent_30_and_31_all_fingerprint_differently()
+    {
+        ISettingsFingerprint fingerprint = new SettingsFingerprint();
+
+        var absent = fingerprint.Compute(Baseline(), []);
+        var thirty = fingerprint.Compute(Baseline() with { Audit = new AuditOptions { RetentionDays = 30 } }, []);
+        var thirtyOne = fingerprint.Compute(Baseline() with { Audit = new AuditOptions { RetentionDays = 31 } }, []);
+
+        Assert.NotEqual(absent, thirty);
+        Assert.NotEqual(thirty, thirtyOne);
+        Assert.Equal("5c72dafc104d4339ffde640a03098610fa1983dfff638574b3ff63a1f44f2f0d", thirty);
     }
 
     [Fact]
@@ -164,6 +183,12 @@ public sealed class SettingsFingerprintTests
         if (type == typeof(Uri))
         {
             return value is Uri current ? new Uri(current, "changed") : new Uri("https://changed.example/");
+        }
+
+        // Likewise a nullable int, whose absent value is a null with no type to switch on.
+        if (type == typeof(int?) && value is null)
+        {
+            return 30;
         }
 
         return value switch

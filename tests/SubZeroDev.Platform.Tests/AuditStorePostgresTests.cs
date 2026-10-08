@@ -45,6 +45,41 @@ public sealed class AuditStorePostgresTests(PostgresContainerFixture fixture) : 
         Assert.Equal(perHost * 2, result.Value.Count);
     }
 
+    /// <summary>S32.9 on the second provider: 0002's index exists, and the retention prune's bounded,
+    /// oldest-first delete — a <c>LIMIT</c> inside an <c>IN</c> subquery — runs against PostgreSQL and
+    /// deletes exactly the row past the cutoff.</summary>
+    [Fact]
+    public async Task S32_9_The_occurred_at_index_exists_and_the_prune_deletes_past_the_cutoff()
+    {
+        var connectionString = await AcquireConnectionStringAsync();
+
+        await using var host = await StartHostAsync(connectionString, HostRole.Worker, retentionDays: "30");
+        var migrated = await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None);
+        Assert.True(migrated.IsSuccess);
+
+        await using (var connection = new NpgsqlConnection(connectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT COUNT(*) FROM pg_indexes WHERE tablename = 'audit_event' AND indexname = 'ix_audit_event_occurred_at';";
+            Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+        }
+
+        var tenant = new TenantId(Guid.NewGuid());
+        var actor = new Principal(new PrincipalId("postgres-retention", "subject"), PrincipalKind.Account, "A", null);
+        await WriteOneAsync(host, tenant, actor, "old");
+        host.Clock.Advance(TimeSpan.FromDays(31));
+        await WriteOneAsync(host, tenant, actor, "new");
+
+        await host.RunBackgroundWorkOnceAsync(new BackgroundWorkName("platform.audit.prune"), CancellationToken.None);
+
+        var remaining = await host.Services.GetRequiredService<IAuditReadApi>().ByTenantAsync(
+            tenant, DateTimeOffset.MinValue, DateTimeOffset.MaxValue, CancellationToken.None);
+        Assert.True(remaining.IsSuccess);
+        Assert.Equal("test.append.new", Assert.Single(remaining.Value).Action.Value);
+    }
+
     /// <summary><see cref="AuditClass.Required"/>, not <see cref="AuditClass.Recorded"/>: a
     /// contention run pushes a shared Postgres connection pool hard enough that an individual write
     /// can meet a transient, retryable failure, and <c>Required</c> is what makes that failure
@@ -76,12 +111,21 @@ public sealed class AuditStorePostgresTests(PostgresContainerFixture fixture) : 
         }
     }
 
-    private static Task<IPlatformTestHost> StartHostAsync(string connectionString) =>
-        PlatformTestHost.CreateBuilder()
+    private static Task<IPlatformTestHost> StartHostAsync(
+        string connectionString, HostRole role = HostRole.Web, string? retentionDays = null)
+    {
+        var builder = PlatformTestHost.CreateBuilder()
+            .WithRole(role)
             .WithProvider(PersistenceProvider.PostgreSql)
             .WithSetting("Persistence:ConnectionString", connectionString)
-            .WithServices(services => services.AddSingleton<IPlatformModule, AuditModule>())
-            .StartAsync(CancellationToken.None);
+            .WithServices(services => services.AddSingleton<IPlatformModule, AuditModule>());
+        if (retentionDays is not null)
+        {
+            builder = builder.WithSetting("Audit:RetentionDays", retentionDays);
+        }
+
+        return builder.StartAsync(CancellationToken.None);
+    }
 
     private async Task<string> AcquireConnectionStringAsync()
     {

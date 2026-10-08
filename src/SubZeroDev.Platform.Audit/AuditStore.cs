@@ -93,6 +93,24 @@ internal sealed class AuditStore(IProviderCapability capability)
             Enum.Parse<AuditClass>(reader.GetString(11)));
     }
 
+    /// <summary>Deletes at most <paramref name="limit"/> rows whose <c>occurred_at</c> is strictly
+    /// before <paramref name="cutoff"/>, oldest first, and returns how many it deleted. The instant is
+    /// compared as text, which orders correctly because <see cref="IProviderCapability.FormatInstant"/>
+    /// is fixed-width on both providers.</summary>
+    internal async Task<int> DeleteOlderThanAsync(
+        DbConnection connection, DbTransaction transaction, DateTimeOffset cutoff, int limit, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DELETE FROM audit_event WHERE event_id IN (
+                SELECT event_id FROM audit_event WHERE occurred_at < @cutoff ORDER BY occurred_at LIMIT @limit);
+            """;
+        AddParameter(command, "@cutoff", capability.FormatInstant(cutoff));
+        AddParameter(command, "@limit", limit);
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static void AddParameter(DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();
@@ -103,14 +121,33 @@ internal sealed class AuditStore(IProviderCapability capability)
 }
 
 /// <summary>Creates <c>audit_event</c> — the one table <c>design/20-contract.md</c>'s Persisted
-/// schemas §1 names. <b>Migration story: none</b> beyond this: no retention migration is ever
-/// registered, and the table grows without bound deliberately
-/// (<c>design/90-decisions.md</c> § Open).</summary>
+/// schemas §1 names — and, since D5-S32, the <c>occurred_at</c> index the retention prune deletes
+/// through. The index is created whether or not retention is configured, so a database's schema never
+/// depends on a setting. No migration ever deletes rows: only <see cref="AuditPruneWork"/> does, and
+/// only when <c>Platform:Audit:RetentionDays</c> is set.</summary>
 internal sealed class AuditMigrationSource : IModuleMigrationSource
 {
     public ModuleName Module { get; } = new("Audit");
 
-    public IReadOnlyList<IModuleMigration> Migrations { get; } = [new CreateAuditTableMigration()];
+    public IReadOnlyList<IModuleMigration> Migrations { get; } =
+        [new CreateAuditTableMigration(), new CreateAuditOccurredAtIndexMigration()];
+}
+
+/// <summary>D5-S32: the index the retention prune's oldest-first, bounded delete reads. Without it,
+/// every prune statement would scan the whole table; the three 0001 indexes all lead with another
+/// column.</summary>
+internal sealed class CreateAuditOccurredAtIndexMigration : IModuleMigration
+{
+    public string Name => "0002_create_audit_event_occurred_at_index";
+
+    public async Task ApplyAsync(
+        DbConnection connection, DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "CREATE INDEX ix_audit_event_occurred_at ON audit_event (occurred_at);";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
 }
 
 internal sealed class CreateAuditTableMigration : IModuleMigration

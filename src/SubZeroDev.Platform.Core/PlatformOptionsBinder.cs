@@ -62,6 +62,8 @@ internal static class PlatformOptionsBinder
         var logDirectory = reader.OptionalString("Telemetry:LogDirectory") ?? "logs";
         var otlpEndpoint = reader.AbsoluteHttpUri("Telemetry:OtlpEndpoint");
 
+        var auditRetentionDays = reader.OptionalInt32("Audit:RetentionDays", Between(1, 36_500));
+
         if (reader.Error is { } error)
         {
             return Result<PlatformOptions, ConfigurationError>.Failure(error);
@@ -153,6 +155,7 @@ internal static class PlatformOptionsBinder
                 LogDirectory = logDirectory,
                 OtlpEndpoint = otlpEndpoint,
             },
+            Audit = new AuditOptions { RetentionDays = auditRetentionDays },
         });
     }
 
@@ -256,6 +259,32 @@ internal static class PlatformOptionsBinder
             }
 
             return Check(path, parsed, constraint, fallback);
+        }
+
+        /// <summary>Reads an optional whole number. Absent is valid and reads as null — for audit
+        /// retention it means "keep forever". Present-but-malformed is not.</summary>
+        internal int? OptionalInt32(string path, Func<int, (bool Ok, string Constraint)> constraint)
+        {
+            var raw = Raw(path);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            if (!int.TryParse(raw, out var parsed))
+            {
+                Fail(ConfigurationError.InvalidSetting(Key(path), "must be a whole number"));
+                return null;
+            }
+
+            var (ok, description) = constraint(parsed);
+            if (ok)
+            {
+                return parsed;
+            }
+
+            Fail(ConfigurationError.InvalidSetting(Key(path), description));
+            return null;
         }
 
         internal long Int64(string path, long fallback, Func<long, (bool Ok, string Constraint)> constraint)
