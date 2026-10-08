@@ -33,23 +33,26 @@ The rule that stops this from becoming "put everything in the framework" is stat
 
 ### 1. What is persisted, and by whom
 
-Nothing in the framework's D5 additions is persisted except audit, and audit's storage is a module.
+Nothing in the framework's D5 additions is persisted except audit, whose storage is a module, and
+Persistence's own inbox record, which closes the duplicate-delivery window the outbox prices (#62).
 That is the single most consequential property of the model, and it is what the brief's local shape
 forces: a host with no Identity, Organizations, Billing or Licensing package has no table those
-capabilities would own, and no migration to skip.
+capabilities would own, and no migration to skip. A host that takes Identity without its account store (§ 14) has no
+Identity table either.
 
 | Owner | Persisted | In-memory only |
 |---|---|---|
 | Abstractions | — | principal, principal id and kind, permission name, feature name, authorization decision, entitlement decision, audit event, composition profile |
-| Identity module | — | each generic-path provider's validation settings and the issuer's key set, per instance |
+| Identity module | account and account link, **only when the host registers `IdentityAccountsModule`** (§ 14) | each generic-path provider's validation settings and the issuer's key set, per instance |
 | Vendor configuration package | — | nothing; it contributes configuration values at startup and holds no state |
-| Persistence | the shareable marker on entity types that declare it | the shared-read scope |
+| Persistence | the shareable marker and the version column on entity types that declare them; the inbox record (one per handled outbox message) | the shared-read scope |
 | Audit store module | the audit record | — |
 | Organizations module | organization, membership, invitation | active-organization selection (per request) |
 | Billing module | plan, subscription, provider event receipt | entitlement (derived) |
 | Licensing module | the verified-licence record | licence claims (derived), grace state (derived) |
 | Mcp module | — | tool registration and exposure, frozen after startup |
 | Web shell | — | everything; it holds no state the backend does not |
+| Runtime settings module | the setting row, one per layer a setting is set at | the setting catalogue, frozen after startup |
 
 ### 2. Identity — the principal is total
 
@@ -93,10 +96,12 @@ consumer of the principal defensive about fields that are permanently absent.
 provider produced. It is derived per request and never persisted; only the `PrincipalId` reaches
 storage, through the existing audit columns.
 
-**Nothing in Identity is a user table.** The brief's Identity row commits to "integration seams for
-hosted authentication without choosing or owning an identity provider", and the non-goals rule out
-federation, account linking and a shared directory. Platform therefore has no user entity, and the
-Identity module is authentication providers and principal mapping — no rows.
+**Nothing in Identity is a user table, and the one thing it may own is an account store that is not one.** The brief's
+Identity row commits to "integration seams for hosted authentication without choosing or owning an identity
+provider". Decision 6 (2026-10-08) adds an **optional, per-host** account store keyed on (issuer, subject), with
+explicit, authenticated linking (§ 14). It holds no profile, email, credential or claim. It is not a directory. It
+never spans products: decision 5 stands, and the Automator's and GEaaS's stores are two stores in two hosts. A
+host that does not register it is exactly the host this section described before decision 6.
 
 **Platform validates a credential; it never conducts a sign-in.** The authentication seam sees a
 request's headers and nothing else, and answers with one principal per request. Interactive sign-in —
@@ -142,11 +147,28 @@ providers it is structural: I-I6 keeps every claim but the principal id out of a
 each provider carries a revoke-then-deny test — grant, authorize, revoke, and the very next evaluation
 under the same credential denies. For a consumer's provider it is a contract obligation, and
 `Platform.Testing` carries that same revoke-then-deny test as a harness the consumer runs against its own
-provider.
+provider — and, for a provider over a mirror, a second test that revokes at the issuer and proves the
+bound below.
 
 The cost is real and stated. Roles an identity provider manages — Entra app roles, Keycloak realm roles —
 cannot feed the evaluator directly. A consumer who wants them mirrors them into a store it can revoke
-from and registers a provider over that store, and the mirror's freshness is the consumer's to own.
+from, and registers a provider over that store that also says when the mirror last synced. **A mirror is
+a copy of a source someone else revokes, so its freshness is bounded, not owned:** once its last sync is
+older than `Platform:Authorization:MirrorMaximumAge`, or it has never synced, the evaluator counts it as
+unable to answer, and the check answers "try again" rather than granting from the copy.
+
+**There is therefore one revocation promise per kind of source, and each is unconditional.** A grant from
+a store the operator writes — a membership, a consumer's own role table — denies on the next request. A
+role the issuer manages, reaching the evaluator through a mirror, **stops granting no later than
+`MirrorMaximumAge` after it is removed at the issuer**, whatever the token says and however long the token
+lives. The bound holds because the mirror's stamp is the instant its sync *began* reading the issuer, so a
+removal the sync did not see is always younger than the stamp the evaluator is judging. Clock skew between
+the host that wrote the stamp and the host evaluating adds to or subtracts from the bound, and an issuer
+whose own reads lag its writes adds that lag; both are outside Platform. The cost of the bound is
+availability: a sync that stops turns every check that only the mirror could satisfy into a retryable
+failure once the maximum passes. That is the intended failure: a dead sync is an outage someone sees, not
+an over-grant nobody does. The harness in `Platform.Testing` proves the bound by revoking at the issuer,
+not in the mirror.
 
 **`AuthorizationDecision`** carries the permission, the resource when the check was resource-scoped,
 the tenant it was evaluated in, the outcome, and **the non-empty set of providers that produced the
@@ -310,11 +332,23 @@ contracts only and acquires no implementation (*Module boundaries*, § 3), and t
 implementation. The D3 decision that made it fixed rather than configurable is unchanged, and a
 redaction boundary a consumer could replace is not a boundary.
 
-The audit record is append-only at the contract: no update, no delete. **D5 selects no retention**, per
-the brief's operating assumptions, so the table grows without bound and no pruning job is registered
-even though [`Prune`](../src/SubZeroDev.Platform.Persistence/Prune.cs) exists. That is a real cost, it
-is accepted deliberately, and the reason to state it here is that the first consumer to notice will be
-an operator rather than a reviewer.
+The audit record is append-only at the contract: no surface updates or deletes a row. **Retention is off
+by default and is one setting.** With `Platform:Audit:RetentionDays` absent, rows are kept forever and
+nothing deletes them. With it set to *N*, the Audit store module registers one piece of background work,
+`platform.audit.prune`, that runs hourly on the Worker under a lease and deletes rows whose `OccurredAt`
+is more than *N* days before the worker's clock, oldest first, at most 500 rows per statement. It reuses
+the mechanism of [`Prune`](../src/SubZeroDev.Platform.Persistence/Prune.cs) and adds no target to it,
+because Persistence does not own the audit table. **That delete is the only one, and it removes whole rows
+by age**, never a field and never a row chosen by content (I-U7, I-U12). Pruning is not itself audited:
+the record has no payload to carry a count, and the row would age out with the rest. It is logged
+instead. Archival and export are not provided; an installation that must keep rows beyond its retention
+copies them out before they age.
+
+The setting is the same for every consumer, and none of them depends on the principal kind. The
+**Automator**, self-hosted, leaves its operator to choose, and an installation that never sets the value
+behaves exactly as before. **Game Engine as a Service** and **BarStrad**, both hosted, can bound a table
+that grows with every player action or table session. **SkyNet HR** keeps the default, forever, unless its
+operator sets a value.
 
 ### 8. Mcp — registration and exposure are two different facts
 
@@ -470,6 +504,133 @@ document has no end-session endpoint, so sign-out is proven against a provider t
 the standard one. A configuration source built as a vendor package would build it supplies that
 fixture's template.
 
+### 12. The edge's streamed routes — opted in per route, committed at the workload's headers
+
+**Added 2026-10-08** ([`90-decisions.md`](90-decisions.md), 2026-10-08, #110). The edge's design is
+G1's (`g1/10-design.md`), as amended by G2's readiness change; both are archived. This section
+declares only what streaming adds, and the contract's *Types* § 14, *Public surface* § 17 and *Error
+semantics* § 14 name each G1 declaration they amend.
+
+**What it is.** An operator lists route prefixes under `GameEdge:StreamingRoutes`, each with its own
+`FirstByteTimeout`. A request whose path falls under a listed prefix is forwarded with the workload's
+body relayed as it arrives, rather than read to the end first. Every other request is forwarded exactly
+as G1 forwards it, and an edge with no listed route is G1's edge byte for byte.
+
+**The commit point is the workload's response headers.** Before them, the edge can still answer for
+itself, and it does so with G1's two answers: `503 workload_unreachable` when it cannot reach the
+workload, and `504 workload_timeout` when the headers have not arrived within `FirstByteTimeout`. Once
+the headers arrive, the edge sends the workload's status and `Content-Type` to the caller and has no
+answer of its own left to give. From then on there is no edge deadline: the stream lasts as long as
+the workload and the caller keep it open.
+
+**A failure after the commit point aborts the response.** If the workload's body fails mid-stream, the
+edge aborts the caller's response. On HTTP/1.1 the body stops without its terminating chunk and the
+connection closes; on HTTP/2 the stream is reset. It writes nothing of its own after headers: no
+status, envelope or frame. This is the streamed counterpart of #106. A buffered route turns a
+mid-body death into an honest `503`; a streamed route has already sent `200`, so the honest signal left
+is an incomplete response, which every HTTP client reports as one. The abort is logged once at
+`Warning` and counted once, because the request-duration metric records the workload's `200`.
+
+**Exactly one attempt still holds.** The edge never retries a forward and never resumes a stream.
+Recovery belongs to the client: SkyNet HR's console reconnects and replays from its own cursor.
+
+**Per consumer.**
+
+| Consumer | What changes |
+|---|---|
+| SkyNet HR | Its SSE console transport works through the edge on a route its deployment lists. Its reconnect-and-replay sees an incomplete response, never a clean end, when the workload dies. Its WebSocket transport is **not** covered: no upgrade path is added. It does not run on the edge yet (ADR-007; D5 brief non-goals), so this is the capability, not its onboarding. |
+| Game Engine as a Service | Nothing. The game wire lists no route; every forward stays buffered under `ForwardTimeout`, with byte identity, the honest `503`/`504` and #106's after-headers answer intact. |
+| Automator | Untouched. It does not sit behind the edge. |
+| BarStrad | Untouched. It does not sit behind the edge. |
+
+### 13. Runtime settings — a module, layered, read through every time
+
+**Added 2026-10-08** ([`90-decisions.md`](90-decisions.md), 2026-10-08, #58). Startup configuration and
+a runtime setting are different things, and Platform keeps them apart. Configuration binds once,
+fails the host on a bad value, and is identical across every instance of a role (the fingerprint
+checks that). A runtime setting is changed by a running system, may differ per tenant and per user, and
+is persisted. **No runtime setting overrides a startup option, and no startup option is read from a
+runtime setting.**
+
+**A setting is declared once.** A product registers a catalogue that names each setting, its type
+(boolean, integer or text), its default, the layers it may be set at, and an optional validation rule.
+The module builds the catalogue before the host starts serving and freezes it. A duplicate name, a
+default its own rule rejects, an empty layer set, or a name matching the redaction marker set each fail
+startup. A setting is never a secret, and secrets stay in configuration.
+
+**Resolution is user, then tenant, then global, then the declared default**, and only the layers the
+declaration admits are consulted. Which layers *exist* for a read depends on the ambient operation:
+
+| Layer | Exists when | Row belongs to |
+|---|---|---|
+| user | the principal is an `Account` and the tenant is not implicit | the current tenant, keyed by the principal |
+| tenant | the tenant is not implicit | the current tenant |
+| global | always | the installation, like the verified-licence row |
+
+A `Delegated` principal has no user layer. A BarStrad table is shared by successive guests, and a
+SkyNet HR operator's lifetime is the proxy's. A `System` principal and an anonymous one have no user
+layer either. A stored value that no longer parses or validates is answered as an error, never replaced
+by a lower layer. A store failure is answered as retryable, never replaced by the default.
+
+**Writing global or tenant needs a permission; writing your own user value does not.** The writer
+evaluates `Platform.RuntimeSettings.WriteGlobal` or `…WriteTenant`, scoped to the setting, before it
+touches the store. A user-layer write reaches only the caller's own row, because the API names no
+principal. Every change writes one `Required` audit record in the same transaction, naming the layer
+and the setting and never the value.
+
+**No setting grants anything.** The module registers no permission provider and no entitlement
+contributor, and no authorization or entitlement decision reads a setting. A product may read a setting
+to choose *how* a permitted, entitled thing behaves, never *whether* it is permitted.
+
+**There is no cache.** Each read is one query for at most three rows. A write on the web host is
+therefore visible to the worker on its next read, with no invalidation protocol, because there is no
+copy to invalidate.
+
+What it does for each consumer:
+
+| Consumer | Layers in use | Who writes |
+|---|---|---|
+| Automator, Local or self-hosted | global | `System`, granted every declared name in Local |
+| Automator, operated | global, tenant (team), user (account) | the product's provider grants the two names |
+| Game Engine as a Service | tenant (studio), user (player account) | the studio's administrators via the product's provider; players their own |
+| BarStrad | global, tenant (venue) | venue staff the product's provider grants `WriteTenant`; tables are `Delegated`, so there is no user layer |
+| SkyNet HR | global | whomever its provider grants `WriteGlobal`; a `Delegated` operator may hold it |
+
+### 14. The account store — optional, per host, keyed on the provider's own pair
+
+**Added 2026-10-08** (decision 6, #93). An account is an opaque id that one or more (issuer, subject) pairs are linked
+to. It exists so that one person signing in through two issuers can be one principal, and for no other reason.
+
+- **Opt-in by module, not by setting.** `IdentityAccountsModule` lives in the Identity package and depends on
+  `IdentityModule`. It registers the store, its migration and the account API. A host that registers only
+  `IdentityModule` has no table, no migration and no store read.
+- **An identity is never an account until someone makes it one.** On a host with the store, an identity linked to no
+  account authenticates exactly as on a host without it: its principal is its own (issuer, subject). The identity
+  creates an account explicitly, and is that account's first link.
+- **A linked identity authenticates as its account.** Identity's own `Account`-producing providers read the link on
+  every request. There is no cache, so a link or unlink applies from the next request. The principal is
+  (`platform.account`, account id), with kind `Account`, and its display name and claims come from the credential
+  presented. Organizations, audit and stamping see one principal for every linked identity, and change nothing.
+- **Linking is explicit and authenticated, never inferred.** A second identity joins an account only when two things
+  hold in one call: the caller is authenticated as the account, and the caller presents a credential for the second
+  identity that an Identity provider validates now and that was issued within the last five minutes. That is the
+  token a sign-in the person has just completed returns, for example from the sign-in module's token endpoint (§ 11).
+  **No email, no `email_verified`, and no claim other than the subject pair is ever read to create, find or link an
+  account.** Two issuers asserting the same email are two principals until linked.
+- **One identity, at most one account**, by the store's primary key, never by a check. **An account keeps at least
+  one identity**: the last cannot be unlinked.
+- **Per host, not per tenant.** An account has no tenant. Tenancy reaches it through Organizations' memberships,
+  which are keyed by principal id.
+
+**What each consumer gets.**
+
+| Consumer | Uses the store | Effect |
+|---|---|---|
+| Automator | yes, per installation | A user or service account signing in through two issuers is one principal once linked. An installation's store is its own. |
+| Game Engine as a Service | yes, in the hosted service | A player who signs in through two issuers is one player once linked, never by email. GEaaS's store is never the Automator's. |
+| BarStrad | never | Its table principal is `Delegated`, established outside Identity's bearer path. The host registers no account module, so it has no table and its principals are unchanged. |
+| SkyNet HR | never | It takes Identity only for the upstream-proxy provider. That principal is `Delegated` and is never mapped, even on a host that registers the store. It has no table and no store read. |
+
 ---
 
 ## Module boundaries
@@ -482,7 +643,7 @@ composition point. **No framework entry contains policy**, and that is the test 
 
 | Capability | Framework | Module |
 |---|---|---|
-| Identity | the principal contract, its four kinds, the ambient principal, the transport-authentication seam | authentication providers, including the generic bearer path (*Data model*, § 10), and principal mapping. No directory, no user table |
+| Identity | the principal contract, its four kinds, the ambient principal, the transport-authentication seam | authentication providers, including the generic bearer path (*Data model*, § 10), and principal mapping. No directory and no user table; an optional, per-host account store keyed on (issuer, subject), registered by a second module type in the same package (*Data model*, § 14) |
 | Authorization | permission names, the provider seam, the evaluator, the decision type, tenant-aware evaluation | grant contributors. D5's are the composition provider and Organizations |
 | Organizations | — | all of it: organizations, memberships, invitations, ownership, the tenant resolver for the active organization |
 | Tenancy | the resolver seam, the ambient tenant, query enforcement, the shareable declaration and the audited shared-read scope | tenant *provisioning*, which is Organizations |
@@ -510,6 +671,11 @@ framework's contracts and on the Identity module's issuer settings, and nothing 
 graph stays acyclic. No framework package references it (ADR-006 rule 1), and no module references it
 (rule 2).
 
+**The runtime settings module** (*Data model*, § 13) is a module-tier package and has no row. It places
+none of the nine capabilities. It depends on the framework's contracts and on Persistence's unit of
+work and migration source, and nothing depends on it. No framework package references it (ADR-006 rule
+1), and no module references it (rule 2).
+
 ### 2. The seam-admission test
 
 A seam enters the framework only when **a framework package must consume it on a path that exists with
@@ -531,6 +697,9 @@ contract would be convenient in Abstractions, and a framework that accumulates s
 nobody installed has become the twenty-four-package plan by increments, which
 [`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §1 names as the exact
 hazard the guard exists against.
+
+A runtime-settings seam fails the same test. No framework package reads a setting, and no second
+module does, so the reader and writer live in the module and the framework is unchanged.
 
 **The cost, stated.** The framework's public surface grows by five contracts that a consumer taking no
 module never uses, and each carries the generated-reference obligation ADR-006's consequences already
@@ -571,7 +740,9 @@ Modules, each depending only on framework packages:
 - **Identity** owns authentication providers — the test-grade HMAC provider, the upstream-proxy
   provider and the generic bearer path — and the mapping from an authentication result to a
   `Principal`. Exposes registration and the generic path's configuration schema, which is public
-  contract. Owns no rows. Depends on a token-validation library (*Alternatives considered*, § 9), and no
+  contract. Owns no rows unless the host registers `IdentityAccountsModule`. In that case it owns the account and
+  account-link tables and the account API (*Data model*, § 14), and gains a dependency on Persistence, as
+  Organizations has. Depends on a token-validation library (*Alternatives considered*, § 9), and no
   type of that library appears in what it exposes.
 - **Organizations** owns organizations, memberships, invitations and the tenant it provisions per
   organization. Exposes the organization API, a tenant resolver and a permission provider. Depends on
@@ -585,6 +756,9 @@ Modules, each depending only on framework packages:
 - **Mcp** owns the transport, connection authentication, the tool catalogue and invocation. Exposes tool
   producer registration and exposure configuration. Consumes the principal, permission, entitlement and
   audit seams.
+- **Runtime settings** owns the setting catalogue and the setting row. Exposes a reader, a writer, two
+  permission names and two audit actions. Consumes the principal, tenant, permission and audit seams.
+  Exposes no endpoint.
 - **Web shell** owns nothing on the server. It consumes the public HTTP API over the network.
 
 Outside both tiers:
@@ -656,6 +830,9 @@ capability's semantics are stated relative to it.
    none and the principal is `Anonymous`. Failure to *validate* a presented credential is not the same
    as presenting none: a bad token is rejected here with a stable code, and an absent one continues as
    `Anonymous` to be denied later by authorization, if it is denied at all.
+   On a host that registers the account store, a principal an Identity provider establishes as `Account` is
+   looked up by its (issuer, subject). A linked identity continues as its account's principal. A failed lookup
+   fails authentication (`ProviderFailed`) and never continues as the unlinked pair.
 2. **Resolve the tenant.** Registered resolvers run in order; the first that answers wins; none
    answering means `TenantId.Implicit`. In the operated sample the answering resolver is Organizations,
    reading the request's active-organization selection and confirming the principal's membership.
@@ -735,6 +912,17 @@ graph fails at startup with a named error rather than at first use.
    fails startup: a provider whose first fetch fails starts with no keys, rejects every credential with
    `KeyMaterialUnavailable`, reports not-ready, and keeps trying on the refresh schedule (*Concurrency
    and ordering*).
+9. **In the development environment only, pending migrations are applied**, through the same runner and
+   the same provider-native lock as migrate mode. A host whose environment is anything else never
+   applies a migration. Operators run migrate mode, which is unchanged except that it now also runs
+   seeders (*Public surface* § 16 of the contract). A development host whose sibling holds the lock
+   waits for it rather than starting against a half-migrated schema.
+10. **Module initialization hooks run**, one module at a time in topological order, after every check
+    above has passed and before the first background tick or request. A hook that throws fails startup
+    naming the module, and every module that had already initialized is shut down in reverse first. On
+    stop, the hooks' shutdown halves run in reverse order after the listener and background work have
+    stopped. They run exactly once for each module that initialized, including when a later startup
+    step failed.
 
 Steps 3, 4 and 5, and the settings half of step 8, are the ones that make the design's guarantees
 structural. Each is a startup failure because each describes a deployment that would otherwise run and
@@ -788,8 +976,11 @@ part. Without the module it does not, and steps 1 and 3 below are the client's. 
 6. **What sign-out cannot do at Platform.** An access token already issued stays valid at Platform until
    it expires, because validation reads nothing that sign-out changes (I-S2). That window is bounded by
    the token lifetime the operator sets at the issuer. Authorization is not inside the window: no grant
-   is carried in the token (*Data model*, § 3), so a revoked membership or role denies on the next
-   request whatever the token says.
+   is carried in the token (*Data model*, § 3). A revoked membership, or a role in a store the operator
+   writes, denies on the next request whatever the token says. A role the issuer manages reaches the
+   evaluator through a mirror and stops granting within `Platform:Authorization:MirrorMaximumAge` of its
+   removal at the issuer — the promise *Data model* § 3 states — and that bound does not depend on the
+   token's lifetime either.
 7. **Without the module**, a client handles its own sign-in and sign-out against its issuer. A host
    behind a TLS-terminating proxy that builds absolute addresses reads the original scheme through
    forwarded-header configuration, which is deployment configuration and not an identity concern.
@@ -927,6 +1118,18 @@ harness detects it in the consumer's own test run. Undetected, the consequence i
 grant takes effect only when the credential expires. It is a breach of the provider contract (*Data
 model*, § 3), and no Platform guarantee is stated relative to a provider that breaches it.
 
+**A consumer's mirror falling behind its issuer.** Detected on every evaluation: the evaluator reads the
+mirrored provider's last-synced instant before its grants, and a mirror never synced or older than
+`Platform:Authorization:MirrorMaximumAge` contributes nothing and is named in the decision's
+`ProviderFailure`. The caller answers a retryable failure — 503 on HTTP, a retryable tool result on Mcp —
+unless another provider granted, in which case the union allows as it would during any provider's outage.
+The operator sees retryable failures naming the provider; the fix is the consumer's sync, and nothing in
+Platform retries or re-syncs. Two breaches stay undetectable at runtime, as the token case above is: a
+provider over a mirror that does not declare itself one, and a sync that advances the stamp after an
+issuer read that failed. The first is caught by the issuer-side harness only if the consumer runs it
+against that provider; the second is an instruction (I-A14). State left behind: none — a stale mirror is
+read, never written, by Platform.
+
 **Startup failures.** Every check in path 2 fails the host rather than degrading it, and each names the
 registration that caused it. A host that cannot state its own composition should not serve, because
 every guarantee in this document is stated relative to a composition.
@@ -940,7 +1143,19 @@ ambient context is restored, and the next request does not inherit it.
 **What state is left behind, in summary.** Nothing in D5 leaves a half-applied write. Every state change
 is transactional; the only records written outside their action's transaction are audit rows for actions
 that changed nothing; the licence record is a single-row monotonic write; and the tool catalogue is
-in-memory and frozen. The one durable thing that grows without bound is the audit table, deliberately.
+in-memory and frozen. The one durable thing that can grow without bound is the audit table, and it does so only while
+`Platform:Audit:RetentionDays` is unset, which is the default.
+
+### Module hooks, development migration and seeding
+
+| Failure | Detected by | System does | Person sees | State left behind |
+|---|---|---|---|---|
+| a module's initialization hook throws | the lifecycle service | shuts down the already-initialized modules in reverse, then fails startup with `ModuleInitialization` naming the module | the process exits; the log names the module and carries the exception | whatever the hook wrote before throwing; hooks are written to tolerate re-running |
+| a shutdown hook throws or overruns the drain window | the lifecycle service | logs it at Error and runs the remaining shutdowns | nothing; the process exits | whatever the hook did not release |
+| a development migration fails | the runner's result | rolls back the whole run (the runner's existing semantics) and fails startup | the process exits naming the module and migration | the schema as before the run |
+| the sibling development host holds the migration lock | `Locked` | waits one second and retries until the lock is free | a slower start, logged | none |
+| the development database is unreachable | `Unavailable` | starts, warns, reports not-ready; the dispatcher claims nothing | not-ready until restarted with the database up | none |
+| a seeder throws in migrate mode | migrate mode | stops seeding and exits 1 with `SeedFailed` | the operator re-runs migrate after fixing it | committed migrations, and the earlier seeders' committed writes; seeders converge, so a re-run is safe |
 
 ### The sign-in module
 
@@ -953,6 +1168,38 @@ in-memory and frozen. The one durable thing that grows without bound is the audi
 | anti-forgery header absent on the token endpoint | the endpoint | refuses | nothing readable | none |
 | data-protection keys differ between instances | a session cookie one instance cannot decrypt | treated as a missing cookie | signed out, begins again | none. Operators share keys across instances; the documentation states it |
 
+### The edge's streamed routes
+
+| Failure | Detected by | System does | Person sees | State left behind |
+|---|---|---|---|---|
+| workload unreachable before headers | the send's failure | answers `503 workload_unreachable`, one attempt | the edge's error body | none |
+| workload's headers later than `FirstByteTimeout` | the forward's own deadline | answers `504 workload_timeout`, one attempt; the workload sees the request cancelled | the edge's error body | none at the edge; the workload's own |
+| workload dies after headers | a read failure on the workload's body | aborts the caller's response, logs `EdgeStreamAborted` at `Warning`, counts `subzerodev.edge.stream.aborts` | an incomplete response: no terminating chunk, or a reset stream; the client reconnects | none at the edge |
+| caller disconnects mid-stream | `RequestAborted` | disposes the upstream response, so the workload sees the disconnect; not logged above `Debug`, not counted | — | none |
+| host shuts down with streams open | Kestrel's shutdown deadline | streams are cut when the deadline passes, like a caller disconnect | an incomplete response | none |
+| a listed prefix is malformed, nested in another, or its budget is out of range | startup validation | fails startup naming the full key | — | none |
+
+### The runtime settings module
+
+| Failure | Detected by | System does | Person sees | State left behind |
+|---|---|---|---|---|
+| duplicate setting name, invalid default, no layers, or a sensitive name | catalogue build at startup | fails startup naming the setting | — | none |
+| store unreachable on read or write | the unit of work | answers retryable; never substitutes the default | a retryable failure | none |
+| stored value no longer parses or validates | the read | answers `StoredValueInvalid`; does not fall through | a non-retryable failure naming the setting | the row, until someone sets or clears it |
+| audit write fails during a change | the audit write inside the transaction | rolls the change back, answers retryable | a retryable failure | none |
+| authorization provider or its denial audit fails | the decision | answers retryable; nothing written | a retryable failure | none |
+| rolling deploy with a changed default or type | nothing; by design | each host answers by its own declaration until restarted | old host may answer `StoredValueInvalid` | none |
+
+### The account store
+
+| Failure | Detected by | System does | Person sees | State left behind |
+|---|---|---|---|---|
+| store unreachable while mapping a principal | the read at authentication | fails authentication `ProviderFailed`; never the unlinked pair (I-I20) | unauthenticated; retry succeeds once the store is back | none |
+| second identity already linked to another account | the primary key on (issuer, subject) | refuses `IdentityAlreadyLinked`; writes nothing | that sign-in belongs to another account | none |
+| second credential stale, unvalidated or without `iat` | validation inside the link call | refuses `SecondCredentialRejected` | sign in with the second method again, then link | none |
+| two unlinks race for an account's last two identities | the account row's write lock, taken before counting | one succeeds, the other answers `LastIdentity` | one method removed | one identity remains (I-I19) |
+| two creates race for one identity | the primary key on (issuer, subject) | one account is created; the other answers `IdentityAlreadyLinked` and rolls back its account row | the next request is the one account | one account |
+
 ---
 
 ## Concurrency and ordering
@@ -961,7 +1208,7 @@ in-memory and frozen. The one durable thing that grows without bound is the audi
 request's lifetime, and the fixed order of path 1 is what enforces it. The tenant and principal are
 resolved once and cannot change; a membership revoked mid-request affects the next request.
 
-**Across instances, four things are genuinely concurrent**, and the operated proof runs its contention
+**Across instances, seven things are genuinely concurrent**, and the operated proof runs its contention
 scenarios on PostgreSQL because SQLite is a single-node provider.
 
 | Concurrent | What must not happen | Enforced by |
@@ -970,6 +1217,9 @@ scenarios on PostgreSQL because SQLite is a single-node provider.
 | Two organizations being created | two organizations sharing a tenant | uniqueness on the organization's tenant column; the mint and the write are one transaction |
 | One invitation redeemed twice | two memberships from one token | a conditional update against the unredeemed state — at most once, by the store |
 | Audit rows from every host | nothing; appends do not contend | append-only, no unique key across hosts |
+| The retention prune against concurrent appends and against a second prune | a row younger than the retention deleted; a half-deleted row; a write lock held long enough to fail appends | Worker role only, under the lease; an age predicate fixed per tick, so a row deleted twice is deleted once; at most 500 rows per statement, each statement in its own transaction |
+| Two hosts writing one versioned row — the web and worker hosts overlapping during a restart, or a venue's staff and a table on one BarStrad order | the later write silently overwriting the earlier | a compare-and-swap on the row's version, judged by `IVersionGuard`: exactly one matched row commits, none rolls the whole unit back as `StaleVersion` (#60; I-P1–I-P3) |
+| One outbox message dispatched twice — a lost claim, or a claim that expired while its handler still ran | the handler's database effects applied twice | the inbox record, inserted in the handler's own transaction before the handler runs; a conflicting insert skips the handler (#62; I-P4–I-P6) |
 
 **Audit ordering is deliberately weak, and that is stated so nobody relies on the opposite.** Audit rows
 carry an instant from `IClock` and a correlation, and they are *not* totally ordered across hosts. Two
@@ -991,13 +1241,31 @@ not a second admission and is not gated again.
 **The tool catalogue is immutable after startup**, so there is no registration-versus-invocation race to
 resolve, and no lock on the path every MCP call takes.
 
-**Background work is unchanged.** The existing lease
+**A runtime setting is last-writer-wins, and the next read sees it everywhere.** Two writes to one
+layer of one setting both commit, as an upsert, and the stored value is whichever committed last;
+each writes its own audit record. Nothing is cached, so the next read on any instance of either role
+sees the committed value. The row does not opt in to #60's version column (*Types* § 6a); opting in later is an additive
+migration.
+
+**Background work is unchanged in kind.** The existing lease
 ([`src/SubZeroDev.Platform.Persistence/Lease.cs`](../src/SubZeroDev.Platform.Persistence/Lease.cs))
-still decides which instance runs a single-runner registration, and D5 adds one piece of background
-work of its own, the generic path's key-set refresh: no retention job, no revocation poll, no licence
+still decides which instance runs a single-runner registration. D5 adds two pieces of background work of
+its own. The first is the generic path's key-set refresh. The second is the audit retention prune, and it
+is registered only when `Platform:Audit:RetentionDays` is set. There is no revocation poll and no licence
 re-verification timer. Licence state changes when a host restarts or when a host is asked to re-verify;
 a timer that re-verifies would be a second writer contending on the one row for no requirement anybody
 stated.
+
+A mirror's sync is a consumer's background work, not Platform's: Platform adds no revocation poll for
+mirrored roles either, and reads only the instant the consumer's sync stamped.
+
+**The retention prune assumes no single process.** It runs only in the Worker role, and the lease reduces
+several workers to one runner without guaranteeing it. Two overlapping runs are harmless, because each
+statement deletes by an age predicate and a row already gone is not deleted again. Rows that web hosts are
+appending carry an instant near now and are never eligible. The exception is a writer whose clock lags the
+worker's by more than the retention period, and that is a clock fault, not a race. Workers that disagree on
+the retention value are not prevented; they disagree on the settings fingerprint, and
+`platform.settings-fingerprint` reports it, as it does for the outbox retention windows.
 
 **The key-set refresh runs on every instance, takes no lease and writes nothing durable.** Each instance
 validates tokens against its own cache, so each must refresh its own; a lease would leave every other
@@ -1005,6 +1273,23 @@ instance's cache stale. The refresh replaces the cached set by a single atomic s
 it concurrently sees the whole old set or the whole new one and never a partial set. Instances may hold
 different sets for up to one interval, which is the same bound the rotation boundary in *Failure modes*
 already states.
+
+**Nothing that runs at startup may assume it is the only process.** The web and worker hosts start
+independently, and during a restart an old and a new instance of the same role overlap. Every instance of
+every role runs every module's initialization hook, concurrently with the others, so a hook is
+per-process work: warming a cache, verifying a precondition, subscribing. Work that must happen once per
+installation is a migration, which runs under the provider-native lock, or a seeder, which converges.
+Two development hosts migrating at start serialise on that same lock. Seeders run outside it, and two
+concurrent migrate runs both seed, which is why a seeder must leave the same rows however many times it
+runs.
+
+**Optimistic concurrency is opt-in per table; inbox deduplication is not.** A table that never contends
+pays nothing for a version column it does not declare, which is the same reason `ISoftDeletable` is
+opt-in. Dispatch always contends, because at-least-once delivery is a logged decision, so every
+dispatch records. The inbox narrows "handlers must be idempotent" to **external** side effects; effects
+inside the database commit at most once per message and handler. Game Engine as a Service's Node
+session store keeps its own compare-and-swap of the same shape ([`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md)
+§ 6.1); SkyNet HR owns no Platform-persisted row and is untouched.
 
 ---
 
@@ -1242,7 +1527,10 @@ licence and capabilities from memory is exactly what `AGENTS.md`, *Verification*
 **Chosen:** every permission provider takes grants from a source revocable while the caller's credential
 is still valid; claims and the raw authentication result are never a grant source; Platform's providers
 are held to it by I-I6 and a revoke-then-deny test, and a consumer's by contract and the same test as a
-`Platform.Testing` harness (*Data model*, § 3).
+`Platform.Testing` harness (*Data model*, § 3). **Issuer-managed roles reach the evaluator through a
+consumer's mirror whose staleness is capped**: a mirror whose last sync is older than
+`Platform:Authorization:MirrorMaximumAge` — 15 minutes unless set, never unbounded — counts as unable to
+answer, and a second harness proves the cap by revoking at the issuer.
 
 **Rejected:**
 
@@ -1257,14 +1545,45 @@ are held to it by I-I6 and a revoke-then-deny test, and a consumer's by contract
   since the issuer sets the token lifetime, which is the exact failure #92 was raised against.
 - **Leaving it to the consumer.** #92 asks for revocation to hold for every provider; a rule that binds
   only Platform's own providers is the rule Platform already had.
+- **Leaving the mirror's freshness to the consumer, unbounded.** This was the rule until 2026-10-08, and
+  red-team F3 found it made the next-request promise false for mirrored roles: a role removed at 12:00
+  still granted at 12:01, and at 12:59 if the sync had died, while the harness passed because it revoked
+  the mirror's row rather than the issuer's role. A promise that holds only if an unchecked obligation is
+  met is not a promise.
+- **Naming the delay as unbounded and documenting it.** Honest, and it would satisfy the letter of #264,
+  but it leaves a mirrored role's revocation latency to whoever runs the sync, with no failure anyone
+  sees when the sync stops.
+- **Asking the issuer on every request.** It removes the delay, and puts a network call to a vendor's
+  administrative API on the path every request takes — the thing the key-material rule forbids for
+  authentication — makes every check depend on that vendor's availability and rate limits, and depends
+  on the vendor rather than the protocol, since OpenID Connect has no role-lookup endpoint.
+- **Platform running the sync.** It would make the stamp trustworthy by construction, and it needs a
+  role store Platform owns (I-A9 forbids one) and an adapter per vendor's administrative API.
+- **Answering a stale mirror as forbidden**, or granting from it with a warning. The first tells the
+  caller an outage is a refusal, the confusion S24 exists to remove; the second fails open.
+- **Letting "unset" mean unbounded.** It ships F3 as the default.
+
+**The delay, weighed.** A claims-derived grant waits for the token to expire — a latency the *issuer* sets,
+60 to 90 minutes by default at Entra. A mirrored role waits at most `MirrorMaximumAge` — a latency the
+*operator* sets, 15 minutes by default, and between 30 seconds and a day. The mirror is therefore
+strictly better than claims on control, and better on latency wherever the maximum is below the token
+lifetime, which the default is for Entra and is not for Keycloak's five-minute default; an operator on
+Keycloak who wants parity sets the maximum lower and syncs more often. What the bound costs is
+availability, not correctness: between syncs a revocation waits up to the maximum, and when the sync
+stops, checks that only the mirror could satisfy answer "try again" until it resumes. A membership or a
+consumer-owned role is unaffected, and keeps the next-request promise.
 
 **Why:** the rule the contract states is the one Platform can prove for itself and hand a consumer the
 means to prove. The cost is that issuer-managed roles reach the evaluator only through a mirror the
-consumer owns.
+consumer owns, and that the mirror's delay is bounded by an availability failure rather than a silent
+grant.
 
 **Reversibility: cheap to relax, expensive to tighten.** Admitting claims-derived grants later is a
 contract relaxation no consumer has to act on. Taking the claims off `Principal` later is the breaking
 change rejected above, with more consumers to break.
+The maximum's default and range are cheap to change. Admitting an unbounded maximum is cheap to code and
+reopens #264. Moving the stamp or the sync into Platform is expensive — a schema change on every host and
+a vendor adapter per issuer.
 
 ### 11. Platform validates credentials; it does not host sign-in
 
@@ -1366,6 +1685,77 @@ custody. The cost is the loss of forced logout, stated above.
 
 **Reversibility: cheap to add, moderate to withdraw.** The configuration keys and the endpoints become
 public contract once a host depends on them.
+
+### 15. Module lifecycle: hooks on the module, or hosted services each module registers
+
+**Chosen:** `InitializeAsync` and `ShutdownAsync` as default members on `IPlatformModule`, run by Hosting
+in topological order with a built provider (owner's ruling, 2026-10-08, #63). **Rejected:** a hosted
+service per module, as Licensing, Mcp and Identity do today, which orders modules by registration rather
+than by the graph and has no shutdown after a failed start; ABP's seven hooks, which no consumer has
+asked for. **Reversibility: expensive.** Every module implements the interface.
+
+### 16. Development migration: automatic, opt-in, or retracted
+
+**Chosen:** automatic when the derived environment is `Development`, owned by Persistence, through the
+runner and its lock (owner's ruling, 2026-10-08, #68). The lock answers D3's objection that two
+processes starting together race. **Rejected:** an opt-in setting, since the ruling says automatic;
+retracting the promise. **Reversibility: cheap.** There is no public surface.
+
+### 17. Seeding: a contract run by migrate mode, or data written by hooks or migrations
+
+**Chosen:** `ISeeder`, run by migrate mode after migrations, in module order, with each seeder stating its
+tenant (owner's ruling, 2026-10-08, #61). **Rejected:** seeding inside a migration, which runs on a raw
+connection outside any scope, so tenancy and audit columns would be written by hand; seeding from a hook,
+which runs on every instance concurrently at every start. **Reversibility: expensive.** `ISeeder` is
+public.
+
+### 18. How a streamed response ends when the workload dies
+
+**Abort the response (chosen)**, end the body cleanly, or write an in-band error frame. A clean end
+makes a truncated stream look complete, which is the dishonest answer #106 removed. An in-band frame
+teaches the edge the content's framing and is read as data by any client that does not share it. An
+abort costs a reconnect, which SkyNet HR's console already performs. The full rejection list is in
+[`90-decisions.md`](90-decisions.md), 2026-10-08, #110.
+
+### 19. Runtime settings: one module, no cache
+
+**Chosen:** a module that owns a catalogue and one table, resolves user over tenant over global over
+the default on every read, and holds no in-process copy (*Data model*, § 13).
+
+**Rejected:**
+
+- **Runtime settings as a configuration source.** It would let a stored value override a startup
+  option. That defeats the fingerprint and the fail-at-startup rule, which is the distinction #58 is
+  about.
+- **A framework seam in Abstractions.** It has no framework consumer and no second module consumer, so
+  it fails the seam test.
+- **Owning it in Organizations.** Global and user settings would then need Organizations, which the
+  self-hosted Automator and SkyNet HR do not run.
+- **A per-instance cache with a TTL, or an invalidation bus.** The first makes a staleness promise that
+  is hard to withdraw. The second is a distributed event bus, which is a non-goal. A cache can be added
+  later without breaking a caller; a promise cannot be removed.
+
+**Reversibility: expensive for the package and the resolution order, cheap for the rest.**
+
+### 20. Where the account store sits, and how an identity reaches it
+
+**Chosen:** a second module type in the Identity package. The account is mapped inside Identity's own providers,
+and a link takes the second identity's freshly issued bearer token, validated by Identity (*Data model*, § 14).
+
+**Rejected:**
+
+- **A framework principal-mapping seam.** One owner and one consumer fail the seam-admission test, and the
+  framework would carry an account concept the ruling keeps out of it.
+- **A sign-in hook at the callback.** The callback's subject comes from an id token whose signature the module does
+  not check, and it may differ from the access token's subject that the bearer path establishes. The callback
+  request also carries no bearer to show the caller is the account.
+- **Just-in-time accounts on first authentication.** That is a write before any scope exists, so it cannot be
+  audited, and it would make most second identities already-owned by the time someone links them.
+- **Matching on a verified email.** Ruled out by #93 and by the ruling; `email_verified` is one issuer's statement
+  about one address, not proof that two issuers' subjects are one person.
+
+**Reversibility:** the placement is cheap to change. The principal shape (`platform.account`, id) is expensive,
+because every membership and audit row stores it.
 
 ---
 

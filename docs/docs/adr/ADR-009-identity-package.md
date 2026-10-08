@@ -7,7 +7,8 @@ sidebar_label: ADR-009 Identity Package
 
 ## Status
 
-Accepted
+Accepted. Decision 4 amended 2026-10-08 (D5 brief decision 6, #93): Identity may own an optional, per-host account
+store. The rest stands.
 
 ## Context
 
@@ -48,8 +49,10 @@ module owns the answers that come from authenticating a credential. Neither owns
    Neither half is parsed, normalised or case-folded. Two stores minting the same subject are two
    principals, not a collision.
 4. **`SubZeroDev.Platform.Identity` is a module.** It holds authentication providers and the mapping
-   from an authentication result to a principal. It owns no entity type, no context, no migration, no
-   directory and no user table (invariant I-I4). Registering it adds no provider on the consumer's
+   from an authentication result to a principal. It owns no directory and no user table (invariant I-I4). **Amended 2026-10-08:** a second
+   module type in the same package, `IdentityAccountsModule`, owns an optional, per-host account store keyed on
+   (issuer, subject), with explicit, authenticated linking. It holds no profile, email or credential, and a host
+   that does not register it owns no Identity table and no migration (`design/10-design.md` *Data model* § 14). Registering it adds no provider on the consumer's
    behalf.
 5. **Platform chooses no identity provider.** Each provider trusts an issuer the consumer names and
    operates. A deployment trusting several issuers registers one provider per issuer.
@@ -64,7 +67,9 @@ module owns the answers that come from authenticating a credential. Neither owns
 - **Every consumer brings its own identity provider and its own user store.** Platform offers no
   sign-up, no password handling, no account lifecycle and no user administration. A consumer wanting
   those builds them or adopts a substrate behind the seam. This is the direct cost of the brief's
-  non-goals, and it is the largest one.
+  non-goals, and it is the largest one. Since 2026-10-08 a consumer may instead register Identity's account
+  store, which gives it one principal per person across issuers it links, and nothing more: no sign-up, no
+  profile, no password.
 - The framework carries the principal types and the authentication seam whether or not a host
   authenticates anyone. A host that authenticates no one still pays for those types, though not for a
   module.
@@ -85,6 +90,8 @@ module owns the answers that come from authenticating a credential. Neither owns
 owns the user schema and migrations, and consumers opt in. Rejected because the approved D5 brief
 makes a shared user directory and shared identity storage non-goals, and because a store would give
 Platform an opinion about what an account is. BarStrad and SkyNet HR have no account at all.
+**Partly reversed 2026-10-08:** the store Identity now may own is keyed on the provider's pair, holds no user data,
+is per host and is opt-in. It is not this proposal's user schema.
 
 **A substrate as the platform default.** Keycloak, authentik or Supabase Auth, chosen once for every
 consumer. Rejected on 2026-08-10 and not reopened. Choosing or operating an identity substrate is a
@@ -105,7 +112,8 @@ must not reference it (I-C5), and ADR-006 rule 1 makes that structural only if t
 module.
 
 **One identity shared across products.** One principal store, with federation or account linking.
-Rejected by brief decision 5 and by the brief's non-goals.
+Rejected by brief decision 5 and by the brief's non-goals. Still rejected: the 2026-10-08 account store links
+identities within one host and never across products.
 
 ## Not decided here
 

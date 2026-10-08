@@ -169,6 +169,6 @@ It schedules nothing. The near-term set is still the six of
 starts — [`implementation-plan.md`](implementation-plan.md) holds the ordering, and nothing on this
 page moves it.
 
-It also does not settle whether BarStrad is self-hosted and licensed per installation or a service
-operated for venues. That question contradicts binding statements in the D3 brief depending on its
-answer, it is the repository owner's to settle, and it is tracked rather than assumed.
+BarStrad's deployment shape is settled: the owner ruled on 2026-10-08
+([#24](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/24)) that it is a service the
+owner operates for venues, not software a venue installs.
