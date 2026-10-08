@@ -720,6 +720,9 @@ public sealed class McpInvocationTests
                             case IToolInvoker invoker:
                                 services.AddSingleton(invoker);
                                 break;
+                            case Action<IServiceCollection> configure:
+                                configure(services);
+                                break;
                         }
                     }
 

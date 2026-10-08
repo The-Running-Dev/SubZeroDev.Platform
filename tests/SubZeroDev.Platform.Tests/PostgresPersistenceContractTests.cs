@@ -70,8 +70,57 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
         }
     }
 
+    [Fact]
+    public async Task S35_5_Of_two_concurrent_guarded_writes_of_one_row_exactly_one_lands()
+    {
+        var connectionString = await AcquireConnectionStringAsync();
+        try
+        {
+            await using var host = await StartVersionedAsync(connectionString: connectionString);
+            await InsertVersionedRowAsync(host, "row", TenantId.Implicit, "original", version: 1);
+            var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+            var guard = host.Services.GetRequiredService<IVersionGuard>();
+            var updated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            // The first lands its update and holds its transaction, and so the row's lock, open.
+            var first = Task.Run(() => unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                async token =>
+                {
+                    var landed = await GuardedRenameAsync(guard, "row", TenantId.Implicit, expected: 1, "first", token);
+                    updated.TrySetResult();
+                    await release.Task;
+                    return landed;
+                },
+                CancellationToken.None));
+            await updated.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            // The second issues the same update, which waits on that lock.
+            var second = Task.Run(() => unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token => GuardedRenameAsync(guard, "row", TenantId.Implicit, expected: 1, "second", token),
+                CancellationToken.None));
+            await WaitForBlockedLockAsync(connectionString, second);
+
+            release.TrySetResult();
+            var firstResult = await first.WaitAsync(TimeSpan.FromSeconds(30));
+            var secondResult = await second.WaitAsync(TimeSpan.FromSeconds(30));
+
+            Assert.True(firstResult.IsSuccess);
+            Assert.True(firstResult.Value.IsSuccess);
+            Assert.False(secondResult.IsSuccess);
+            Assert.Equal(nameof(TransactionError.StaleVersion), secondResult.Error.Code);
+            Assert.Equal(("first", 2L), (await ReadVersionedRowAsync(host, "row"))!.Value);
+        }
+        finally
+        {
+            await ReleaseConnectionStringAsync(connectionString);
+        }
+    }
+
     /// <summary>Returns once a backend in this database waits on a lock it has not been granted —
-    /// the second dispatcher's insert queued behind the first's uncommitted key.</summary>
+    /// the overlapping work's statement queued behind the first transaction's uncommitted row.</summary>
     private static async Task WaitForBlockedLockAsync(string connectionString, Task overlapping)
     {
         var database = new NpgsqlConnectionStringBuilder(connectionString).Database;
@@ -80,7 +129,7 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
-            Assert.False(overlapping.IsCompleted, "The second dispatch finished without waiting on the first's inbox key.");
+            Assert.False(overlapping.IsCompleted, "The overlapping work finished without waiting on the first's lock.");
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 SELECT COUNT(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
@@ -95,7 +144,7 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
             await Task.Delay(TimeSpan.FromMilliseconds(50));
         }
 
-        Assert.Fail("The second dispatch never blocked on the first's uncommitted inbox key.");
+        Assert.Fail("The overlapping work never blocked on the first's uncommitted row.");
     }
 
     protected override async Task<string> AcquireConnectionStringAsync()

@@ -420,8 +420,8 @@ Acceptance:
 Out of scope: a separate inbox retention setting. Foreign keys or `PRAGMA foreign_keys`. Pruning anything by tenant.
 
 ## S35 — Two hosts writing the same row no longer silently overwrite each other
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As a product developer on Automator or BarStrad, I mark a table as versioned and write
 through the guard. A write based on a stale read is rejected as a whole, my endpoint answers 409, and my
@@ -444,7 +444,7 @@ Out of scope:
   - ETags or any version on a product wire.
 
 ## S36 — A module can do its start-up and shut-down work in its own two methods, in dependency order, and is always shut down if it started
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As a module author, I can put work that must happen before my host serves, and clean-up that must happen when it stops, in two methods on my module. They run in the order my module's dependencies imply. If anything fails during startup, every module that already started is shut down cleanly.

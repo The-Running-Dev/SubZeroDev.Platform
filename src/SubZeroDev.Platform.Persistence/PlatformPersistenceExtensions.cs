@@ -60,6 +60,7 @@ public static class PlatformPersistenceExtensions
         services.TryAddSingleton<InboxStore>();
 
         services.TryAddSingleton<IUnitOfWork, UnitOfWork>();
+        services.TryAddSingleton<IVersionGuard, VersionGuard>();
         services.TryAddSingleton<IMigrationRunner, MigrationRunner>();
 
         // Replaces Core's default, transaction-agnostic writer: Persistence is the only package that

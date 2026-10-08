@@ -152,4 +152,14 @@ public sealed record ContractViolation(string Code) : PlatformError(Code)
     /// fix the call site, not the scope.</summary>
     /// <returns>The violation.</returns>
     public static ContractViolation WriteInsideSharedReadScope() => new(nameof(WriteInsideSharedReadScope));
+
+    /// <summary>A guarded write ran with no ambient transaction, or inside one opened read-only. A
+    /// compare-and-swap outside a write unit of work has nothing to roll back when it fails.</summary>
+    /// <returns>The violation.</returns>
+    public static ContractViolation GuardedWriteOutsideWriteTransaction() => new(nameof(GuardedWriteOutsideWriteTransaction));
+
+    /// <summary>A guarded write matched more than one row: its predicate is not keyed to a single
+    /// row. The unit of work is rolled back, so none of the rows it matched change.</summary>
+    /// <returns>The violation.</returns>
+    public static ContractViolation GuardedWriteNotSingleRow() => new(nameof(GuardedWriteNotSingleRow));
 }

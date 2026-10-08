@@ -111,6 +111,11 @@ internal sealed record AmbientTransaction(
     /// <summary>Whether a shared-read scope has made this transaction refuse every write at the
     /// database (I-T1). Once set it stays set until the transaction ends.</summary>
     internal bool WritesRefused { get; set; }
+
+    /// <summary>Whether a guarded write on this transaction matched no row. Once set, the unit of
+    /// work rolls back and reports <see cref="TransactionError.StaleVersion"/> however its work
+    /// returned.</summary>
+    internal bool Doomed { get; set; }
 }
 
 /// <summary>Chooses the capability the configured provider calls for. A capability holds no
@@ -216,6 +221,22 @@ internal sealed class UnitOfWork(
             }
 
             var value = await work(cancellationToken).ConfigureAwait(false);
+
+            // Checked before the flushes below: a doomed unit stages nothing, whether or not its work
+            // looked at the guard's result — what it did was built on a read that no longer holds.
+            if (transaction.Doomed)
+            {
+                try
+                {
+                    await transaction.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort: the connection may already be gone.
+                }
+
+                return Result<T, TransactionError>.Failure(TransactionError.StaleVersion());
+            }
 
             // Enqueue stages rows rather than writing them, so a failed insert here is reported the
             // same way any other participant's write failure is — rolled back and classified —

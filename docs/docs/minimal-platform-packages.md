@@ -104,6 +104,13 @@ integration events, audit fields, and soft-delete where required.
 **Refuses** to impose a repository pattern. A product may use the data-access layer
 directly.
 
+**Guards** a write against a stale read when a product asks it to. A table that declares
+`IVersioned` carries a `version` column, and the product writes it through `IVersionGuard`
+with its own UPDATE or DELETE, predicated on the version it read. If the row changed, is
+gone, or belongs to another tenant, the write matches nothing and the whole unit of work
+rolls back with `StaleVersion` — even when the product's code ignored the result. The
+product answers 409 on HTTP and a fixed sentence on MCP; neither answer carries a version.
+
 **Done when** two modules each own their migrations independently and can be applied in
 either order; the outbox survives a process kill between the domain write and the publish;
 and **the tenant column exists in the first schema**, defaulted to a single implicit tenant,

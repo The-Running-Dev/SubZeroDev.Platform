@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence: tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs
+Evidence: tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/StaleVersionAnswerTests.cs
 
 ## Statement
 No answer to a stale version — HTTP, MCP, log or audit — carries a version value, and gone, changed and another tenant's row get the same answer (Owner: Persistence, each consumer.)
