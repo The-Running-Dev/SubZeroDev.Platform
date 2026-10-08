@@ -16,6 +16,12 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-08 — S25: the fresh-root case derives its attempt count from the sampling ratio, rather than predicting the sampler's per-trace-id decision
+Context: S25.1 offers two readings: a pass condition derived from `PlatformSampler`'s deterministic per-trace-id decision, or a derived attempt count with a miss below one in a million. Predicting the decision in TypeScript means replicating the .NET OpenTelemetry `TraceIdRatioBasedSampler` arithmetic (which bytes of the id, which endianness, which threshold rounding) without its source in the repository, and keeping that copy in step with every SDK upgrade.
+Chosen: the derived count. n = ceil(ln(1e-6) / ln(1 − 0.1)) = 132, so a healthy build misses with probability 0.9^132 ≈ 9.1e-7. The ratio and the bound are named constants and the derivation is written beside them. Broken pairing still fails every run, because no trace id then carries an edge→workload pair whatever the edge samples.
+Rejected: replicating the sampler's decision (a silent wrong answer on an SDK change would make the test vacuous or always-red); raising the ratio or making it configurable for the test (S25 out of scope; a public surface the contract does not declare).
+Reversibility: cheap. One constant block in one test.
+
 ### 2026-10-08 — S24: the HTTP outage test uses a provider that fails at the pipeline, since the Organizations provider cannot be reached from it
 Context: S24.5 names the condition "the Organizations permission provider's store unreachable". The HTTP pipeline check is never resource-scoped (I-R7), and `OrganizationsPermissionProvider` answers an empty grant without touching its store unless the resource is an `Organization`, so that literal condition yields 403 through the pipeline, not 503. Mcp scopes the check to `ResourceRef(tool, id)`, which reaches the store only for a tool named `Organization`.
 Chosen: both surface tests register a provider that returns an error at the check (a non-`ProviderUnavailable` one, to cover normalisation too), which is the state an unreachable store puts any provider in. No production change to Organizations.
