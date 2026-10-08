@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -19,6 +20,8 @@ namespace SubZeroDev.Platform.GameEdge.Tests;
 
 /// <summary>S41 — a route the operator lists is relayed as the workload produces it, and a workload
 /// that dies after its headers leaves the caller an incomplete response rather than a finished one.
+/// S42 — that abort is the operator's to see: logged and counted once, and never confused with a
+/// caller who left.
 /// The edge runs on real Kestrel throughout, because chunk framing and a closed connection are what
 /// is being observed, and the in-memory test server has neither.</summary>
 public sealed class StreamingTests
@@ -317,7 +320,7 @@ public sealed class StreamingTests
         };
 
         var logs = new CapturingLoggerProvider();
-        await using var edge = StartEdge(workload.BaseAddress, logs, environment: QuietAbortEnvironment);
+        await using var edge = StartEdge(workload.BaseAddress, logs, environment: ObservedEnvironment);
 
         // No drain on dispose: the connection closes when the response is let go, as a browser tab
         // closing would.
@@ -352,7 +355,7 @@ public sealed class StreamingTests
 
         var logs = new CapturingLoggerProvider();
         await using var edge = StartEdge(
-            workload.BaseAddress, logs, firstByteTimeout: RefusalBudget, environment: QuietAbortEnvironment);
+            workload.BaseAddress, logs, firstByteTimeout: RefusalBudget, environment: ObservedEnvironment);
 
         using (var client = new HttpClient(new SocketsHttpHandler { MaxResponseDrainSize = 0 }) { BaseAddress = EdgeAddress(edge) })
         using (var leave = new CancellationTokenSource())
@@ -370,6 +373,180 @@ public sealed class StreamingTests
         Assert.DoesNotContain(logs.Entries, entry => entry.Level >= LogLevel.Error);
     }
 
+    /// <summary>S42.1, S42.3 and S42.4 (I-E5). A caller who leaves mid-stream and a stream that ends
+    /// cleanly come first, so the single record and single measurement at the end are the abort's
+    /// alone.</summary>
+    [Fact]
+    public async Task An_abort_is_logged_and_counted_once_and_a_caller_disconnect_is_neither()
+    {
+        await using var workload = await FakeWorkload.StartAsync();
+        var logs = new CapturingLoggerProvider();
+        await using var edge = StartEdge(workload.BaseAddress, logs, environment: ObservedEnvironment);
+        using var aborts = new AbortMeasurements(edge);
+
+        workload.Script = async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            await FakeWorkload.EmitAsync(context, First);
+            await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
+        };
+        using (var leaving = new HttpClient(new SocketsHttpHandler { MaxResponseDrainSize = 0 }) { BaseAddress = EdgeAddress(edge) })
+        {
+            using var response = await leaving.GetAsync(Route, HttpCompletionOption.ResponseHeadersRead);
+            await using var body = await response.Content.ReadAsStreamAsync();
+            Assert.Equal(First, await ReadTextAsync(body, First.Length).WaitAsync(Patience));
+        }
+
+        await workload.ScriptAborted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var client = Caller(edge);
+        workload.Script = async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            await FakeWorkload.EmitAsync(context, First);
+        };
+        Assert.Equal(First, await client.GetStringAsync(Route).WaitAsync(Patience));
+
+        var die = Gate();
+        workload.Script = DiesAfterFirst(die);
+        using var request = new HttpRequestMessage(HttpMethod.Get, Route);
+        request.Headers.Add("traceparent", $"00-{TraceId}-00f067aa0ba902b7-01");
+        using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+        {
+            await using var body = await response.Content.ReadAsStreamAsync();
+            Assert.Equal(First, await ReadTextAsync(body, First.Length).WaitAsync(Patience));
+            die.SetResult();
+            await Assert.ThrowsAnyAsync<IOException>(() => body.CopyToAsync(Stream.Null).WaitAsync(Patience));
+        }
+
+        var record = await SettledSingleAsync(logs, entry => entry.EventId.Id == 1101);
+        Assert.Equal("EdgeStreamAborted", record.EventId.Name);
+        Assert.Equal(LogLevel.Warning, record.Level);
+        Assert.Equal("SubZeroDev.Platform.GameEdge", record.Category);
+        Assert.Equal(Route, record.Value("Route"));
+        Assert.Equal(TraceId, record.Value("Correlation"));
+        Assert.Equal("workload_unreachable", record.Value("Code"));
+        Assert.True(Assert.IsType<long>(record.Value("BytesForwarded")) >= First.Length);
+        Assert.False(string.IsNullOrEmpty(Assert.IsType<string>(record.Value("ExceptionType"))));
+
+        // The exception travels as its type name only: attached, its message would reach every sink.
+        Assert.Null(record.Exception);
+
+        var measurement = Assert.Single(aborts.Taken);
+        Assert.Equal(1, measurement.Value);
+        Assert.Equal(Route, measurement.Tags["route"]);
+        Assert.Equal("workload_unreachable", measurement.Tags["code"]);
+
+        var edgeRecords = logs.Entries.Where(entry => entry.Category == "SubZeroDev.Platform.GameEdge" && entry.Level > LogLevel.Debug);
+        Assert.Same(record, Assert.Single(edgeRecords));
+    }
+
+    /// <summary>S42.2. The records Platform and the edge write name the configured prefix; the
+    /// request's path and query, which can carry a session or a token, appear in none of them. The
+    /// framework's own request and outbound-call records do carry the path, which is the access log's
+    /// job, and the level that governs them is the operator's.</summary>
+    [Fact]
+    public async Task An_aborted_stream_is_recorded_without_the_requests_path_or_query()
+    {
+        await using var workload = await FakeWorkload.StartAsync();
+        var die = Gate();
+        workload.Script = DiesAfterFirst(die);
+
+        var logs = new CapturingLoggerProvider();
+        await using var edge = StartEdge(workload.BaseAddress, logs, environment: ObservedEnvironment);
+        using var client = Caller(edge);
+
+        using (var response = await client.GetAsync("/console/stream/7?token=secret", HttpCompletionOption.ResponseHeadersRead))
+        {
+            await using var body = await response.Content.ReadAsStreamAsync();
+            Assert.Equal(First, await ReadTextAsync(body, First.Length).WaitAsync(Patience));
+            die.SetResult();
+            await Assert.ThrowsAnyAsync<IOException>(() => body.CopyToAsync(Stream.Null).WaitAsync(Patience));
+        }
+
+        var record = await SettledSingleAsync(logs, entry => entry.EventId.Id == 1101);
+        Assert.Equal(Route, record.Value("Route"));
+
+        string[] forbidden = ["/console/stream/7", "token", "secret"];
+        var ours = logs.Entries.Where(entry => entry.Category.StartsWith("SubZeroDev.", StringComparison.Ordinal)).ToList();
+        Assert.Contains(record, ours);
+        var leaks = ours
+            .Where(entry => forbidden.Any(entry.Text.Contains))
+            .Select(entry => $"{entry.Level} {entry.Category}: {entry.Text}")
+            .ToList();
+        Assert.Empty(leaks);
+    }
+
+    /// <summary>S42.5. No S41 outcome on a streamed route — a clean end, a caller who leaves, a
+    /// workload that dies after its headers, sends none in time, or is gone — is an unhandled failure
+    /// that reaches Platform's error envelope.</summary>
+    [Fact]
+    public async Task No_streamed_route_outcome_reaches_the_error_envelope()
+    {
+        var workload = await FakeWorkload.StartAsync();
+        var logs = new CapturingLoggerProvider();
+        await using var edge = StartEdge(workload.BaseAddress, logs, environment: ObservedEnvironment);
+        using var client = Caller(edge);
+
+        try
+        {
+            workload.Script = async context =>
+            {
+                context.Response.ContentType = "text/event-stream";
+                await FakeWorkload.EmitAsync(context, First);
+            };
+            Assert.Equal(First, await client.GetStringAsync(Route).WaitAsync(Patience));
+
+            workload.Script = async context =>
+            {
+                context.Response.ContentType = "text/event-stream";
+                await FakeWorkload.EmitAsync(context, First);
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
+            };
+            using (var leaving = new HttpClient(new SocketsHttpHandler { MaxResponseDrainSize = 0 }) { BaseAddress = EdgeAddress(edge) })
+            {
+                using var response = await leaving.GetAsync(Route, HttpCompletionOption.ResponseHeadersRead);
+                await using var body = await response.Content.ReadAsStreamAsync();
+                Assert.Equal(First, await ReadTextAsync(body, First.Length).WaitAsync(Patience));
+            }
+
+            await workload.ScriptAborted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var die = Gate();
+            workload.Script = DiesAfterFirst(die);
+            using (var response = await client.GetAsync(Route, HttpCompletionOption.ResponseHeadersRead))
+            {
+                await using var body = await response.Content.ReadAsStreamAsync();
+                Assert.Equal(First, await ReadTextAsync(body, First.Length).WaitAsync(Patience));
+                die.SetResult();
+                await Assert.ThrowsAnyAsync<IOException>(() => body.CopyToAsync(Stream.Null).WaitAsync(Patience));
+            }
+
+            workload.Script = async context => await Task.Delay(TimeSpan.FromSeconds(3), context.RequestAborted);
+            using (var response = await client.GetAsync(Route))
+            {
+                Assert.Equal(HttpStatusCode.GatewayTimeout, response.StatusCode);
+            }
+        }
+        finally
+        {
+            await workload.DisposeAsync();
+        }
+
+        // Gone. On Windows a refused connect can outlast the 2 s budget and be answered 504 rather
+        // than 503; either is the edge's own answer, and neither is the envelope's 500.
+        using (var response = await client.GetAsync(Route))
+        {
+            Assert.Contains(response.StatusCode, new[] { HttpStatusCode.ServiceUnavailable, HttpStatusCode.GatewayTimeout });
+        }
+
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        Assert.Contains(logs.Entries, entry => entry.Category.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            logs.Entries,
+            entry => entry.Category.EndsWith(".ErrorEnvelopeMiddleware", StringComparison.Ordinal) && entry.Level >= LogLevel.Error);
+    }
+
     private static Func<HttpContext, Task> DiesAfterFirst(TaskCompletionSource die) => async context =>
     {
         context.Response.ContentType = "text/event-stream";
@@ -380,11 +557,27 @@ public sealed class StreamingTests
         context.Abort();
     };
 
-    /// <summary>The disconnect tests run outside Development. There the framework's exception page
-    /// sits inside Platform's error envelope and absorbs an exception raised by a client abort at
-    /// Debug, so an exception escaping the edge would never reach the envelope's Error log and the
-    /// assertion could not fail.</summary>
-    private const string QuietAbortEnvironment = "Production";
+    /// <summary>The tests that read the edge's logs run outside Development. There the framework's
+    /// exception page sits inside Platform's error envelope and absorbs an exception raised by a
+    /// client abort at Debug, so an exception escaping the edge would never reach the envelope's
+    /// Error log and an assertion against it could not fail.</summary>
+    private const string ObservedEnvironment = "Production";
+
+    private const string TraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+    /// <summary>Waits for the first record that matches, then long enough for a second to land if
+    /// the edge were to write one, and returns the only one.</summary>
+    private static async Task<LogEntry> SettledSingleAsync(CapturingLoggerProvider logs, Func<LogEntry, bool> match)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (!logs.Entries.Any(match) && deadline.Elapsed < Patience)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+        }
+
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        return Assert.Single(logs.Entries, entry => match(entry));
+    }
 
     private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -489,9 +682,52 @@ public sealed class StreamingTests
         }
     }
 
+    private sealed record LogEntry(
+        string Category,
+        LogLevel Level,
+        EventId EventId,
+        string Message,
+        IReadOnlyList<KeyValuePair<string, object?>> State,
+        Exception? Exception)
+    {
+        public object? Value(string key) => State.Single(pair => pair.Key == key).Value;
+
+        /// <summary>Everything a sink could write: the message, each state value and the exception.</summary>
+        public string Text =>
+            string.Join(" | ", [Message, .. State.Select(pair => $"{pair.Key}={pair.Value}"), Exception?.ToString() ?? string.Empty]);
+    }
+
+    /// <summary>Listens to one host's abort counter only: the meter comes from that host's
+    /// <see cref="IMeterFactory"/>, so another test's edge in the same process is not heard.</summary>
+    private sealed class AbortMeasurements : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+
+        public AbortMeasurements(WebApplicationFactory<Program> edge)
+        {
+            var scope = edge.Services.GetRequiredService<IMeterFactory>();
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (ReferenceEquals(instrument.Meter.Scope, scope)
+                    && instrument.Meter.Name == PlatformTelemetry.MeterName
+                    && instrument.Name == "subzerodev.edge.stream.aborts")
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
+            };
+            _listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+                Taken.Enqueue((value, tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value))));
+            _listener.Start();
+        }
+
+        public ConcurrentQueue<(long Value, Dictionary<string, object?> Tags)> Taken { get; } = new();
+
+        public void Dispose() => _listener.Dispose();
+    }
+
     private sealed class CapturingLoggerProvider : ILoggerProvider
     {
-        public ConcurrentQueue<(string Category, LogLevel Level, string Message)> Entries { get; } = new();
+        public ConcurrentQueue<LogEntry> Entries { get; } = new();
 
         public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
 
@@ -512,7 +748,15 @@ public sealed class StreamingTests
                 TState state,
                 Exception? exception,
                 Func<TState, Exception?, string> formatter) =>
-                owner.Entries.Enqueue((category, logLevel, formatter(state, exception)));
+                owner.Entries.Enqueue(new LogEntry(
+                    category,
+                    logLevel,
+                    eventId,
+                    formatter(state, exception),
+                    // Copied now: the framework's request records read the request lazily, and it
+                    // is gone by the time a test looks.
+                    (state as IEnumerable<KeyValuePair<string, object?>>)?.ToList() ?? [],
+                    exception));
         }
     }
 }
