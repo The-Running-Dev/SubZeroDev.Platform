@@ -219,6 +219,136 @@ internal sealed class PlatformRegistryStartup(
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
+/// <summary>The modules in the topological order composition resolved.</summary>
+/// <param name="Modules">The modules, dependencies first.</param>
+internal sealed record ModuleOrder(IReadOnlyList<IPlatformModule> Modules);
+
+/// <summary>Runs every module's <see cref="IPlatformModule.InitializeAsync"/> on start and its
+/// <see cref="IPlatformModule.ShutdownAsync"/> exactly once afterwards.</summary>
+/// <remarks>Registered between <see cref="PlatformRegistryStartup"/> and
+/// <see cref="BackgroundWorkService"/>, so the host's own ordering does the timing: the registries froze
+/// in <c>StartingAsync</c>, which runs before any <c>StartAsync</c>, and the first tick and the listener
+/// both start after this. Shutdown is claimed once, by whichever comes first of the host stopping and
+/// the container disposing this service — the host never stops a service whose start-up a later
+/// service failed, so disposal is the only remaining chance to shut those modules down.</remarks>
+internal sealed class ModuleLifecycleService(
+    ModuleOrder order,
+    IServiceScopeFactory scopes,
+    IServiceProvider root,
+    PlatformOptions options,
+    ILogger<ModuleLifecycleService> logger) : IHostedService, IAsyncDisposable, IDisposable
+{
+    private readonly Lock gate = new();
+    private readonly Stack<IPlatformModule> initialized = new();
+    private bool shutdownClaimed;
+
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        foreach (var module in order.Modules)
+        {
+            try
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                await module.InitializeAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Module {Module} failed to initialize.", module.Name.Value);
+
+                using var drain = new CancellationTokenSource(options.Hosting.GracefulShutdownDrainWindow);
+                await ShutDownAsync(Claim(), containerAlive: true, drain.Token).ConfigureAwait(false);
+
+                // The type and never the message: the message is in the log line above, where the
+                // operator reads it, and not in an error that may travel further.
+                throw new PlatformStartupException(HostStartupError.ModuleInitialization(
+                    module.Name,
+                    exception.GetType().FullName ?? exception.GetType().Name));
+            }
+
+            bool lateForShutdown;
+            lock (gate)
+            {
+                lateForShutdown = shutdownClaimed;
+                if (!lateForShutdown)
+                {
+                    initialized.Push(module);
+                }
+            }
+
+            if (lateForShutdown)
+            {
+                // Stop was claimed while this module was initializing. It completed, so it is owed its
+                // one shutdown, and nothing after it starts.
+                await ShutDownAsync([module], containerAlive: true, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+    }
+
+    /// <summary>The host's token is already bounded by the drain window: Hosting sets the host's
+    /// shutdown timeout to it.</summary>
+    public Task StopAsync(CancellationToken cancellationToken) =>
+        ShutDownAsync(Claim(), containerAlive: true, cancellationToken);
+
+    public async ValueTask DisposeAsync()
+    {
+        var pending = Claim();
+        if (pending.Length == 0)
+        {
+            return;
+        }
+
+        using var drain = new CancellationTokenSource(options.Hosting.GracefulShutdownDrainWindow);
+        await ShutDownAsync(pending, containerAlive: false, drain.Token).ConfigureAwait(false);
+    }
+
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    /// <summary>Takes every initialized module, most recent first, exactly once.</summary>
+    private IPlatformModule[] Claim()
+    {
+        lock (gate)
+        {
+            if (shutdownClaimed)
+            {
+                return [];
+            }
+
+            shutdownClaimed = true;
+            var claimed = initialized.ToArray();
+            initialized.Clear();
+            return claimed;
+        }
+    }
+
+    private async Task ShutDownAsync(IPlatformModule[] modules, bool containerAlive, CancellationToken cancellationToken)
+    {
+        foreach (var module in modules)
+        {
+            try
+            {
+                if (containerAlive)
+                {
+                    await using var scope = scopes.CreateAsyncScope();
+                    await module.ShutdownAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // The container marks itself disposed before it disposes this service, so no scope
+                    // can be created and nothing can be resolved. The hook still runs; what it resolves
+                    // fails, and is logged below like any other failed shutdown.
+                    await module.ShutdownAsync(root, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+            {
+                // One module's failed shutdown must not cost the rest theirs.
+                logger.LogError(exception, "Module {Module} failed to shut down.", module.Name.Value);
+            }
+        }
+    }
+}
+
 /// <summary>Owns the timer for every background-work registration this host's role runs.</summary>
 /// <remarks>Hosting owns the schedule and a registration owns one tick. That separation is what
 /// makes background work testable: no fake clock drives a real timer, so a test replaces the
