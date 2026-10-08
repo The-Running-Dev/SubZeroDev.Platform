@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -175,6 +177,155 @@ public sealed class AdministrationShellTests
         {
             await app.DisposeAsync();
         }
+    }
+
+    /// <summary>S29.3 / I-W1 — every request the shell's source issues targets a route in the live
+    /// route table. The calls are read from the shell's own source, not from
+    /// <see cref="AdminEndpoints.ShellCalls"/>, so a call added to <c>api.ts</c> without a matching
+    /// route fails here; the manifest S16.3 checks is then held equal to what the source issues.
+    /// The source has exactly one network primitive — <c>fetch</c>, inside <c>api.ts</c>'s
+    /// <c>request</c> — so every request is one of <c>request</c>'s callers.</summary>
+    [Fact]
+    public async Task S29_3_Every_request_the_shell_issues_targets_a_route_in_the_public_route_table()
+    {
+        var sources = ShellBuildSources();
+        foreach (var (file, text) in sources)
+        {
+            foreach (var primitive in new[] { "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon" })
+            {
+                Assert.False(text.Contains(primitive, StringComparison.Ordinal), $"{file} uses {primitive}.");
+            }
+        }
+
+        var fetches = sources.Where(source => source.Text.Contains("fetch(", StringComparison.Ordinal)).ToList();
+        var (apiFile, api) = Assert.Single(fetches);
+        Assert.Equal("src/api.ts", apiFile);
+        Assert.Single(Regex.Matches(api, @"\bfetch\("));
+        Assert.Matches(@"async function request<T>\(path: string, init\?: RequestInit\)[^}]*fetch\(path, init\)", api);
+
+        var calls = Regex.Matches(
+                api,
+                @"request<[^>]*>\(\s*(?:""(?<path>[^""]*)""|`(?<path>[^`]*)`)\s*(?:,\s*\{\s*method:\s*""(?<method>[A-Z]+)""\s*\})?\s*,?\s*\)")
+            .Select(match => (
+                Method: match.Groups["method"].Success ? match.Groups["method"].Value : "GET",
+                Route: NormaliseRoute(match.Groups["path"].Value)))
+            .ToList();
+
+        // Every caller of request is one of the calls read above — the definition is the only other
+        // occurrence — and no other file calls it.
+        Assert.Equal(calls.Count + 1, Regex.Matches(api, @"\brequest<").Count);
+        Assert.NotEmpty(calls);
+
+        var (app, _) = await StartShellHostAsync();
+
+        try
+        {
+            var routeTable = app.Services.GetRequiredService<IEnumerable<EndpointDataSource>>()
+                .SelectMany(source => source.Endpoints)
+                .OfType<RouteEndpoint>()
+                .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
+                    .Select(method => (Method: method, Route: NormaliseRoute(endpoint.RoutePattern.RawText!))))
+                .ToHashSet();
+
+            foreach (var call in calls)
+            {
+                Assert.True(routeTable.Contains(call), $"The shell calls {call.Method} {call.Route}, which no mapped endpoint serves.");
+            }
+
+            Assert.Equal(
+                AdminEndpoints.ShellCalls.Select(call => (call.Method, Route: NormaliseRoute(call.RouteTemplate))).Order(),
+                calls.Order());
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    /// <summary>S29.3 / I-W1 — the shell's build output holds no server-side state store and no
+    /// endpoint of its own. CI does not build the shell, so the proof reads what determines that
+    /// output: the single <c>index.html</c> entry, every module its import graph reaches (relative
+    /// files and the declared browser dependencies only, never a Node or server module), a Vite
+    /// configuration with no server-side build or server hook, and no .NET project under
+    /// <c>shell/</c> that a host could reference.</summary>
+    [Fact]
+    public void S29_3_The_shell_build_holds_no_server_side_state_store_and_no_endpoint_of_its_own()
+    {
+        var shell = Path.Combine(S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory), "shell");
+
+        var scripts = Regex.Matches(File.ReadAllText(Path.Combine(shell, "index.html")), @"<script\b[^>]*>");
+        Assert.Equal(@"<script type=""module"" src=""/src/main.tsx"">", Assert.Single(scripts).Value);
+
+        using var package = JsonDocument.Parse(File.ReadAllText(Path.Combine(shell, "package.json")));
+        var dependencies = package.RootElement.GetProperty("dependencies").EnumerateObject().Select(p => p.Name).ToHashSet();
+        Assert.Equal(["react", "react-dom"], dependencies.Order());
+
+        var reached = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<string>([Path.Combine(shell, "src", "main.tsx")]);
+        while (pending.Count > 0)
+        {
+            var module = Path.GetFullPath(pending.Pop());
+            if (!reached.Add(module))
+            {
+                continue;
+            }
+
+            foreach (Match import in Regex.Matches(File.ReadAllText(module), @"^\s*import\s+(?:[^'""]*?\s+from\s+)?[""'](?<specifier>[^""']+)[""']", RegexOptions.Multiline))
+            {
+                var specifier = import.Groups["specifier"].Value;
+                if (specifier.StartsWith('.'))
+                {
+                    var target = Path.Combine(Path.GetDirectoryName(module)!, specifier);
+                    Assert.True(File.Exists(target), $"{module} imports {specifier}, which does not exist.");
+                    pending.Push(target);
+                    continue;
+                }
+
+                var packageName = specifier.Split('/')[0];
+                Assert.True(
+                    dependencies.Contains(packageName),
+                    $"{Path.GetRelativePath(shell, module)} imports '{specifier}', which is not a declared browser dependency.");
+            }
+
+            Assert.DoesNotMatch(@"\bimport\s*\(", File.ReadAllText(module));
+        }
+
+        Assert.Equal(
+            ["App.tsx", "AuditPanel.tsx", "EntitlementPanel.tsx", "IdentityPanel.tsx", "OrganizationPanel.tsx", "api.ts", "main.tsx"],
+            reached.Select(Path.GetFileName).Order(StringComparer.Ordinal));
+
+        var config = File.ReadAllText(Path.Combine(shell, "vite.config.ts"));
+        foreach (var serverSide in new[] { "ssr", "configureServer", "configurePreviewServer", "rollupOptions", "preview:" })
+        {
+            Assert.False(config.Contains(serverSide, StringComparison.Ordinal), $"vite.config.ts declares {serverSide}.");
+        }
+
+        var dotnet = Directory.EnumerateFiles(shell, "*", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && (path.EndsWith(".cs", StringComparison.Ordinal) || path.EndsWith("proj", StringComparison.Ordinal)))
+            .ToList();
+        Assert.True(dotnet.Count == 0, $"shell/ holds .NET sources a host could reference: {string.Join(", ", dotnet)}");
+    }
+
+    /// <summary>The shell's shipped source: everything under <c>shell/src</c> except its tests.</summary>
+    private static List<(string File, string Text)> ShellBuildSources()
+    {
+        var src = Path.Combine(S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory), "shell", "src");
+        return Directory.EnumerateFiles(src, "*.ts*", SearchOption.AllDirectories)
+            .Where(path => !path.Contains(".test.", StringComparison.Ordinal)
+                && !Path.GetRelativePath(src, path).StartsWith($"test{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Select(path => ("src/" + Path.GetRelativePath(src, path).Replace('\\', '/'), File.ReadAllText(path)))
+            .ToList();
+    }
+
+    /// <summary>One spelling for a route on both sides: query dropped, every parameter — a
+    /// TypeScript <c>${…}</c> interpolation or an ASP.NET <c>{name:constraint}</c> — reduced to
+    /// <c>{}</c>.</summary>
+    private static string NormaliseRoute(string route)
+    {
+        var path = route.Split('?')[0];
+        path = Regex.Replace(path, @"\$\{[^}]*\}", "{}");
+        return Regex.Replace(path, @"\{[^}]+\}", "{}");
     }
 
     /// <summary>Starts a web host mapping <see cref="AdminEndpoints.MapAdminEndpoints"/> — the exact

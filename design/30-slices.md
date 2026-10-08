@@ -251,8 +251,8 @@ Out of scope: audit retention, which is the retention slice's
 ([#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187)).
 
 ## S29 — Host startup, telemetry, the shell and billing keep their promises under test
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: an operator deploying a Platform host can trust that a bad configuration stops the host with a
 named cause, that missing telemetry settings start no exporter, and that billing never calls out on a
@@ -280,7 +280,7 @@ Acceptance:
 Out of scope: adding new startup checks or new telemetry options.
 
 ## S30 — Mcp, Organizations and Licensing keep their promises under test
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a product exposing tools over Mcp, inviting members, or selling paid features can rely on

@@ -1,8 +1,15 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Mcp;
 
 namespace SubZeroDev.Platform.Tests;
 
@@ -187,19 +194,177 @@ public sealed class CompositionProfileTests
         }
     }
 
+    /// <summary>S29.1 (I-C9): the variants are read off <see cref="HostStartupError"/> itself, so
+    /// one added later arrives here as a row with no provocation and fails, rather than going
+    /// unexercised because nobody remembered to list it.</summary>
+    public static TheoryData<string> StartupErrorVariants()
+    {
+        var variants = new TheoryData<string>();
+        foreach (var factory in typeof(HostStartupError)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.ReturnType == typeof(HostStartupError))
+            .OrderBy(method => method.Name, StringComparer.Ordinal))
+        {
+            variants.Add(factory.Name);
+        }
+
+        return variants;
+    }
+
+    /// <summary>S29.1 (I-C9) — every startup check fails the host and names the registration that
+    /// caused it. Each variant is provoked through a real host build and start, and the refusal must
+    /// carry that variant's code, decline to be retried, and name the thing the provocation
+    /// registered or set — a token chosen per row so a generic message cannot satisfy it.</summary>
+    [Theory]
+    [MemberData(nameof(StartupErrorVariants))]
+    public async Task S29_1_Every_startup_error_variant_fails_the_host_naming_its_cause(string variant)
+    {
+        Assert.True(
+            Provocations.TryGetValue(variant, out var provocation),
+            $"HostStartupError.{variant} has no provocation in {nameof(Provocations)}; add one.");
+
+        var (refuse, names) = provocation;
+        var error = await refuse();
+
+        Assert.Equal(variant, error.Code);
+        Assert.False(error.IsRetryable);
+        Assert.Contains(names, error.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>One provocation per variant, and the token its refusal must name.</summary>
+    private static readonly Dictionary<string, (Func<Task<HostStartupError>> Refuse, string Names)> Provocations = new()
+    {
+        [nameof(HostStartupError.Configuration)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?> { ["Platform:Outbox:ClaimWindow"] = "s29 is not a duration" },
+                services: null,
+                composeOperatedDefaults: true),
+            "Platform:Outbox:ClaimWindow"),
+
+        [nameof(HostStartupError.ModuleGraph)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?>(),
+                services => services.AddSingleton<IPlatformModule>(new StubModule("S29.Orders", "S29.Invoices")),
+                composeOperatedDefaults: true),
+            "S29.Invoices"),
+
+        [nameof(HostStartupError.Registration)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?>(),
+                services =>
+                {
+                    services.AddSingleton<IAuditSink>(new RecordingAuditSink("s29-shared", isDurable: true));
+                    services.AddSingleton<IAuditSink>(new RecordingAuditSink("s29-shared", isDurable: true));
+                },
+                composeOperatedDefaults: true),
+            "s29-shared"),
+
+        [nameof(HostStartupError.AuthenticationProviderRequired)] = (
+            () => RefusedAsync(
+                Profile(CompositionProfile.Operated),
+                services => services.AddSingleton<IAuditSink>(new RecordingAuditSink("durable", isDurable: true))),
+            nameof(IAuthenticationProvider)),
+
+        [nameof(HostStartupError.DurableAuditSinkRequired)] = (
+            () => RefusedAsync(
+                Profile(CompositionProfile.Operated),
+                services =>
+                {
+                    services.AddSingleton<IAuthenticationProvider>(new StubAuthenticationProvider("provider"));
+                    services.AddSingleton<IAuditSink>(new RecordingAuditSink("s29-volatile", isDurable: false));
+                }),
+            "s29-volatile"),
+
+        [nameof(HostStartupError.RegistrationForbiddenByProfile)] = (
+            () => RefusedAsync(
+                Profile(CompositionProfile.Local),
+                services => services.AddSingleton<IAuthenticationProvider>(new StubAuthenticationProvider("s29-issuer"))),
+            "s29-issuer"),
+
+        [nameof(HostStartupError.ProbeBindFailed)] = (WorkerProbeRefusedAsync, "Platform:Hosting:WorkerProbePort"),
+
+        [nameof(HostStartupError.UndeclaredEndpointRequirement)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?>(),
+                services: null,
+                composeOperatedDefaults: true,
+                mapEndpoints: application => application.MapGet("/s29-undeclared", () => Results.Ok())),
+            "/s29-undeclared"),
+
+        [nameof(HostStartupError.SensitiveToolParameter)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?>(),
+                services =>
+                {
+                    var permission = new PermissionName("S29.Tool.Use");
+                    services.AddSingleton<IPlatformModule, McpModule>();
+                    services.AddSingleton(new McpOptions { ExposedTools = new HashSet<ToolName> { new("s29-leaky-tool") } });
+                    services.AddSingleton<IToolProducer>(new StubToolProducer(
+                        "s29-producer",
+                        new ToolDefinition(
+                            new ToolName("s29-leaky-tool"),
+                            "Names a sensitive parameter.",
+                            McpInvocationTests.Schema("apiKey"),
+                            permission,
+                            null)));
+                    services.AddSingleton<IPermissionCatalog>(new StubPermissionCatalog(permission));
+                },
+                composeOperatedDefaults: true),
+            "s29-leaky-tool"),
+
+        [nameof(HostStartupError.UnregisteredPermission)] = (
+            () => RefusedAsync(
+                new Dictionary<string, string?>(),
+                services: null,
+                composeOperatedDefaults: true,
+                mapEndpoints: application => application
+                    .MapGet("/s29-unregistered", () => Results.Ok())
+                    .RequiresPlatformAuthorization(new PermissionName("S29.Undeclared"), feature: null)),
+            "S29.Undeclared"),
+    };
+
+    /// <summary>The worker host binds its probe port while it is being built, so the one variant
+    /// that is about a port is provoked on that path: the port is held open first.</summary>
+    private static Task<HostStartupError> WorkerProbeRefusedAsync()
+    {
+        var occupied = new TcpListener(IPAddress.Loopback, 0);
+        occupied.Start();
+
+        try
+        {
+            var settings = Settings.Required();
+            settings["Platform:Hosting:WorkerProbePort"] = ((IPEndPoint)occupied.LocalEndpoint).Port.ToString();
+
+            var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+            {
+                EnvironmentName = "Production",
+            });
+            builder.Configuration.AddInMemoryCollection(settings);
+
+            var thrown = Assert.Throws<PlatformStartupException>(() => builder.AddPlatformWorkerHost());
+            return Task.FromResult(Assert.IsType<HostStartupError>(thrown.Error));
+        }
+        finally
+        {
+            occupied.Stop();
+        }
+    }
+
     private static Dictionary<string, string?> Profile(CompositionProfile profile) =>
         new() { ["Platform:CompositionProfile"] = profile.ToString() };
 
     /// <summary>Starts a host that is expected to refuse, and returns why.</summary>
     private static async Task<HostStartupError> RefusedAsync(
         IDictionary<string, string?> settings,
-        Action<IServiceCollection>? services)
+        Action<IServiceCollection>? services,
+        bool composeOperatedDefaults = false,
+        Action<WebApplication>? mapEndpoints = null)
     {
         WebApplication? app = null;
         try
         {
             (app, _) = await WebHostUnderTest.StartAsync(
-                services, settings, composeOperatedDefaults: false);
+                services, settings, composeOperatedDefaults: composeOperatedDefaults, mapEndpoints: mapEndpoints);
         }
         catch (PlatformStartupException exception)
         {
