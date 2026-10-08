@@ -246,7 +246,11 @@ internal sealed class CompositionPermissionProvider(
 /// nothing and does not fail the evaluation — the union proceeds with whatever the others
 /// answered. A denial reached while a provider could not answer carries
 /// <see cref="AuthorizationError.ProviderUnavailable"/> naming the first such provider in registry
-/// order on <see cref="AuthorizationDecision.ProviderFailure"/>. Audits exactly one <see cref="AuditClass.Required"/> record on a denial, and carries
+/// order on <see cref="AuthorizationDecision.ProviderFailure"/>. An
+/// <see cref="IMirroredPermissionProvider"/> is asked when it last synced first; a stamp that is null,
+/// errs, or is older than <see cref="AuthorizationOptions.MirrorMaximumAge"/> by
+/// <see cref="IClock"/> means it is not asked for grants and counts as a provider that could not
+/// answer (I-A13). Audits exactly one <see cref="AuditClass.Required"/> record on a denial, and carries
 /// that write's failure on <see cref="AuthorizationDecision.AuditFailure"/>; an allowed decision is
 /// not itself an audited fact — the writer that performs the action audits it. A name no
 /// registered catalog declares is refused before any provider is asked, by throwing
@@ -258,7 +262,9 @@ internal sealed class AuthorizationEvaluator(
     IPermissionProviderRegistry providers,
     ICurrentPrincipal principal,
     ICurrentTenant tenant,
-    IAuditWriter auditWriter) : IAuthorizationEvaluator
+    IAuditWriter auditWriter,
+    IClock clock,
+    PlatformOptions options) : IAuthorizationEvaluator
 {
     public async Task<AuthorizationDecision> EvaluateAsync(
         PermissionName permission, ResourceRef? resource, CancellationToken cancellationToken)
@@ -279,6 +285,13 @@ internal sealed class AuthorizationEvaluator(
 
         foreach (var provider in providers.Registered)
         {
+            if (provider is IMirroredPermissionProvider mirror
+                && !await IsFreshAsync(mirror, currentTenant, cancellationToken).ConfigureAwait(false))
+            {
+                firstUnanswered ??= provider.Name;
+                continue;
+            }
+
             var granted = await provider
                 .GrantsAsync(currentPrincipal, currentTenant, resource, cancellationToken)
                 .ConfigureAwait(false);
@@ -316,5 +329,15 @@ internal sealed class AuthorizationEvaluator(
                 ? AuthorizationError.ProviderUnavailable(unanswered)
                 : null,
         };
+    }
+
+    private async Task<bool> IsFreshAsync(
+        IMirroredPermissionProvider mirror, TenantId currentTenant, CancellationToken cancellationToken)
+    {
+        var synced = await mirror.LastSyncedAsync(currentTenant, cancellationToken).ConfigureAwait(false);
+
+        return synced.IsSuccess
+            && synced.Value is { } stamp
+            && clock.UtcNow - stamp <= options.Authorization.MirrorMaximumAge;
     }
 }

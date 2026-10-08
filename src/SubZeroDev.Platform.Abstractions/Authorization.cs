@@ -100,6 +100,23 @@ public interface IPermissionProvider
         CancellationToken cancellationToken);
 }
 
+/// <summary>A provider that answers from a copy of grants held elsewhere — roles synced from an
+/// identity provider into a consumer's own table. The evaluator asks it when that copy was last
+/// synced before asking it for grants; a copy older than
+/// <c>Platform:Authorization:MirrorMaximumAge</c> by the evaluating host's clock is not asked, grants
+/// nothing and is recorded as <see cref="AuthorizationError.ProviderUnavailable"/> naming it, so a
+/// role removed at the source stops granting within a bound the operator sets (I-A13).</summary>
+public interface IMirroredPermissionProvider : IPermissionProvider
+{
+    /// <summary>When the mirror was last synced for the tenant. Null — never synced — and an error are
+    /// both treated as stale: the provider is not asked for grants.</summary>
+    /// <param name="tenant">The tenant the check is evaluated in.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    /// <returns>The last sync instant, null when the mirror has never synced, or why it could not be
+    /// read.</returns>
+    Task<Result<DateTimeOffset?, AuthorizationError>> LastSyncedAsync(TenantId tenant, CancellationToken cancellationToken);
+}
+
 /// <summary>Declares the permission names a module contributes. Collected and frozen at
 /// startup.</summary>
 public interface IPermissionCatalog
