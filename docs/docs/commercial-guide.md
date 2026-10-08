@@ -20,7 +20,7 @@ Identity, Organizations, Billing, Licensing, Audit and Mcp. Each package name st
 `SubZeroDev.Platform.`. Authorization and entitlement are framework seams, not additional packages.
 The web shell is a separate frontend and is not a backend package dependency.
 
-The **Package Consumers** CI workflow uploads the twelve checked `.nupkg` files as the
+The **Package Consumers** CI workflow uploads the thirteen checked `.nupkg` files as the
 `d5-packages` artifact. A separate job downloads them into a fresh checkout, restores the
 sample solution using an isolated package cache, checks that every Platform reference resolved
 as a package at that version, then builds and runs the assertions and web/worker round trip.
@@ -177,6 +177,67 @@ name and writing the keys above. It depends on the configuration abstraction and
 package, so it cannot implement a parallel provider. A quirk the keys cannot express is not handled in
 Platform and not worked around in the vendor's package: it becomes a new generic-path key first, and a
 key the table does not name fails startup exactly as it would from a settings file.
+
+## Signing a person in (optional)
+
+Platform is a resource server: it checks the bearer token a caller already holds. A browser client
+with no sign-in of its own takes the optional `SubZeroDev.Platform.SignIn` package, which is an
+OpenID Connect authorization-code client with a proof key (S256). It is a public client: there is no
+client secret and no refresh token. A host that does not call `AddPlatformSignIn()` takes none of it.
+
+```csharp
+builder.Services.AddPlatformSignIn();          // before AddPlatformWebHost
+// ...
+app.MapPlatformSignIn();                        // on the host that takes Identity
+```
+
+Each method is one section, `SubZeroDev:SignIn:<Name>`. `Issuer` must equal the `Issuer` of a provider
+under `Platform:Identity:Bearer`, so the token the module obtains is one Identity will accept.
+
+| Key | Meaning |
+|---|---|
+| `Issuer`, `ClientId`, `RedirectPath` | Required. `RedirectPath` is where the callback is mapped; two methods may not share one. |
+| `Scopes` | Space-separated; must include `openid`. Default `openid`. |
+| `PostSignOutPath` | Where sign-out returns to. Default `/`. |
+| `EndSessionTemplate` | The provider's own sign-out address, with `{client_id}`, `{return_to}` and `{id_token_hint}` placeholders. Use it when the provider's discovery document lists no `end_session_endpoint`. |
+| `ExtraAuthorizeParameters:<name>` | Extra authorize-request parameters, such as `audience`. The names the module owns (`client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method`) fail startup. |
+
+A key the table does not name, a client-secret key included, fails startup naming the full key.
+
+Four endpoints are mapped per method: `GET /signin/<Name>/begin`, the callback at `RedirectPath`,
+`POST /signin/<Name>/token` and `POST /signin/<Name>/signout`. The session is an encrypted cookie
+holding the issuer, the subject, the access token and its expiry, and nothing else. The page reads its
+access token from the token endpoint with an `X-Platform-SignIn` header; the cookie itself is
+`HttpOnly`.
+
+**Reaching for the hook is expected for some providers, not a sign of doing it wrong.** When the two
+settings above cannot express a provider's dialect, register code for that one method and leave the
+rest to configuration:
+
+```csharp
+builder.Services.ConfigurePlatformSignIn("auth0", hooks =>
+{
+    hooks.AdjustAuthorizeRequest = context => ValueTask.FromResult<IReadOnlyDictionary<string, string>>(
+        new Dictionary<string, string>(context.Parameters) { ["audience"] = "https://api.example.com" });
+    hooks.ReplaceEndSessionAddress = context => ValueTask.FromResult(new Uri("https://tenant.example.com/v2/logout"));
+});
+```
+
+Configuration binds first and the hook adjusts after. A hook cannot change what Platform trusts: the
+module re-sets its own parameters (state, nonce, proof key, client and redirect) after the hook runs,
+and the token it holds is still checked by Identity like any other. Rewriting the scheme behind a
+proxy is a deployment concern for `ForwardedHeaders`, not a hook.
+
+What an operator must know:
+
+- **Sign-out clears the module's session. It does not revoke a token already issued**; that token
+  stays valid until it expires.
+- **Instances that serve one site must share Data Protection keys.** A cookie one instance wrote and
+  another cannot read is treated as no session.
+- **The cookie carries the access token**, so a provider that issues very large tokens may exceed the
+  browser's cookie limit.
+- The issuer's discovery document is read on first use, not at startup, and cached for an hour; an
+  unreachable issuer does not stop the host from starting.
 
 ## Security defaults and failures
 
