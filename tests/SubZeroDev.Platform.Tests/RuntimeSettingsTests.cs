@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
@@ -11,7 +12,8 @@ namespace SubZeroDev.Platform.Tests;
 
 /// <summary>S43: a product declares its runtime settings once and reads the value that applies to
 /// whoever is asking — layer precedence, the startup checks on the catalogue, and the reader's errors,
-/// on SQLite. <c>RuntimeSettingsPostgresTests</c> repeats S43.8 on PostgreSQL.</summary>
+/// on SQLite. S44: an administrator changes a setting at a layer through the writer, authorized and
+/// audited. <c>RuntimeSettingsPostgresTests</c> repeats S43.8 on PostgreSQL.</summary>
 public sealed class RuntimeSettingsTests
 {
     internal static readonly TenantId T1 = new(Guid.Parse("11111111-1111-1111-1111-111111111111"));
@@ -403,13 +405,384 @@ public sealed class RuntimeSettingsTests
             .WithServices(configure)
             .StartAsync(CancellationToken.None);
 
+    // S44.1 -----------------------------------------------------------------------------------
+
+    internal static readonly SettingDefinition<string> Banner =
+        SettingDefinition.Text(new SettingName("Sample.Banner"), "", AllLayers);
+
+    [Fact]
+    public async Task S44_1_In_Local_the_system_principal_sets_the_global_value_and_one_Required_record_names_it()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, local: true);
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.Global, 8L, TenantId.Implicit, FakePrincipals.System);
+
+        Assert.True(set.IsSuccess);
+        Assert.Equal(new ResolvedSetting<long>(8, SettingLayer.Global), (await ReadAsync(host, MaxConcurrent, T1, AccountA)).Value);
+        var record = Assert.Single(sink.Received);
+        Assert.Equal(RuntimeSettingsAuditActions.SettingSet, record.Action);
+        Assert.Equal(AuditClass.Required, record.Class);
+        Assert.Equal(AuditOutcome.Allowed, record.Outcome);
+        Assert.Equal(new ResourceRef("RuntimeSetting", "global/Sample.Runs.MaxConcurrent"), record.Resource);
+        Assert.Equal(FakePrincipals.System.Id, record.Actor);
+    }
+
+    // S44.2 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S44_2_Account_A_with_no_grant_is_denied_a_tenant_write_and_only_the_denial_is_audited()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.Tenant, 6L, T1, AccountA);
+
+        Assert.False(set.IsSuccess);
+        Assert.Equal(nameof(SettingError.PermissionDenied), set.Error.Code);
+        Assert.False(set.Error.IsRetryable);
+        Assert.Equal(0, await RowCountAsync(host));
+        var record = Assert.Single(sink.Received);
+        Assert.Equal(PlatformAuditActions.AuthorizationDenied, record.Action);
+        Assert.Equal(new ResourceRef("RuntimeSetting", MaxConcurrentName.Value), record.Resource);
+    }
+
+    [Fact]
+    public async Task S44_2_A_grant_of_WriteTenant_on_the_setting_admits_the_write_and_no_write_to_another_setting()
+    {
+        var other = SettingDefinition.Integer(new SettingName("Sample.Runs.Other"), 1, AllLayers);
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(
+            sink, extra: GrantWriteTenantOnMaxConcurrent, declares: [MaxConcurrent, other]);
+
+        var granted = await SetAsync(host, MaxConcurrent, SettingLayer.Tenant, 6L, T1, AccountA);
+        var elsewhere = await SetAsync(host, other, SettingLayer.Tenant, 6L, T1, AccountA);
+
+        Assert.True(granted.IsSuccess);
+        Assert.Equal(new ResolvedSetting<long>(6, SettingLayer.Tenant), (await ReadAsync(host, MaxConcurrent, T1, AccountA)).Value);
+        Assert.Equal(new ResourceRef("RuntimeSetting", "tenant/Sample.Runs.MaxConcurrent"), sink.Received[0].Resource);
+        Assert.Equal(nameof(SettingError.PermissionDenied), elsewhere.Error.Code);
+        Assert.Equal(1, await RowCountAsync(host));
+    }
+
+    [Fact]
+    public async Task S44_2_A_grant_of_WriteTenant_does_not_admit_a_global_write()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, extra: GrantWriteTenantOnMaxConcurrent);
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.Global, 8L, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.PermissionDenied), set.Error.Code);
+        Assert.Equal(0, await RowCountAsync(host));
+    }
+
+    [Fact]
+    public async Task S44_2_A_global_write_from_a_tenant_is_the_installation_s_value_in_every_tenant()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(
+            sink,
+            extra: services => services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionProvider>(
+                new SettingGrantProvider(RuntimeSettingsPermissions.WriteGlobal, MaxConcurrentName))));
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.Global, 8L, T1, AccountA);
+
+        Assert.True(set.IsSuccess);
+        Assert.Equal(new ResolvedSetting<long>(8, SettingLayer.Global), (await ReadAsync(host, MaxConcurrent, T2, AccountA)).Value);
+        Assert.Equal(new ResourceRef("RuntimeSetting", "global/Sample.Runs.MaxConcurrent"), Assert.Single(sink.Received).Resource);
+    }
+
+    // S44.3 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S44_3_A_boolean_and_a_text_value_read_back_as_written()
+    {
+        var enabled = SettingDefinition.Boolean(new SettingName("Sample.Runs.Enabled"), false, AllLayers);
+        await using var host = await StartWriterHostAsync(DurableSink(), declares: [enabled, Banner]);
+
+        Assert.True((await SetAsync(host, enabled, SettingLayer.User, true, T1, AccountA)).IsSuccess);
+        Assert.True((await SetAsync(host, Banner, SettingLayer.User, " Hello, 1.5 ", T1, AccountA)).IsSuccess);
+
+        Assert.Equal(new ResolvedSetting<bool>(true, SettingLayer.User), (await ReadAsync(host, enabled, T1, AccountA)).Value);
+        Assert.Equal(new ResolvedSetting<string>(" Hello, 1.5 ", SettingLayer.User), (await ReadAsync(host, Banner, T1, AccountA)).Value);
+    }
+
+    [Fact]
+    public async Task S44_3_Account_A_sets_its_own_value_with_no_grant_and_only_A_in_T1_reads_it()
+    {
+        var accountB = FakePrincipals.Account("issuer-a", "account-b");
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+        await InsertAsync(host, TenantId.Implicit, "global", MaxConcurrentName.Value, "", "", "8");
+        await InsertAsync(host, T1, "tenant", MaxConcurrentName.Value, "", "", "6");
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.User, 2L, T1, AccountA);
+
+        Assert.True(set.IsSuccess);
+        Assert.Equal(new ResolvedSetting<long>(2, SettingLayer.User), (await ReadAsync(host, MaxConcurrent, T1, AccountA)).Value);
+        Assert.Equal(new ResolvedSetting<long>(6, SettingLayer.Tenant), (await ReadAsync(host, MaxConcurrent, T1, accountB)).Value);
+        Assert.Equal(new ResolvedSetting<long>(8, SettingLayer.Global), (await ReadAsync(host, MaxConcurrent, T2, AccountA)).Value);
+        var record = Assert.Single(sink.Received);
+        Assert.Equal(new ResourceRef("RuntimeSetting", "user/Sample.Runs.MaxConcurrent"), record.Resource);
+        Assert.Equal(T1, record.Tenant);
+    }
+
+    [Fact]
+    public async Task S44_3_Writing_the_user_layer_again_replaces_the_value()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+
+        await SetAsync(host, MaxConcurrent, SettingLayer.User, 2L, T1, AccountA);
+        var again = await SetAsync(host, MaxConcurrent, SettingLayer.User, 3L, T1, AccountA);
+
+        Assert.True(again.IsSuccess);
+        Assert.Equal(new ResolvedSetting<long>(3, SettingLayer.User), (await ReadAsync(host, MaxConcurrent, T1, AccountA)).Value);
+        Assert.Equal(1, await RowCountAsync(host));
+        Assert.Equal(2, sink.Received.Count);
+    }
+
+    // S44.4 -----------------------------------------------------------------------------------
+
+    public static TheoryData<string, string, SettingLayer> UnavailableLayers => new()
+    {
+        { "delegated", "T1", SettingLayer.User },
+        { "system", "T1", SettingLayer.User },
+        { "account", "implicit", SettingLayer.Tenant },
+        { "account", "implicit", SettingLayer.User },
+        { "system", "implicit", SettingLayer.Tenant },
+    };
+
+    [Theory]
+    [MemberData(nameof(UnavailableLayers))]
+    public async Task S44_4_A_layer_that_does_not_exist_for_the_writer_is_unavailable_with_no_row_and_no_record(
+        string kind, string tenantName, SettingLayer layer)
+    {
+        var principal = kind switch
+        {
+            "delegated" => FakePrincipals.Delegated("issuer-a", "account-a"),
+            "system" => FakePrincipals.System,
+            _ => AccountA,
+        };
+        var tenant = tenantName == "T1" ? T1 : TenantId.Implicit;
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, local: true, extra: GrantWriteTenantOnMaxConcurrent);
+
+        var set = await SetAsync(host, MaxConcurrent, layer, 2L, tenant, principal);
+        var clear = await ClearAsync(host, MaxConcurrent, layer, tenant, principal);
+
+        Assert.Equal(nameof(SettingError.LayerUnavailable), set.Error.Code);
+        Assert.Equal(nameof(SettingError.LayerUnavailable), clear.Error.Code);
+        Assert.Equal(0, await RowCountAsync(host));
+        Assert.Empty(sink.Received);
+    }
+
+    // S44.5 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S44_5_A_layer_the_declaration_does_not_admit_is_refused_before_anything_else()
+    {
+        var globalOnly = SettingDefinition.Integer(
+            MaxConcurrentName, 4, new HashSet<SettingLayer> { SettingLayer.Global });
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, declares: [globalOnly]);
+
+        var set = await SetAsync(host, globalOnly, SettingLayer.User, 2L, T1, AccountA);
+        var clear = await ClearAsync(host, globalOnly, SettingLayer.Tenant, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.LayerNotAdmitted), set.Error.Code);
+        Assert.Equal(nameof(SettingError.LayerNotAdmitted), clear.Error.Code);
+        Assert.Equal(0, await RowCountAsync(host));
+        Assert.Empty(sink.Received);
+    }
+
+    [Fact]
+    public async Task S44_5_A_value_outside_the_rule_is_invalid_and_the_error_does_not_echo_it()
+    {
+        var atMostTen = SettingDefinition.Integer(MaxConcurrentName, 4, AllLayers, value => value <= 10);
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, declares: [atMostTen]);
+
+        var set = await SetAsync(host, atMostTen, SettingLayer.User, 12L, T1, AccountA);
+        var atLimit = await SetAsync(host, atMostTen, SettingLayer.User, 10L, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.InvalidValue), set.Error.Code);
+        Assert.False(set.Error.IsRetryable);
+        Assert.DoesNotContain("12", set.Error.Detail, StringComparison.Ordinal);
+        Assert.True(atLimit.IsSuccess);
+        Assert.Equal(1, await RowCountAsync(host));
+    }
+
+    [Fact]
+    public async Task S44_5_An_invalid_value_is_refused_before_permission_is_evaluated()
+    {
+        var atMostTen = SettingDefinition.Integer(MaxConcurrentName, 4, AllLayers, value => value <= 10);
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, declares: [atMostTen]);
+
+        var set = await SetAsync(host, atMostTen, SettingLayer.Tenant, 12L, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.InvalidValue), set.Error.Code);
+        Assert.Empty(sink.Received);
+    }
+
+    [Fact]
+    public async Task S44_5_A_setting_the_catalogue_does_not_declare_is_not_written()
+    {
+        var undeclared = SettingDefinition.Integer(new SettingName("Sample.Undeclared"), 1, AllLayers);
+        var sameNameOtherType = SettingDefinition.Boolean(MaxConcurrentName, false, AllLayers);
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+
+        Result<SettingError>[] results =
+        [
+            await SetAsync(host, undeclared, SettingLayer.User, 1L, T1, AccountA),
+            await SetAsync(host, sameNameOtherType, SettingLayer.User, true, T1, AccountA),
+            await ClearAsync(host, undeclared, SettingLayer.User, T1, AccountA),
+            await ClearAsync(host, sameNameOtherType, SettingLayer.User, T1, AccountA),
+        ];
+
+        Assert.All(results, result => Assert.Equal(nameof(SettingError.NotDeclared), result.Error.Code));
+        Assert.Equal(0, await RowCountAsync(host));
+    }
+
+    // S44.6 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S44_6_Clearing_the_tenant_row_falls_the_next_read_through_to_global_with_one_cleared_record()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink, extra: GrantWriteTenantOnMaxConcurrent);
+        await InsertAsync(host, TenantId.Implicit, "global", MaxConcurrentName.Value, "", "", "8");
+        await InsertAsync(host, T1, "tenant", MaxConcurrentName.Value, "", "", "6");
+        await InsertAsync(host, T2, "tenant", MaxConcurrentName.Value, "", "", "5");
+
+        var clear = await ClearAsync(host, MaxConcurrent, SettingLayer.Tenant, T1, AccountA);
+
+        Assert.True(clear.IsSuccess);
+        Assert.Equal(new ResolvedSetting<long>(8, SettingLayer.Global), (await ReadAsync(host, MaxConcurrent, T1, AccountA)).Value);
+        Assert.Equal(new ResolvedSetting<long>(5, SettingLayer.Tenant), (await ReadAsync(host, MaxConcurrent, T2, AccountA)).Value);
+        var record = Assert.Single(sink.Received);
+        Assert.Equal(RuntimeSettingsAuditActions.SettingCleared, record.Action);
+        Assert.Equal(AuditClass.Required, record.Class);
+        Assert.Equal(new ResourceRef("RuntimeSetting", "tenant/Sample.Runs.MaxConcurrent"), record.Resource);
+    }
+
+    [Fact]
+    public async Task S44_6_Clearing_a_row_that_is_not_there_succeeds_and_writes_no_record()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+
+        var clear = await ClearAsync(host, MaxConcurrent, SettingLayer.User, T1, AccountA);
+
+        Assert.True(clear.IsSuccess);
+        Assert.Empty(sink.Received);
+    }
+
+    [Fact]
+    public async Task S44_6_Clearing_needs_the_same_permission_as_setting()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+        await InsertAsync(host, T1, "tenant", MaxConcurrentName.Value, "", "", "6");
+
+        var clear = await ClearAsync(host, MaxConcurrent, SettingLayer.Tenant, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.PermissionDenied), clear.Error.Code);
+        Assert.Equal(1, await RowCountAsync(host));
+        Assert.Equal(PlatformAuditActions.AuthorizationDenied, Assert.Single(sink.Received).Action);
+    }
+
+    // S44.7 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S44_7_A_failing_durable_sink_leaves_the_previous_value_and_answers_a_retryable_failure()
+    {
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(sink);
+        Assert.True((await SetAsync(host, MaxConcurrent, SettingLayer.User, 2L, T1, AccountA)).IsSuccess);
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable("settings")));
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.User, 3L, T1, AccountA);
+        var clear = await ClearAsync(host, MaxConcurrent, SettingLayer.User, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.StoreUnavailable), set.Error.Code);
+        Assert.True(set.Error.IsRetryable);
+        Assert.Equal(nameof(SettingError.StoreUnavailable), clear.Error.Code);
+        Assert.Equal(new ResolvedSetting<long>(2, SettingLayer.User), (await ReadAsync(host, MaxConcurrent, T1, AccountA)).Value);
+    }
+
+    // S44.8 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S44_8_A_permission_provider_that_cannot_answer_makes_the_write_retryable_with_no_row()
+    {
+        var faulting = new FakePermissionProvider
+        {
+            Response = Result<IReadOnlySet<PermissionName>, AuthorizationError>.Failure(
+                AuthorizationError.ProviderUnavailable(new PermissionProviderName("Platform.Testing.PermissionProvider"))),
+        };
+        var sink = DurableSink();
+        await using var host = await StartWriterHostAsync(
+            sink, extra: services => services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionProvider>(faulting)));
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.Tenant, 6L, T1, AccountA);
+        var clear = await ClearAsync(host, MaxConcurrent, SettingLayer.Global, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.AuthorizationUnavailable), set.Error.Code);
+        Assert.True(set.Error.IsRetryable);
+        Assert.Equal(nameof(SettingError.AuthorizationUnavailable), clear.Error.Code);
+        Assert.Equal(0, await RowCountAsync(host));
+    }
+
+    [Fact]
+    public async Task S44_8_A_denial_whose_audit_record_cannot_be_written_is_retryable()
+    {
+        var sink = DurableSink();
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable("settings")));
+        await using var host = await StartWriterHostAsync(sink);
+
+        var set = await SetAsync(host, MaxConcurrent, SettingLayer.Tenant, 6L, T1, AccountA);
+
+        Assert.Equal(nameof(SettingError.AuthorizationUnavailable), set.Error.Code);
+        Assert.Equal(0, await RowCountAsync(host));
+    }
+
+    [Fact]
+    public void S44_The_module_declares_its_two_write_permissions()
+    {
+        var services = new ServiceCollection();
+        new RuntimeSettingsModule().Register(services);
+        using var provider = services.BuildServiceProvider();
+
+        var catalog = Assert.Single(provider.GetServices<IPermissionCatalog>());
+
+        Assert.Equal(
+            ["Platform.RuntimeSettings.WriteGlobal", "Platform.RuntimeSettings.WriteTenant"],
+            catalog.Declares.Select(permission => permission.Value).Order());
+    }
+
+    private static void GrantWriteTenantOnMaxConcurrent(IServiceCollection services) =>
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionProvider>(
+            new SettingGrantProvider(RuntimeSettingsPermissions.WriteTenant, MaxConcurrentName)));
+
     // Helpers ---------------------------------------------------------------------------------
 
     private static async Task<IPlatformTestHost> StartHostAsync(
-        ISettingCatalog catalog, bool migrate = true, Action<IServiceCollection>? extra = null)
+        ISettingCatalog catalog,
+        bool migrate = true,
+        Action<IServiceCollection>? extra = null,
+        bool local = false)
     {
-        var host = await PlatformTestHost.CreateBuilder()
-            .WithProvider(PersistenceProvider.Sqlite)
+        var builder = PlatformTestHost.CreateBuilder().WithProvider(PersistenceProvider.Sqlite);
+        if (local)
+        {
+            builder = builder.WithSetting("CompositionProfile", nameof(CompositionProfile.Local));
+        }
+
+        var host = await builder
             .WithServices(services =>
             {
                 services.AddSingleton<IPlatformModule, RuntimeSettingsModule>();
@@ -448,7 +821,7 @@ public sealed class RuntimeSettingsTests
         }
     }
 
-    /// <summary>Writes a row by raw SQL, beneath the module — the writer is S44's.</summary>
+    /// <summary>Writes a row by raw SQL, beneath the module and its writer's checks.</summary>
     internal static async Task<bool> InsertAsync(
         IPlatformTestHost host, TenantId tenant, string layer, string name, string issuer, string subject, string value)
     {
@@ -483,6 +856,48 @@ public sealed class RuntimeSettingsTests
         return result.IsSuccess;
     }
 
+    private static RecordingAuditSink DurableSink() => new("settings", isDurable: true);
+
+    /// <summary>A SQLite host composing the module, the sample catalogue and <paramref name="sink"/>,
+    /// Operated unless <paramref name="local"/>.</summary>
+    private static Task<IPlatformTestHost> StartWriterHostAsync(
+        RecordingAuditSink sink,
+        bool local = false,
+        Action<IServiceCollection>? extra = null,
+        SettingDefinition[]? declares = null) =>
+        StartHostAsync(
+            new SampleCatalog(declares ?? [MaxConcurrent, Banner]),
+            local: local,
+            extra: services =>
+            {
+                services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink));
+                extra?.Invoke(services);
+            });
+
+    private static async Task<Result<SettingError>> SetAsync<T>(
+        IPlatformTestHost host, SettingDefinition<T> setting, SettingLayer layer, T value, TenantId tenant, Principal principal)
+        where T : notnull
+    {
+        var writer = host.Services.GetRequiredService<ISettingWriter>();
+        using (host.Services.GetRequiredService<IOperationScopeFactory>().Begin(tenant, principal))
+        {
+            return await writer.SetAsync(setting, layer, value, CancellationToken.None);
+        }
+    }
+
+    private static async Task<Result<SettingError>> ClearAsync(
+        IPlatformTestHost host, SettingDefinition setting, SettingLayer layer, TenantId tenant, Principal principal)
+    {
+        var writer = host.Services.GetRequiredService<ISettingWriter>();
+        using (host.Services.GetRequiredService<IOperationScopeFactory>().Begin(tenant, principal))
+        {
+            return await writer.ClearAsync(setting, layer, CancellationToken.None);
+        }
+    }
+
+    private static Task<long> RowCountAsync(IPlatformTestHost host) =>
+        ScalarAsync(host, "SELECT COUNT(*) FROM runtime_setting;");
+
     internal static async Task<long> ScalarAsync(IPlatformTestHost host, string sql)
     {
         var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
@@ -505,6 +920,21 @@ public sealed class RuntimeSettingsTests
     internal sealed class SampleCatalog(params SettingDefinition[] declares) : ISettingCatalog
     {
         public IReadOnlyCollection<SettingDefinition> Declares { get; } = declares;
+    }
+
+    /// <summary>Grants one permission, and only on the one setting it names.</summary>
+    private sealed class SettingGrantProvider(PermissionName permission, SettingName setting) : IPermissionProvider
+    {
+        public PermissionProviderName Name { get; } = new("Tests.RuntimeSettings");
+
+        public Task<Result<IReadOnlySet<PermissionName>, AuthorizationError>> GrantsAsync(
+            Principal principal, TenantId tenant, ResourceRef? resource, CancellationToken cancellationToken)
+        {
+            IReadOnlySet<PermissionName> grants = resource == new ResourceRef("RuntimeSetting", setting.Value)
+                ? new HashSet<PermissionName> { permission }
+                : new HashSet<PermissionName>();
+            return Task.FromResult(Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(grants));
+        }
     }
 
     /// <summary>A hosted service whose start marks the host as having begun to serve.</summary>

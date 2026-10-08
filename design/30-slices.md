@@ -756,8 +756,8 @@ Out of scope: the writer, the permissions' enforcement and the audit (S44); any 
 endpoint or UI.
 
 ## S44 — An administrator changes a setting for the installation, a tenant or themselves, and the change is recorded
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an administrator, I change a setting globally or for my tenant when I hold the grant,
 and as an account I change my own value. Each change is audited without its value, and a change I am
@@ -793,7 +793,7 @@ Out of scope: endpoints for products to call (products map their own); optimisti
 Organizations granting the two names.
 
 ## S45 — Both hosts see a change on their next read, and the sample proves it on both databases
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an operator running a web host and a worker against one database, I change a setting on
