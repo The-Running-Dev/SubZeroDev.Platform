@@ -31,6 +31,7 @@ if (StreamingRoutes.Validate(options) is { Count: > 0 } streamingErrors)
 }
 
 builder.Services.AddSingleton(options);
+builder.Services.AddSingleton<EdgeTelemetry>();
 
 builder.Services.AddHttpClient<IGameWorkloadForwarder, GameWorkloadForwarder>();
 

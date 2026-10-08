@@ -51,6 +51,17 @@ and probes the workload's own `/readyz` — so a workload that is alive but unab
 store unreachable) makes the edge report not-ready too. With the workload stopped, the edge stays
 up: liveness still answers `200`, readiness answers `503` naming the failed check.
 
+A route listed under `GameEdge:StreamingRoutes` is relayed as the workload writes it, so a
+workload that dies after its headers leaves the caller an incomplete response while the access log
+still shows `200`. Watch the edge's own record of it instead: one `Warning` with event id `1101`
+(`EdgeStreamAborted`) in category `SubZeroDev.Platform.GameEdge`, naming the configured prefix and
+the correlation id, and one count on `subzerodev.edge.stream.aborts` on meter `SubZeroDev.Platform`,
+tagged `route` and `code` — chart and alert on that counter, not on status codes. A caller who
+leaves mid-stream raises neither. Neither carries the request's path or query, but the framework's
+own request and outbound-call records do at `Information`; if a query can carry a token, raise
+`Microsoft.AspNetCore.Hosting.Diagnostics` and `System.Net.Http.HttpClient` above `Information`
+under `Logging:LogLevel`.
+
 ## Run the replay against each
 
 From `workloads/game-service`, with dependencies installed (no server needs to be started by

@@ -675,8 +675,8 @@ other than status and `Content-Type`; streaming the request body; any change to 
 `ForwardAsync`.
 
 ## S42 — An operator can see how often a streamed route was cut short by the workload, without a dashboard counting those cuts as successes
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: When a workload dies mid-stream, the operator gets one warning naming the route and the
 correlation id, and a counter they can chart and alert on. Callers who simply leave do not raise
@@ -698,7 +698,9 @@ Acceptance:
     - bytes forwarded ≥ the length of `data: 1\n\n`
     - an exception type name
   - S42.2 Requesting `GET /console/stream/7?token=secret` with the S41.2 workload: no log record at any
-    level contains `/console/stream/7`, `token` or `secret`.
+    level that Platform or the edge writes (category `SubZeroDev.*`) contains `/console/stream/7`, `token`
+    or `secret`. The framework's request and outbound-call records are out of the check; see
+    `90-decisions.md`, 2026-10-09, S42.
   - S42.3 A `MeterListener` on meter `SubZeroDev.Platform` records exactly one measurement of `1` on
     `subzerodev.edge.stream.aborts`, tagged `route=/console/stream` and `code=workload_unreachable`.
   - S42.4 In S41.9's scenario (caller disconnect) and S41.7's (clean end), no `EdgeStreamAborted`
@@ -710,7 +712,7 @@ Out of scope: a counter for streams started or their duration; an idle timeout; 
 I-E1..I-E5 to `code` (that is the reconciliation after both slices merge).
 
 ## S43 — A product declares its runtime settings once and reads the value that applies to whoever is asking
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As a product developer, I declare a setting with a default and the layers it may be set at,

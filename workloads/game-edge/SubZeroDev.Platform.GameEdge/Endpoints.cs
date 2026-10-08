@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
@@ -93,8 +94,9 @@ public static class GameEdgeEndpointExtensions
     /// <summary>Relays a streamed route. Before the workload's headers the edge answers for itself, as
     /// on a buffered route. At the headers it commits the workload's status and <c>Content-Type</c>,
     /// then flushes each piece of the body as it is read (I-E2). A workload failure after that aborts
-    /// the response, with no byte of the edge's own (I-E3); a caller that goes away ends the relay
-    /// quietly, and disposing the upstream response carries that to the workload.</summary>
+    /// the response, with no byte of the edge's own (I-E3), and is logged and counted once (I-E5); a
+    /// caller that goes away ends the relay quietly, and disposing the upstream response carries that
+    /// to the workload.</summary>
     private static async Task StreamAsync(
         HttpContext context,
         IGameWorkloadForwarder forwarder,
@@ -124,6 +126,8 @@ public static class GameEdgeEndpointExtensions
 
         await using var streamed = result.Value;
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        var headersAt = Stopwatch.GetTimestamp();
+        long forwarded = 0;
         try
         {
             context.Response.StatusCode = streamed.StatusCode;
@@ -145,8 +149,16 @@ public static class GameEdgeEndpointExtensions
                     && thrown is IOException or HttpRequestException)
                 {
                     // The workload failed after the commit point: the honest signal left is an
-                    // incomplete response, so no terminating chunk and no edge-authored byte.
+                    // incomplete response, so no terminating chunk and no edge-authored byte. The
+                    // operator's signal is the edge's own record, which a 200 in the access log hides.
                     context.Abort();
+                    context.RequestServices.GetRequiredService<EdgeTelemetry>().StreamAborted(
+                        route,
+                        correlation,
+                        EdgeError.WorkloadUnreachable(),
+                        forwarded,
+                        Stopwatch.GetElapsedTime(headersAt),
+                        thrown);
                     return;
                 }
 
@@ -157,6 +169,7 @@ public static class GameEdgeEndpointExtensions
 
                 await context.Response.Body.WriteAsync(buffer.AsMemory(0, read), aborted).ConfigureAwait(false);
                 await context.Response.Body.FlushAsync(aborted).ConfigureAwait(false);
+                forwarded += read;
             }
         }
         catch (OperationCanceledException) when (aborted.IsCancellationRequested)
