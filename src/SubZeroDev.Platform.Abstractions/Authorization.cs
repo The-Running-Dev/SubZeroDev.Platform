@@ -122,6 +122,8 @@ public interface IAuthorizationEvaluator
     /// <param name="resource">The resource the check is scoped to, when resource-scoped.</param>
     /// <param name="cancellationToken">Cancels the check.</param>
     /// <returns>The decision.</returns>
+    /// <exception cref="PlatformContractViolationException"><paramref name="permission"/> is declared
+    /// by no registered catalog. Raised before any provider is asked; nothing is audited.</exception>
     Task<AuthorizationDecision> EvaluateAsync(
         PermissionName permission,
         ResourceRef? resource,

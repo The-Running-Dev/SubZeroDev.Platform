@@ -100,6 +100,10 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
   `Required` write's failure from the response, which *Error semantics* § 4 forbids.
 - **A `PermissionName` reaching the evaluator unregistered is a startup-detectable defect, never a
   runtime denial.** A typo that silently denies is indistinguishable from a policy that denies — I-A3.
+  Startup catches it on every endpoint and tool requirement. A caller that reaches the evaluator
+  directly with one gets `PlatformContractViolationException` carrying
+  `PermissionCatalogError.UnregisteredPermission`, before any provider is asked and with nothing
+  audited (S26).
 - **`PermissionName.Value` must not acquire a parser, a wildcard, a hierarchy or a prefix match.** It
   is a stable id compared ordinally. Platform's own names take the `Platform.` prefix by convention;
   the convention is not enforced by the type, because a consumer's names are its own.
@@ -2262,11 +2266,11 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 |---|---|---|---|---|
 | **I-A1** | `AuthorizationDecision.Sources` is non-empty **iff** `Outcome == Allowed` (Owner: Core.) Enforced by code — evaluator construction. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A2** | The evaluator takes the union of every registered provider and consults no other source (Owner: Core.) | — | instruction | — |
-| **I-A3** | Every `PermissionName` reaching the evaluator is declared by some `IPermissionCatalog`; an undeclared one fails **startup**, never a request (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A3** | Every `PermissionName` reaching the evaluator is declared by some `IPermissionCatalog`; an undeclared one fails **startup**, never a request (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A4** | Two modules never declare the same `PermissionName` (Owner: Core.) Enforced by code — startup validation. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A5** | A provider returning an error denies and never grants (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A6** | The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
-| **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
 | **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
 | **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
@@ -2299,7 +2303,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-E3** | After a streamed route's headers are sent, a workload failure aborts the caller's response — no terminating chunk on HTTP/1.1, a reset stream on HTTP/2 — and the edge writes no byte of its own after headers: no status, envelope, frame or trailer (Owner: GameEdge.) | — | instruction | — |
 | **I-E4** | A streamed forward is exactly one attempt to the workload: the edge never retries it, before or after headers, and never resumes a stream (Owner: GameEdge.) | — | instruction | — |
 | **I-E5** | Each aborted stream is logged once as `EdgeStreamAborted` at `Warning` and counted once on `subzerodev.edge.stream.aborts`, carrying the configured prefix and never the request path, query, body or exception message; a caller disconnect is neither counted nor logged above `Debug` (Owner: GameEdge.) | — | instruction | — |
-| **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) | — | instruction | tests/SubZeroDev.Platform.Tests/OperationScopeTests.cs, tests/SubZeroDev.Platform.Tests/PrincipalTests.cs |
+| **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) | — | code | tests/SubZeroDev.Platform.Tests/OperationScopeTests.cs, tests/SubZeroDev.Platform.Tests/PrincipalTests.cs |
 | **I-I2** | `PrincipalId.Issuer` and `.Subject` are never parsed, normalised, trimmed or case-folded by Platform (Owner: Abstractions.) | — | instruction | — |
 | **I-I3** | `PrincipalId.ToString()` is never split to recover the pair; anywhere the pair is stored it is two columns (Owner: Abstractions, Audit store, Organizations.) Enforced by code — in each schema; enforced by instruction otherwise. | — | code, instruction | — |
 | **I-I4** | Platform declares no user entity and no directory. The optional account store holds an account id, its creation instant and its linked (issuer, subject) pairs, and nothing else, and exists only in a host that registers it (Owner: Identity.) Enforced by code — an architecture check over the module's types and its migration's columns. | — | code, instruction | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
@@ -2362,7 +2366,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-P11** | Migrate mode opens no operation scope for a seeder; a seeder writes only inside a scope it opened naming its tenant, as `Principal.LocalSystem` (Owner: Persistence for the first half; each seeder's module for the second.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
 | **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
 | **I-R2** | Tenant resolution precedes authorization (Owner: Hosting, Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
-| **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
 | **I-R4** | The local host takes the same path with no step skipped and no branch taken (Owner: Hosting.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
 | **I-R5** | Only an endpoint admitting new paid-feature work is entitlement-gated (Owner: consumers.) | — | instruction | — |
 | **I-R6** | Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |

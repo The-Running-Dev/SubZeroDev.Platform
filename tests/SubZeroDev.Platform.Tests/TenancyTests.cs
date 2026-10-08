@@ -1,10 +1,14 @@
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
+using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Persistence;
 using SubZeroDev.Platform.Testing;
 
@@ -102,6 +106,82 @@ public sealed class TenancyTests
         currentAnswer = SecondTenant;
 
         Assert.Equal(FirstTenant, scope.Tenant);
+    }
+
+    [Fact]
+    public async Task S26_4_Neither_the_scope_nor_its_implementation_exposes_a_way_to_change_its_tenant_or_principal()
+    {
+        await using var host = await PlatformTestHost.CreateBuilder().StartAsync(CancellationToken.None);
+        var factory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        using var scope = factory.Begin(FirstTenant, FakePrincipals.Account());
+
+        // The refusal is structural: there is no member to call. Not a public setter, not an init
+        // accessor, not a private one a later edit could widen without this test noticing.
+        foreach (var type in new[] { typeof(IOperationScope), scope.GetType() })
+        {
+            foreach (var name in new[] { nameof(IOperationScope.Tenant), nameof(IOperationScope.Principal) })
+            {
+                var property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                Assert.NotNull(property);
+                Assert.Null(property.GetSetMethod(nonPublic: true));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task S26_4_A_read_at_the_end_of_a_request_returns_the_tenant_and_principal_set_at_its_start()
+    {
+        var first = FakePrincipals.Account(subject: "first");
+        var tenantAnswer = FirstTenant;
+        var principalAnswer = first;
+        TenantId? tenantAtStart = null, tenantAtEnd = null;
+        Principal? principalAtStart = null, principalAtEnd = null;
+        var sameScope = false;
+
+        var (app, client) = await WebHostUnderTest.StartAsync(
+            services =>
+            {
+                services.AddSingleton<IAuthenticationProvider>(new StubAuthenticationProvider(
+                    "fixed-scope",
+                    _ => Result<Principal, AuthenticationError>.Success(principalAnswer)));
+                services.AddSingleton<IAuditSink>(new RecordingAuditSink("fixed-scope", isDurable: true));
+                services.AddSingleton<ITenantResolver>(new StubTenantResolver("fixed-scope", () => tenantAnswer));
+            },
+            composeOperatedDefaults: false,
+            mapEndpoints: application => application
+                .MapGet("/fixed", async (ICurrentTenant tenant, ICurrentPrincipal principal, IOperationScopeAccessor accessor) =>
+                {
+                    var scopeAtStart = accessor.Current;
+                    tenantAtStart = tenant.Current;
+                    principalAtStart = principal.Current;
+
+                    // Both would answer differently now, and the request crosses an await before
+                    // it reads again: nothing re-resolves or re-authenticates mid-request.
+                    tenantAnswer = SecondTenant;
+                    principalAnswer = FakePrincipals.Delegated(subject: "second");
+                    await Task.Delay(10);
+
+                    tenantAtEnd = tenant.Current;
+                    principalAtEnd = principal.Current;
+                    sameScope = ReferenceEquals(scopeAtStart, accessor.Current);
+                    return Results.Ok();
+                })
+                .ExemptFromPlatformAuthorization(
+                    "Test-only endpoint proving the scope is fixed for the request (I-R3); not part of any "
+                    + "product's permission surface."));
+
+        await using (app)
+        using (client)
+        {
+            var response = await client.GetAsync("/fixed");
+            response.EnsureSuccessStatusCode();
+        }
+
+        Assert.Equal(FirstTenant, tenantAtStart);
+        Assert.Equal(FirstTenant, tenantAtEnd);
+        Assert.Equal(first, principalAtStart);
+        Assert.Equal(first, principalAtEnd);
+        Assert.True(sameScope);
     }
 
     [Fact]

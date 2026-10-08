@@ -105,6 +105,10 @@ public abstract class OperatedScenarioTests
                 .WithServices(services =>
                 {
                     services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink));
+
+                    // The evaluator refuses a name no catalog declares (I-A3), so the scenario
+                    // declares its own, as any module evaluating a permission directly must.
+                    services.AddSingleton<IPermissionCatalog>(new StubPermissionCatalog(permission));
                     services.TryAddEnumerable(ServiceDescriptor.Singleton<IPermissionProvider>(new StubPermissionProvider(
                         "scenario-granter",
                         (principal, _, _) => Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(
