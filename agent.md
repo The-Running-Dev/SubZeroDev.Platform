@@ -173,7 +173,7 @@ and preferences belong in `AGENTS.md`.
   locally, missing in CI, with nothing saying why.
 - **That near-miss then happened here, for real.** `.gitignore` carried a bare `build/` under
   "Build output". `Invoke-SetupDocs` installs `build/Test-Documentation.ps1` and
-  `build/ConvertTo-DocumentationHomepage.ps1` there, and `.github/workflows/docs-ci.yml` runs
+  `build/ConvertTo-DocumentationHomepage.ps1` there, and `.github/workflows/docs.yml` runs
   the first — so both were invisible to git, the gate passed locally, and CI would have failed
   on a missing file. Caught by running `git check-ignore -v` on the installed paths rather
   than trusting `git status`, which simply does not list them. **`build/` is a scripts

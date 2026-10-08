@@ -75,20 +75,8 @@
       "name": "build.yml / game-service — Test"
     },
     {
-      "command": "./build/Test-Documentation.ps1",
-      "name": "docs-ci.yml / documentation — Validate Markdown links, terminology, and generated files"
-    },
-    {
-      "command": "./build/Test-SliceStatusMarkers.ps1",
-      "name": "docs-ci.yml / slice-status-markers — Validate design/30-slices.md's Status markers"
-    },
-    {
-      "command": "npm --prefix site ci && npm --prefix site run check",
-      "name": "docs-ci.yml / verify — Build and verify the status-page site"
-    },
-    {
-      "command": "npm --prefix site ci && npm --prefix site run check",
-      "name": "docs-deploy.yml / deploy — Build and verify the status-page site"
+      "command": "./build/Test-Documentation.ps1 && ./build/Test-SliceStatusMarkers.ps1, then the docs build, then npm --prefix site ci && npm --prefix site run check && npm --prefix site run merge",
+      "name": "docs.yml / Build — Validate Markdown links, terminology, generated files and design/30-slices.md's Status markers, build the docs, then check and merge the status-page site"
     },
     {
       "command": "pwsh ./build/Test-PackageConsumerGraphFixtures.ps1",

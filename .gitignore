@@ -5,7 +5,7 @@ node_modules/
 #
 # NOT `build/`. That directory holds committed scripts here — the documentation
 # gate and the homepage generator, installed by Invoke-SetupDocs and run by
-# .github/workflows/docs-ci.yml. Ignoring it made both invisible to git: present
+# .github/workflows/docs.yml. Ignoring it made both invisible to git: present
 # locally, green locally, absent in CI, with nothing saying why. Name the output
 # directories instead, and never re-add a bare `build/`.
 dist/

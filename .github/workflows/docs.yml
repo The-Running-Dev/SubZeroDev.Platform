@@ -1,0 +1,21 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  docs:
+    permissions: { contents: read, pages: write, id-token: write }
+    uses: The-Running-Dev/GitHub-ActionTemplates/.github/workflows/docs.yml@v0
+    with:
+      output: artifacts/docs
+      pre-build: |
+        ./build/Test-Documentation.ps1
+        ./build/Test-SliceStatusMarkers.ps1
+      # The status-page site is checked and merged into the documentation build.
+      node-project: site
+      node-scripts: check merge
