@@ -16,6 +16,12 @@ _(previously tracked out of this section: issues [#187](https://github.com/The-R
 
 ---
 
+### 2026-10-08 — The sign-in module is stateless, hosted on the Identity host, with a hook above vendor configuration
+Context: [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94). The owner ratified the 2026-10-07 proposal below, agreed all six premises of the `/design` pass and chose the minimal approach. The proposal left the session store, the callback host and the hook shape open.
+Chosen: an optional `SubZeroDev.Platform.SignIn` module (`10-design.md` *Data model* § 11, *Alternatives* § 14). The session is an encrypted cookie and the module owns no row. There is no refresh token and no client secret. The client reads its access token from a same-origin, anti-forgery-guarded endpoint, so the authentication seam is not widened. Vendor dialect is two configuration settings, an end-session template and extra authorize parameters, so a vendor package still references no Platform package (I-I13). The hook sits above configuration, is registered by the host, and cannot change what Platform trusts. Sign-out does not revoke an issued token. The endpoints are mapped on the operated host that takes Identity, recorded as a recommendation under *Open questions* 5. The 2026-09-26 accepted risk is superseded for a host that takes the module. Contract Unresolved item 4 is closed against this.
+Rejected: a stateful backend-for-frontend with a session store; a client-side contract with no host; widening the seam to read the cookie; a vendor package that supplies the hook; a raw callback with no configuration path.
+Reversibility: cheap to add, moderate to withdraw — the keys and endpoints become public contract once a host depends on them. A session store can be added later without removing this module.
+
 ### 2026-10-07 — Platform hosts an optional sign-in module so #94's hook has a method to attach to (reverses 2026-09-26) [PROPOSED — owner to ratify]
 
 Context: [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94). The 2026-09-26 entry accepted red-team F1: with Platform a resource server (`10-design.md` *Alternatives* § 11), #94's first, third and fourth criteria — a hook per configured sign-in method, sign-out proven against a provider without the standard one, documentation that reaching for the hook is expected — describe a sign-in method Platform does not have. The owner ruled to reverse that choice rather than amend #94 down to the validation half.

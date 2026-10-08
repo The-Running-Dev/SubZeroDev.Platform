@@ -418,6 +418,28 @@ case-insensitively, so two sections whose names differ only in case are one sect
   are referenced by `SubZeroDev.Platform.Identity` and by nothing else, on the same terms, and for the
   same reason, as the MCP SDK (*Types* § 10).
 
+### 13. The sign-in module — `SubZeroDev.Platform.SignIn`
+
+Settings, one set per sign-in method, read from configuration under `SubZeroDev:SignIn:<Name>`. The
+schema is public contract, like § 12's.
+
+| Key | Required | Rule |
+|---|---|---|
+| `Issuer` | yes | names a configured generic-path provider's issuer; a name that matches none fails startup |
+| `ClientId` | yes | non-empty |
+| `RedirectPath` | yes | a relative path beginning with `/` |
+| `Scopes` | no | defaults to `openid` |
+| `EndSessionTemplate` | no | placeholders limited to `{client_id}`, `{return_to}`, `{id_token_hint}`; any other fails startup |
+| `ExtraAuthorizeParameters` | no | name and value pairs. A name that is one of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method` fails startup |
+| `PostSignOutPath` | no | a relative path, `/` by default |
+
+There is no client-secret key. An unrecognised key fails startup naming the full key (I-I10).
+
+```csharp
+public sealed record AuthorizeRequestContext(string Method, Uri Address, IReadOnlyDictionary<string, string> Parameters);
+public sealed record EndSessionContext(string Method, Uri Address);
+```
+
 ---
 
 ## Persisted schemas
@@ -981,6 +1003,41 @@ startup-abort wrapper, authorized by
   accepted, file and OTLP failures remain behind their bounded non-blocking processors and never
   propagate to application work.
 
+
+### 13. The sign-in module — `SubZeroDev.Platform.SignIn`
+
+Written against the recommendation of `10-design.md` *Open questions*, 5: the endpoints are mapped on the
+operated host that takes Identity.
+
+```csharp
+public static IServiceCollection AddPlatformSignIn(this IServiceCollection services);
+public static IEndpointRouteBuilder MapPlatformSignIn(this IEndpointRouteBuilder endpoints);
+public static IServiceCollection ConfigurePlatformSignIn(this IServiceCollection services, string method, Action<SignInHooks> configure);
+
+public sealed class SignInHooks
+{
+    public Func<AuthorizeRequestContext, ValueTask<IReadOnlyDictionary<string, string>>>? AdjustAuthorizeRequest { get; set; }
+    public Func<EndSessionContext, ValueTask<Uri>>? ReplaceEndSessionAddress { get; set; }
+}
+```
+
+Endpoints per method, under `/signin/<method>`: `begin` (GET), `callback` (GET), `token` (POST, requires the
+anti-forgery header), `signout` (POST).
+
+- **A caller may rely on** the callback creating a session only after the state matched (I-S1), and on
+  the session carrying no more than issuer, subject, access token and its expiry.
+- **A caller must never** expect sign-out to revoke an issued access token (I-S2), or the hook to change
+  what Platform trusts (I-S3). The hooks receive Platform's records and return a parameter set or a
+  `Uri`; no ASP.NET or IdentityModel type crosses this surface (I-I12).
+- **Hooks run after configuration binds.** `AdjustAuthorizeRequest` may add parameters and not replace
+  `client_id`, `redirect_uri`, `response_type`, `scope`, `state` or the proof key; `ReplaceEndSessionAddress`
+  is called after the template or discovery value has produced the address.
+- **A vendor configuration package** writes `EndSessionTemplate` and `ExtraAuthorizeParameters` and
+  nothing else of this module's keys it did not already write for § 12, and references no Platform
+  package (I-I13).
+- **Proof without a vendor package:** a fixture issuer whose discovery document has no end-session
+  endpoint; sign-out sends the person to the template's address built from the fixture's values.
+
 ---
 
 ## Error semantics
@@ -1361,6 +1418,9 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-R5** | Only an endpoint admitting new paid-feature work is entitlement-gated (Owner: consumers.) | — | instruction | — |
 | **I-R6** | Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 | **I-R7** | The pipeline's authorization check is never resource-scoped; a per-resource check is the handler's own second call (Owner: Hosting, consumers.) | — | instruction | — |
+| **I-S1** | The sign-in module creates a session only after the callback's state equals the state it stored for that begin, and the session holds no more than the issuer, the subject, the access token and its expiry; the module owns no row and does not change the authentication seam (Owner: SignIn.) | — | instruction | — |
+| **I-S2** | Sign-out clears the session and redirects to the issuer, and never claims to revoke an access token already issued; such a token stays valid at Platform until it expires (Owner: SignIn.) | — | instruction | — |
+| **I-S3** | A host-registered sign-in hook runs after configuration binds and cannot change which issuer, key source, audience or algorithm Platform trusts; the trust root is the generic path's settings alone (Owner: SignIn.) | — | instruction | — |
 | **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
@@ -1405,6 +1465,13 @@ structural for Platform's providers (I-I6, I-A2, I-A10) and a contract obligatio
 revoke-then-deny test shipped in `Platform.Testing` as a harness. `Principal.Claims` stays public, and
 #92's criteria were amended to match, per the owner's ruling of 2026-10-07 ([#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263),
 [`90-decisions.md`](90-decisions.md), 2026-10-07).
+
+**Item 4 was reopened and resolved by the 2026-10-08 design, and the paragraph below is superseded for
+a host that takes the sign-in module.** #94's first, third and fourth criteria now have a sign-in method
+to attach to (*Types* § 13, *Public surface* § 13), and 2026-09-26's accepted risk no longer applies to
+such a host. The host that serves the endpoints is `10-design.md` *Open questions*, 5, and the
+declarations are written against its recommendation. What follows is kept as the record of the
+validation half:
 
 Item 4 (a per-vendor escape hatch for sign-in providers that depart from the standard,
 [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94)) was resolved **for the
