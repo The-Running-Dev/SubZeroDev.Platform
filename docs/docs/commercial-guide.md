@@ -20,7 +20,7 @@ Identity, Organizations, Billing, Licensing, Audit and Mcp. Each package name st
 `SubZeroDev.Platform.`. Authorization and entitlement are framework seams, not additional packages.
 The web shell is a separate frontend and is not a backend package dependency.
 
-The **Package Consumers** CI workflow uploads the thirteen checked `.nupkg` files as the
+The **Package Consumers** CI workflow uploads the fourteen checked `.nupkg` files as the
 `d5-packages` artifact. A separate job downloads them into a fresh checkout, restores the
 sample solution using an isolated package cache, checks that every Platform reference resolved
 as a package at that version, then builds and runs the assertions and web/worker round trip.
@@ -105,6 +105,13 @@ Run the worker in another terminal with
 `dotnet run --project samples/SubZeroDev.Platform.Sample.Worker`. Keep both processes configured
 for the same database. The Linux CI round-trip script supplies matching settings and checks
 restart delivery. These are local sample commands, not deployment instructions.
+
+`migrate` applies every registered module's migrations, then runs each module's seeders: the
+installation-wide data a module needs, written so that re-running `migrate` changes nothing. When the
+host's environment is `Development` (`DOTNET_ENVIRONMENT` or `ASPNETCORE_ENVIRONMENT`), the web and
+worker hosts also apply pending migrations themselves at start; they do not seed, so run `migrate` once
+for seed data. In any other environment a host never migrates, and `migrate` is the only way a schema
+changes.
 
 The operated sample uses a deterministic test issuer and deliberately permissive permissions
 for its diagnostic surface. Its licence document is absent and it starts at Community. Those
@@ -238,6 +245,19 @@ What an operator must know:
   browser's cookie limit.
 - The issuer's discovery document is read on first use, not at startup, and cached for an hour; an
   unreachable issuer does not stop the host from starting.
+
+## Runtime settings (optional)
+
+Startup configuration is read once and fails the host on a bad value. A runtime setting is changed by a
+running system and persisted. Compose `RuntimeSettingsModule`, declare your settings in an
+`ISettingCatalog` (name, type, default, the layers it may be set at, an optional rule), and read them
+with `ISettingReader`. A read returns the user's value, else the tenant's, else the global one, else
+your default. Only an account has a user value, and only a real tenant has a tenant value.
+
+Writing global or tenant values needs `Platform.RuntimeSettings.WriteGlobal` or `WriteTenant`. In
+Local, the system principal holds both. In Operated, your own permission provider grants them, and
+nothing in Platform does. Every change is audited without its value. The module maps no endpoints, so
+map your own. Never put a secret in a setting: a name that looks like one fails startup.
 
 ## Security defaults and failures
 

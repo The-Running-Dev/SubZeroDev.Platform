@@ -1,0 +1,16 @@
+# I-ST7
+Kind: invariant
+Status: active
+Anchor: I-ST7
+Enforcement: instruction
+Consumes:
+Exposes:
+Binds:
+Live:
+Archival:
+Questions:
+Work:
+Evidence:
+
+## Statement
+The module holds no in-process copy of a stored value, so a committed write is seen by the next read on every instance of every role (Owner: RuntimeSettings.)

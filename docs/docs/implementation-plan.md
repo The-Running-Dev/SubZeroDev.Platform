@@ -136,10 +136,14 @@ consumer needs bespoke wiring has not proven anything.
 > assertion against the sample built on the restored packages, which proves pack, publish and
 > authenticated restore. But the sample is Platform's own, and a framework proving itself against
 > its own sample has not met the sentence above in the spirit it was written.
-> [#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97) is the live proposal to settle it, with
-> `SubZeroDev.Adventures` — a real product with real players — as the outside consumer that proves
-> the claim. Until something like
-> that lands, **D3 is built but not proven.**
+> The owner ruled on 2026-10-08 ([#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97))
+> that `SubZeroDev.Adventures`, a real product with real players, becomes a hosted consumer. It
+> will restore the packages from the feed, and that restore is the outside proof. The adoption work
+> lives in the Adventures repository. Each gap it finds is filed here as D4 extraction evidence.
+> Adventures' identity replacement stays evidence only
+> ([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)), and no Identity
+> package is created from it. Until Adventures runs on the restored packages, **D3 is built but not
+> proven.**
 
 ### D4 — Extraction, on evidence *(ecosystem Phase 5)*
 
@@ -226,6 +230,39 @@ produce one success and one explicit rejection — never a silent overwrite.
 > composition root has two real call sites and zero real implementations of the abstraction
 > it specifies, to be revisited *"when a second `SessionStore` implementation is actually
 > needed."* This is that implementation.
+
+#### Reading the Adventures POC against G2 *(retrospective, [#86](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/86))*
+
+[`SubZeroDev.Adventures`](https://github.com/The-Running-Dev/SubZeroDev.Adventures) was a reference for G2, not a source
+(G1 decision, 2026-08-09). This is what G2 did with each idea. Reasons live in the
+[G2 design](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/g2/10-design.md); this table only
+points. "Deferred" means G2's binding non-goals sent it to G3 or G4, not that it was judged.
+
+| POC idea | Verdict | Where to see it |
+|---|---|---|
+| Postgres ports over plain `pg` and `node-pg-migrate`, inside the Node workload | Adopted | design, "The store"; `workloads/game-service/src/store.ts` |
+| Schema mapped 1:1 to the engine's records | Adapted: tenant in every key, host-only columns, `text` ids | design, "engine-owned values, host-owned columns" |
+| Engine timestamps and blob as `text` | Adopted, made a rule | design, "Four things about this table are decisions" |
+| Compare-and-swap on `attempt_counter` | Adapted: same statement shape, store-owned `version` | design, opening adjudication; hosting contract §6.1 |
+| Lost race surfaces as 503 | Rejected: `concurrent_modification` at 409 | brief Scope 3; slices S1, S2 |
+| Long-lived session layer with a cache | Rejected: composed per request | design, "Module boundaries" |
+| Second store over the same DB as the durability test | Adapted: three proofs, two real processes | design, "Control flow 3"; `tests/` |
+| One row per achievement, set union | Adopted, plus a header row and terminals | design, "`profile` and `profile_achievement`" |
+| Unlocked saves, conditional delete, `listByProfile` | Adopted | design, "`save`" |
+| Progress columns derived from the blob | Rejected (implicit): the store stays opaque | design, "`blob` is `text`" |
+| Once-per-deploy sweep | Adapted: startup migration plus a timer sweep with a retention tombstone | design, "Control flow 1", "Expiry" |
+| Hand-written REST routes; replay endpoints | Rejected | G1 decisions, 2026-08-09; brief non-goals |
+| Cookie identity, ownership decorator, per-player save list | Deferred to G3; the storage seam is declared | `compose.ts` `StorageSeam`; G2 decisions, 2026-08-20 |
+| Disk catalogue, admin publishing | Deferred to G4 | — |
+
+**For G3.** Read `principal.ts`, `store/ownedStore.ts` and `persistence.ts` `sessionOwner` in the POC. Decide on purpose
+whether an unknown id and someone else's id look the same: the POC's decorator lets unknown ids through to a 404 and
+refuses owned ones with a 403. Adventures is a hosted consumer of Platform packages
+([#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97)); its identity is evidence only
+([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)).
+
+**For G4.** Read the POC's `campaigns/` and `content-cell.ts`, and its issues #27-#31: publishing without a rebuild, and
+content that must not be able to brick the server. This plan does not yet assume either.
 
 ### G3 — Principals
 
