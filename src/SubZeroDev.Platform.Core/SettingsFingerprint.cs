@@ -37,8 +37,9 @@ internal sealed class SettingsFingerprint : ISettingsFingerprint
 {
     /// <summary>The format version, inside the hashed input so a future encoding change is a
     /// visible break rather than a silent one. Bumped in D5-S1 when <c>CompositionProfile</c>
-    /// joined the fingerprinted set, and again in D5-S8 when the entitlement contributor set did.</summary>
-    private static readonly byte[] FormatVersion = "szdfp3"u8.ToArray();
+    /// joined the fingerprinted set, again in D5-S8 when the entitlement contributor set did, and again in
+    /// D5-S32 when <c>Audit:RetentionDays</c> did.</summary>
+    private static readonly byte[] FormatVersion = "szdfp4"u8.ToArray();
 
     public string Compute(
         PlatformOptions options,

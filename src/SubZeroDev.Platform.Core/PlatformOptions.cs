@@ -58,6 +58,19 @@ public sealed record PlatformOptions
 
     /// <summary>Log-file location and optional OTLP export target.</summary>
     public TelemetryOptions Telemetry { get; init; } = new();
+
+    /// <summary>Audit retention. Read only when the Audit module is composed.</summary>
+    public AuditOptions Audit { get; init; } = new();
+}
+
+/// <summary>Audit retention. Absent by default: audit rows are kept forever, as they always were.</summary>
+public sealed record AuditOptions
+{
+    /// <summary><c>Platform:Audit:RetentionDays</c>. Null: rows are kept forever and no prune is
+    /// registered. Otherwise a worker deletes rows whose <c>OccurredAt</c> is more than this many
+    /// days before now.</summary>
+    [Fingerprinted]
+    public int? RetentionDays { get; init; }
 }
 
 /// <summary>Log-file location and optional OTLP export target. Everything else about telemetry

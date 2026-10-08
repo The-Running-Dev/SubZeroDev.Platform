@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.Audit;
@@ -29,5 +30,16 @@ public sealed class AuditModule : IPlatformModule
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink, DurableAuditSink>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IModuleMigrationSource, AuditMigrationSource>());
+
+        // D5-S32: retention is opt-in. With no Platform:Audit:RetentionDays the prune is not
+        // registered at all, so nothing can delete an audit row (I-U11). The options are already
+        // bound — the host adds them before composing modules — so this reads the instance rather
+        // than resolving a provider mid-registration.
+        var options = services.LastOrDefault(d => d.ServiceType == typeof(PlatformOptions))?.ImplementationInstance
+            as PlatformOptions;
+        if (options?.Audit.RetentionDays is not null)
+        {
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IBackgroundWork, AuditPruneWork>());
+        }
     }
 }
