@@ -500,8 +500,8 @@ Acceptance:
 Out of scope: seeding at development start; a seeding history table or per-seeder "already ran" tracking; a `Platform.Testing` seeder harness; per-tenant seeding when a tenant is created.
 
 ## S38 — A developer's local hosts bring their own database schema up to date when they start, and the two hosts never race each other to do it
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As a developer running the web and worker hosts locally in the Development environment, I no longer run `migrate` before starting them. Either host applies pending migrations at start, the second waits for the first, and a broken migration stops the host with its name. Outside Development nothing changes.
 Touches:
@@ -524,7 +524,7 @@ Acceptance:
 Out of scope: an opt-in or opt-out setting; seeding at start; changing migrate mode; retrying on `Unavailable`.
 
 ## S39 — A role removed at the identity provider stops granting within a limit the operator sets
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: an operator whose roles live in Entra or Keycloak, and reach a Platform-hosted service through
