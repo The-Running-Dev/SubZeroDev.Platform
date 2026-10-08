@@ -91,8 +91,8 @@ and S42 add per-route streaming at the edge ([#110](https://github.com/The-Runni
 module ([#58](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/58)). S46 to S48 add the optional account store and explicit linking ([#93](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/93) boxes 3–4).
 
 ## S24 — A permission check during an outage answers "try again", not "forbidden"
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: someone calling a Platform-hosted service while a permission provider is unreachable is told
 the service could not check their permission and that they may retry. Today they are told they lack
@@ -135,7 +135,7 @@ Out of scope: retrying the provider inside the evaluator, any change to the orde
 consulted in, and caching a provider's last answer. None is in the contract.
 
 ## S25 — Cross-process trace evidence passes or fails on the code, not on a sampling draw
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a contributor whose pull request touches nothing near tracing no longer has CI fail on it at

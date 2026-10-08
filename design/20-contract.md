@@ -61,18 +61,10 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 ### 2. Authorization — `SubZeroDev.Platform.Abstractions`
 
 `PermissionName`, `PermissionProviderName`, `AuthorizationOutcome`, `AuthorizationDecision` and
-`PlatformPermissions` are declared in the tree (S4):
+`PlatformPermissions` are declared in the tree (S4; `AuthorizationDecision.ProviderFailure`, S24):
 [`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs). `ResourceRef` is
 declared in the same project, materialised by S3 because `AuditEvent` needs it ahead of the rest of
 this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
-
-One member of `AuthorizationDecision` is not in the tree yet, and is scaffolded here until the slice
-that materialises it replaces this block with the pointer above
-([`90-decisions.md`](90-decisions.md), 2026-09-28):
-
-```csharp
-public AuthorizationError? ProviderFailure { get; init; }
-```
 
 **What the declarations cannot say.**
 
@@ -2278,8 +2270,8 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
 | **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
 | **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
-| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider could not answer — returned an error, or is a mirror past `MirrorMaximumAge` (I-A13) — and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | instruction | — |
-| **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | instruction | — |
+| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider could not answer — returned an error, or is a mirror past `MirrorMaximumAge` (I-A13) — and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | code | tests/SubZeroDev.Platform.Tests/ProviderFailureHttpTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
 | **I-A13** | A registered `IMirroredPermissionProvider` whose `LastSyncedAsync` is null, errs, or is older than `Platform:Authorization:MirrorMaximumAge` by the evaluating host's clock contributes no grant, is not asked for grants, and is recorded as `ProviderUnavailable` naming it; no configuration makes the maximum unbounded (Owner: Core.) | — | instruction | — |
 | **I-A14** | A mirror's last-synced instant is the instant its most recent successful sync began reading the issuer, written with the rows that read produced; a failed or partial issuer read advances neither (Owner: each consumer's mirror sync. Checked in part by `PermissionProviderHarness.AssertIssuerRevocationDeniesWithinBoundAsync`.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |

@@ -69,14 +69,20 @@ internal sealed class PlatformMcpTool(ToolRegistration registration, IServicePro
             // A denial is audited too (S15.9 counts every invocation of a known tool), inside its own
             // scope — never the one a successful invocation would open around producer work. A
             // Required record that could not be written, the evaluator's or this one, turns the
-            // answer into a retryable failure (Error semantics § 4).
+            // answer into a retryable failure (Error semantics § 4). Otherwise a denial reached
+            // while a provider could not answer is retryable too, never forbidden (§ 2).
             using var deniedScope = scopeFactory.Begin(tenant, principal);
             var deniedAudit = await auditWriter
                 .WriteAsync(new AuditAction(tool.Value), resource, AuditOutcome.Denied, AuditClass.Required, cancellationToken)
                 .ConfigureAwait(false);
-            return decision.AuditFailure is null && deniedAudit.IsSuccess
+            if (decision.AuditFailure is not null || !deniedAudit.IsSuccess)
+            {
+                return McpToolResults.AuditUnavailable(tool);
+            }
+
+            return decision.ProviderFailure is null
                 ? McpToolResults.Forbidden(tool)
-                : McpToolResults.AuditUnavailable(tool);
+                : McpToolResults.ProviderUnavailable(tool);
         }
 
         // Step 5 — check entitlement, only when the tool declares a feature.
@@ -158,6 +164,9 @@ internal static class McpToolResults
 
     internal static CallToolResult AuditUnavailable(ToolName tool) =>
         Error($"Tool '{tool}' could not be audited; the call may be retried.");
+
+    internal static CallToolResult ProviderUnavailable(ToolName tool) =>
+        Error($"Tool '{tool}' could not have its permission checked; the call may be retried.");
 
     internal static CallToolResult FromInvocation(ToolInvocationResult result) => new()
     {

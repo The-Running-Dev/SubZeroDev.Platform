@@ -244,7 +244,9 @@ internal sealed class CompositionPermissionProvider(
 /// <inheritdoc cref="IAuthorizationEvaluator"/>
 /// <remarks>Asks every registered provider and takes the union. A provider that errors contributes
 /// nothing and does not fail the evaluation — the union proceeds with whatever the others
-/// answered. Audits exactly one <see cref="AuditClass.Required"/> record on a denial, and carries
+/// answered. A denial reached while a provider could not answer carries
+/// <see cref="AuthorizationError.ProviderUnavailable"/> naming the first such provider in registry
+/// order on <see cref="AuthorizationDecision.ProviderFailure"/>. Audits exactly one <see cref="AuditClass.Required"/> record on a denial, and carries
 /// that write's failure on <see cref="AuthorizationDecision.AuditFailure"/>; an allowed decision is
 /// not itself an audited fact — the writer that performs the action audits it.</remarks>
 internal sealed class AuthorizationEvaluator(
@@ -259,6 +261,7 @@ internal sealed class AuthorizationEvaluator(
         var currentPrincipal = principal.Current;
         var currentTenant = tenant.Current;
         var sources = new List<PermissionProviderName>();
+        PermissionProviderName? firstUnanswered = null;
 
         foreach (var provider in providers.Registered)
         {
@@ -266,7 +269,11 @@ internal sealed class AuthorizationEvaluator(
                 .GrantsAsync(currentPrincipal, currentTenant, resource, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (granted.IsSuccess && granted.Value.Contains(permission))
+            if (!granted.IsSuccess)
+            {
+                firstUnanswered ??= provider.Name;
+            }
+            else if (granted.Value.Contains(permission))
             {
                 sources.Add(provider.Name);
             }
@@ -291,6 +298,9 @@ internal sealed class AuthorizationEvaluator(
         return new AuthorizationDecision(permission, resource, currentTenant, outcome, sources)
         {
             AuditFailure = auditFailure,
+            ProviderFailure = outcome == AuthorizationOutcome.Denied && firstUnanswered is { } unanswered
+                ? AuthorizationError.ProviderUnavailable(unanswered)
+                : null,
         };
     }
 }
