@@ -57,6 +57,7 @@ public static class PlatformPersistenceExtensions
             provider.GetRequiredService<IClock>()));
 
         services.TryAddSingleton<IEventHandlerRegistry, EventHandlerRegistry>();
+        services.TryAddSingleton<InboxStore>();
 
         services.TryAddSingleton<IUnitOfWork, UnitOfWork>();
         services.TryAddSingleton<IMigrationRunner, MigrationRunner>();

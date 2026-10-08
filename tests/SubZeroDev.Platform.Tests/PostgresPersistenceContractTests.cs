@@ -1,6 +1,9 @@
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Persistence;
+using SubZeroDev.Platform.Testing;
 using Testcontainers.PostgreSql;
 
 namespace SubZeroDev.Platform.Tests;
@@ -22,6 +25,78 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
     : PersistenceContractTests, IClassFixture<PostgresContainerFixture>
 {
     protected override PersistenceProvider Provider => PersistenceProvider.PostgreSql;
+
+    [Fact]
+    public async Task S33_5_Two_overlapping_dispatches_of_one_message_apply_its_effect_once()
+    {
+        var connectionString = await AcquireConnectionStringAsync();
+        try
+        {
+            var probe = new InboxProbe { Block = true };
+            await using var first = await StartInboxWorkerAsync(connectionString, probe);
+            await using var second = await StartInboxWorkerAsync(connectionString, probe);
+            using (first.Services.GetRequiredService<IOperationScopeFactory>().Begin(TenantId.Implicit, Principal.Anonymous))
+            {
+                var enqueued = await first.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+                    TransactionIntent.Write,
+                    _ =>
+                    {
+                        first.Services.GetRequiredService<IOutboxWriter>().Enqueue(new TestEvent());
+                        return Task.CompletedTask;
+                    },
+                    CancellationToken.None);
+                Assert.True(enqueued.IsSuccess);
+            }
+
+            // The first dispatch has recorded and written, and holds its transaction open.
+            var held = first.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.OutboxDispatch, CancellationToken.None);
+            await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            // The second reclaims the expired claim and issues its own inbox insert.
+            second.Clock.Advance(first.Services.GetRequiredService<PlatformOptions>().Outbox.ClaimWindow + TimeSpan.FromSeconds(1));
+            var overlapping = second.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.OutboxDispatch, CancellationToken.None);
+            await WaitForBlockedLockAsync(connectionString, overlapping);
+
+            probe.Release.TrySetResult();
+            await held.WaitAsync(TimeSpan.FromSeconds(30));
+            await overlapping.WaitAsync(TimeSpan.FromSeconds(30));
+
+            Assert.Equal(1, probe.Invocations);
+            Assert.Equal(1, await CountRowsAsync(connectionString, "t_inbox_effect", new TestEvent().Value));
+        }
+        finally
+        {
+            await ReleaseConnectionStringAsync(connectionString);
+        }
+    }
+
+    /// <summary>Returns once a backend in this database waits on a lock it has not been granted —
+    /// the second dispatcher's insert queued behind the first's uncommitted key.</summary>
+    private static async Task WaitForBlockedLockAsync(string connectionString, Task overlapping)
+    {
+        var database = new NpgsqlConnectionStringBuilder(connectionString).Database;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            Assert.False(overlapping.IsCompleted, "The second dispatch finished without waiting on the first's inbox key.");
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                WHERE NOT l.granted AND a.datname = @database;
+                """;
+            command.Parameters.AddWithValue("@database", database!);
+            if (Convert.ToInt64(await command.ExecuteScalarAsync()) > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        Assert.Fail("The second dispatch never blocked on the first's uncommitted inbox key.");
+    }
 
     protected override async Task<string> AcquireConnectionStringAsync()
     {
@@ -98,6 +173,14 @@ public sealed class PostgresPersistenceContractTests(PostgresContainerFixture fi
         "platform_outbox ix_platform_outbox_eligibility(processed_at, poisoned_at, next_attempt_at, claimed_at, sequence)",
         "platform_outbox ix_platform_outbox_poisoned_at(poisoned_at)",
         "platform_outbox ix_platform_outbox_processed_at(processed_at)",
+    ];
+
+    protected override IReadOnlyList<string> InboxSchema { get; } =
+    [
+        "platform_inbox.message_id bytea NOT NULL PK1",
+        "platform_inbox.consumer text NOT NULL PK2",
+        "platform_inbox.tenant text NOT NULL",
+        "platform_inbox.processed_at text NOT NULL",
     ];
 
     protected override async Task<IReadOnlyList<string>> DescribeSchemaAsync(

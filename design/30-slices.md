@@ -386,8 +386,8 @@ Out of scope:
 - adding the audit table to Persistence's `PruneWork`
 
 ## S33 — A handler is no longer run twice when its message is redelivered after it already committed
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an operator of any C# Platform host, when a worker loses its claim after a handler
 committed, or two workers overlap on one message, the handler's database effects land once and the
@@ -404,7 +404,7 @@ Acceptance:
 Out of scope: a public inbox API, or deduplication for webhooks or other inbound messages (Unresolved 5). Making external side effects idempotent. Pruning, which is S34.
 
 ## S34 — Inbox records are removed once the message they guard is gone, so the table cannot grow without bound
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an operator, the inbox stays as small as the outbox. Its records disappear on the outbox's
