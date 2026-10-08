@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-P7
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:

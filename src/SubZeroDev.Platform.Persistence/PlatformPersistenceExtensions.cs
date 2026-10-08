@@ -96,6 +96,12 @@ public static class PlatformPersistenceExtensions
             services.AddHostedService<PersistenceStartupCheck>();
         }
 
+        // After the startup check, so a bad journal mode aborts before anything is migrated.
+        if (!services.Any(descriptor => descriptor.ImplementationType == typeof(DevelopmentMigrationStartup)))
+        {
+            services.AddHostedService<DevelopmentMigrationStartup>();
+        }
+
         if (!services.Any(descriptor => descriptor.ImplementationType == typeof(EventHandlerRegistryStartup)))
         {
             services.AddHostedService<EventHandlerRegistryStartup>();
