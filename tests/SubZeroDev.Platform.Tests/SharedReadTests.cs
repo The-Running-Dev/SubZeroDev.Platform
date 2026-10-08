@@ -15,6 +15,7 @@ public sealed class SharedReadTests
 
     private const string TableA = "t_shared_a";
     private const string TableB = "t_shared_b";
+    private const string TablePrivate = "t_private";
 
     [Fact]
     public async Task S6_1_Two_tenants_write_the_same_logical_id_without_collision_and_each_reads_only_its_own()
@@ -79,6 +80,56 @@ public sealed class SharedReadTests
             var rows = await QueryAsync<ShareableRowA>(unitOfWork, ambient, scopeFactory, TableA, TenantA, CancellationToken.None);
             var row = Assert.Single(rows);
             Assert.Equal("mine", row.LogicalId);
+        }
+    }
+
+    [Fact]
+    public async Task S27_2_Outside_a_scope_a_shareable_and_a_non_shareable_query_each_return_only_the_current_tenants_rows()
+    {
+        await using var host = await BuildHostAsync();
+        var scopes = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var scopeFactory = host.Services.GetRequiredService<ISharedReadScopeFactory>();
+
+        foreach (var (tenant, prefix) in new[] { (TenantA, "a"), (TenantB, "b") })
+        {
+            using (scopes.Begin(tenant, FakePrincipals.System))
+            {
+                // Tenant B publishes its shareable row: publication must still not reach tenant A
+                // while no scope is open.
+                var sharedAt = tenant == TenantB ? host.Clock.UtcNow : (DateTimeOffset?)null;
+                await InsertAsync(unitOfWork, ambient, capability, TableA, tenant, $"{prefix}-shareable", sharedAt, CancellationToken.None);
+                await InsertPrivateAsync(unitOfWork, ambient, tenant, $"{prefix}-private", CancellationToken.None);
+            }
+        }
+
+        using (scopes.Begin(TenantA, FakePrincipals.System))
+        {
+            // No scope is open for any type, so the one seam a consumer's filter consults answers
+            // "tenant only".
+            Assert.False(scopeFactory.IsOpenFor<ShareableRowA>());
+            Assert.False(scopeFactory.IsOpenFor<ShareableRowB>());
+
+            var shareable = await QueryAsync<ShareableRowA>(unitOfWork, ambient, scopeFactory, TableA, TenantA, CancellationToken.None);
+            Assert.Equal([(TenantA.ToString(), "a-shareable")], shareable);
+
+            var nonShareable = await QueryPrivateAsync(unitOfWork, ambient, TenantA, CancellationToken.None);
+            Assert.Equal([(TenantA.ToString(), "a-private")], nonShareable);
+        }
+    }
+
+    [Fact]
+    public void S27_2_A_non_shareable_type_cannot_be_named_to_the_scope_so_its_filter_is_never_widened()
+    {
+        // The widening seam accepts shareable types only: there is no call by which a non-shareable
+        // type's filter becomes anything but "tenant equals current", inside a scope or outside one.
+        foreach (var name in new[] { nameof(ISharedReadScopeFactory.Open), nameof(ISharedReadScopeFactory.IsOpenFor) })
+        {
+            var method = typeof(ISharedReadScopeFactory).GetMethod(name)!;
+            var parameter = Assert.Single(method.GetGenericArguments());
+            Assert.Contains(typeof(IShareable), parameter.GetGenericParameterConstraints());
         }
     }
 
@@ -271,7 +322,7 @@ public sealed class SharedReadTests
     [Fact]
     public void Open_answers_the_audit_failure_and_leaves_the_filter_untouched_when_the_record_cannot_be_written()
     {
-        var factory = new SharedReadScopeFactory(new SharedReadScopeState(), new FailingAuditWriter());
+        var factory = new SharedReadScopeFactory(new SharedReadScopeState(), new FailingAuditWriter(), new AmbientTransactionState());
 
         var opened = factory.Open<ShareableRowA>();
 
@@ -320,6 +371,10 @@ public sealed class SharedReadTests
                     "SharedReadB", TestMigration.Sql(
                         "0001_create",
                         $"CREATE TABLE {TableB} (tenant TEXT NOT NULL, logical_id TEXT NOT NULL, shared_at TEXT NULL, PRIMARY KEY (tenant, logical_id));")));
+                services.AddSingleton<IModuleMigrationSource>(new TestMigrationSource(
+                    "SharedReadPrivate", TestMigration.Sql(
+                        "0001_create",
+                        $"CREATE TABLE {TablePrivate} (tenant TEXT NOT NULL, logical_id TEXT NOT NULL, PRIMARY KEY (tenant, logical_id));")));
                 configure?.Invoke(services);
             })
             .StartAsync(CancellationToken.None);
@@ -401,6 +456,61 @@ public sealed class SharedReadTests
         return rows;
     }
 
+    private static async Task InsertPrivateAsync(
+        IUnitOfWork unitOfWork,
+        IAmbientTransactionAccessor ambient,
+        TenantId tenant,
+        string logicalId,
+        CancellationToken cancellationToken)
+    {
+        var result = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var insert = current.Connection.CreateCommand();
+                insert.Transaction = current.Transaction;
+                insert.CommandText = $"INSERT INTO {TablePrivate} (tenant, logical_id) VALUES (@tenant, @logicalId);";
+                AddParameter(insert, "@tenant", tenant.ToString());
+                AddParameter(insert, "@logicalId", logicalId);
+                await insert.ExecuteNonQueryAsync(token);
+            },
+            cancellationToken);
+        Assert.True(result.IsSuccess);
+    }
+
+    // A non-shareable type has no IsOpenFor to consult (S27_2's structural test), so its filter is
+    // "tenant equals current" unconditionally.
+    private static async Task<List<(string Tenant, string LogicalId)>> QueryPrivateAsync(
+        IUnitOfWork unitOfWork,
+        IAmbientTransactionAccessor ambient,
+        TenantId currentTenant,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<(string, string)>();
+
+        var result = await unitOfWork.ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var select = current.Connection.CreateCommand();
+                select.Transaction = current.Transaction;
+                select.CommandText = $"SELECT tenant, logical_id FROM {TablePrivate} WHERE tenant = @tenant;";
+                AddParameter(select, "@tenant", currentTenant.ToString());
+
+                await using var reader = await select.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    rows.Add((reader.GetString(0), reader.GetString(1)));
+                }
+            },
+            cancellationToken);
+
+        Assert.True(result.IsSuccess);
+        return rows;
+    }
+
     private static void AddParameter(System.Data.Common.DbCommand command, string name, object? value)
     {
         var parameter = command.CreateParameter();
@@ -419,7 +529,7 @@ public sealed class SharedReadTests
     private static class SharedState
     {
         internal static readonly ISharedReadScopeFactory Factory =
-            new SharedReadScopeFactory(new SharedReadScopeState(), new NoOpAuditWriter());
+            new SharedReadScopeFactory(new SharedReadScopeState(), new NoOpAuditWriter(), new AmbientTransactionState());
     }
 
     /// <summary>Answers success without dispatching anywhere — S6.7 only needs <c>Open</c> to

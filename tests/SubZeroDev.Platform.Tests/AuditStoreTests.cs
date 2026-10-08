@@ -349,6 +349,50 @@ public sealed class AuditStoreTests
         }
     }
 
+    // S27.1 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S27_1_A_record_written_during_a_read_only_unit_of_work_survives_that_unit_of_works_rollback()
+    {
+        var database = TemporaryPath();
+        try
+        {
+            await using var host = await StartHostAsync(database);
+            var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+            var writer = host.Services.GetRequiredService<IAuditWriter>();
+            var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+
+            using (scopeFactory.Begin(TenantOne, ActorA))
+            {
+                // The sink never writes into a read-only ambient transaction — inside a shared-read
+                // scope that transaction refuses every write — so the record commits on its own and
+                // the read failing afterwards takes nothing of it back.
+                var read = await unitOfWork.ExecuteAsync<int>(
+                    TransactionIntent.ReadOnly,
+                    async ct =>
+                    {
+                        Assert.True((await writer.WriteAsync(
+                            new AuditAction("test.read"), new ResourceRef("thing", "1"),
+                            AuditOutcome.Allowed, AuditClass.Recorded, ct)).IsSuccess);
+                        throw new InvalidOperationException("the read fails after its record was written");
+                    },
+                    CancellationToken.None);
+                Assert.False(read.IsSuccess);
+            }
+
+            var readApi = host.Services.GetRequiredService<IAuditReadApi>();
+            var result = await readApi.ByTenantAsync(
+                TenantOne, DateTimeOffset.MinValue, DateTimeOffset.MaxValue, CancellationToken.None);
+
+            Assert.True(result.IsSuccess);
+            Assert.Equal("test.read", Assert.Single(result.Value).Action.Value);
+        }
+        finally
+        {
+            DeleteSqliteFiles(database);
+        }
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static async Task<IPlatformTestHost> StartHostAsync(string databasePath)

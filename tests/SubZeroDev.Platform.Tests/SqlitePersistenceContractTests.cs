@@ -98,6 +98,97 @@ public sealed class SqlitePersistenceContractTests : PersistenceContractTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    // Captured from the three migrations as they stood at d6daabf; their bodies are unchanged since.
+    protected override IReadOnlyList<string> BaselineSchema { get; } =
+    [
+        "platform_background_work_lease.name TEXT NOT NULL PK1",
+        "platform_background_work_lease.holder TEXT NOT NULL",
+        "platform_background_work_lease.acquired_at TEXT NOT NULL",
+        "platform_background_work_lease.expires_at TEXT NOT NULL",
+        "platform_host_registration.role TEXT NOT NULL PK1",
+        "platform_host_registration.instance TEXT NOT NULL PK2",
+        "platform_host_registration.started_at TEXT NOT NULL",
+        "platform_host_registration.heartbeat_at TEXT NOT NULL",
+        "platform_host_registration.settings_fingerprint TEXT NOT NULL",
+        "platform_host_registration ix_platform_host_registration_role_heartbeat(role, heartbeat_at)",
+        "platform_outbox.id BLOB NOT NULL PK1",
+        "platform_outbox.sequence INTEGER NOT NULL",
+        "platform_outbox.occurred_at TEXT NOT NULL",
+        "platform_outbox.type TEXT NOT NULL",
+        "platform_outbox.payload TEXT NOT NULL",
+        "platform_outbox.tenant TEXT NOT NULL",
+        "platform_outbox.trace_parent TEXT NOT NULL",
+        "platform_outbox.trace_state TEXT",
+        "platform_outbox.correlation TEXT NOT NULL",
+        "platform_outbox.culture TEXT NOT NULL",
+        "platform_outbox.attempts INTEGER NOT NULL",
+        "platform_outbox.next_attempt_at TEXT",
+        "platform_outbox.first_deferred_at TEXT",
+        "platform_outbox.claimed_by TEXT",
+        "platform_outbox.claimed_at TEXT",
+        "platform_outbox.processed_at TEXT",
+        "platform_outbox.poisoned_at TEXT",
+        "platform_outbox.last_error TEXT",
+        "platform_outbox ix_platform_outbox_eligibility(processed_at, poisoned_at, next_attempt_at, claimed_at, sequence)",
+        "platform_outbox ix_platform_outbox_poisoned_at(poisoned_at)",
+        "platform_outbox ix_platform_outbox_processed_at(processed_at)",
+    ];
+
+    protected override async Task<IReadOnlyList<string>> DescribeSchemaAsync(
+        string connectionString, IReadOnlyList<string> tables)
+    {
+        await using var connection = OpenNonPooled(connectionString);
+        await connection.OpenAsync();
+
+        var lines = new List<string>();
+        foreach (var table in tables)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info({table});";
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    var notNull = reader.GetInt64(3) != 0 ? " NOT NULL" : string.Empty;
+                    var primaryKey = reader.GetInt64(5) != 0 ? $" PK{reader.GetInt64(5)}" : string.Empty;
+                    lines.Add($"{table}.{reader.GetString(1)} {reader.GetString(2)}{notNull}{primaryKey}");
+                }
+            }
+
+            var indexes = connection.CreateCommand();
+            indexes.CommandText =
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = @table "
+                + "AND name NOT LIKE 'sqlite_%' ORDER BY name;";
+            indexes.Parameters.AddWithValue("@table", table);
+            var names = new List<string>();
+            await using (var reader = await indexes.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    names.Add(reader.GetString(0));
+                }
+            }
+
+            foreach (var name in names)
+            {
+                var columns = connection.CreateCommand();
+                columns.CommandText = $"PRAGMA index_info({name});";
+                var indexed = new List<string>();
+                await using (var reader = await columns.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        indexed.Add(reader.GetString(2));
+                    }
+                }
+
+                lines.Add($"{table} {name}({string.Join(", ", indexed)})");
+            }
+        }
+
+        return lines;
+    }
+
     protected override async Task<int> CountTablesAsync(string connectionString, string table)
     {
         await using var connection = OpenNonPooled(connectionString);

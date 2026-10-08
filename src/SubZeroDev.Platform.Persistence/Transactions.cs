@@ -103,6 +103,14 @@ internal sealed record AmbientTransaction(
     /// same terms as <see cref="PendingOutboxMessages"/>: a rollback leaves none dispatched, and a
     /// commit dispatches each exactly once.</summary>
     internal List<(AuditEvent Event, AuditClass Class)> PendingAuditEvents { get; } = [];
+
+    /// <summary>The provider that opened this transaction — what decides how
+    /// <see cref="SharedReadWriteRefusal"/> makes it refuse a write.</summary>
+    internal PersistenceProvider Provider { get; init; }
+
+    /// <summary>Whether a shared-read scope has made this transaction refuse every write at the
+    /// database (I-T1). Once set it stays set until the transaction ends.</summary>
+    internal bool WritesRefused { get; set; }
 }
 
 /// <summary>Chooses the capability the configured provider calls for. A capability holds no
@@ -163,7 +171,8 @@ internal sealed class UnitOfWork(
         // I-T1: there is no code path by which a write reaches another tenant's row. Isolation is
         // asymmetric on purpose — reads have one modelled, audited escape (ISharedReadScopeFactory);
         // writes have none. Checked before anything opens, so no row is ever changed by a write
-        // attempted while a shared-read scope is open (S6.5).
+        // attempted while a shared-read scope is open (S6.5). A read-only unit of work opened inside
+        // the scope is refused its writes at the database instead, below (S27.1).
         if (intent == TransactionIntent.Write && sharedReadScope.OpenFor is not null)
         {
             throw new PlatformContractViolationException(ContractViolation.WriteInsideSharedReadScope());
@@ -190,12 +199,22 @@ internal sealed class UnitOfWork(
         var transaction = new AmbientTransaction(
             providerTransaction.Intent,
             providerTransaction.Connection,
-            providerTransaction.Transaction);
+            providerTransaction.Transaction)
+        {
+            Provider = capability.Provider,
+        };
         var previous = ambient.Current;
         ambient.Current = transaction;
 
         try
         {
+            // The declared intent is not enforcement: a read-only unit of work can still issue a
+            // write, and inside the scope that write could reach the rows the scope made visible.
+            if (sharedReadScope.OpenFor is not null)
+            {
+                SharedReadWriteRefusal.Apply(transaction);
+            }
+
             var value = await work(cancellationToken).ConfigureAwait(false);
 
             // Enqueue stages rows rather than writing them, so a failed insert here is reported the
@@ -265,6 +284,22 @@ internal sealed class UnitOfWork(
 
             throw;
         }
+        catch (PlatformContractViolationException)
+        {
+            // A defect in the caller, not a database outage — it propagates rather than being
+            // classified into a TransactionError the caller might retry. The transaction is rolled
+            // back first, so nothing the work did before the violation survives it.
+            try
+            {
+                await transaction.Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The transaction is already gone — the rollback is moot.
+            }
+
+            throw;
+        }
         catch (Exception exception)
         {
             try
@@ -277,11 +312,19 @@ internal sealed class UnitOfWork(
                 // moot, and the original exception is the one worth reporting.
             }
 
+            // The database refused a write because a shared-read scope is open: the same defect a
+            // write-intent unit of work inside the scope is refused for, reported the same way.
+            if (transaction.WritesRefused && SharedReadWriteRefusal.IsRefusal(exception))
+            {
+                throw new PlatformContractViolationException(ContractViolation.WriteInsideSharedReadScope());
+            }
+
             return Result<T, TransactionError>.Failure(capability.Classify(exception));
         }
         finally
         {
             ambient.Current = previous;
+            await SharedReadWriteRefusal.ReleaseAsync(transaction).ConfigureAwait(false);
             await transaction.Connection.DisposeAsync().ConfigureAwait(false);
         }
     }

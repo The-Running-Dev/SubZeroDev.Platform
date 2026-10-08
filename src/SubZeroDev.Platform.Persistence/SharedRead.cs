@@ -1,4 +1,7 @@
+using Microsoft.Data.Sqlite;
+using Npgsql;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
 
 namespace SubZeroDev.Platform.Persistence;
 
@@ -42,10 +45,18 @@ internal sealed class SharedReadScopeState
 }
 
 /// <inheritdoc cref="ISharedReadScopeFactory"/>
-internal sealed class SharedReadScopeFactory(SharedReadScopeState state, IAuditWriter auditWriter) : ISharedReadScopeFactory
+internal sealed class SharedReadScopeFactory(
+    SharedReadScopeState state, IAuditWriter auditWriter, AmbientTransactionState ambient) : ISharedReadScopeFactory
 {
     public Result<IDisposable, AuditError> Open<TEntity>() where TEntity : class, IShareable
     {
+        // I-T1: a write transaction already open would carry on writing with the widened rows in
+        // reach. Refused before the audit record, so an escape that never opens is never recorded.
+        if (ambient.Current is { Intent: TransactionIntent.Write })
+        {
+            throw new PlatformContractViolationException(ContractViolation.WriteInsideSharedReadScope());
+        }
+
         // One audit record per scope, not per row (I-T4) — written before the filter widens, so a
         // caller never observes a widened read that was not recorded. Open() stays synchronous
         // because the widened state is an AsyncLocal, and one set inside an async method does not
@@ -61,6 +72,13 @@ internal sealed class SharedReadScopeFactory(SharedReadScopeState state, IAuditW
         if (!written.IsSuccess)
         {
             return Result<IDisposable, AuditError>.Failure(written.Error);
+        }
+
+        // A read-only transaction already open refuses its writes from here on — the same refusal a
+        // unit of work opened inside the scope gets (S27.1).
+        if (ambient.Current is AmbientTransaction { Intent: TransactionIntent.ReadOnly } transaction)
+        {
+            SharedReadWriteRefusal.Apply(transaction);
         }
 
         var previous = state.OpenFor;
@@ -85,4 +103,69 @@ internal sealed class SharedReadScopeFactory(SharedReadScopeState state, IAuditW
             state.OpenFor = previous;
         }
     }
+}
+
+/// <summary>Makes a read-only transaction refuse every write at the database while a shared-read
+/// scope is open (I-T1). The scope makes another tenant's published rows visible to the caller's
+/// own query code; a declared <see cref="TransactionIntent.ReadOnly"/> is only a declaration, so
+/// without this a write issued under it would reach those rows.</summary>
+/// <remarks>Internal and keyed on <see cref="AmbientTransaction.Provider"/>, not a new
+/// <see cref="IProviderCapability"/> member: the capability is a public contract a third-party
+/// provider implements, and the two statements below are the whole of the difference.</remarks>
+internal static class SharedReadWriteRefusal
+{
+    // SQLITE_READONLY: what a write against a connection with query_only set fails with.
+    private const int SqliteReadOnly = 8;
+
+    // read_only_sql_transaction: what a write inside a READ ONLY transaction fails with.
+    private const string PostgreSqlReadOnlyTransaction = "25006";
+
+    internal static void Apply(AmbientTransaction transaction)
+    {
+        if (transaction.WritesRefused)
+        {
+            return;
+        }
+
+        using var command = transaction.Connection.CreateCommand();
+        command.Transaction = transaction.Transaction;
+        command.CommandText = transaction.Provider switch
+        {
+            PersistenceProvider.Sqlite => "PRAGMA query_only = ON;",
+            PersistenceProvider.PostgreSql => "SET TRANSACTION READ ONLY;",
+            _ => throw new NotSupportedException($"No write refusal for '{transaction.Provider}'."),
+        };
+        command.ExecuteNonQuery();
+        transaction.WritesRefused = true;
+    }
+
+    /// <summary>Clears SQLite's flag before the connection returns to the pool. It belongs to the
+    /// connection, not the transaction, so left set it would refuse the next unit of work's writes;
+    /// PostgreSQL's ends with the transaction and needs nothing.</summary>
+    internal static async Task ReleaseAsync(AmbientTransaction transaction)
+    {
+        if (!transaction.WritesRefused || transaction.Connection is not SqliteConnection connection)
+        {
+            return;
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA query_only = OFF;";
+            await command.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The flag could not be cleared, so this connection must never be handed out again.
+            SqliteConnection.ClearPool(connection);
+        }
+    }
+
+    internal static bool IsRefusal(Exception exception) => exception switch
+    {
+        SqliteException { SqliteErrorCode: SqliteReadOnly } => true,
+        PostgresException { SqlState: PostgreSqlReadOnlyTransaction } => true,
+        _ => false,
+    };
 }

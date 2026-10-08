@@ -289,6 +289,51 @@ public sealed class PackageGraphTests
             violations.Order(StringComparer.Ordinal));
     }
 
+    // S27.4 ------------------------------------------------------------------------------------
+
+    /// <summary>I-O8, held on its own rather than through I-C6: a framework type could learn of an
+    /// owner without referencing any module — a field, a parameter, a type of its own — and the
+    /// package graph would never see it.</summary>
+    [Fact]
+    public void I_O8_no_framework_type_or_member_refers_to_a_tenants_owner()
+    {
+        var map = OwnerConceptGuard.Resolve(FrameworkAssemblies());
+
+        var violations = OwnerConceptGuard.Violations(map);
+
+        Assert.Empty(violations);
+        Assert.Equal(FrameworkAssemblies().Count, map.Count);
+        Assert.All(map.Values, identifiers => Assert.NotEmpty(identifiers));
+    }
+
+    [Fact]
+    public void S27_4_the_owner_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["SubZeroDev.Platform.Core"] = new HashSet<string>
+            {
+                "SubZeroDev.Platform.Core.TenantId",
+                "SubZeroDev.Platform.Core.TenantId.OwnerId",
+                "SubZeroDev.Platform.Core.TenantDirectory.Resolve(organization)",
+                "SubZeroDev.Platform.Organizations.OrganizationId",
+                "SubZeroDev.Platform.Abstractions.PlatformPermissions.get_AdministerOrganization",
+                "SubZeroDev.Platform.Abstractions.PlatformPermissions.AdministerOrganizationOwner",
+            },
+        };
+
+        var violations = OwnerConceptGuard.Violations(broken);
+
+        Assert.Equal(
+            [
+                "SubZeroDev.Platform.Core -> SubZeroDev.Platform.Abstractions.PlatformPermissions.AdministerOrganizationOwner",
+                "SubZeroDev.Platform.Core -> SubZeroDev.Platform.Core.TenantDirectory.Resolve(organization)",
+                "SubZeroDev.Platform.Core -> SubZeroDev.Platform.Core.TenantId.OwnerId",
+                "SubZeroDev.Platform.Core -> SubZeroDev.Platform.Organizations.OrganizationId",
+            ],
+            violations.Order(StringComparer.Ordinal));
+    }
+
     /// <summary>Every assembly outside Billing that is built alongside this test run: the six
     /// framework assemblies plus every other module. Billing itself is deliberately absent — I-C8
     /// bounds what may reference its types from <em>outside</em> it, not from within.</summary>
@@ -745,4 +790,120 @@ internal static class VendorPackageGuard
                 .Where(reference => reference.StartsWith(PlatformPrefix, StringComparison.Ordinal))
                 .Select(reference => $"{entry.Key} -> {reference}")),
         ];
+}
+
+/// <summary>I-O8's checking logic: every identifier a framework assembly declares or references —
+/// type, field, property, event, method and parameter names, and the types and members it
+/// references from elsewhere — read from the compiled metadata, and none may name an owner. The
+/// owner words are the ones the contract gives the concept: an owner, and the organization that is
+/// one (<c>design/20-contract.md</c>, "An organization holds a tenant; it is not one").</summary>
+internal static class OwnerConceptGuard
+{
+    internal static readonly IReadOnlyCollection<string> OwnerWords = ["Owner", "Organization"];
+
+    /// <summary>The one name that carries an owner word without the concept: the permission
+    /// Organizations checks, which the framework's permission catalogue names so that a consumer's
+    /// policy can refer to it (<c>PlatformPermissions</c>). It is a permission's name, not a
+    /// relation — nothing in it says which tenant an organization holds. Removed from an identifier
+    /// before the words are looked for, so the same identifier carrying a second owner word still
+    /// fails.</summary>
+    internal static readonly IReadOnlyCollection<string> ExemptNames = ["AdministerOrganization"];
+
+    /// <summary>Reads each assembly's <c>TypeDef</c>, member, parameter, <c>TypeRef</c> and
+    /// <c>MemberRef</c> tables — never loading or running it, on the discipline
+    /// <see cref="SubscriptionTypeGuard"/> uses.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlySet<string>> Resolve(IReadOnlyCollection<Assembly> assemblies)
+    {
+        var map = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var assembly in assemblies)
+        {
+            using var stream = File.OpenRead(assembly.Location);
+            using var peReader = new PEReader(stream);
+            var reader = peReader.GetMetadataReader();
+
+            var identifiers = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var handle in reader.TypeDefinitions)
+            {
+                var type = reader.GetTypeDefinition(handle);
+                var typeName = Qualified(reader, type.Namespace, type.Name);
+                identifiers.Add(typeName);
+
+                foreach (var field in type.GetFields())
+                {
+                    identifiers.Add($"{typeName}.{reader.GetString(reader.GetFieldDefinition(field).Name)}");
+                }
+
+                foreach (var property in type.GetProperties())
+                {
+                    identifiers.Add($"{typeName}.{reader.GetString(reader.GetPropertyDefinition(property).Name)}");
+                }
+
+                foreach (var @event in type.GetEvents())
+                {
+                    identifiers.Add($"{typeName}.{reader.GetString(reader.GetEventDefinition(@event).Name)}");
+                }
+
+                foreach (var methodHandle in type.GetMethods())
+                {
+                    var method = reader.GetMethodDefinition(methodHandle);
+                    var methodName = $"{typeName}.{reader.GetString(method.Name)}";
+                    identifiers.Add(methodName);
+
+                    foreach (var parameter in method.GetParameters())
+                    {
+                        var name = reader.GetString(reader.GetParameter(parameter).Name);
+                        if (name.Length > 0)
+                        {
+                            identifiers.Add($"{methodName}({name})");
+                        }
+                    }
+                }
+            }
+
+            foreach (var handle in reader.TypeReferences)
+            {
+                var reference = reader.GetTypeReference(handle);
+                identifiers.Add(Qualified(reader, reference.Namespace, reference.Name));
+            }
+
+            foreach (var handle in reader.MemberReferences)
+            {
+                identifiers.Add(reader.GetString(reader.GetMemberReference(handle).Name));
+            }
+
+            map[assembly.GetName().Name!] = identifiers;
+        }
+
+        return map;
+    }
+
+    /// <summary>I-O8: no identifier in <paramref name="identifiersByAssembly"/> contains an owner
+    /// word, compared ignoring case so <c>owner</c> as a parameter is caught as surely as
+    /// <c>OwnerId</c> as a type.</summary>
+    internal static IReadOnlyList<string> Violations(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> identifiersByAssembly)
+    {
+        var violations = new List<string>();
+
+        foreach (var (assembly, identifiers) in identifiersByAssembly)
+        {
+            violations.AddRange(
+                identifiers
+                    .Where(identifier => OwnerWords.Any(
+                        word => WithoutExemptNames(identifier).Contains(word, StringComparison.OrdinalIgnoreCase)))
+                    .Select(identifier => $"{assembly} -> {identifier}"));
+        }
+
+        return violations;
+    }
+
+    private static string WithoutExemptNames(string identifier) =>
+        ExemptNames.Aggregate(identifier, (remaining, exempt) => remaining.Replace(exempt, string.Empty, StringComparison.Ordinal));
+
+    private static string Qualified(MetadataReader reader, StringHandle @namespace, StringHandle name)
+    {
+        var namespaceText = reader.GetString(@namespace);
+        return namespaceText.Length == 0 ? reader.GetString(name) : $"{namespaceText}.{reader.GetString(name)}";
+    }
 }
