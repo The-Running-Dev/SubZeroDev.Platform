@@ -245,6 +245,61 @@ public sealed class AuditTests
         Assert.Equal(AuditOutcome.Denied, recorded.Outcome);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task S28_1_An_allowed_action_that_wrote_nothing_dispatches_once_its_work_completes_and_outlives_a_rollback(
+        bool insideReadOnlyUnitOfWork)
+    {
+        var sink = new RecordingAuditSink();
+        await using var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(PersistenceProvider.Sqlite)
+            .WithServices(services => services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink)))
+            .StartAsync(CancellationToken.None);
+
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var writer = host.Services.GetRequiredService<IAuditWriter>();
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+
+        async Task WorkThenAuditAsync(CancellationToken token)
+        {
+            // The work completes first; only then is the outcome known and the record written.
+            Assert.Empty(sink.Received);
+            var written = await writer.WriteAsync(
+                new AuditAction("test.read"), new ResourceRef("Document", "doc-1"), AuditOutcome.Allowed, AuditClass.Required, token);
+
+            // Dispatched there and then, in its own write — an allowed action that wrote no state has
+            // no transaction of its own to defer to.
+            Assert.True(written.IsSuccess);
+            Assert.Single(sink.Received);
+        }
+
+        using (scopeFactory.Begin(TestTenant, TestPrincipal))
+        {
+            if (insideReadOnlyUnitOfWork)
+            {
+                var result = await unitOfWork.ExecuteAsync(
+                    TransactionIntent.ReadOnly,
+                    async token =>
+                    {
+                        await WorkThenAuditAsync(token);
+                        throw new InvalidOperationException("forces rollback of the read's transaction");
+                    },
+                    CancellationToken.None);
+
+                Assert.False(result.IsSuccess);
+            }
+            else
+            {
+                await WorkThenAuditAsync(CancellationToken.None);
+            }
+        }
+
+        var recorded = Assert.Single(sink.Received);
+        Assert.Equal("test.read", recorded.Action.Value);
+        Assert.Equal(AuditOutcome.Allowed, recorded.Outcome);
+    }
+
     [Fact]
     public async Task S3_8_A_required_write_that_a_sink_refuses_becomes_a_retryable_failure_and_degrades_readiness()
     {

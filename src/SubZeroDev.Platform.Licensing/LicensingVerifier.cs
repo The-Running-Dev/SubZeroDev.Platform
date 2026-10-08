@@ -156,6 +156,10 @@ internal sealed class LicenceVerifier(
 
         var tier = effective?.Claims.Tier ?? LicenceTier.Community;
 
+        // The tier is read from a document Platform did not write, so it reaches a log line or an
+        // audit record only through redaction (I-U6).
+        var loggedTier = Redaction.RedactValue(tier.Value);
+
         // Invalid is logged loudly; the other three are ordinary operational facts.
         if (outcome == LicenceVerificationOutcome.Invalid)
         {
@@ -164,7 +168,7 @@ internal sealed class LicenceVerifier(
                 + "accepted key or is malformed, and grants no tier. Resolved tier is {Tier}.",
                 nameof(LicenceVerificationOutcome.Invalid),
                 options.DocumentPath,
-                tier);
+                loggedTier);
         }
         else
         {
@@ -172,7 +176,7 @@ internal sealed class LicenceVerifier(
                 "Licence verification outcome {Outcome} for document '{Path}'. Resolved tier is {Tier}.",
                 outcome.ToString(),
                 options.DocumentPath,
-                tier);
+                loggedTier);
         }
 
         // Awaited, not fire-and-forget: the record must exist before the caller can observe the new
@@ -193,6 +197,8 @@ internal sealed class LicenceVerifier(
     /// even though they fall back identically (S12.6).</summary>
     private async Task AuditIfChangedAsync(LicenceVerificationOutcome outcome, LicenceTier tier)
     {
+        // The comparison keys on the raw tier so a change between two secret-shaped values is still a
+        // new detection; only the recorded form is redacted.
         var signature = $"{outcome}:{tier.Value}";
         if (string.Equals(_lastAuditedSignature, signature, StringComparison.Ordinal))
         {
@@ -212,7 +218,7 @@ internal sealed class LicenceVerifier(
                 // The outcome is named in the resource reference because AuditEvent carries no
                 // free-form detail member and none may be added (design/20-contract.md, Audit §6) —
                 // this is the only place the record can keep Invalid and Unavailable apart.
-                new ResourceRef("VerifiedLicence", signature),
+                new ResourceRef("VerifiedLicence", $"{outcome}:{Redaction.RedactValue(tier.Value)}"),
                 outcome == LicenceVerificationOutcome.Verified ? AuditOutcome.Allowed : AuditOutcome.Failed,
                 AuditClass.Required,
                 CancellationToken.None).ConfigureAwait(false);
