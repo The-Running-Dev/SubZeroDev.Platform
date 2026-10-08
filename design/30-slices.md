@@ -581,8 +581,8 @@ between requests; any sync, mirror table or vendor adapter inside Platform; the 
 (S40). None of these is in the contract.
 
 ## S40 — A consumer can prove its mirrored roles are revoked within the limit by revoking at the identity provider
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a consumer that mirrors issuer roles runs one test that removes a role where it really lives,
 at the identity provider, and fails if the role keeps granting past the limit. The test also fails if
@@ -621,7 +621,7 @@ Out of scope: a harness case for a sync that advances the stamp after a failed i
 `instruction`); fake issuers for real vendors; changing `AssertRevokedGrantDeniesNextRequestAsync`.
 
 ## S41 — A caller on a route the operator opts in sees the workload's output as it is produced, and sees a broken stream, not a finished one, when the workload dies mid-response
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: An operator lists a path prefix and its first-byte budget, and a client of that route
