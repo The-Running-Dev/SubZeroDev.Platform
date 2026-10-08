@@ -179,6 +179,7 @@ public sealed class OutboxDispatchTests
         var logger = new CapturingLogger<OutboxDispatcher>();
         var dispatcher = new OutboxDispatcher(
             services.GetRequiredService<IOutboxStore>(),
+            services.GetRequiredService<InboxStore>(),
             services.GetRequiredService<IEventHandlerRegistry>(),
             new PendingMigrationRunner(),
             services.GetRequiredService<IServiceScopeFactory>(),
@@ -317,6 +318,7 @@ public sealed class OutboxDispatchTests
         var services = fixture.Host.Services;
         var dispatcher = new OutboxDispatcher(
             new CancelAfterClaimOutboxStore(services.GetRequiredService<IOutboxStore>(), shutdown),
+            services.GetRequiredService<InboxStore>(),
             services.GetRequiredService<IEventHandlerRegistry>(),
             services.GetRequiredService<IMigrationRunner>(),
             services.GetRequiredService<IServiceScopeFactory>(),
@@ -351,6 +353,91 @@ public sealed class OutboxDispatchTests
         var row = await fixture.ReadAsync(id);
         Assert.NotNull(row.ClaimedBy);
         Assert.Null(row.ProcessedAt);
+    }
+
+    [Fact]
+    public async Task S33_3_A_failed_handler_leaves_no_inbox_record_and_its_retry_runs_and_records_once()
+    {
+        await using var fixture = await ScriptedFixture.StartAsync();
+        fixture.Script.Results.Enqueue(Result<HandlerError>.Failure(HandlerError.Transient()));
+        var id = await MigrateAndEnqueueOneAsync(fixture.Host);
+
+        await TickAsync(fixture.Host);
+        Assert.Equal(1, (await fixture.ReadAsync(id)).Attempts);
+        Assert.Empty(await fixture.ReadInboxAsync(id));
+
+        fixture.Host.Clock.Advance(TimeSpan.FromSeconds(30));
+        await TickAsync(fixture.Host);
+
+        Assert.Equal(2, fixture.Script.Observed.Count);
+        Assert.NotNull((await fixture.ReadAsync(id)).ProcessedAt);
+        var record = Assert.Single(await fixture.ReadInboxAsync(id));
+        Assert.Equal("test.event", record.Consumer);
+    }
+
+    [Fact]
+    public async Task S33_4_The_inbox_records_the_message_tenant_in_the_outbox_encoding()
+    {
+        await using var fixture = await ScriptedFixture.StartAsync();
+        Assert.True((await fixture.Host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        var tenant = new TenantId(Guid.NewGuid());
+        OutboxMessageId tenanted;
+        using (fixture.Host.Services.GetRequiredService<IOperationScopeFactory>().Begin(tenant, Principal.Anonymous))
+        {
+            tenanted = await EnqueueOneAsync(fixture.Host);
+        }
+
+        var implicitTenant = await EnqueueOneAsync(fixture.Host);
+
+        await TickAsync(fixture.Host);
+
+        Assert.Equal(tenant.ToString(), Assert.Single(await fixture.ReadInboxAsync(tenanted)).Tenant);
+        Assert.Equal(tenant.ToString(), await fixture.ReadOutboxTenantAsync(tenanted));
+        Assert.Equal(TenantId.Implicit.ToString(), Assert.Single(await fixture.ReadInboxAsync(implicitTenant)).Tenant);
+    }
+
+    [Fact]
+    public async Task S33_6_The_lost_claim_warning_reads_as_the_contract_states_and_nothing_carries_the_payload()
+    {
+        const string Marker = "payload-marker-5f1c";
+        await using var fixture = await ScriptedFixture.StartAsync();
+        Assert.True((await fixture.Host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        var id = await EnqueueOneAsync(fixture.Host, new TestEvent(Marker));
+        var services = fixture.Host.Services;
+        var logger = new CapturingLogger<OutboxDispatcher>();
+        var dispatcher = new OutboxDispatcher(
+            new LoseClaimOnceOutboxStore(services.GetRequiredService<IOutboxStore>()),
+            services.GetRequiredService<InboxStore>(),
+            services.GetRequiredService<IEventHandlerRegistry>(),
+            services.GetRequiredService<IMigrationRunner>(),
+            services.GetRequiredService<IServiceScopeFactory>(),
+            services.GetRequiredService<IOperationScopeFactory>(),
+            services.GetRequiredService<ITraceContextCodec>(),
+            services.GetRequiredService<PlatformOptions>(),
+            services.GetRequiredService<InstanceId>(),
+            services.GetRequiredService<IClock>(),
+            logger);
+
+        // The handler commits, then the processed write finds the claim gone.
+        await dispatcher.TickAsync(CancellationToken.None);
+        var lost = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Equal(
+            $"Outbox state write for {id} lost its claim; the message may be dispatched again and the inbox will skip it.",
+            lost.Message);
+
+        // Redelivered once the claim expires: skipped, not re-applied.
+        fixture.Host.Clock.Advance(services.GetRequiredService<PlatformOptions>().Outbox.ClaimWindow + TimeSpan.FromSeconds(1));
+        await dispatcher.TickAsync(CancellationToken.None);
+        Assert.Single(fixture.Script.Observed);
+        Assert.NotNull((await fixture.ReadAsync(id)).ProcessedAt);
+        Assert.Contains(logger.Entries, entry => entry.Level == LogLevel.Information
+            && entry.Message.Contains("the inbox skipped it", StringComparison.Ordinal));
+
+        Assert.All(logger.Entries, entry => Assert.DoesNotContain(Marker, entry.Message, StringComparison.Ordinal));
+        var record = Assert.Single(await fixture.ReadInboxAsync(id));
+        Assert.DoesNotContain(Marker, record.Consumer, StringComparison.Ordinal);
+        Assert.DoesNotContain(Marker, record.Tenant, StringComparison.Ordinal);
+        Assert.DoesNotContain(Marker, record.ProcessedAt, StringComparison.Ordinal);
     }
 
     private static async Task<IPlatformTestHost> StartWorkerAsync(int? dispatchTickBudget = null)
@@ -401,7 +488,7 @@ public sealed class OutboxDispatchTests
         return await EnqueueOneAsync(host);
     }
 
-    private static async Task<OutboxMessageId> EnqueueOneAsync(IPlatformTestHost host)
+    private static async Task<OutboxMessageId> EnqueueOneAsync(IPlatformTestHost host, TestEvent? @event = null)
     {
         var writer = host.Services.GetRequiredService<IOutboxWriter>();
         var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
@@ -425,7 +512,7 @@ public sealed class OutboxDispatchTests
                 TransactionIntent.Write,
                 token =>
                 {
-                    id = writer.Enqueue(new TestEvent());
+                    id = writer.Enqueue(@event ?? new TestEvent());
                     return Task.CompletedTask;
                 },
                 CancellationToken.None);
@@ -482,6 +569,33 @@ public sealed class OutboxDispatchTests
                 Instant(4), Instant(5), reader.IsDBNull(6) ? null : reader.GetString(6));
         }
 
+        internal async Task<IReadOnlyList<InboxRecord>> ReadInboxAsync(OutboxMessageId id)
+        {
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT consumer, tenant, processed_at FROM platform_inbox WHERE message_id = @id;";
+            command.Parameters.AddWithValue("@id", Host.Services.GetRequiredService<IProviderCapability>().EncodeIdentifier(id.Value));
+            await using var reader = await command.ExecuteReaderAsync();
+            var records = new List<InboxRecord>();
+            while (await reader.ReadAsync())
+            {
+                records.Add(new InboxRecord(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            }
+
+            return records;
+        }
+
+        internal async Task<string> ReadOutboxTenantAsync(OutboxMessageId id)
+        {
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT tenant FROM platform_outbox WHERE id = @id;";
+            command.Parameters.AddWithValue("@id", Host.Services.GetRequiredService<IProviderCapability>().EncodeIdentifier(id.Value));
+            return (string)(await command.ExecuteScalarAsync())!;
+        }
+
         internal async Task ExecuteAsync(string sql, OutboxMessageId id)
         {
             await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
@@ -512,74 +626,102 @@ public sealed class OutboxDispatchTests
         DateTimeOffset? PoisonedAt,
         string? LastError);
 
-    private sealed class CancelAfterClaimOutboxStore(IOutboxStore inner, CancellationTokenSource shutdown)
-        : IOutboxStore
-    {
-        public Task<Result<TransactionError>> InsertAsync(
-            OutboxMessage message, CancellationToken cancellationToken) =>
-            inner.InsertAsync(message, cancellationToken);
+    private sealed record InboxRecord(string Consumer, string Tenant, string ProcessedAt);
 
-        public async Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
+    private sealed class CancelAfterClaimOutboxStore(IOutboxStore inner, CancellationTokenSource shutdown)
+        : DelegatingOutboxStore(inner)
+    {
+        public override async Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
             InstanceId holder, CancellationToken cancellationToken)
         {
-            var claimed = await inner.ClaimNextAsync(holder, cancellationToken);
+            var claimed = await base.ClaimNextAsync(holder, cancellationToken);
             await shutdown.CancelAsync();
             return claimed;
         }
+    }
 
-        public Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
+    /// <summary>Reports the first processed write as a lost claim without making it — the outcome
+    /// a worker sees when another instance reclaimed the message while its handler ran.</summary>
+    private sealed class LoseClaimOnceOutboxStore(IOutboxStore inner) : DelegatingOutboxStore(inner)
+    {
+        private bool _lost;
+
+        public override Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
+            OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken)
+        {
+            if (_lost)
+            {
+                return base.MarkProcessedAsync(id, holder, cancellationToken);
+            }
+
+            _lost = true;
+            return Task.FromResult(Result<ClaimedWriteOutcome, TransactionError>.Success(ClaimedWriteOutcome.ClaimLost));
+        }
+    }
+
+    private abstract class DelegatingOutboxStore(IOutboxStore inner) : IOutboxStore
+    {
+        public virtual Task<Result<TransactionError>> InsertAsync(
+            OutboxMessage message, CancellationToken cancellationToken) =>
+            inner.InsertAsync(message, cancellationToken);
+
+        public virtual Task<Result<OutboxMessage?, TransactionError>> ClaimNextAsync(
+            InstanceId holder, CancellationToken cancellationToken) =>
+            inner.ClaimNextAsync(holder, cancellationToken);
+
+        public virtual Task<Result<ClaimedWriteOutcome, TransactionError>> MarkProcessedAsync(
             OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
             inner.MarkProcessedAsync(id, holder, cancellationToken);
 
-        public Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
+        public virtual Task<Result<ClaimedWriteOutcome, TransactionError>> RecordFailureAsync(
             OutboxMessageId id, InstanceId holder, string error, DateTimeOffset nextAttemptAt,
             CancellationToken cancellationToken) =>
             inner.RecordFailureAsync(id, holder, error, nextAttemptAt, cancellationToken);
 
-        public Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
+        public virtual Task<Result<ClaimedWriteOutcome, TransactionError>> PoisonAsync(
             OutboxMessageId id, InstanceId holder, string error, PoisonAttemptMode attemptMode,
             CancellationToken cancellationToken) =>
             inner.PoisonAsync(id, holder, error, attemptMode, cancellationToken);
 
-        public Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
+        public virtual Task<Result<ClaimedWriteOutcome, TransactionError>> DeferAsync(
             OutboxMessageId id, InstanceId holder, DateTimeOffset nextAttemptAt,
             CancellationToken cancellationToken) =>
             inner.DeferAsync(id, holder, nextAttemptAt, cancellationToken);
 
-        public Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
+        public virtual Task<Result<ClaimedWriteOutcome, TransactionError>> ReleaseClaimAsync(
             OutboxMessageId id, InstanceId holder, CancellationToken cancellationToken) =>
             inner.ReleaseClaimAsync(id, holder, cancellationToken);
 
-        public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
+        public virtual Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> RedriveAsync(
             IReadOnlyCollection<OutboxMessageId> ids, CancellationToken cancellationToken) =>
             inner.RedriveAsync(ids, cancellationToken);
 
-        public Task<Result<int, TransactionError>> RedriveByTypeAsync(
+        public virtual Task<Result<int, TransactionError>> RedriveByTypeAsync(
             EventTypeName type, CancellationToken cancellationToken) =>
             inner.RedriveByTypeAsync(type, cancellationToken);
 
-        public Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
+        public virtual Task<Result<IReadOnlyList<OutboxAdministrationResult>, TransactionError>> DiscardAsync(
             IReadOnlyCollection<OutboxMessageId> ids, string reason, CancellationToken cancellationToken) =>
             inner.DiscardAsync(ids, reason, cancellationToken);
 
-        public Task<Result<int, TransactionError>> DiscardByTypeAsync(
+        public virtual Task<Result<int, TransactionError>> DiscardByTypeAsync(
             EventTypeName type, string reason, CancellationToken cancellationToken) =>
             inner.DiscardByTypeAsync(type, reason, cancellationToken);
 
-        public Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
+        public virtual Task<Result<IReadOnlyList<OutboxMessage>, TransactionError>> ListPoisonedAsync(
             int limit, CancellationToken cancellationToken) =>
             inner.ListPoisonedAsync(limit, cancellationToken);
 
-        public Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
+        public virtual Task<Result<DateTimeOffset?, TransactionError>> OldestPendingDueAsync(CancellationToken cancellationToken) =>
             inner.OldestPendingDueAsync(cancellationToken);
 
-        public Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken) =>
+        public virtual Task<Result<long, TransactionError>> PendingCountAsync(CancellationToken cancellationToken) =>
             inner.PendingCountAsync(cancellationToken);
 
-        public Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken) =>
+        public virtual Task<Result<long, TransactionError>> PoisonedCountAsync(CancellationToken cancellationToken) =>
             inner.PoisonedCountAsync(cancellationToken);
 
-        public Task<Result<int, TransactionError>> PruneAsync(
+        public virtual Task<Result<int, TransactionError>> PruneAsync(
             PruneTarget target, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken) =>
             inner.PruneAsync(target, olderThan, batchSize, cancellationToken);
     }

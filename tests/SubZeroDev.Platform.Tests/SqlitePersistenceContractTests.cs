@@ -134,6 +134,14 @@ public sealed class SqlitePersistenceContractTests : PersistenceContractTests
         "platform_outbox ix_platform_outbox_processed_at(processed_at)",
     ];
 
+    protected override IReadOnlyList<string> InboxSchema { get; } =
+    [
+        "platform_inbox.message_id BLOB NOT NULL PK1",
+        "platform_inbox.consumer TEXT NOT NULL PK2",
+        "platform_inbox.tenant TEXT NOT NULL",
+        "platform_inbox.processed_at TEXT NOT NULL",
+    ];
+
     protected override async Task<IReadOnlyList<string>> DescribeSchemaAsync(
         string connectionString, IReadOnlyList<string> tables)
     {

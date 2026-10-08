@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-P5
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence: tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs
+Evidence: tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs
 
 ## Statement
 The inbox record commits in the same transaction as the handler's effects, and a handler failure leaves no record (Owner: Persistence.)

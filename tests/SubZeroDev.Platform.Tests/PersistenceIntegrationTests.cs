@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
@@ -1390,6 +1391,125 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     protected abstract Task<RawOutboxRow?> ReadOutboxRowAsync(
         string connectionString, IProviderCapability capability, OutboxMessageId id);
 
+    // S33 ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S33_1_Migrate_creates_platform_inbox_after_the_lease_table_and_leaves_the_baseline_schema()
+    {
+        await using var host = await StartAsync();
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        // Keyed on (message_id, consumer), tenant recorded and non-null, no secondary index.
+        Assert.Equal(InboxSchema, await DescribeSchemaAsync(_connectionString, ["platform_inbox"]));
+        Assert.Equal(BaselineSchema, await DescribeSchemaAsync(_connectionString, BaselineTables));
+
+        string[] expected = [.. BaselineMigrations, "0004_create_inbox"];
+        var platform = host.Services.GetServices<IModuleMigrationSource>()
+            .Single(source => source.Module == new ModuleName("Platform"));
+        Assert.Equal(expected, platform.Migrations.Select(migration => migration.Name));
+
+        var history = host.Services.GetRequiredService<IProviderCapability>()
+            .MigrationHistoryTable(new ModuleName("Platform"));
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var applied = new List<string>();
+        var read = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var command = current.Connection.CreateCommand();
+                command.Transaction = current.Transaction;
+                command.CommandText = $"SELECT name FROM {history} ORDER BY name;";
+                await using var reader = await command.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    applied.Add(reader.GetString(0));
+                }
+            },
+            CancellationToken.None);
+        Assert.True(read.IsSuccess);
+        Assert.Equal(expected, applied);
+    }
+
+    [Fact]
+    public async Task S33_2_A_redelivered_message_is_skipped__its_effect_lands_once_and_the_skip_is_logged()
+    {
+        var probe = new InboxProbe();
+        var log = new CapturingLogger<OutboxDispatcher>();
+        await using var host = await StartInboxWorkerAsync(_connectionString, probe, log);
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var id = await EnqueueOneAsync(host);
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.OutboxDispatch, CancellationToken.None);
+        var first = await ReadOutboxRowAsync(_connectionString, capability, id);
+        Assert.False(first!.ProcessedAtIsNull);
+        Assert.Equal(1, probe.Invocations);
+
+        // A lost claim, simulated: the committed message looks pending again.
+        await ExecuteOnOutboxRowAsync(
+            host, "UPDATE platform_outbox SET processed_at = NULL, claimed_by = NULL, claimed_at = NULL WHERE id = @id;", id);
+        Assert.True((await ReadOutboxRowAsync(_connectionString, capability, id))!.ProcessedAtIsNull);
+
+        await host.RunBackgroundWorkOnceAsync(PlatformBackgroundWork.OutboxDispatch, CancellationToken.None);
+
+        Assert.Equal(1, probe.Invocations);
+        Assert.Equal(1, await CountRowsAsync(_connectionString, "t_inbox_effect", new TestEvent().Value));
+        var second = await ReadOutboxRowAsync(_connectionString, capability, id);
+        Assert.False(second!.ProcessedAtIsNull);
+        Assert.Equal(first.Attempts, second.Attempts);
+        var skipped = Assert.Single(log.Entries, entry => entry.Message.Contains("the inbox skipped it", StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Information, skipped.Level);
+        Assert.Contains(id.ToString(), skipped.Message, StringComparison.Ordinal);
+        Assert.Contains(InboxProbe.EventType.Value, skipped.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary><c>platform_inbox</c> as <see cref="DescribeSchemaAsync"/> renders it.</summary>
+    protected abstract IReadOnlyList<string> InboxSchema { get; }
+
+    /// <summary>A Worker host whose <c>test.event</c> handler writes one <c>t_inbox_effect</c> row
+    /// on the dispatch transaction, so a second application of the handler would show as a
+    /// second row.</summary>
+    private protected async Task<IPlatformTestHost> StartInboxWorkerAsync(
+        string connectionString, InboxProbe probe, CapturingLogger<OutboxDispatcher>? log = null)
+    {
+        var host = await PlatformTestHost.CreateBuilder()
+            .WithRole(HostRole.Worker)
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", connectionString)
+            .WithServices(services =>
+            {
+                services.AddSingleton<IModuleMigrationSource>(InboxProbe.EffectTable);
+                services.AddSingleton(probe);
+                services.AddPlatformEventHandler<TestEvent, InboxEffectHandler>(InboxProbe.EventType);
+                if (log is not null)
+                {
+                    services.AddSingleton<ILogger<OutboxDispatcher>>(log);
+                }
+            })
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        return host;
+    }
+
+    private static async Task ExecuteOnOutboxRowAsync(IPlatformTestHost host, string sql, OutboxMessageId id)
+    {
+        var capability = host.Services.GetRequiredService<IProviderCapability>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var written = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var command = current.Connection.CreateCommand();
+                command.Transaction = current.Transaction;
+                command.CommandText = sql;
+                AddParameter(command, "@id", capability.EncodeIdentifier(id.Value));
+                Assert.Equal(1, await command.ExecuteNonQueryAsync(token));
+            },
+            CancellationToken.None);
+        Assert.True(written.IsSuccess);
+    }
+
     // S27.3 -----------------------------------------------------------------------------------
 
     /// <summary>The migrations Platform registered at D5's baseline commit (<c>d6daabf</c>, the
@@ -1613,5 +1733,57 @@ public sealed class CrossProviderPayloadTests(PostgresContainerFixture fixture) 
                 // Best-effort cleanup.
             }
         }
+    }
+}
+
+/// <summary>Shared by every host in an inbox test: how often the handler ran, and an optional gate
+/// that holds the handler — and so its dispatch transaction — open after it has written.</summary>
+internal sealed class InboxProbe
+{
+    internal static readonly EventTypeName EventType = new("test.event");
+
+    internal static readonly TestMigrationSource EffectTable = new(
+        "InboxEffect", TestMigration.Sql("0001_create", "CREATE TABLE t_inbox_effect (id TEXT NOT NULL);"));
+
+    private int _invocations;
+
+    internal int Invocations => Volatile.Read(ref _invocations);
+
+    internal bool Block { get; set; }
+
+    internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal void Invoked() => Interlocked.Increment(ref _invocations);
+}
+
+/// <summary>Writes one unkeyed <c>t_inbox_effect</c> row per invocation on the dispatch
+/// transaction: applied twice, it leaves two rows.</summary>
+internal sealed class InboxEffectHandler(IAmbientTransactionAccessor ambient, InboxProbe probe)
+    : IIntegrationEventHandler<TestEvent>
+{
+    public async Task<Result<HandlerError>> HandleAsync(TestEvent @event, CancellationToken cancellationToken)
+    {
+        probe.Invoked();
+        var current = ambient.Current!;
+        await using (var insert = current.Connection.CreateCommand())
+        {
+            insert.Transaction = current.Transaction;
+            insert.CommandText = "INSERT INTO t_inbox_effect (id) VALUES (@id);";
+            var parameter = insert.CreateParameter();
+            parameter.ParameterName = "@id";
+            parameter.Value = @event.Value;
+            insert.Parameters.Add(parameter);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (probe.Block)
+        {
+            probe.Started.TrySetResult();
+            await probe.Release.Task.WaitAsync(cancellationToken);
+        }
+
+        return Result<HandlerError>.Success();
     }
 }

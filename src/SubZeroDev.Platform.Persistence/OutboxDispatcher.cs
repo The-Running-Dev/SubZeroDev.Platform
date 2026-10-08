@@ -10,6 +10,7 @@ namespace SubZeroDev.Platform.Persistence;
 /// <summary>Claims and dispatches one row at a time, bounded by the configured per-tick budget.</summary>
 internal sealed class OutboxDispatcher(
     IOutboxStore store,
+    InboxStore inbox,
     IEventHandlerRegistry registry,
     IMigrationRunner migrations,
     IServiceScopeFactory serviceScopes,
@@ -111,11 +112,21 @@ internal sealed class OutboxDispatcher(
         var handler = dependencyScope.ServiceProvider.GetRequiredService(registration.HandlerType);
         var unitOfWork = dependencyScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         Result<HandlerError>? handlerResult = null;
+        var duplicate = false;
 
+        // Record, then invoke only if the record was new: a handler failure rolls the record back with
+        // everything else, so a retry is never mistaken for a duplicate (I-P4, I-P5).
         var transaction = await unitOfWork.ExecuteAsync(
             TransactionIntent.Write,
             async token =>
             {
+                if (!await inbox.TryRecordAsync(
+                    message.Id, registration.Type, message.Tenant, clock.UtcNow, token).ConfigureAwait(false))
+                {
+                    duplicate = true;
+                    return;
+                }
+
                 handlerResult = await InvokeHandlerAsync(
                     handler, registration.EventType, payload, token).ConfigureAwait(false);
                 if (!handlerResult.Value.IsSuccess)
@@ -139,6 +150,13 @@ internal sealed class OutboxDispatcher(
                 await store.ReleaseClaimAsync(message.Id, instance, CancellationToken.None).ConfigureAwait(false))
                 .ConfigureAwait(false);
             return;
+        }
+
+        if (duplicate)
+        {
+            logger.LogInformation(
+                "Outbox message {MessageId} was already handled by {Consumer}; the inbox skipped it.",
+                message.Id, registration.Type);
         }
 
         await ObserveClaimedWriteAsync(
@@ -202,7 +220,7 @@ internal sealed class OutboxDispatcher(
         }
         else if (written.Value == ClaimedWriteOutcome.ClaimLost)
         {
-            logger.LogWarning("Outbox state write for {MessageId} lost its claim; duplicate delivery is possible.", id);
+            logger.LogWarning("Outbox state write for {MessageId} lost its claim; the message may be dispatched again and the inbox will skip it.", id);
         }
 
         return Task.CompletedTask;

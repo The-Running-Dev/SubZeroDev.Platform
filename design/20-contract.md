@@ -1504,18 +1504,8 @@ public enum PruneTarget
 }
 ```
 
-Internal, stated so the slice introduces nothing unlisted:
-
-```csharp
-internal sealed class InboxStore
-{
-    /// <summary>INSERT … ON CONFLICT (message_id, consumer) DO NOTHING on the ambient transaction.
-    /// True when the record was inserted; false when one already existed.</summary>
-    internal Task<bool> TryRecordAsync(
-        OutboxMessageId message, EventTypeName consumer, TenantId tenant, DateTimeOffset at,
-        CancellationToken cancellationToken);
-}
-```
+The internal store is `InboxStore` in [`Inbox.cs`](../src/SubZeroDev.Platform.Persistence/Inbox.cs):
+`TryRecordAsync` inserts on the ambient transaction and reports whether the record was new.
 
 - **Dispatch order, inside the handler's one write transaction:** record, then — only if the record
   was inserted — invoke the handler. A handler failure rolls the record back with everything else, so
@@ -2356,8 +2346,8 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-P1** | A guarded write commits only when it matched exactly one row; zero rows rolls back the whole unit of work — consumer writes, staged outbox rows and staged audit — and returns `StaleVersion`, whether or not the work read the guard's result (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
 | **I-P2** | Every guarded write predicates on `version = @expected` and the tenant, and an UPDATE sets `version = @expected + 1`; no other statement writes `version` (Owner: each consumer declaring `IVersioned`.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
 | **I-P3** | No answer to a stale version — HTTP, MCP, log or audit — carries a version value, and gone, changed and another tenant's row get the same answer (Owner: Persistence, each consumer.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
-| **I-P4** | A handler is never invoked for a (message id, consumer) whose earlier invocation committed (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs |
-| **I-P5** | The inbox record commits in the same transaction as the handler's effects, and a handler failure leaves no record (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs |
+| **I-P4** | A handler is never invoked for a (message id, consumer) whose earlier invocation committed (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
+| **I-P5** | The inbox record commits in the same transaction as the handler's effects, and a handler failure leaves no record (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
 | **I-P6** | An inbox record is pruned only once its outbox row no longer exists (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
 | **I-P7** | Migrations are applied automatically only when the derived environment is `Development`; no setting can enable it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
 | **I-P8** | `IMigrationRunner.ApplyAsync` is the only path that writes migration history; development application and migrate mode both take the provider-native lock through it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
