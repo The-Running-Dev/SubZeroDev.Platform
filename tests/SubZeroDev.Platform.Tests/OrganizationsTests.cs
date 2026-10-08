@@ -1,3 +1,8 @@
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SubZeroDev.Platform.Abstractions;
@@ -169,6 +174,154 @@ public sealed class OrganizationsTests
             organization.Id, OrganizationRole.Member, host.Clock.UtcNow.AddDays(7), CancellationToken.None);
         Assert.True(invitedAgain.IsSuccess);
         Assert.NotEqual(invited.Value.Token, invitedAgain.Value.Token);
+    }
+
+    // S30.3 -----------------------------------------------------------------------------------
+
+    /// <summary>S30.3 (I-O4): once minted, the token exists only in the one answer that minted it. The
+    /// stored row holds its SHA-256, no stored value anywhere in the database holds the token, no public
+    /// member but the minting call can return it, and every later read — memberships, a redemption, a
+    /// replayed redemption, the audit trail — carries nothing token-shaped.</summary>
+    [Fact]
+    public async Task S30_3_A_minted_token_is_stored_only_as_its_hash_and_no_later_read_returns_anything_token_shaped()
+    {
+        var sink = new RecordingAuditSink(isDurable: true);
+        await using var host = await StartHostAsync(sink);
+        var api = host.Services.GetRequiredService<IOrganizationApi>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        OrganizationId organizationId;
+        string token;
+        using (scopeFactory.Begin(TenantId.Implicit, Alice))
+        {
+            organizationId = (await api.CreateOrganizationAsync("Acme", CancellationToken.None)).Value.Id;
+            var minted = await api.InviteAsync(
+                organizationId, OrganizationRole.Member, host.Clock.UtcNow.AddDays(7), CancellationToken.None);
+            Assert.True(minted.IsSuccess);
+            token = minted.Value.Token;
+        }
+
+        // The token is the shape this test looks for afterwards: 32 random bytes, base64url.
+        Assert.Matches(TokenShape, token);
+
+        // The stored row holds the hash, and the hash is of this token.
+        var storedHash = await ReadScalarAsync(host, "SELECT token_hash FROM organization_invitation;");
+        Assert.NotEqual(token, storedHash);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token))), storedHash);
+
+        // No stored value in any table holds the token, or anything shaped like one.
+        var stored = await ReadEveryStoredValueAsync(host);
+        Assert.Contains(stored, value => value.Location == "organization_invitation.token_hash");
+        Assert.DoesNotContain(stored, value => value.Value.Contains(token, StringComparison.Ordinal));
+        Assert.DoesNotContain(stored, value => TokenShape.IsMatch(value.Value));
+
+        // No public member other than the minting call can hand an InvitationToken back.
+        var returning = typeof(IOrganizationApi).Assembly.GetExportedTypes()
+            .Where(type => type != typeof(InvitationToken))
+            .SelectMany(type => type.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
+            .Where(method => Carries(method.ReturnType, typeof(InvitationToken)))
+            .Select(method => $"{method.DeclaringType!.Name}.{method.Name}")
+            .ToList();
+        Assert.Equal([$"{nameof(IOrganizationApi)}.{nameof(IOrganizationApi.InviteAsync)}"], returning);
+
+        // Every later read — listing, redeeming, replaying the redemption — answers nothing token-shaped.
+        var answers = new List<object>();
+        using (scopeFactory.Begin(TenantId.Implicit, Alice))
+        {
+            answers.Add((await api.ListMembershipsAsync(organizationId, CancellationToken.None)).Value);
+        }
+
+        using (scopeFactory.Begin(TenantId.Implicit, Bob))
+        {
+            var redeemed = await api.RedeemInvitationAsync(token, CancellationToken.None);
+            Assert.True(redeemed.IsSuccess);
+            answers.Add(redeemed.Value);
+            answers.Add((await api.ListMembershipsAsync(organizationId, CancellationToken.None)).Value);
+        }
+
+        using (scopeFactory.Begin(TenantId.Implicit, Carol))
+        {
+            var replayed = await api.RedeemInvitationAsync(token, CancellationToken.None);
+            Assert.False(replayed.IsSuccess);
+            answers.Add(replayed.Error);
+        }
+
+        foreach (var answer in answers)
+        {
+            var rendered = JsonSerializer.Serialize(answer, answer.GetType()) + answer;
+            Assert.DoesNotContain(token, rendered, StringComparison.Ordinal);
+            Assert.DoesNotMatch(TokenShape, rendered);
+        }
+
+        Assert.NotEmpty(sink.Received);
+        Assert.All(sink.Received, record => Assert.DoesNotContain(token, record.ToString(), StringComparison.Ordinal));
+
+        // After redemption the stored row still holds only the hash.
+        Assert.DoesNotContain(
+            await ReadEveryStoredValueAsync(host), value => value.Value.Contains(token, StringComparison.Ordinal));
+    }
+
+    /// <summary>The minted token's shape: 32 random bytes as unpadded base64url, bounded so a longer
+    /// run (a hex hash) does not match a slice of itself.</summary>
+    private static readonly Regex TokenShape = new("(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])");
+
+    /// <summary>Whether <paramref name="type"/> is, or wraps through its generic arguments or element
+    /// type, <paramref name="target"/>.</summary>
+    private static bool Carries(Type type, Type target) =>
+        type == target
+        || (type.HasElementType && Carries(type.GetElementType()!, target))
+        || (type.IsGenericType && type.GetGenericArguments().Any(argument => Carries(argument, target)));
+
+    /// <summary>Every non-null value in every table, as text, with the table and column it was in.</summary>
+    private static async Task<IReadOnlyList<(string Location, string Value)>> ReadEveryStoredValueAsync(IPlatformTestHost host)
+    {
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var result = await unitOfWork.ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            async ct =>
+            {
+                var tables = new List<string>();
+                await using (var command = ambient.Current!.Connection.CreateCommand())
+                {
+                    command.Transaction = ambient.Current!.Transaction;
+                    command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%';";
+                    await using var reader = await command.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
+                    {
+                        tables.Add(reader.GetString(0));
+                    }
+                }
+
+                var values = new List<(string Location, string Value)>();
+                foreach (var table in tables)
+                {
+                    await using var command = ambient.Current!.Connection.CreateCommand();
+                    command.Transaction = ambient.Current!.Transaction;
+                    command.CommandText = $"SELECT * FROM \"{table}\";";
+                    await using var reader = await command.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
+                    {
+                        for (var i = 0; i < reader.FieldCount; i++)
+                        {
+                            if (!reader.IsDBNull(i))
+                            {
+                                var value = reader.GetValue(i);
+                                values.Add((
+                                    $"{table}.{reader.GetName(i)}",
+                                    value is byte[] bytes ? Convert.ToBase64String(bytes) : Convert.ToString(value)!));
+                            }
+                        }
+                    }
+                }
+
+                return (IReadOnlyList<(string Location, string Value)>)values;
+            },
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        return result.Value;
     }
 
     // S10.4 -----------------------------------------------------------------------------------

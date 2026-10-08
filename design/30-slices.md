@@ -280,8 +280,8 @@ Acceptance:
 Out of scope: adding new startup checks or new telemetry options.
 
 ## S30 — Mcp, Organizations and Licensing keep their promises under test
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a product exposing tools over Mcp, inviting members, or selling paid features can rely on
 credentials being checked once per connection, invitation tokens never being stored readable, and
@@ -312,7 +312,7 @@ Out of scope: the cancelled-call test that
 `ModelContextProtocol` ships its fix.
 
 ## S31 — The public roadmap shows the work in progress now, not D3's finished plan
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a visitor to the site's roadmap page sees the active effort's slices: what has shipped, what is being built now, what is queued, and D5's real non-goals. Today the page shows a closed effort's finished plan.

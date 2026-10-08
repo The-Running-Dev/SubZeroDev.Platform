@@ -441,6 +441,128 @@ public sealed class LicensingTests : IDisposable
         }
     }
 
+    // S30.4 -----------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S30_4_Past_grace_accepted_work_completes_scheduled_work_runs_at_its_time_data_reads_and_exports_and_only_new_paid_work_is_refused()
+    {
+        // The real module, so whatever Licensing registers is present; only its startup verification is
+        // removed, and the claims are set directly, so the grace boundary is the one this test places.
+        var clock = new FakeClock();
+        var holder = new LicenceStateHolder();
+        var issuedAt = clock.UtcNow;
+        var graceEndsAt = issuedAt.AddDays(31);
+
+        holder.Set(
+            new LicenceClaims(
+                new LicenceTier("Studio"),
+                new HashSet<FeatureName> { PaidFeature },
+                issuedAt,
+                issuedAt.AddDays(1),
+                graceEndsAt,
+                issuedAt),
+            LicenceVerificationOutcome.Verified);
+
+        using var signer = new TestLicenceSigner("key-2026-a");
+        var permission = new PermissionName("Test.Licensing.Use");
+
+        // Work accepted inside grace and scheduled for a day after grace has ended.
+        var scheduled = new ScheduledLicensedWork(clock, runAt: graceEndsAt.AddDays(1));
+
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptedCancelled = false;
+
+        var (app, client) = await WebHostUnderTest.StartAsync(
+            services =>
+            {
+                services.AddSingleton<IClock>(clock);
+                services.AddSingleton(holder);
+                services.AddSingleton<IPlatformModule, LicensingModule>();
+                services.AddSingleton(signer.Options(TemporaryPath("absent-licence")));
+                services.AddSingleton<IBackgroundWork>(scheduled);
+                services.AddSingleton<IPermissionCatalog>(new StubPermissionCatalog(permission));
+                services.AddSingleton<IPermissionProvider>(new StubPermissionProvider(
+                    "licensing-permission",
+                    (_, _, _) => Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(
+                        new HashSet<PermissionName> { permission })));
+            },
+            postCompose: services =>
+            {
+                foreach (var descriptor in services
+                    .Where(descriptor => descriptor.ImplementationType == typeof(LicenceStartupVerification))
+                    .ToList())
+                {
+                    services.Remove(descriptor);
+                }
+            },
+            mapEndpoints: application =>
+            {
+                // New paid-feature work: admitted only while entitled. The handler holds until the test
+                // releases it, so one admission can straddle the grace end.
+                application.MapPost("/simulations", async (CancellationToken cancellationToken) =>
+                    {
+                        accepted.TrySetResult();
+                        await release.Task.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+                        acceptedCancelled = cancellationToken.IsCancellationRequested;
+                        return Results.Ok(new { completed = true });
+                    })
+                    .RequiresPlatformAuthorization(permission, PaidFeature);
+
+                application.MapGet("/simulations/existing", () => Results.Ok(new { id = "existing" }))
+                    .RequiresPlatformAuthorization(permission, feature: null);
+                application.MapGet("/simulations/existing/export", () => Results.Ok(new { rows = 3 }))
+                    .RequiresPlatformAuthorization(permission, feature: null);
+            });
+
+        await using (app)
+        using (client)
+        {
+            // Inside grace (expired, grace not ended): the paid work is admitted and starts running.
+            clock.Advance(TimeSpan.FromDays(2));
+            var running = client.PostAsync("/simulations", null);
+            var first = await Task.WhenAny(accepted.Task, running).WaitAsync(TimeSpan.FromSeconds(10));
+            if (first != accepted.Task)
+            {
+                Assert.Fail($"Paid work inside grace was not admitted: {(await running).StatusCode}.");
+            }
+
+            // The scheduled work is ticking on Hosting's own timer, and does not run before its time.
+            await WaitUntilAsync(() => scheduled.Ticks >= 3, "the scheduled work never ticked");
+            Assert.False(scheduled.Ran.IsCompleted, "The scheduled work ran before its time.");
+
+            // Grace ends while the accepted work is still running, and the clock reaches the schedule.
+            clock.SetTo(graceEndsAt.AddDays(2));
+
+            release.SetResult();
+            var completion = await running.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(HttpStatusCode.OK, completion.StatusCode);
+            Assert.False(acceptedCancelled, "Accepted work was cancelled when grace ended.");
+
+            var ranAt = await scheduled.Ran.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(ranAt >= graceEndsAt.AddDays(1), $"Scheduled work ran at {ranAt:O}, before its time.");
+
+            // Existing data stays readable and exportable.
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/simulations/existing")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/simulations/existing/export")).StatusCode);
+
+            // New paid-feature work is refused as an entitlement refusal, and never reaches its handler.
+            accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Assert.Equal(HttpStatusCode.PaymentRequired, (await client.PostAsync("/simulations", null)).StatusCode);
+            Assert.False(accepted.Task.IsCompleted, "Refused paid work reached its handler.");
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string failure)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, failure);
+            await Task.Delay(20, CancellationToken.None);
+        }
+    }
+
     // S12.10 ----------------------------------------------------------------------------------
 
     [Fact]
@@ -851,6 +973,41 @@ public sealed class LicensingTests : IDisposable
         }
 
         public void Dispose() => _key.Dispose();
+    }
+
+    /// <summary>Work accepted before grace ended and scheduled for an instant after it. Hosting's timer
+    /// ticks it; the tick does its work once the clock reaches <paramref name="runAt"/>, and records the
+    /// instant it ran (S30.4).</summary>
+    private sealed class ScheduledLicensedWork(IClock clock, DateTimeOffset runAt) : IBackgroundWork
+    {
+        private readonly TaskCompletionSource<DateTimeOffset> _ran =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private int _ticks;
+
+        public BackgroundWorkName Name { get; } = new("licensed-scheduled-report");
+
+        public HostRoles Roles => HostRoles.Both;
+
+        public TimeSpan Interval => TimeSpan.FromMilliseconds(20);
+
+        public bool RequiresLease => false;
+
+        internal int Ticks => Volatile.Read(ref _ticks);
+
+        internal Task<DateTimeOffset> Ran => _ran.Task;
+
+        public Task TickAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _ticks);
+            var now = clock.UtcNow;
+            if (now >= runAt)
+            {
+                _ran.TrySetResult(now);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>A revocation check that fails the test the moment anything calls it. S12.13's whole
