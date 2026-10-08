@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
@@ -62,6 +63,13 @@ public static class GameEdgeEndpointExtensions
             context.Request.ContentType,
             trace);
 
+        var options = context.RequestServices.GetRequiredService<GameEdgeOptions>();
+        if (StreamingRoutes.Match(options.StreamingRoutes, context.Request.Path.Value ?? string.Empty) is { } route)
+        {
+            await StreamAsync(context, forwarder, request, route, correlation.Current).ConfigureAwait(false);
+            return;
+        }
+
         var result = await forwarder.ForwardAsync(request, context.RequestAborted).ConfigureAwait(false);
 
         if (result.IsSuccess)
@@ -80,6 +88,86 @@ public static class GameEdgeEndpointExtensions
         }
 
         await WriteEdgeErrorAsync(context, result.Error, correlation.Current).ConfigureAwait(false);
+    }
+
+    /// <summary>Relays a streamed route. Before the workload's headers the edge answers for itself, as
+    /// on a buffered route. At the headers it commits the workload's status and <c>Content-Type</c>,
+    /// then flushes each piece of the body as it is read (I-E2). A workload failure after that aborts
+    /// the response, with no byte of the edge's own (I-E3); a caller that goes away ends the relay
+    /// quietly, and disposing the upstream response carries that to the workload.</summary>
+    private static async Task StreamAsync(
+        HttpContext context,
+        IGameWorkloadForwarder forwarder,
+        ForwardedRequest request,
+        StreamingRoute route,
+        CorrelationId correlation)
+    {
+        var aborted = context.RequestAborted;
+        Result<StreamedResponse, EdgeError> result;
+        try
+        {
+            result = await forwarder
+                .ForwardStreamingAsync(request, route.FirstByteTimeout, aborted)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+        {
+            // The caller went away before the workload's headers: nothing to answer, nothing to log.
+            return;
+        }
+
+        if (!result.IsSuccess)
+        {
+            await WriteEdgeErrorAsync(context, result.Error, correlation).ConfigureAwait(false);
+            return;
+        }
+
+        await using var streamed = result.Value;
+        var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            context.Response.StatusCode = streamed.StatusCode;
+            if (streamed.ContentType is { } contentType)
+            {
+                context.Response.ContentType = contentType;
+            }
+
+            await context.Response.StartAsync(aborted).ConfigureAwait(false);
+
+            while (true)
+            {
+                int read;
+                try
+                {
+                    read = await streamed.Body.ReadAsync(buffer, aborted).ConfigureAwait(false);
+                }
+                catch (Exception thrown) when (!aborted.IsCancellationRequested
+                    && thrown is IOException or HttpRequestException)
+                {
+                    // The workload failed after the commit point: the honest signal left is an
+                    // incomplete response, so no terminating chunk and no edge-authored byte.
+                    context.Abort();
+                    return;
+                }
+
+                if (read == 0)
+                {
+                    return;
+                }
+
+                await context.Response.Body.WriteAsync(buffer.AsMemory(0, read), aborted).ConfigureAwait(false);
+                await context.Response.Body.FlushAsync(aborted).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+        {
+            // The caller went away. Not the workload's failure and not the edge's: nothing to answer
+            // and nothing to log above Debug (I-E5). Disposing `streamed` releases the workload.
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private static Task WriteEdgeErrorAsync(HttpContext context, EdgeError error, CorrelationId correlation)

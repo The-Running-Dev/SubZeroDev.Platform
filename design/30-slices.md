@@ -621,8 +621,8 @@ Out of scope: a harness case for a sync that advances the stamp after a failed i
 `instruction`); fake issuers for real vendors; changing `AssertRevokedGrantDeniesNextRequestAsync`.
 
 ## S41 — A caller on a route the operator opts in sees the workload's output as it is produced, and sees a broken stream, not a finished one, when the workload dies mid-response
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: An operator lists a path prefix and its first-byte budget, and a client of that route
 receives each piece of the workload's response as the workload writes it. If the workload dies partway
@@ -675,7 +675,7 @@ other than status and `Content-Type`; streaming the request body; any change to 
 `ForwardAsync`.
 
 ## S42 — An operator can see how often a streamed route was cut short by the workload, without a dashboard counting those cuts as successes
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: When a workload dies mid-stream, the operator gets one warning naming the route and the

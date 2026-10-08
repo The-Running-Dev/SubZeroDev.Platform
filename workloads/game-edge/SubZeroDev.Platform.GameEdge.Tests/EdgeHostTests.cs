@@ -136,6 +136,91 @@ public sealed class EdgeHostTests
         Assert.Contains("ForwardTimeout", Flatten(thrown), StringComparison.Ordinal);
     }
 
+    /// <summary>S41.8 — each breach of the streamed-route rules fails startup with
+    /// <see cref="InvalidOperationException"/> naming the breaching key, and only that key. A
+    /// <see langword="null"/> setting is left unset, so an entry with no <c>FirstByteTimeout</c> binds
+    /// to zero, which is how "no default" is enforced.</summary>
+    [Theory]
+    [InlineData("console", "00:00:02", null, null, "00:00:10", "0:PathPrefix")]
+    [InlineData("/", "00:00:02", null, null, "00:00:10", "0:PathPrefix")]
+    [InlineData("/console/", "00:00:02", null, null, "00:00:10", "0:PathPrefix")]
+    [InlineData("/a?b", "00:00:02", null, null, "00:00:10", "0:PathPrefix")]
+    [InlineData("/a#b", "00:00:02", null, null, "00:00:10", "0:PathPrefix")]
+    [InlineData("/console", "00:00:02", "/console/stream", "00:00:02", "00:00:10", "1:PathPrefix")]
+    [InlineData("/console/stream", "00:00:02", "/console/stream", "00:00:02", "00:00:10", "1:PathPrefix")]
+    [InlineData("/console/stream", "00:00:00", null, null, "00:00:10", "0:FirstByteTimeout")]
+    [InlineData("/console/stream", "00:00:11", null, null, "00:00:10", "0:FirstByteTimeout")]
+    [InlineData("/console/stream", null, null, null, "00:00:10", "0:FirstByteTimeout")]
+    public async Task A_streamed_route_that_breaks_a_rule_fails_startup_naming_its_key(
+        string prefix0,
+        string? timeout0,
+        string? prefix1,
+        string? timeout1,
+        string forwardTimeout,
+        string breach)
+    {
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
+            builder.UseSetting("GameEdge:ForwardTimeout", forwardTimeout);
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:StreamingRoutes:0:PathPrefix", prefix0);
+            Set(builder, "GameEdge:StreamingRoutes:0:FirstByteTimeout", timeout0);
+            Set(builder, "GameEdge:StreamingRoutes:1:PathPrefix", prefix1);
+            Set(builder, "GameEdge:StreamingRoutes:1:FirstByteTimeout", timeout1);
+        });
+
+        var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
+
+        var invalid = Chain(thrown).OfType<InvalidOperationException>()
+            .FirstOrDefault(exception => exception.Message.Contains("StreamingRoutes", StringComparison.Ordinal));
+        Assert.NotNull(invalid);
+
+        string[] keys = ["0:PathPrefix", "0:FirstByteTimeout", "1:PathPrefix", "1:FirstByteTimeout"];
+        foreach (var key in keys)
+        {
+            var named = invalid.Message.Contains($"'GameEdge:StreamingRoutes:{key}'", StringComparison.Ordinal);
+            Assert.True(named == (key == breach), $"Expected only '{breach}' to be named; '{key}' named: {named}. {invalid.Message}");
+        }
+    }
+
+    [Fact]
+    public async Task Valid_streamed_routes_start_the_host()
+    {
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
+            builder.UseSetting("GameEdge:ForwardTimeout", "00:00:10");
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:StreamingRoutes:0:PathPrefix", "/console/stream");
+            builder.UseSetting("GameEdge:StreamingRoutes:0:FirstByteTimeout", "00:00:10");
+            builder.UseSetting("GameEdge:StreamingRoutes:1:PathPrefix", "/console/streamer");
+            builder.UseSetting("GameEdge:StreamingRoutes:1:FirstByteTimeout", "00:00:01");
+        });
+        using var client = factory.CreateClient();
+
+        using var liveness = await client.GetAsync("/health/live");
+        Assert.Equal(HttpStatusCode.OK, liveness.StatusCode);
+    }
+
+    private static void Set(IWebHostBuilder builder, string key, string? value)
+    {
+        if (value is not null)
+        {
+            builder.UseSetting(key, value);
+        }
+    }
+
+    private static IEnumerable<Exception> Chain(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            yield return current;
+        }
+    }
+
     /// <summary>The entry point's failure reaches the caller wrapped, so the assertion reads the
     /// whole chain rather than guessing which layer carries the message.</summary>
     private static string Flatten(Exception exception)

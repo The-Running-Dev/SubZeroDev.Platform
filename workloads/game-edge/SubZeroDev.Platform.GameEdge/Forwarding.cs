@@ -26,6 +26,19 @@ public sealed record ForwardedResponse(
     ReadOnlyMemory<byte> Body,
     string? ContentType);
 
+/// <summary>The workload's answer on a streamed route, at its headers. <see cref="Body"/> is still on the
+/// wire and owns the upstream response: disposing it releases the workload connection, which is how a
+/// caller's disconnect reaches the workload.</summary>
+/// <param name="StatusCode">The workload's status code.</param>
+/// <param name="ContentType">The workload's <c>Content-Type</c>, when present.</param>
+/// <param name="Body">The workload's response body, read as it arrives.</param>
+public sealed record StreamedResponse(int StatusCode, string? ContentType, Stream Body) : IAsyncDisposable
+{
+    /// <summary>Releases the upstream response and the workload connection under it.</summary>
+    /// <returns>A task that completes when the body is released.</returns>
+    public ValueTask DisposeAsync() => Body.DisposeAsync();
+}
+
 /// <summary>Forwards one request to the workload. Retries nothing — a retry against a request whose
 /// outcome is unknown would be a second action.</summary>
 public interface IGameWorkloadForwarder
@@ -37,6 +50,20 @@ public interface IGameWorkloadForwarder
     /// <returns>The workload's response, or an <see cref="EdgeError"/>.</returns>
     Task<Result<ForwardedResponse, EdgeError>> ForwardAsync(
         ForwardedRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>Forwards <paramref name="request"/> and returns the workload's response at its headers,
+    /// with the body still to be read. Exactly one attempt (I-E4).</summary>
+    /// <param name="request">The request to forward.</param>
+    /// <param name="firstByteTimeout">How long the workload has to send its response headers. Nothing
+    /// bounds the body after them.</param>
+    /// <param name="cancellationToken">Cancelled when the caller disconnects; it also cancels a body
+    /// read in progress.</param>
+    /// <returns>The workload's response at its headers, or an <see cref="EdgeError"/> when the
+    /// workload could not be reached or did not send headers in time.</returns>
+    Task<Result<StreamedResponse, EdgeError>> ForwardStreamingAsync(
+        ForwardedRequest request,
+        TimeSpan firstByteTimeout,
         CancellationToken cancellationToken);
 }
 
@@ -53,24 +80,7 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(options.ForwardTimeout);
 
-        using var message = new HttpRequestMessage(
-            request.Method,
-            new Uri(options.WorkloadBaseAddress, request.PathAndQuery));
-
-        if (!request.Body.IsEmpty)
-        {
-            message.Content = new ByteArrayContent(request.Body.ToArray());
-            if (request.ContentType is { } contentType)
-            {
-                message.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
-            }
-        }
-
-        message.Headers.TryAddWithoutValidation("traceparent", request.Trace.TraceParent);
-        if (request.Trace.TraceState is { } traceState)
-        {
-            message.Headers.TryAddWithoutValidation("tracestate", traceState);
-        }
+        using var message = CreateMessage(request);
 
         HttpResponseMessage response;
         try
@@ -116,5 +126,79 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
                 body,
                 response.Content.Headers.ContentType?.ToString()));
         }
+    }
+
+    /// <inheritdoc/>
+    public async Task<Result<StreamedResponse, EdgeError>> ForwardStreamingAsync(
+        ForwardedRequest request,
+        TimeSpan firstByteTimeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var message = CreateMessage(request);
+
+        HttpResponseMessage response;
+        using (var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            // The budget runs to the workload's headers and no further: `ResponseHeadersRead` returns
+            // there, and the body below is read under the caller's token alone (I-E2). Exactly one
+            // attempt, as on the buffered path.
+            budget.CancelAfter(firstByteTimeout);
+            try
+            {
+                response = await httpClient
+                    .SendAsync(message, HttpCompletionOption.ResponseHeadersRead, budget.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return Result<StreamedResponse, EdgeError>.Failure(EdgeError.WorkloadTimeout());
+            }
+            catch (HttpRequestException)
+            {
+                return Result<StreamedResponse, EdgeError>.Failure(EdgeError.WorkloadUnreachable());
+            }
+        }
+
+        Stream body;
+        try
+        {
+            body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+
+        return Result<StreamedResponse, EdgeError>.Success(new StreamedResponse(
+            (int)response.StatusCode,
+            response.Content.Headers.ContentType?.ToString(),
+            body));
+    }
+
+    private HttpRequestMessage CreateMessage(ForwardedRequest request)
+    {
+        var message = new HttpRequestMessage(
+            request.Method,
+            new Uri(options.WorkloadBaseAddress, request.PathAndQuery));
+
+        if (!request.Body.IsEmpty)
+        {
+            message.Content = new ByteArrayContent(request.Body.ToArray());
+            if (request.ContentType is { } contentType)
+            {
+                message.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            }
+        }
+
+        message.Headers.TryAddWithoutValidation("traceparent", request.Trace.TraceParent);
+        if (request.Trace.TraceState is { } traceState)
+        {
+            message.Headers.TryAddWithoutValidation("tracestate", traceState);
+        }
+
+        return message;
     }
 }
