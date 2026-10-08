@@ -212,18 +212,10 @@ and nothing else to the storage shape — `IShareable` is declared in
 
 ### 6a. Versioned rows — `SubZeroDev.Platform.Persistence`
 
-A new opt-in column marker beside `ISoftDeletable` in
+`IVersioned` is an opt-in column marker beside `ISoftDeletable` in
 [`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs), on the same terms: a declaration, not
-a mechanism — the consumer adds the column in its own migration and writes its own SQL.
-
-```csharp
-/// <summary>Opt-in: the row carries a store-owned version a guarded write asserts and advances.</summary>
-public interface IVersioned
-{
-    /// <summary>1 on insert; advanced by exactly 1 by each guarded write that lands.</summary>
-    long Version { get; }
-}
-```
+a mechanism — the consumer adds the column in its own migration and writes its own SQL. Its one member,
+`long Version`, is 1 on insert and advanced by exactly 1 by each guarded write that lands.
 
 - **The version is the store's.** It is never supplied by a caller, never chosen by the engine or
   domain code, and never carried in a Platform response — engine-hosting-contract § 6.1.
@@ -1450,25 +1442,12 @@ under `/signin/<method>`, and `callback` (GET) at the method's `RedirectPath`; t
 
 #### The version guard
 
-```csharp
-/// <summary>Executes a consumer's compare-and-swap write on the ambient transaction and judges it.
-/// Platform builds no SQL: the command is the consumer's own.</summary>
-public interface IVersionGuard
-{
-    /// <summary>Runs <paramref name="guardedWrite"/> on the ambient Write transaction.</summary>
-    /// <param name="guardedWrite">An UPDATE or DELETE whose predicate includes the row's key, the
-    /// tenant, and <c>version = @expected</c>, and whose UPDATE sets <c>version = @expected + 1</c>.</param>
-    /// <param name="cancellationToken">Cancels the operation.</param>
-    /// <returns>Success when exactly one row matched; <see cref="TransactionError.StaleVersion"/> when
-    /// none did, after which the unit of work is doomed.</returns>
-    /// <exception cref="PlatformContractViolationException">No ambient transaction, or one opened
-    /// <see cref="TransactionIntent.ReadOnly"/> (<c>GuardedWriteOutsideWriteTransaction</c>); or more
-    /// than one row matched (<c>GuardedWriteNotSingleRow</c>).</exception>
-    Task<Result<TransactionError>> ExecuteAsync(DbCommand guardedWrite, CancellationToken cancellationToken);
-}
-```
-
-Registered by Persistence's composition alongside `IUnitOfWork`.
+`IVersionGuard` is in [`VersionGuard.cs`](../src/SubZeroDev.Platform.Persistence/VersionGuard.cs):
+`ExecuteAsync(DbCommand guardedWrite, CancellationToken)` runs a consumer's compare-and-swap write on
+the ambient Write transaction and returns `Result<TransactionError>`. Platform builds no SQL: the
+command is the consumer's own, an UPDATE or DELETE whose predicate includes the row's key, the tenant
+and `version = @expected`, and whose UPDATE sets `version = @expected + 1`. Registered by Persistence's
+composition alongside `IUnitOfWork`.
 
 - **The guard enlists the command** on the ambient connection and transaction; the consumer does not.
 - **Matched rows are the judgement**, and both providers report UPDATE and DELETE matched rows the same
@@ -2126,16 +2105,9 @@ the setting, constraint and non-retryable meaning are identical.
 
 ### 12. `TransactionError.StaleVersion` — `SubZeroDev.Platform.Persistence`
 
-One variant is added to `TransactionError` in
-[`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs):
-
-```csharp
-/// <summary>A guarded write matched no row: the row changed or is gone since it was read.
-/// The whole unit of work was rolled back.</summary>
-/// <returns>The error.</returns>
-public static TransactionError StaleVersion() =>
-    new(nameof(StaleVersion), isRetryable: false, "The guarded write matched no row: the row changed or is gone since it was read.");
-```
+One variant, `StaleVersion`, is added to `TransactionError` in
+[`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs). Its detail is "The guarded write
+matched no row: the row changed or is gone since it was read." and names no version.
 
 | Variant | Raised when | Retryable | The caller is expected to |
 |---|---|---|---|
@@ -2345,9 +2317,9 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-O7** | A non-member cannot switch into or administer an organization, and is told not found (Owner: Organizations.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 | **I-O8** | The framework never learns that a tenant has an owner (Owner: all.) | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
 | **I-OB1** | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work (Owner: Observability, Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/TelemetryOptionsTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryExportTests.cs |
-| **I-P1** | A guarded write commits only when it matched exactly one row; zero rows rolls back the whole unit of work — consumer writes, staged outbox rows and staged audit — and returns `StaleVersion`, whether or not the work read the guard's result (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
-| **I-P2** | Every guarded write predicates on `version = @expected` and the tenant, and an UPDATE sets `version = @expected + 1`; no other statement writes `version` (Owner: each consumer declaring `IVersioned`.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
-| **I-P3** | No answer to a stale version — HTTP, MCP, log or audit — carries a version value, and gone, changed and another tenant's row get the same answer (Owner: Persistence, each consumer.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
+| **I-P1** | A guarded write commits only when it matched exactly one row; zero rows rolls back the whole unit of work — consumer writes, staged outbox rows and staged audit — and returns `StaleVersion`, whether or not the work read the guard's result (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/PostgresPersistenceContractTests.cs |
+| **I-P2** | Every guarded write predicates on `version = @expected` and the tenant, and an UPDATE sets `version = @expected + 1`; no other statement writes `version` (Owner: each consumer declaring `IVersioned`.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
+| **I-P3** | No answer to a stale version — HTTP, MCP, log or audit — carries a version value, and gone, changed and another tenant's row get the same answer (Owner: Persistence, each consumer.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/StaleVersionAnswerTests.cs |
 | **I-P4** | A handler is never invoked for a (message id, consumer) whose earlier invocation committed (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
 | **I-P5** | The inbox record commits in the same transaction as the handler's effects, and a handler failure leaves no record (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
 | **I-P6** | An inbox record is pruned only once its outbox row no longer exists (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/PruneLoggingTests.cs |

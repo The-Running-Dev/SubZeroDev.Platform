@@ -1643,6 +1643,289 @@ public abstract class PersistenceContractTests : IAsyncLifetime
         return count;
     }
 
+    // S35 ---------------------------------------------------------------------------------------
+
+    private static readonly TenantId OtherTenant = new(Guid.Parse("22222222-2222-2222-2222-222222222222"));
+
+    [Fact]
+    public async Task S35_1_Of_two_units_that_read_the_same_version_the_second_guarded_write_is_stale()
+    {
+        await using var host = await StartVersionedAsync();
+        await InsertVersionedRowAsync(host, "row", TenantId.Implicit, "original", version: 1);
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var guard = host.Services.GetRequiredService<IVersionGuard>();
+
+        // Both units read the row before either writes it.
+        var firstRead = (await ReadVersionedRowAsync(host, "row"))!.Value.Version;
+        var secondRead = (await ReadVersionedRowAsync(host, "row"))!.Value.Version;
+        Assert.Equal(1, firstRead);
+        Assert.Equal(1, secondRead);
+
+        var first = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            token => GuardedRenameAsync(guard, "row", TenantId.Implicit, firstRead, "first", token),
+            CancellationToken.None);
+        Assert.True(first.IsSuccess);
+        Assert.True(first.Value.IsSuccess);
+        Assert.Equal(("first", 2L), (await ReadVersionedRowAsync(host, "row"))!.Value);
+
+        Result<TransactionError> seen = default;
+        var second = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token => seen = await GuardedRenameAsync(guard, "row", TenantId.Implicit, secondRead, "second", token),
+            CancellationToken.None);
+
+        Assert.False(second.IsSuccess);
+        Assert.Equal(nameof(TransactionError.StaleVersion), second.Error.Code);
+        Assert.False(second.Error.IsRetryable);
+        Assert.False(seen.IsSuccess);
+        Assert.Equal(second.Error, seen.Error);
+        Assert.Equal(("first", 2L), (await ReadVersionedRowAsync(host, "row"))!.Value);
+    }
+
+    [Fact]
+    public async Task S35_2_A_stale_guarded_write_rolls_back_the_whole_unit_even_when_its_work_ignores_the_result()
+    {
+        var sink = new RecordingAuditSink();
+        await using var host = await StartVersionedAsync(sink);
+        await InsertVersionedRowAsync(host, "row", TenantId.Implicit, "original", version: 3);
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var guard = host.Services.GetRequiredService<IVersionGuard>();
+        var outbox = host.Services.GetRequiredService<IOutboxWriter>();
+        var audit = host.Services.GetRequiredService<IAuditWriter>();
+
+        using var scope = host.Services.GetRequiredService<IOperationScopeFactory>().Begin(TenantId.Implicit, Principal.Anonymous);
+        var executed = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                var current = ambient.Current!;
+                await using var insert = current.Connection.CreateCommand();
+                insert.Transaction = current.Transaction;
+                insert.CommandText = "INSERT INTO t_versioned_side (id) VALUES (@id);";
+                AddParameter(insert, "@id", "side");
+                await insert.ExecuteNonQueryAsync(token);
+
+                outbox.Enqueue(new TestEvent());
+                Assert.True((await audit.WriteAsync(
+                    new AuditAction("test.versioned"), null, AuditOutcome.Allowed, AuditClass.Recorded, token)).IsSuccess);
+
+                // Expects 1; the row is at 3. The result is deliberately not looked at.
+                _ = await GuardedRenameAsync(guard, "row", TenantId.Implicit, expected: 1, "ignored", token);
+            },
+            CancellationToken.None);
+
+        Assert.False(executed.IsSuccess);
+        Assert.Equal(nameof(TransactionError.StaleVersion), executed.Error.Code);
+        Assert.Equal(0, await CountRowsAsync(_connectionString, "t_versioned_side", "side"));
+        Assert.Equal(0, await CountAllAsync(host, "platform_outbox"));
+        Assert.Empty(sink.Received);
+        Assert.Equal(("original", 3L), (await ReadVersionedRowAsync(host, "row"))!.Value);
+    }
+
+    [Fact]
+    public async Task S35_3_A_deleted_row_a_newer_version_and_another_tenants_row_return_the_same_error()
+    {
+        await using var host = await StartVersionedAsync();
+        await InsertVersionedRowAsync(host, "deleted", TenantId.Implicit, "a", version: 1);
+        await InsertVersionedRowAsync(host, "newer", TenantId.Implicit, "b", version: 5);
+        await InsertVersionedRowAsync(host, "foreign", OtherTenant, "c", version: 1);
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var guard = host.Services.GetRequiredService<IVersionGuard>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+
+        Assert.True((await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                await using var delete = ambient.Current!.Connection.CreateCommand();
+                delete.Transaction = ambient.Current.Transaction;
+                delete.CommandText = "DELETE FROM t_versioned WHERE id = 'deleted';";
+                await delete.ExecuteNonQueryAsync(token);
+            },
+            CancellationToken.None)).IsSuccess);
+
+        var errors = new List<TransactionError>();
+        foreach (var id in new[] { "deleted", "newer", "foreign" })
+        {
+            var executed = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token => GuardedRenameAsync(guard, id, TenantId.Implicit, expected: 1, "renamed", token),
+                CancellationToken.None);
+            Assert.False(executed.IsSuccess);
+            errors.Add(executed.Error);
+        }
+
+        Assert.All(errors, error =>
+        {
+            Assert.Equal(nameof(TransactionError.StaleVersion), error.Code);
+            Assert.Equal(TransactionError.StaleVersion().Detail, error.Detail);
+        });
+        Assert.Single(errors.Distinct());
+        Assert.Equal(("b", 5L), (await ReadVersionedRowAsync(host, "newer"))!.Value);
+        Assert.Equal(("c", 1L), (await ReadVersionedRowAsync(host, "foreign"))!.Value);
+    }
+
+    [Fact]
+    public async Task S35_4_A_guarded_write_outside_a_write_unit_or_matching_two_rows_is_a_contract_violation()
+    {
+        await using var host = await StartVersionedAsync();
+        await InsertVersionedRowAsync(host, "one", TenantId.Implicit, "a", version: 1);
+        await InsertVersionedRowAsync(host, "two", TenantId.Implicit, "b", version: 1);
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var guard = host.Services.GetRequiredService<IVersionGuard>();
+
+        await using (var detached = DetachedCommand())
+        {
+            detached.CommandText = "UPDATE t_versioned SET version = 2 WHERE id = 'one' AND version = 1;";
+            var outside = await Assert.ThrowsAsync<PlatformContractViolationException>(
+                () => guard.ExecuteAsync(detached, CancellationToken.None));
+            Assert.Equal(nameof(ContractViolation.GuardedWriteOutsideWriteTransaction), outside.Error.Code);
+        }
+
+        var readOnly = await Assert.ThrowsAsync<PlatformContractViolationException>(() => unitOfWork.ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            token => GuardedRenameAsync(guard, "one", TenantId.Implicit, expected: 1, "read-only", token),
+            CancellationToken.None));
+        Assert.Equal(nameof(ContractViolation.GuardedWriteOutsideWriteTransaction), readOnly.Error.Code);
+
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var notSingle = await Assert.ThrowsAsync<PlatformContractViolationException>(() => unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                // Keyed to the tenant and version but not to a row: both rows match.
+                await using var update = ambient.Current!.Connection.CreateCommand();
+                update.CommandText =
+                    "UPDATE t_versioned SET name = 'both', version = @expected + 1 WHERE tenant = @tenant AND version = @expected;";
+                AddParameter(update, "@expected", 1L);
+                AddParameter(update, "@tenant", TenantId.Implicit.ToString());
+                return await guard.ExecuteAsync(update, token);
+            },
+            CancellationToken.None));
+        Assert.Equal(nameof(ContractViolation.GuardedWriteNotSingleRow), notSingle.Error.Code);
+
+        Assert.Equal(("a", 1L), (await ReadVersionedRowAsync(host, "one"))!.Value);
+        Assert.Equal(("b", 1L), (await ReadVersionedRowAsync(host, "two"))!.Value);
+    }
+
+    private static TestMigrationSource VersionedTableSource(PersistenceProvider provider) => new(
+        "Versioned",
+        TestMigration.Sql(
+            "0001_create",
+            "CREATE TABLE t_versioned (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, name TEXT NOT NULL, version "
+            + (provider == PersistenceProvider.Sqlite ? "INTEGER" : "BIGINT") + " NOT NULL DEFAULT 1);"),
+        TestMigration.Sql("0002_side", "CREATE TABLE t_versioned_side (id TEXT PRIMARY KEY);"));
+
+    private protected async Task<IPlatformTestHost> StartVersionedAsync(RecordingAuditSink? sink = null, string? connectionString = null)
+    {
+        var host = await PlatformTestHost.CreateBuilder()
+            .WithProvider(Provider)
+            .WithSetting("Persistence:ConnectionString", connectionString ?? _connectionString)
+            .WithServices(services =>
+            {
+                services.AddSingleton<IModuleMigrationSource>(VersionedTableSource(Provider));
+                services.AddPlatformEventHandler<TestEvent, TestEventHandler>(new EventTypeName("test.event"));
+                if (sink is not null)
+                {
+                    services.AddSingleton<IAuditSink>(sink);
+                }
+            })
+            .StartAsync(CancellationToken.None);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+        return host;
+    }
+
+    /// <summary>Inserts with the version given, as a consumer's own insert would, letting the column
+    /// default stand when it is 1.</summary>
+    private protected static async Task InsertVersionedRowAsync(IPlatformTestHost host, string id, TenantId tenant, string name, long version)
+    {
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var inserted = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                await using var insert = ambient.Current!.Connection.CreateCommand();
+                insert.Transaction = ambient.Current.Transaction;
+                insert.CommandText = version == 1
+                    ? "INSERT INTO t_versioned (id, tenant, name) VALUES (@id, @tenant, @name);"
+                    : "INSERT INTO t_versioned (id, tenant, name, version) VALUES (@id, @tenant, @name, @version);";
+                AddParameter(insert, "@id", id);
+                AddParameter(insert, "@tenant", tenant.ToString());
+                AddParameter(insert, "@name", name);
+                if (version != 1)
+                {
+                    AddParameter(insert, "@version", version);
+                }
+
+                await insert.ExecuteNonQueryAsync(token);
+            },
+            CancellationToken.None);
+        Assert.True(inserted.IsSuccess);
+    }
+
+    /// <summary>The consumer's own compare-and-swap: keyed to the row, the tenant and the version
+    /// read. The command has no connection or transaction — enlisting it is the guard's job.</summary>
+    private protected async Task<Result<TransactionError>> GuardedRenameAsync(
+        IVersionGuard guard, string id, TenantId tenant, long expected, string name, CancellationToken token)
+    {
+        await using var update = DetachedCommand();
+        update.CommandText =
+            "UPDATE t_versioned SET name = @name, version = @expected + 1 "
+            + "WHERE id = @id AND tenant = @tenant AND version = @expected;";
+        AddParameter(update, "@name", name);
+        AddParameter(update, "@expected", expected);
+        AddParameter(update, "@id", id);
+        AddParameter(update, "@tenant", tenant.ToString());
+        return await guard.ExecuteAsync(update, token);
+    }
+
+    /// <summary>A provider command bound to nothing, as a consumer would build one.</summary>
+    private System.Data.Common.DbCommand DetachedCommand() => Provider == PersistenceProvider.Sqlite
+        ? new SqliteCommand()
+        : new NpgsqlCommand();
+
+    private protected static async Task<(string Name, long Version)?> ReadVersionedRowAsync(IPlatformTestHost host, string id)
+    {
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        (string, long)? row = null;
+        var read = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            async token =>
+            {
+                await using var select = ambient.Current!.Connection.CreateCommand();
+                select.Transaction = ambient.Current.Transaction;
+                select.CommandText = "SELECT name, version FROM t_versioned WHERE id = @id;";
+                AddParameter(select, "@id", id);
+                await using var reader = await select.ExecuteReaderAsync(token);
+                if (await reader.ReadAsync(token))
+                {
+                    row = (reader.GetString(0), Convert.ToInt64(reader.GetValue(1)));
+                }
+            },
+            CancellationToken.None);
+        Assert.True(read.IsSuccess);
+        return row;
+    }
+
+    private static async Task<long> CountAllAsync(IPlatformTestHost host, string table)
+    {
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        long count = -1;
+        var read = await host.Services.GetRequiredService<IUnitOfWork>().ExecuteAsync(
+            TransactionIntent.ReadOnly,
+            async token =>
+            {
+                await using var command = ambient.Current!.Connection.CreateCommand();
+                command.Transaction = ambient.Current.Transaction;
+                command.CommandText = $"SELECT COUNT(*) FROM {table};";
+                count = Convert.ToInt64(await command.ExecuteScalarAsync(token));
+            },
+            CancellationToken.None);
+        Assert.True(read.IsSuccess);
+        return count;
+    }
+
     // S27.3 -----------------------------------------------------------------------------------
 
     /// <summary>The migrations Platform registered at D5's baseline commit (<c>d6daabf</c>, the

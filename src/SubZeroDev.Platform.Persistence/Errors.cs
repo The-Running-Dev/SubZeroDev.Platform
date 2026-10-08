@@ -42,6 +42,14 @@ public sealed record TransactionError : PlatformError
     /// belongs in the log, which is where the correlation ties the two together.</remarks>
     public static TransactionError Faulted() =>
         new(nameof(Faulted), isRetryable: false, "The transaction failed and was rolled back.");
+
+    /// <summary>A guarded write matched no row: the row changed or is gone since it was read.
+    /// The whole unit of work was rolled back.</summary>
+    /// <returns>The error.</returns>
+    /// <remarks>Not retryable: repeating the same write repeats the same stale assertion. The caller
+    /// reads the row again and decides. The detail names no version, stored or expected.</remarks>
+    public static TransactionError StaleVersion() =>
+        new(nameof(StaleVersion), isRetryable: false, "The guarded write matched no row: the row changed or is gone since it was read.");
 }
 
 /// <summary>Why an outbox administration operation did not complete.</summary>

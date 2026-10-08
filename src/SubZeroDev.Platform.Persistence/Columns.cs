@@ -43,6 +43,16 @@ public interface ISoftDeletable
     string? DeletedBy { get; }
 }
 
+/// <summary>Opt-in: the row carries a store-owned version a guarded write asserts and advances.
+/// The column is <c>version</c>, <c>INTEGER NOT NULL DEFAULT 1</c> on SQLite and <c>BIGINT NOT NULL
+/// DEFAULT 1</c> on PostgreSQL, added in the consumer's own migration; <see cref="IVersionGuard"/>
+/// runs the write that asserts it.</summary>
+public interface IVersioned
+{
+    /// <summary>1 on insert; advanced by exactly 1 by each guarded write that lands.</summary>
+    long Version { get; }
+}
+
 /// <summary>An entity type that may publish rows for reading by other tenants. Declared on the type
 /// at model build; there is no per-row opt-in on an ordinary type. Not a Platform table — a
 /// consumer's entity type declaring this acquires a <see cref="SharedAt"/> column in that consumer's
