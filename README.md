@@ -23,7 +23,8 @@ the whole of the rule, and it is enforced by the build rather than by intent.
 
 ## What's here
 
-Design documents. No packages yet.
+Design documents, and the framework packages that implement them under `src/`, with their tests
+under `tests/`. A version tag publishes the shipped packages to a private GitHub Packages feed.
 
 Start with **Platform Identity** — what this repository is, and the naming collision it
 settles; everything else depends on it. From there the reading order runs through the
@@ -50,4 +51,4 @@ Check it before pushing:
 
 ---
 
-Public, work in progress. Design stage — no packages have been built.
+Public, work in progress. Packages are built and tested on every change; releases go to a private feed.

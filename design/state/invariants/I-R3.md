@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-R3
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/TenancyTests.cs
 
 ## Statement
-The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) Enforced by code — the scope.
+The scope's tenant and principal do not change for the request's lifetime (Owner: Core.)

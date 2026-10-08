@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/TenancyTests.cs
 
 ## Statement
 A resolver never denies; it answers or defers (Owner: Core.) Enforced by code — the return type carries no decision.

@@ -39,6 +39,7 @@ Neither the design nor the contract settles these, and none is a slice's to sett
 | Design Open question 2 — how the administration shell is delivered | **S16**. The recommendation is a separate front-end build with no .NET package; the alternative is a .NET-hosted UI. Neither introduces a .NET declaration, so nothing before S16 changes shape either way |
 | Design Open question 4 — whether the D5 packages version in lockstep with the framework or independently | **S18**. The recommendation is lockstep for the whole of D5 |
 | Design Open question 3 — whether ADR-006's vocabulary is corrected now that five infrastructure packages land in its module tier | **Not blocking any slice.** It is an ADR amendment and therefore the repository owner's; the placement in *Module boundaries* does not wait on the answer. Recorded here so `/slice` does not read the silence as settled |
+| Issue #94's disposition once S23 lands. By the 2026-09-26 decision, D5 does not deliver #94's criteria 1, 3 and 4 (the sign-in hook, the sign-out proof and the hook documentation), and criterion 2 holds in validation terms only | **Not blocking any slice.** It is the repository owner's call whether #94 closes with those criteria recorded as accepted risk, or is split so they stay tracked. Recorded here so `/track` does not close #94 as fully delivered |
 
 ## How this document is kept
 
@@ -60,11 +61,20 @@ progress while any is queued, and no shipped slice ordered after a queued one.
 
 ## Outstanding
 
-None. All D5 slices have landed; their closed issues retain the acceptance criteria.
+None. Every slice in this plan has landed; S23 was the last, closing the generic bearer path that issue
+[#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94) asks for.
 
 ---
 
 ## Landed
+
+| Slice | Name | Issue | Criteria | Body complete at |
+|---|---|---|---|---|
+| **S19** | An untrusted credential is refused, not ignored | [#270](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/270), closed | S19.1–S19.8 | `c00c2af` |
+| **S20** | An issuer with fixed keys is trusted from configuration alone | [#271](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/271), closed | S20.1–S20.12 | `bca2535` |
+| **S21** | Keys are found through discovery and kept fresh | [#272](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/272), closed | S21.1–S21.10 | `60d4167` |
+| **S22** | One issuer serves many customer tenants | [#273](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/273), closed | S22.1–S22.6 | `c00c2af` |
+| **S23** | A vendor's settings arrive as a configuration source | [#274](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/274), closed | S23.1–S23.6 | `c00c2af` |
 
 - **S1 — The two hosts and the enforced package boundary** — shipped:
   [#169](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/169) via

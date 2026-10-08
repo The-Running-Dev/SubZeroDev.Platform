@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs
 
 ## Statement
 Authorization runs before any producer code is reached (Owner: Mcp.) Enforced by code — invocation order.

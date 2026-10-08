@@ -16,6 +16,7 @@
     <Project Path="src/SubZeroDev.Platform.Observability/SubZeroDev.Platform.Observability.csproj" />
     <Project Path="src/SubZeroDev.Platform.Organizations/SubZeroDev.Platform.Organizations.csproj" />
     <Project Path="src/SubZeroDev.Platform.Persistence/SubZeroDev.Platform.Persistence.csproj" />
+    <Project Path="src/SubZeroDev.Platform.SignIn/SubZeroDev.Platform.SignIn.csproj" />
     <Project Path="src/SubZeroDev.Platform.Testing/SubZeroDev.Platform.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">

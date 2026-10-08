@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-I6
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/PermissionGrantSourceTests.cs
 
 ## Statement
 No Platform decision reads `Principal.Claims` (Owner: all.)

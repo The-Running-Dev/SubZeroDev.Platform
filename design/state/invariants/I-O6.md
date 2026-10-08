@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs
 
 ## Statement
 Membership is keyed by `PrincipalId` and never by a user row (Owner: Organizations.) Enforced by code — schema.

@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-M5
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs
 
 ## Statement
-Authentication happens at the connection and never at a call (Owner: Mcp.) Enforced by code — no per-call credential parameter exists.
+Authentication happens at the connection and never at a call (Owner: Mcp.)

@@ -65,6 +65,14 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 declared in the same project, materialised by S3 because `AuditEvent` needs it ahead of the rest of
 this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 
+One member of `AuthorizationDecision` is not in the tree yet, and is scaffolded here until the slice
+that materialises it replaces this block with the pointer above
+([`90-decisions.md`](90-decisions.md), 2026-09-28):
+
+```csharp
+public AuthorizationError? ProviderFailure { get; init; }
+```
+
 **What the declarations cannot say.**
 
 - **`Sources` is non-empty when and only when `Outcome` is `Allowed`.** The evaluator takes a union
@@ -78,6 +86,24 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
   § 4. The HTTP pipeline answers 503 with the `AuditError` code; Mcp answers a tool result saying the
   call could not be audited and may be retried. A denial that cannot be recorded is not answered as
   though it were.
+- **`ProviderFailure` is set when and only when the outcome is `Denied` and at least one registered
+  provider returned an error** (I-A11). A denial reached that way is not the policy's answer, only the
+  absence of one. An allowed decision never carries it: the union means any provider's grant allows, and
+  one provider's outage does not make another's grant less valid.
+- **`ProviderFailure` is always `ProviderUnavailable`, naming the provider as the registry knows it**,
+  whatever variant the provider returned. The fact the caller acts on is that a provider could not
+  answer, not what it said about itself — the same reason *Error semantics* § 4 has the class, not the
+  sink, decide the response. A provider cannot name another provider in a decision.
+- **Where more than one provider could not answer, `ProviderFailure` names the first in the provider
+  registry's order.** It says the denial may not be the policy's answer. It is not a list of the
+  providers that failed, and a caller must not read it as one.
+- **A decision carrying `ProviderFailure` is answered as a retryable failure, never as forbidden or
+  not found** (I-A12, *Error semantics* § 2). The HTTP pipeline answers 503 with the error's code. Mcp
+  answers a tool result saying the permission could not be checked and may be retried. The denial still
+  stands for this request: the caller does not proceed, so the check still fails closed.
+- **Where a decision carries both, `AuditFailure` decides the answer.** Both answers are retryable, so
+  the caller's next move is the same either way. Answering with the provider's code would drop a
+  `Required` write's failure from the response, which *Error semantics* § 4 forbids.
 - **A `PermissionName` reaching the evaluator unregistered is a startup-detectable defect, never a
   runtime denial.** A typo that silently denies is indistinguishable from a policy that denies — I-A3.
 - **`PermissionName.Value` must not acquire a parser, a wildcard, a hierarchy or a prefix match.** It
@@ -328,6 +354,92 @@ introduces no .NET declaration.
 
 The shell's contract is therefore a constraint rather than a type, and it is I-W1.
 
+### 12. The generic bearer path — `SubZeroDev.Platform.Identity`
+
+**No public .NET type, and none may be added.** The generic path's public contract is its
+configuration schema ([`10-design.md`](10-design.md) § *Data model* 10). A vendor configuration package
+writes these keys without referencing a Platform package, so a C# settings type would be a second
+contract that no vendor package could compile against. The keys and their meanings are the contract.
+The values they bind to are internal to Identity. The choices below that go past the design are in
+[`90-decisions.md`](90-decisions.md), 2026-09-30.
+
+**One provider per child section of `Platform:Identity:Bearer`.** When the host registers the Identity
+module, every child section `Platform:Identity:Bearer:<name>` becomes one generic-path provider.
+`<name>` is its `IAuthenticationProvider.Name`. With no child section there is no generic-path provider
+and no key fetch. The provider is registered like any other authentication provider, so two providers
+sharing a name raise `DuplicateProviderName` (*Error semantics* § 9). Configuration keys compare
+case-insensitively, so two sections whose names differ only in case are one section.
+
+| Key under `<name>` | Required | Meaning and constraint |
+|---|---|---|
+| `Issuer` | exactly one of `Issuer` and `IssuerPattern` | The expected `iss`, compared ordinally. An absolute URI. |
+| `IssuerPattern` | exactly one of `Issuer` and `IssuerPattern` | An issuer string containing the placeholder `{tenantid}` exactly once. The placeholder matches one or more characters, none of them `/`. Every other character matches itself ordinally. For an issuer that mints one issuer string per customer tenant. |
+| `Discovery` | exactly one of `Discovery` and `SigningKeys` | The issuer's OpenID Connect discovery address: an absolute `https` URI. The key set is found through it. |
+| `SigningKeys` | exactly one of `Discovery` and `SigningKeys` | A fixed JSON Web Key Set document, given inline as one string, for an issuer with no discovery. Only public keys. A key with private members is malformed. |
+| `Audiences` | yes | A non-empty array of non-empty strings. A token must name at least one of them in `aud`. |
+| `Algorithms` | no | An array drawn from `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384` and `ES512`. Default `[RS256]`. Any other value is malformed, including every `HS*` value and `none`. A shared secret stays the test-grade provider's (I-I7). |
+| `ClockTolerance` | no | The skew allowed on `exp` and `nbf`: a non-negative duration of at most `00:05:00`. Default `00:01:00`. |
+| `SubjectClaim` | no | The claim whose string value becomes `PrincipalId.Subject`. Default `sub`. |
+| `DisplayNameClaim` | no | The claim whose string value becomes `Principal.DisplayName`. When absent, there is no display name. |
+| `KeyRefreshInterval` | no | Only valid with `Discovery`. At least `00:00:30` and at most `1.00:00:00`. Default `00:05:00`. |
+
+**What the table cannot say.**
+
+- **The key set is the whole contract, and a key outside it fails startup.** Any key under
+  `Platform:Identity:Bearer:<name>` that the table does not name is unrecognised. The same holds for a
+  value where the table expects a section, and a section where it expects a value. The host fails
+  startup (*Error semantics* § 9). An unrecognised key is most often a vendor dialect the generic path
+  does not yet express. Ignoring it would validate tokens against settings the operator did not write.
+  The fix is a generic-path capability, never a workaround in a vendor package.
+- **Keys are added and never withdrawn or redefined.** Once a vendor package writes a key, the key is
+  public contract. A key's meaning never narrows. Its default never changes in a way that accepts a
+  token the old default rejected.
+- **Identity does not know which configuration source wrote a key.** A key written by a vendor
+  configuration package and the same key in a settings file are the same setting. Where both write it,
+  the host's configuration precedence decides, as it does for any other key. Identity adds no
+  precedence of its own (I-I14).
+- **The principal is `Account`.** Its `PrincipalId` is the validated `iss`, as the token carries it,
+  paired with the value of the configured subject claim, also as the token carries it. For an
+  `IssuerPattern` provider the validated `iss` is the concrete string the token carried, never the
+  pattern, so two customer tenants of one issuer are two issuers (I-I11). Neither half is trimmed or
+  case-folded (I-I2). A missing, empty or non-string subject claim rejects the credential.
+- **The display-name claim is the only other claim the provider reads into a named field.** The rest
+  stay in `Principal.Claims`, which no Platform decision reads (I-I6).
+- **With `Issuer` and `Discovery`, the discovery document's `issuer` must equal `Issuer` ordinally.**
+  With `IssuerPattern`, it must equal the pattern string ordinally. A document that names another
+  issuer is a failed fetch. OpenID Connect Discovery requires the match, and the check is what stops a
+  misdirected discovery address from supplying keys for an issuer it does not speak for.
+- **`SigningKeys` is never fetched and never refreshed.** Its provider has key material from startup,
+  and its readiness check always reports healthy. Rotation for such an issuer is a configuration change
+  and a restart.
+- **A `Discovery` provider fetches, holds and refreshes its own key set**, per instance and never on
+  the request path (*Public surface* § 10).
+- **No `Microsoft.IdentityModel.*` type appears in Platform's public surface** (I-I12). The libraries
+  are referenced by `SubZeroDev.Platform.Identity` and by nothing else, on the same terms, and for the
+  same reason, as the MCP SDK (*Types* § 10).
+
+### 13. The sign-in module — `SubZeroDev.Platform.SignIn`
+
+Settings, one set per sign-in method, read from configuration under `SubZeroDev:SignIn:<Name>`. The
+schema is public contract, like § 12's.
+
+| Key | Required | Rule |
+|---|---|---|
+| `Issuer` | yes | names a configured generic-path provider's issuer; a name that matches none fails startup |
+| `ClientId` | yes | non-empty |
+| `RedirectPath` | yes | a relative path beginning with `/` |
+| `Scopes` | no | defaults to `openid`; must include `openid` |
+| `EndSessionTemplate` | no | placeholders limited to `{client_id}`, `{return_to}`, `{id_token_hint}`; any other fails startup. `{id_token_hint}` expands to an empty string, as no id token is kept (decision 2026-10-08, #94: id token) |
+| `ExtraAuthorizeParameters` | no | name and value pairs. A name that is one of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method` fails startup |
+| `PostSignOutPath` | no | a relative path, `/` by default |
+
+There is no client-secret key. An unrecognised key fails startup naming the full key (I-I10).
+
+```csharp
+public sealed record AuthorizeRequestContext(string Method, Uri Address, IReadOnlyDictionary<string, string> Parameters);
+public sealed record EndSessionContext(string Method, Uri Address);
+```
+
 ---
 
 ## Persisted schemas
@@ -470,9 +582,20 @@ registry and the chain that runs registered providers in registration order are 
 - **`AuthenticateAsync` distinguishes "no credential presented" from "a credential was presented and
   failed to validate".** No credential is success carrying `Principal.Anonymous`; a bad credential is
   a failure. Collapsing them makes an absent token indistinguishable from a forged one.
-- **It must never block on a network fetch.** Key material is fetched at startup and cached; a request
-  arriving when no key is cached fails with `AuthenticationError.KeyMaterialUnavailable`, which is an
-  authentication failure and **never a server error**.
+- **A provider that sees a credential of its kind it does not claim answers `CredentialNotClaimed`,
+  never `Principal.Anonymous`.** A bearer token naming an issuer the provider does not trust is a
+  presented credential, not an absent one. The chain moves to the next provider, exactly as it does
+  on `Principal.Anonymous`, so one provider per trusted issuer still chains.
+- **A chain that ends with a credential no provider claimed answers `CredentialRejected`, never
+  `Principal.Anonymous`** (I-I15). The chain ends there only when no provider established a principal
+  and none rejected. The rejection names the first provider, in registry order, that answered
+  `CredentialNotClaimed`. **`CredentialNotClaimed` never leaves the chain**: the chain consumes it, and
+  no caller ever receives it. A provider that rejects still ends the chain at once, and a chain in
+  which every provider saw no credential of its kind still answers `Principal.Anonymous`.
+- **It must never block on a network fetch.** Key material is fetched at startup and cached, and the
+  generic path refreshes it off the request path (*Types* § 12). A request arriving when no key is
+  cached fails with `AuthenticationError.KeyMaterialUnavailable`, which is an authentication failure
+  and **never a server error**.
 - **Platform retries nothing here.** `PlatformError.IsRetryable` is the caller's signal, not an
   instruction Platform follows itself.
 - **`IAuthenticationRequest` is the transport's credential surface, and it exposes headers and nothing
@@ -492,8 +615,13 @@ provider are declared in
   at one call.
 - **`EvaluateAsync` returns a decision, never a failure result.** A denial is a decision. A provider
   that could not answer returns `AuthorizationError` to the evaluator, which turns it into a denial
-  the caller may retry — *Error semantics*, § 2.
+  carrying `ProviderFailure` (*Types* § 2) that the caller may retry — *Error semantics*, § 2.
 - **`GrantsAsync` returning an error denies; it never grants.** An unreachable store fails closed.
+- **A provider returns an error only when it could not answer.** A provider that answered and grants
+  nothing returns an empty set. `PermissionDenied` and `ResourceNotVisible` are how a refusing caller
+  answers a decision; a provider never returns them. If one does, the evaluator records it as
+  `ProviderUnavailable` (*Types* § 2), and the caller answers with a retryable failure, not the answer
+  that variant names.
 - **A provider must not audit.** The evaluator audits a denial once, so a union across three
   providers does not write three records. An allowed decision is not itself an audited fact: the
   writer performing the action audits it, inside that action's transaction.
@@ -617,16 +745,24 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
   D3 decision that made it fixed rather than configurable is unchanged, and a redaction boundary a
   consumer could replace is not a boundary. Abstractions is not the destination — it exposes contracts
   only and acquires no implementation.
-- **Startup validation is stated as I-C1 to I-C4 and I-A3 to I-A4**, and every one fails the host with
-  a named error rather than degrading it. **A host that cannot state its own composition does not
-  serve**, because every guarantee in this document is stated relative to a composition.
+- **Startup validation is stated as I-C1 to I-C4, I-A3 to I-A4 and I-I10**, and every one fails the
+  host with a named error rather than degrading it. **A host that cannot state its own composition
+  does not serve**, because every guarantee in this document is stated relative to a composition.
 
 ### 9. Testing — `SubZeroDev.Platform.Testing`
 
 Fakes for the framework seams only, beside the existing ones in
 [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs): a fake principal of each of the four kinds,
 a fake tenant resolver, a fake entitlement contributor, a fake permission provider, an audit
-inspector, and the composition profile on the test host.
+inspector, the composition profile on the test host, and `PermissionProviderHarness`.
+
+**`PermissionProviderHarness`** ([`PermissionProviderHarness.cs`](../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs))
+is the grant-source rule of *Public surface* § 3 as a test a consumer runs against its own
+`IPermissionProvider` (#92). `AssertRevokedGrantDeniesNextRequestAsync` grants, checks the provider
+answers with the permission, revokes, and checks the next answer for the same principal object no
+longer includes it. `AssertTokenClaimsGrantNothingAsync` asks about a principal whose token asserts
+roles and the permission itself, with nothing granted in the provider's own source, and expects
+nothing. Each throws `InvalidOperationException` naming the breach, so any test framework reports it.
 
 The helper declarations are implemented in [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs).
 The getter-only effective composition profile is declared on `IPlatformTestHost` in
@@ -657,6 +793,72 @@ The getter-only effective composition profile is declared on `IPlatformTestHost`
   delete an audit row is a test helper that can be used to prove the wrong thing.
 
 ### 10. Modules
+
+**Identity** exposes authentication providers and the generic bearer path's configuration schema
+(*Types* § 12). A host registers the module and writes configuration. No registration call exists per
+issuer, and no method chains off the module for a vendor. It owns no rows. Its semantics:
+
+- **Settings are validated before any key is fetched, and before the host serves** — path 2, step 8.
+  A settings defect fails startup, names the full key, and leaves no state behind (I-I10). No fetch has
+  been attempted and no provider has been registered, so the host never served.
+- **The key fetch never fails startup** (I-I10). Each `Discovery` provider attempts its first fetch at
+  step 8. A provider whose first fetch fails starts with no keys, answers every credential it claims
+  with `KeyMaterialUnavailable`, reports not-ready, and keeps trying on its refresh schedule.
+- **Every fetch is bounded by a fixed 30-second timeout, which is not a setting.** A fetch that times
+  out is a failed fetch. This applies to the first fetch, which startup waits on, and to every refresh.
+- **Key refresh is background work, and the only background work D5 adds.** Each `Discovery` provider
+  registers one `IBackgroundWork` named `platform.identity.key-refresh:<name>`. It runs at the
+  provider's `KeyRefreshInterval` in both host roles, with `RequiresLease` false. It writes nothing
+  durable. Each instance validates against its own cache, so each must refresh its own, and a lease
+  would leave every other instance's cache stale (I-I9).
+- **A successful refresh replaces the whole cached set in one atomic swap.** A request reading
+  concurrently sees the whole old set or the whole new one, never a mix (I-I9). Instances may hold
+  different sets for up to one interval.
+- **A failed refresh keeps the previous set, logs, and degrades readiness. It never empties the
+  cache** (I-I9). An issuer outage shorter than its own key lifetime is invisible to callers.
+- **The interval is a promise the operator makes about the issuer.** A token signed with a newly
+  published key is rejected until the next refresh, so the interval must be shorter than the lead time
+  the issuer gives between publishing a key and signing with it. A key the issuer withdraws stays
+  accepted until the next successful refresh. The interval bounds how long.
+- **Readiness is one check per `Discovery` provider**, `platform.identity.key-set:<name>`, of kind
+  `Readiness` and criticality `Required`. It reads the cache and the latest fetch outcome, and never
+  fetches:
+
+  | Condition | Status |
+  |---|---|
+  | no key set cached yet | `Unhealthy` |
+  | a set is cached, and the latest fetch failed | `Degraded` |
+  | a set is cached, and the latest fetch succeeded | `Healthy` |
+- **A provider passes on a credential it does not claim.** A bearer token whose `iss` does not match
+  the provider's `Issuer` or `IssuerPattern` is `CredentialNotClaimed`, so the chain moves to the next
+  provider. A token no registered provider claims ends the chain `CredentialRejected` (*Public
+  surface* § 2, I-I15). The test-grade provider answers the same way. A token the provider claims is
+  validated in full and answered by *Error semantics* § 1.
+
+**A vendor configuration package** sits outside both tiers and outside the package graph
+([`10-design.md`](10-design.md) § *Module boundaries* 3 and 4). It is not a Platform package. This
+contract binds its shape because Identity is what reads its output:
+
+- **It is a configuration source**, the same kind of thing a settings file is. It depends on the host's
+  configuration abstraction (`Microsoft.Extensions.Configuration.Abstractions`) and on no Platform
+  package. The fifth build check fails the build if it references one (I-I13). A package that cannot
+  see `IAuthenticationProvider` cannot implement one, so "sugar over the generic path, never a parallel
+  implementation" is a property of what the package can reach.
+- **It exposes one method per protocol surface the vendor offers.** Each method is an extension on the
+  host's configuration builder. It takes the provider name the caller chooses, and writes keys under
+  `Platform:Identity:Bearer:<that name>`. A caller can therefore trust two issuers of one vendor. A
+  hosted and a self-hosted deployment are one method only when the same keys, with different values,
+  describe both. Otherwise they are two methods, and each states in its documentation what the issuer
+  must have switched on (self-hosted Supabase's `GOTRUE_OAUTH_SERVER_ENABLED`, for example).
+- **It writes only keys *Types* § 12 names.** A key the table does not name fails startup exactly as
+  it would from a settings file. A quirk configuration cannot express becomes a generic-path
+  capability first: a new row in that table, and a new decision.
+- **None is built in D5.** The mechanism is proven without one. A configuration source built the way a
+  vendor package would build it lives in a project of its own that references no Platform package, and
+  the fifth build check runs over it. The check must fail against a deliberately broken reference
+  before it counts. The same keys and values, supplied once by that source and once by an in-memory
+  settings file, must yield equal validated settings, and providers that accept and reject the same
+  tokens (I-I14).
 
 **Organizations** exposes the organization API — create, invite, redeem, revoke, switch active
 organization, list an organization's memberships — plus an `ITenantResolver` and an
@@ -801,6 +1003,42 @@ startup-abort wrapper, authorized by
   accepted, file and OTLP failures remain behind their bounded non-blocking processors and never
   propagate to application work.
 
+
+### 13. The sign-in module — `SubZeroDev.Platform.SignIn`
+
+Written against the recommendation of `10-design.md` *Open questions*, 5: the endpoints are mapped on the
+operated host that takes Identity.
+
+```csharp
+public static IServiceCollection AddPlatformSignIn(this IServiceCollection services);
+public static IEndpointRouteBuilder MapPlatformSignIn(this IEndpointRouteBuilder endpoints);
+public static IServiceCollection ConfigurePlatformSignIn(this IServiceCollection services, string method, Action<SignInHooks> configure);
+
+public sealed class SignInHooks
+{
+    public Func<AuthorizeRequestContext, ValueTask<IReadOnlyDictionary<string, string>>>? AdjustAuthorizeRequest { get; set; }
+    public Func<EndSessionContext, ValueTask<Uri>>? ReplaceEndSessionAddress { get; set; }
+}
+```
+
+Endpoints per method: `begin` (GET), `token` (POST, requires the anti-forgery header) and `signout` (POST)
+under `/signin/<method>`, and `callback` (GET) at the method's `RedirectPath`; two methods may not share a
+`RedirectPath` (decision 2026-10-08, #94: callback path).
+
+- **A caller may rely on** the callback creating a session only after the state matched (I-S1), and on
+  the session carrying no more than issuer, subject, access token and its expiry.
+- **A caller must never** expect sign-out to revoke an issued access token (I-S2), or the hook to change
+  what Platform trusts (I-S3). The hooks receive Platform's records and return a parameter set or a
+  `Uri`; no ASP.NET or IdentityModel type crosses this surface (I-I12).
+- **Hooks run after configuration binds.** `AdjustAuthorizeRequest` may add parameters and not replace
+  `client_id`, `redirect_uri`, `response_type`, `scope`, `state` or the proof key; `ReplaceEndSessionAddress`
+  is called after the template or discovery value has produced the address.
+- **A vendor configuration package** writes `EndSessionTemplate` and `ExtraAuthorizeParameters` and
+  nothing else of this module's keys it did not already write for § 12, and references no Platform
+  package (I-I13).
+- **Proof without a vendor package:** a fixture issuer whose discovery document has no end-session
+  endpoint; sign-out sends the person to the template's address built from the fixture's values.
+
 ---
 
 ## Error semantics
@@ -817,16 +1055,42 @@ what the caller does about it will not.
 | `CredentialRejected` | a credential was presented and failed to validate | no | return unauthenticated; **do not fall back to `Anonymous`** |
 | `KeyMaterialUnavailable` | no signing key is cached and none may be fetched on the request path | no | return **unauthenticated**, never a server error, and never block on a fetch |
 | `ProviderFailed` | the provider itself faulted | no | return unauthenticated and degrade readiness |
+| `CredentialNotClaimed` | a provider saw a credential of its kind that it does not claim, such as a bearer token whose `iss` it does not trust | no | **never received**: the chain consumes it, and if no provider claims the credential the chain answers `CredentialRejected` (I-I15) |
 
-**No credential presented is not in this table.** It is success carrying `Principal.Anonymous`.
+**No credential presented is not in this table.** It is success carrying `Principal.Anonymous`. **A
+credential nobody claims is not "no credential"**: it reaches the caller as `CredentialRejected`, and
+the caller does not fall back to `Anonymous` for it either.
+
+**On the generic bearer path** (*Types* § 12), a provider claims a bearer token whose `iss` matches its
+`Issuer` or `IssuerPattern`, and answers any other `CredentialNotClaimed` (*Public surface* § 10). A
+token whose `iss` cannot be read at all is `CredentialRejected`. For a token the provider claims, the
+variants are fixed as follows:
+
+| Condition | Variant |
+|---|---|
+| no key set is cached yet | `KeyMaterialUnavailable` |
+| the header's `alg` is not in the provider's `Algorithms`, including `none` and every `HS*` value | `CredentialRejected` |
+| the token names a key id the cached set does not hold | `CredentialRejected` — **never a fetch** (I-I8) |
+| the token names no key id, and no cached key of an accepted algorithm verifies it | `CredentialRejected` — never a fetch |
+| the signature does not verify | `CredentialRejected` |
+| `exp` or `nbf` is outside the provider's `ClockTolerance`, or `exp` is absent | `CredentialRejected` |
+| `aud` names none of the provider's `Audiences` | `CredentialRejected` |
+| the subject claim is missing, empty or not a string | `CredentialRejected` |
+| the validation library faults on anything other than the token's own content | `ProviderFailed` |
+
+**`KeyMaterialUnavailable` is decided before the token is examined further.** With no keys there is
+nothing to validate against, and answering `CredentialRejected` would tell the caller its token was bad
+when the provider could not check it. **An unknown key id is never a reason to fetch.** A request-path
+fetch keyed on an attacker-chosen key id is an amplifier pointed at the issuer, and the cost of
+refusing it is the rotation bound stated in *Public surface* § 10.
 
 ### 2. `AuthorizationError` — `SubZeroDev.Platform.Abstractions`
 
 | Variant | Raised when | Retryable | The caller is expected to |
 |---|---|---|---|
-| `PermissionDenied` | no provider granted, and the principal can see the resource | no | return **forbidden** |
+| `PermissionDenied` | no provider granted, **every provider answered**, and the principal can see the resource | no | return **forbidden** |
 | `ResourceNotVisible` | the resource is in another tenant, or the principal may not know it exists | no | return **not found** |
-| `ProviderUnavailable` | a provider could not answer — typically an unreachable store | **yes** | return a retryable failure; the denial stands for this request |
+| `ProviderUnavailable` | a provider could not answer — typically an unreachable store. Carried on `AuthorizationDecision.ProviderFailure`, never returned by `EvaluateAsync` | **yes** | return a retryable failure — 503 on HTTP, a retryable tool result on Mcp; the denial stands for this request |
 
 **`PermissionDenied` and `ResourceNotVisible` are not interchangeable, and the difference is a
 security property rather than a style choice.** *Forbidden* confirms the resource exists. A
@@ -836,6 +1100,9 @@ because there the existence is already known and pretending otherwise only obscu
 
 **`ProviderUnavailable` is retryable and still denies.** Failing closed and being retryable are not in
 tension: the request is denied now, and a caller who retries after the store returns is right to.
+**A denial with a provider unable to answer is never answered as `PermissionDenied`, and never as
+`ResourceNotVisible`.** Either would tell the client an outage is a missing permission or a missing
+resource, and would record as a policy denial one that no policy made.
 
 ### 3. `EntitlementError` — `SubZeroDev.Platform.Abstractions`
 
@@ -974,6 +1241,7 @@ like any other.
 | tool registered but not exposed | **unknown tool — the same answer** | no |
 | arguments fail the declared schema | invalid arguments | no |
 | authorization denies | forbidden, or not found where the resource is not visible, per § 2 | no |
+| authorization denies, and a permission provider could not answer | a tool result saying the permission could not be checked, per § 2 | **yes** |
 | entitlement refuses | not entitled, per § 3 | no |
 | the connection drops mid-invocation | cancelled through the existing cancellation plumbing | n/a |
 
@@ -1008,6 +1276,20 @@ retryable — a misconfigured installation does not resolve itself.**
 | `UnregisteredPermission` | a tool, an endpoint, or any registration requires a `PermissionName` no catalog declares — its own code, carrying `PermissionCatalogError.UnregisteredPermission` as the inner error |
 | `SensitiveToolParameter` | a registered tool's schema names a parameter matching the redaction marker set |
 | `UndeclaredEndpointRequirement` | a mapped endpoint carries neither a requirement nor an exemption |
+| `Configuration` | a generic-path provider's settings are defective (*Types* § 12). The inner error is `ConfigurationError`, and the variant depends on the defect — see below |
+
+**A generic-path settings defect is a `ConfigurationError`, not a new code.** The error names the full
+key, `Platform:Identity:Bearer:<name>:<setting>`, so it names the provider and the setting in one
+string, on the `Detail` convention `ConfigurationError` already follows:
+
+| Defect | `ConfigurationError` variant |
+|---|---|
+| `Audiences` is absent; neither `Issuer` nor `IssuerPattern` is present; neither `Discovery` nor `SigningKeys` is present | `MissingRequiredSetting` |
+| `Issuer` and `IssuerPattern` are both present; `Discovery` and `SigningKeys` are both present; `KeyRefreshInterval` is present with `SigningKeys` | `InconsistentSettings` |
+| a value breaks its row's constraint; a key is one the table does not name; a value stands where a section belongs, or a section where a value belongs | `InvalidSetting` |
+
+**A defect fails startup before any fetch** (I-I10). A key-fetch failure is not in this section. It
+never fails startup, and it degrades readiness instead (*Public surface* § 10).
 
 **Each names the profile, the offending registration and which of the two it disagrees with**, on the
 `Detail` convention `ModuleGraphError` and `ConfigurationError` already follow. Each describes a
@@ -1051,96 +1333,114 @@ means writing its record first.
 binds renders `—`, the *enforced by nothing* case, rather than hiding it — this is currently every
 row, because no module has a unit record yet.
 
+Each is written so it could become an assertion. **"Code" means a build check, a startup check, a
+type, or a store constraint — the only ones a reader may trust without checking.** "Instruction"
+means this document is the only thing holding it, and a reviewer is the enforcement.
+
 <!-- invariants:start -->
 | | Statement | Held by | Enforcement | Evidence |
 |---|---|---|---|---|
-| **I-A1** | `AuthorizationDecision.Sources` is non-empty **iff** `Outcome == Allowed` (Owner: Core.) Enforced by code — evaluator construction. | — | code | — |
+| **I-A1** | `AuthorizationDecision.Sources` is non-empty **iff** `Outcome == Allowed` (Owner: Core.) Enforced by code — evaluator construction. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A2** | The evaluator takes the union of every registered provider and consults no other source (Owner: Core.) | — | instruction | — |
-| **I-A3** | Every `PermissionName` reaching the evaluator is declared by some `IPermissionCatalog`; an undeclared one fails **startup**, never a request (Owner: Core.) Enforced by code — startup validation. | — | code | — |
-| **I-A4** | Two modules never declare the same `PermissionName` (Owner: Core.) Enforced by code — startup validation. | — | code | — |
-| **I-A5** | A provider returning an error denies and never grants (Owner: Core.) Enforced by code — the evaluator. | — | code | — |
-| **I-A6** | The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider, plus a sample scenario. | — | code | — |
-| **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) Enforced by code — the provider. | — | code | — |
+| **I-A3** | Every `PermissionName` reaching the evaluator is declared by some `IPermissionCatalog`; an undeclared one fails **startup**, never a request (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A4** | Two modules never declare the same `PermissionName` (Owner: Core.) Enforced by code — startup validation. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A5** | A provider returning an error denies and never grants (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A6** | The composition provider grants nothing to `Anonymous` in either profile (Owner: Core.) Enforced by code — the provider. | — | code | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
+| **I-A7** | The composition provider grants nothing at all in `Operated` (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs |
 | **I-A8** | No provider writes an audit record; the evaluator audits a denial once, and an allowed action is audited by the writer performing it (Owner: Core.) | — | instruction | — |
-| **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | — |
-| **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | instruction | — |
+| **I-A9** | D5 has no role-assignment store (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-A10** | Neither the evaluator nor a Platform permission provider carries a grant from one request to the next, so a membership revoked between two requests is denied on the second without re-authentication (Owner: Core, Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-A11** | `AuthorizationDecision.ProviderFailure` is non-null **iff** `Outcome == Denied` and at least one registered provider returned an error, and when non-null it is `ProviderUnavailable` naming a registered provider (Owner: Core.) | — | instruction | — |
+| **I-A12** | A decision carrying `ProviderFailure` is answered as a retryable failure and never as forbidden or not found, on every surface that refuses on a decision (Owner: Hosting, Mcp, and each caller refusing on a decision.) | — | instruction | — |
 | **I-B1** | Product code asks `FeatureName` and never subscription state or licence tier (Owner: all.) Enforced by code — for subscription state (I-C8); enforced by instruction for licence tier. | — | code, instruction | — |
-| **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | — |
-| **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | — |
-| **I-B4** | Entitlement is never stored by Billing; it is derived from plan, state and `IClock` (Owner: Billing.) Enforced by code — no entitlement table exists. | — | code | — |
+| **I-B2** | Contribution is a union; no contributor can veto another (Owner: Core.) Enforced by code — the evaluator. | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |
+| **I-B3** | `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/EntitlementTests.cs |
+| **I-B4** | Entitlement is never stored by Billing; it is derived from plan, state and `IClock` (Owner: Billing.) Enforced by code — no entitlement table exists. | — | code | tests/SubZeroDev.Platform.Tests/BillingTests.cs |
 | **I-B5** | A unit of work carries the decision that admitted it; nothing re-evaluates during execution (Owner: consumers.) Enforced by code — in the sample's scenario; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-B6** | No billing provider is contacted on the request path, at startup, or on readiness (Owner: Billing.) Enforced by code — the offline CI run. | — | code | — |
-| **I-B7** | A redelivered provider event is idempotent (Owner: Billing.) Enforced by code — a unique receipt key. | — | code | — |
-| **I-C1** | `Operated` with no authentication provider fails startup (Owner: Core.) | — | code | — |
-| **I-C2** | `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback (Owner: Core.) | — | code | — |
-| **I-C3** | `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup (Owner: Core.) | — | code | — |
-| **I-C4** | The composition profile and the contributor set are inside the settings-fingerprint input (Owner: Core.) Enforced by code — see `SettingsFingerprint.cs`. | — | code | — |
-| **I-C5** | The local host has no package or project reference to Identity, Organizations, Billing or Licensing (Owner: the sample.) Enforced by code — a dependency-graph assertion. | — | code | — |
-| **I-C6** | No framework package references a module (Owner: all.) Enforced by code — an architecture test over the resolved package graph, which must fail against a deliberately broken graph before it counts. | — | code | — |
-| **I-C7** | No module references another module (Owner: all.) Enforced by code — the same test, second direction. | — | code | — |
-| **I-C8** | Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test. | — | code | — |
-| **I-C9** | Every startup check fails the host and names the registration that caused it; none degrades (Owner: Core, Hosting.) | — | code | — |
-| **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) Enforced by code — a non-nullable type. | — | code | — |
+| **I-B6** | No billing provider is contacted on the request path, at startup, or on readiness (Owner: Billing.) | — | instruction | — |
+| **I-B7** | A redelivered provider event is idempotent (Owner: Billing.) Enforced by code — a unique receipt key. | — | code | tests/SubZeroDev.Platform.Tests/BillingTests.cs |
+| **I-C1** | `Operated` with no authentication provider fails startup (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C2** | `Operated` with no sink declaring `IsDurable` fails startup; the log sink is never an `Operated` fallback (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C3** | `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-C4** | The composition profile and the contributor set are inside the settings-fingerprint input (Owner: Core.) Enforced by code — see `SettingsFingerprint.cs`. | — | code | tests/SubZeroDev.Platform.Tests/SettingsFingerprintTests.cs |
+| **I-C5** | The local host has no package or project reference to Identity, Organizations, Billing or Licensing (Owner: the sample.) Enforced by code — a dependency-graph assertion. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs, tests/SubZeroDev.Platform.Tests/LocalHostProofTests.cs |
+| **I-C6** | No framework package references a module (Owner: all.) Enforced by code — an architecture test over the resolved package graph, which must fail against a deliberately broken graph before it counts. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-C7** | No module references another module (Owner: all.) Enforced by code — the same test, second direction. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-C8** | Nothing outside Billing references `SubscriptionState` or any subscription type (Owner: all.) Enforced by code — architecture test. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-C9** | Every startup check fails the host and names the registration that caused it; none degrades (Owner: Core, Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs |
+| **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) | — | instruction | tests/SubZeroDev.Platform.Tests/OperationScopeTests.cs, tests/SubZeroDev.Platform.Tests/PrincipalTests.cs |
 | **I-I2** | `PrincipalId.Issuer` and `.Subject` are never parsed, normalised, trimmed or case-folded by Platform (Owner: Abstractions.) | — | instruction | — |
 | **I-I3** | `PrincipalId.ToString()` is never split to recover the pair; anywhere the pair is stored it is two columns (Owner: Abstractions, Audit store, Organizations.) Enforced by code — in each schema; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | — |
+| **I-I4** | Platform declares no user entity and no directory (Owner: Identity.) Enforced by code — an architecture check over the module's types. | — | code | tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
 | **I-I5** | A `Delegated` principal is never treated as an `Account` with missing fields (Owner: every consumer.) | — | instruction | — |
-| **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | instruction | — |
-| **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | — |
-| **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | — |
-| **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | — |
-| **I-L4** | An `Invalid` document never grants a tier (Owner: Licensing.) | — | code | — |
-| **I-L5** | Revocation is consulted on no path — not the request path, not startup, not readiness (Owner: Licensing.) Enforced by code — the offline CI run with outbound network unavailable. | — | code | — |
-| **I-L6** | Grace comes from the document, defaulting to 30 days; it is never a deployment setting (Owner: Licensing.) Enforced by code — no such option exists. | — | code | — |
-| **I-L7** | Accepted signing keys are supplied by the consumer as an ordered set; none is compiled into Platform (Owner: Licensing.) Enforced by code — a required option. | — | code | — |
-| **I-L8** | After grace, new paid-feature work is denied while accepted, running and scheduled work continues and existing data stays readable and exportable (Owner: Licensing, consumers.) Enforced by code — sample scenario. | — | code | — |
-| **I-L9** | Verification never fails startup and never fails a request (Owner: Licensing.) | — | code | — |
-| **I-M1** | The tool catalogue is frozen after startup; nothing registers, unregisters or re-exposes at runtime (Owner: Mcp.) | — | code | — |
-| **I-M2** | No registered tool's schema names a parameter matching the redaction marker set; a match fails **startup** (Owner: Mcp.) Enforced by code — startup validation. | — | code | — |
-| **I-M3** | Exposure is default closed; a registered but unexposed tool is neither listed nor callable (Owner: Mcp.) | — | code | — |
-| **I-M4** | Unregistered and unexposed produce the identical answer (Owner: Mcp.) | — | code | — |
-| **I-M5** | Authentication happens at the connection and never at a call (Owner: Mcp.) Enforced by code — no per-call credential parameter exists. | — | code | — |
-| **I-M6** | Authorization runs before any producer code is reached (Owner: Mcp.) Enforced by code — invocation order. | — | code | — |
-| **I-M7** | Both producers — manifest projection and a product-owned fixed table — register through the same surface, and neither is privileged (Owner: Mcp.) Enforced by code — sample scenario. | — | code | — |
-| **I-M8** | An invocation is audited with no arguments (Owner: Mcp.) Enforced by code — see I-U1. | — | code | — |
-| **I-M9** | No SDK type appears in Platform's public surface; `ModelContextProtocol.*` is referenced by `SubZeroDev.Platform.Mcp` and by nothing else (Owner: Mcp.) Enforced by code — an architecture test over the resolved package graph, alongside I-C6 and I-C7. | — | code | — |
-| **I-M10** | `IToolCatalogue` offers no route to an unexposed registration — no `All`, no exposure-ignoring lookup (Owner: Mcp.) Enforced by code — the interface. | — | code | — |
+| **I-I6** | No Platform decision reads `Principal.Claims` (Owner: all.) | — | code | tests/SubZeroDev.Platform.Tests/PermissionGrantSourceTests.cs |
+| **I-I7** | The generic bearer path accepts asymmetric signature algorithms only: a shared-secret algorithm or `none` in its settings fails startup, and a token whose header names an algorithm outside the provider's set is rejected (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/ConfiguredBearerTests.cs |
+| **I-I8** | No key material is fetched on the request path; a token naming a key id the cached set does not hold is `CredentialRejected` and never triggers a fetch (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/KeyDiscoveryTests.cs |
+| **I-I9** | A key-set refresh takes no lease, writes nothing durable, and replaces the cached set in one atomic swap; a failed refresh keeps the previous set and degrades readiness, and never empties the cache (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/KeyDiscoveryTests.cs |
+| **I-I10** | A generic-path settings defect — missing, inconsistent, malformed or unrecognised key — fails startup naming the full key, before any key fetch; a key-fetch failure never fails startup (Owner: Identity.) Enforced by code — the settings half, before any provider is registered, and the fetch half, where a failed fetch starts the host with no keys. | — | code | tests/SubZeroDev.Platform.Tests/ConfiguredBearerTests.cs, tests/SubZeroDev.Platform.Tests/KeyDiscoveryTests.cs |
+| **I-I11** | A generic-path principal is `Account`, and its `PrincipalId` is the concrete validated `iss` paired with the configured subject claim's value, both exactly as the token carries them — never an issuer pattern (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/ConfiguredBearerTests.cs, tests/SubZeroDev.Platform.Tests/IssuerPatternTests.cs |
+| **I-I12** | No `Microsoft.IdentityModel.*` type appears in Platform's public surface; those libraries are referenced by `SubZeroDev.Platform.Identity` and by nothing else (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-I13** | A vendor configuration package references no Platform package (Owner: each vendor configuration package.) | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-I14** | Identity reads the generic path's settings without knowing which configuration source wrote them: the same keys and values from a vendor configuration source and from a settings file yield equal validated settings (Owner: Identity.) | — | code | tests/SubZeroDev.Platform.Tests/VendorConfigurationSourceTests.cs |
+| **I-I15** | A request presenting a credential that no registered provider claims ends the authentication chain `CredentialRejected`, never `Principal.Anonymous`; `CredentialNotClaimed` is consumed by the chain and never reaches a caller (Owner: Core, every authentication provider.) | — | code | tests/SubZeroDev.Platform.Tests/AuthenticationTests.cs, tests/SubZeroDev.Platform.Tests/IdentityTests.cs |
+| **I-L1** | Exactly one verified-licence row exists per installation (Owner: Licensing.) Enforced by code — a single-row key. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L2** | No verification error path writes any column of that row (Owner: Licensing.) Enforced by code, plus a test that errors repeatedly and asserts the instants unchanged. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L3** | A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L4** | An `Invalid` document never grants a tier (Owner: Licensing.) | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L5** | Revocation is consulted on no path — not the request path, not startup, not readiness (Owner: Licensing.) Enforced by code — no path calls a registered revocation check. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L6** | Grace comes from the document, defaulting to 30 days; it is never a deployment setting (Owner: Licensing.) Enforced by code — no such option exists. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L7** | Accepted signing keys are supplied by the consumer as an ordered set; none is compiled into Platform (Owner: Licensing.) Enforced by code — a required option. | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L8** | After grace, new paid-feature work is denied while accepted, running and scheduled work continues and existing data stays readable and exportable (Owner: Licensing, consumers.) | — | instruction | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-L9** | Verification never fails startup and never fails a request (Owner: Licensing.) | — | code | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-M1** | The tool catalogue is frozen after startup; nothing registers, unregisters or re-exposes at runtime (Owner: Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs |
+| **I-M2** | No registered tool's schema names a parameter matching the redaction marker set; a match fails **startup** (Owner: Mcp.) Enforced by code — startup validation. | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs |
+| **I-M3** | Exposure is default closed; a registered but unexposed tool is neither listed nor callable (Owner: Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
+| **I-M4** | Unregistered and unexposed produce the identical answer (Owner: Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
+| **I-M5** | Authentication happens at the connection and never at a call (Owner: Mcp.) | — | instruction | tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
+| **I-M6** | Authorization runs before any producer code is reached (Owner: Mcp.) Enforced by code — invocation order. | — | code | tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
+| **I-M7** | Both producers — manifest projection and a product-owned fixed table — register through the same surface, and neither is privileged (Owner: Mcp.) | — | instruction | tests/SubZeroDev.Platform.Tests/McpTests.cs |
+| **I-M8** | An invocation is audited with no arguments (Owner: Mcp.) Enforced by code — see I-U1. | — | code | tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-M9** | No SDK type appears in Platform's public surface; `ModelContextProtocol.*` is referenced by `SubZeroDev.Platform.Mcp` and by nothing else (Owner: Mcp.) Enforced by code — an architecture test over the resolved package graph, alongside I-C6 and I-C7. | — | code | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-M10** | `IToolCatalogue` offers no route to an unexposed registration — no `All`, no exposure-ignoring lookup (Owner: Mcp.) Enforced by code — the interface. | — | code | tests/SubZeroDev.Platform.Tests/McpTests.cs |
 | **I-M11** | Platform's permission evaluator is the only authorization authority on this surface; the SDK's authorization-metadata path is not used (Owner: Mcp.) Enforced by code — the sample's unknown-tool scenario; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-O1** | Creating an organization mints the tenant, writes the organization and writes the owner's membership in one transaction with its audit row (Owner: Organizations.) | — | code | — |
-| **I-O2** | Two organizations never share a tenant (Owner: Organizations.) Enforced by code — a unique constraint. | — | code | — |
-| **I-O3** | One invitation token creates at most one membership (Owner: Organizations.) Enforced by code — a conditional update. | — | code | — |
-| **I-O4** | The invitation token is stored only as a hash and is readable exactly once, at mint (Owner: Organizations.) Enforced by code — schema and API. | — | code | — |
-| **I-O5** | Expired, already-redeemed and never-existed are indistinguishable to a caller (Owner: Organizations.) Enforced by code — one error variant. | — | code | — |
-| **I-O6** | Membership is keyed by `PrincipalId` and never by a user row (Owner: Organizations.) Enforced by code — schema. | — | code | — |
-| **I-O7** | A non-member cannot switch into or administer an organization, and is told not found (Owner: Organizations.) Enforced by code — sample scenario. | — | code | — |
-| **I-O8** | The framework never learns that a tenant has an owner (Owner: all.) Enforced by code — see I-C6. | — | code | — |
-| **I-OB1** | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work (Owner: Observability, Hosting.) Enforced by code — standalone and hosted configuration tests, plus the existing blocked-export test. | — | code | — |
-| **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | — |
-| **I-R2** | Tenant resolution precedes authorization (Owner: Hosting, Mcp.) | — | code | — |
-| **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) Enforced by code — the scope. | — | code | — |
-| **I-R4** | The local host takes the same path with no step skipped and no branch taken (Owner: Hosting.) Enforced by code — sample scenario. | — | code | — |
+| **I-O1** | Creating an organization mints the tenant, writes the organization and writes the owner's membership in one transaction with its audit row (Owner: Organizations.) | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O2** | Two organizations never share a tenant (Owner: Organizations.) Enforced by code — a unique constraint. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedProofTests.cs |
+| **I-O3** | One invitation token creates at most one membership (Owner: Organizations.) Enforced by code — a conditional update. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedProofTests.cs |
+| **I-O4** | The invitation token is stored only as a hash and is readable exactly once, at mint (Owner: Organizations.) | — | instruction | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O5** | Expired, already-redeemed and never-existed are indistinguishable to a caller (Owner: Organizations.) Enforced by code — one error variant. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O6** | Membership is keyed by `PrincipalId` and never by a user row (Owner: Organizations.) Enforced by code — schema. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-O7** | A non-member cannot switch into or administer an organization, and is told not found (Owner: Organizations.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
+| **I-O8** | The framework never learns that a tenant has an owner (Owner: all.) | — | instruction | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs |
+| **I-OB1** | An absent OTLP endpoint starts no exporter; a present invalid endpoint aborts both registration paths with the same `ConfigurationError.InvalidSetting`; a validly configured exporter failure never propagates to application work (Owner: Observability, Hosting.) | — | instruction | tests/SubZeroDev.Platform.Tests/TelemetryOptionsTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryExportTests.cs |
+| **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
+| **I-R2** | Tenant resolution precedes authorization (Owner: Hosting, Mcp.) | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
+| **I-R3** | The scope's tenant and principal do not change for the request's lifetime (Owner: Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-R4** | The local host takes the same path with no step skipped and no branch taken (Owner: Hosting.) Enforced by code — sample scenario. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
 | **I-R5** | Only an endpoint admitting new paid-feature work is entitlement-gated (Owner: consumers.) | — | instruction | — |
-| **I-R6** | Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source. | — | code | — |
+| **I-R6** | Every mapped endpoint carries a requirement declaration or a named exemption (Owner: Hosting.) Enforced by code — startup check over the endpoint data source. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 | **I-R7** | The pipeline's authorization check is never resource-scoped; a per-resource check is the handler's own second call (Owner: Hosting, consumers.) | — | instruction | — |
-| **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) Enforced by code — the scope is read-only and a write inside it throws. | — | code | — |
-| **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) Enforced by code — the consumer's own query code, consulting `ISharedReadScopeFactory.IsOpenFor<TEntity>()` at model build. | — | code | — |
-| **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | — |
-| **I-T4** | Opening a shared-read scope emits exactly one audit record, never one per row (Owner: Persistence.) Enforced by code — scope construction. | — | code | — |
+| **I-S1** | The sign-in module creates a session only after the callback's state equals the state it stored for that begin, and the session holds no more than the issuer, the subject, the access token and its expiry; the module owns no row and does not change the authentication seam (Owner: SignIn.) | — | instruction | — |
+| **I-S2** | Sign-out clears the session and redirects to the issuer, and never claims to revoke an access token already issued; such a token stays valid at Platform until it expires (Owner: SignIn.) | — | instruction | — |
+| **I-S3** | A host-registered sign-in hook runs after configuration binds and cannot change which issuer, key source, audience or algorithm Platform trusts; the trust root is the generic path's settings alone (Owner: SignIn.) | — | instruction | — |
+| **I-T1** | **There is no code path in Platform by which a write reaches another tenant's row.** Isolation is asymmetric on purpose: reads have one modelled audited escape, writes have none (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
+| **I-T2** | Outside a shared-read scope the query filter is `tenant equals current`, unconditionally, for shareable and non-shareable types alike (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
+| **I-T3** | A shared-read scope widens the filter for the one declared type only (Owner: Persistence.) Enforced by code — the generic parameter. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
+| **I-T4** | Opening a shared-read scope emits exactly one audit record, never one per row (Owner: Persistence.) Enforced by code — scope construction. | — | code | tests/SubZeroDev.Platform.Tests/SharedReadTests.cs |
 | **I-T5** | `SharedAt` is written only by a permissioned, audited, tenant-scoped write by the owning tenant (Owner: Persistence.) Enforced by code — for the permission check; enforced by instruction otherwise. | — | code, instruction | — |
-| **I-T6** | With no resolver registered, `ICurrentTenant.Current` is `TenantId.Implicit` (Owner: Core.) Enforced by code — resolver chain. | — | code | — |
-| **I-T7** | The tenant identifier, primary keys and implicit-tenant representation are unchanged from D3 and G2 (Owner: Persistence.) Enforced by code — existing migrations unmodified. | — | code | — |
-| **I-T8** | A resolver never denies; it answers or defers (Owner: Core.) Enforced by code — the return type carries no decision. | — | code | — |
-| **I-U1** | `AuditEvent` has no payload, changed-field list or free-form detail field (Owner: Abstractions.) Enforced by code — the type. | — | code | — |
+| **I-T6** | With no resolver registered, `ICurrentTenant.Current` is `TenantId.Implicit` (Owner: Core.) Enforced by code — resolver chain. | — | code | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-T7** | The tenant identifier, primary keys and implicit-tenant representation are unchanged from D3 and G2 (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-T8** | A resolver never denies; it answers or defers (Owner: Core.) Enforced by code — the return type carries no decision. | — | code | tests/SubZeroDev.Platform.Tests/TenancyTests.cs |
+| **I-U1** | `AuditEvent` has no payload, changed-field list or free-form detail field (Owner: Abstractions.) Enforced by code — the type. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
 | **I-U2** | Authorization denials, shared-resource escapes, membership and ownership changes, entitlement and licence transitions and MCP invocations are `Required`; everything else is `Recorded` (Owner: each writer.) | — | instruction | — |
-| **I-U3** | A successful action that wrote state writes its audit row in the same transaction (Owner: each writer.) Enforced by code — the ambient transaction. | — | code | — |
-| **I-U4** | A denial, a read, or a failure that wrote nothing writes its row in its own transaction after the outcome is known (Owner: each writer.) | — | code | — |
-| **I-U5** | `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink. | — | code | — |
-| **I-U6** | No secret value or payload reaches a stored record or a log line, through **any** audited input surface (Owner: all.) Enforced by code — the brief's representative-secret tests. | — | code | — |
-| **I-U7** | Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.) Enforced by code — schema and API. | — | code | — |
+| **I-U3** | A successful action that wrote state writes its audit row in the same transaction (Owner: each writer.) Enforced by code — the ambient transaction. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs |
+| **I-U4** | A denial, a read, or a failure that wrote nothing writes its row in its own transaction after the outcome is known (Owner: each writer.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-U5** | `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-U6** | No secret value or payload reaches a stored record or a log line, through **any** audited input surface (Owner: all.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryRedactionTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
+| **I-U7** | Audit records are append-only: no update, no delete, in any surface (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs |
 | **I-U8** | Audit rows are not totally ordered across hosts and nothing relies on the opposite (Owner: all.) | — | instruction | — |
-| **I-U9** | An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) Enforced by code — the detection sites. | — | code | — |
-| **I-U10** | Audit-write failure degrades readiness in both classes (Owner: Core.) Enforced by code — `platform.audit.sink`. | — | code | — |
-| **I-W1** | The shell holds no server-side state and reaches the system only over the public HTTP API; **no backend package references it, and it has no privileged endpoint of its own** (Owner: the shell.) Enforced by code — the package graph, plus an assertion that every endpoint the shell calls is callable without it. | — | code | — |
+| **I-U9** | An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) | — | instruction | tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
+| **I-U10** | Audit-write failure degrades readiness in both classes (Owner: Core.) Enforced by code — `platform.audit.sink`. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
+| **I-W1** | The shell holds no server-side state and reaches the system only over the public HTTP API; **no backend package references it, and it has no privileged endpoint of its own** (Owner: the shell.) | — | instruction | tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs, tests/SubZeroDev.Platform.Tests/AdministrationShellTests.cs |
 <!-- invariants:end -->
 
 ---
@@ -1158,36 +1458,32 @@ at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprin
 [`90-decisions.md`](90-decisions.md), 2026-09-03. The format version inside `SettingsFingerprint`
 changed in the same commit, per what the item determined either way.
 
-**Item 3 — may a consumer-registered permission provider derive a grant from token claims?**
-([#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92); deferred by
-[ADR-009](../docs/docs/adr/ADR-009-identity-package.md), *Not decided here*.) The Platform half is
-stated: `Principal` carries no permission data (Types § 1), no Platform decision reads `Claims`
-(I-I6), the evaluator consults only registered providers (I-A2), and no grant outlives the request
-that derived it (I-A10). What is not determined is the consumer half. `10-design.md` keeps the raw
-authentication result "for consumers that want claims" (*Alternatives considered*, § 5) and names
-a consumer-registered third provider as the extension point for custom roles (§ 3; Types § 2 here),
-yet nothing says whether that provider may read a role from `Principal.Claims`. A provider that
-does would make revocation wait for token expiry, which I-A10 forbids only for Platform's own
-providers. **This blocks** any contract sentence forbidding permissions or roles in a login token for all providers, and so
-#92's third done-when criterion. It needs a `10-design.md` decision first — a rule on
-`IPermissionProvider` implementations, or an explicit statement that a consumer provider's grant
-source is the consumer's own concern.
+Item 3 (may a consumer-registered permission provider derive a grant from token claims?,
+[#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92)) was resolved by the grant-source
+rule in [`10-design.md`](10-design.md) *Data model* § 3 — claims and the raw authentication result are never
+a grant source for any provider — recorded at [`90-decisions.md`](90-decisions.md), 2026-09-25. The rule is
+structural for Platform's providers (I-I6, I-A2, I-A10) and a contract obligation for a consumer's, with the
+revoke-then-deny test shipped in `Platform.Testing` as a harness. `Principal.Claims` stays public, and
+#92's criteria were amended to match, per the owner's ruling of 2026-10-07 ([#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263),
+[`90-decisions.md`](90-decisions.md), 2026-10-07).
 
-**Item 4 — a per-vendor escape hatch for sign-in providers that depart from the standard.**
-([#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94); deferred by
-[ADR-009](../docs/docs/adr/ADR-009-identity-package.md), *Not decided here*, together with a
-production-grade bearer provider.) `10-design.md` does not determine a surface, so this contract
-declares none. Three things are missing upstream of any signature:
+**Item 4 was reopened and resolved by the 2026-10-08 design, and the paragraph below is superseded for
+a host that takes the sign-in module.** #94's first, third and fourth criteria now have a sign-in method
+to attach to (*Types* § 13, *Public surface* § 13), and 2026-09-26's accepted risk no longer applies to
+such a host. The host that serves the endpoints is `10-design.md` *Open questions*, 5, and the
+declarations are written against its recommendation. What follows is kept as the record of the
+validation half:
 
-1. The repository owner's direction on #94 (2026-08-09) — a named provider package per vendor, each
-   one sugar over the generic path and never a parallel implementation, rather than a raw
-   callback — is recorded only on the issue, not in `10-design.md`.
-2. That direction leaves open whether a hosted and a self-hosted deployment of one vendor are one
-   method with a discriminator or two methods.
-3. There is no generic path to be sugar over. Identity ships one test-grade bearer provider and one
-   upstream-proxy provider behind `IAuthenticationProvider`, and no interactive sign-in or sign-out
-   method. #94's sign-out criterion therefore presupposes a method D5 never designed.
-
-**This blocks** any vendor-package or hook signature on `SubZeroDev.Platform.Identity`, the sign-out
-proof against a non-conforming provider, and the documentation that reaching for the escape hatch is
-expected. A `/design` pass that settles all three comes first.
+Item 4 (a per-vendor escape hatch for sign-in providers that depart from the standard,
+[#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94)) was resolved **for the
+validation half only**. The generic bearer path, its configuration schema and the vendor configuration
+package's shape are in *Types* § 12 and *Public surface* § 10. They follow
+[`90-decisions.md`](90-decisions.md), 2026-09-25, which settled the three questions this item was
+waiting on, and 2026-09-30, which settled the choices the design left to this document. **#94 is not
+satisfied by this contract.** Its first, third and fourth done-when criteria are a hook per configured
+sign-in method, sign-out proven against a non-conforming provider, and documentation that reaching for
+the hook is expected. They describe a sign-in method Platform does not have, and D5 does not deliver
+them ([`90-decisions.md`](90-decisions.md), 2026-09-26, an accepted risk). Its second criterion holds
+in validation terms only: a vendor configuration package adjusts the generic path's values without
+hand-wiring the rest of it. A vendor's sign-in and sign-out quirks stay with each client
+([`10-design.md`](10-design.md) § *Control flow*, path 4).

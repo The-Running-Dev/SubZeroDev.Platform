@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/CompositionProfileTests.cs
 
 ## Statement
 `Local` with an authentication provider, a tenant resolver, or a non-baseline entitlement contributor fails startup (Owner: Core.)

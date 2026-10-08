@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-O8
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/PackageGraphTests.cs
 
 ## Statement
-The framework never learns that a tenant has an owner (Owner: all.) Enforced by code — see I-C6.
+The framework never learns that a tenant has an owner (Owner: all.)

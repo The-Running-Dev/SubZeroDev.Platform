@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
 A verification writes only when its instant is later than the stored one (Owner: Licensing.) Enforced by code — conditional update.

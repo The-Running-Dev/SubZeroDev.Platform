@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
 Accepted signing keys are supplied by the consumer as an ordered set; none is compiled into Platform (Owner: Licensing.) Enforced by code — a required option.

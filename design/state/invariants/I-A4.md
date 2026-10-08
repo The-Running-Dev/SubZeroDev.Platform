@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs
 
 ## Statement
 Two modules never declare the same `PermissionName` (Owner: Core.) Enforced by code — startup validation.

@@ -406,6 +406,70 @@ first vendor package is built when a consumer names its issuer. The mechanism is
 configuration source built the way a vendor package would build it must produce settings equal to those
 an equivalent settings file produces.
 
+### 11. The sign-in module — an optional client of the seam, stateless, with a hook above configuration
+
+**Added 2026-10-08** ([`90-decisions.md`](90-decisions.md), 2026-10-08), reversing the resource-server-only reading of
+*Alternatives* § 11. The Identity row of the brief still commits Platform to validation. This module
+adds the interactive half for a host that wants it, and a host that does not takes nothing.
+
+**What it is.** An optional module package, separately packaged, whose absence is invisible (ADR-006
+rule 1). It is an ordinary client of the authentication seam and an ordinary issuer-side client of an
+OpenID Connect provider. It **does not change the seam**: no cookie, query or body reaches an
+authentication provider, and Mcp is untouched. It never validates a token for Platform's decisions; the
+generic bearer path still does that, on the request that later carries the token.
+
+**What it does.** For each configured *sign-in method* it maps three endpoints on the host that takes the
+module: begin, callback, and sign-out, plus one that hands the signed-in browser client its access token.
+Begin sends the person to the issuer's authorize address with a proof-key challenge and a state value.
+Callback verifies the state, exchanges the code for tokens, and writes the session. The token endpoint
+returns the access token to a same-origin caller that sends the module's anti-forgery header, so a
+foreign page cannot read it. Sign-out clears the session and sends the person to the issuer's
+end-session address.
+
+**The session is stateless.** It is an encrypted, authenticated cookie holding the issuer, the subject,
+the access token and its expiry, and nothing else. The module owns **no row** and Identity's "no rows"
+stands. No refresh token is held. When the access token nears expiry the client begins again, and the
+issuer's own session decides whether that is silent. Cost, stated: no server-side list of sessions and
+no forced logout.
+
+**A sign-in method carries** the generic path's issuer and key settings by reference to that issuer's
+provider, so the trust root is the one configuration (I-S3), plus:
+
+| Setting | Meaning |
+|---|---|
+| client id | the public client's identifier. There is no client secret: the method is a public client with a proof key, which is what a stateless session without a secret store requires |
+| redirect path | where the callback is mapped |
+| scopes | requested scopes |
+| end-session address | the issuer's discovery value by default, or a template over `{client_id}`, `{return_to}` and `{id_token_hint}` for an issuer whose sign-out is not the standard one |
+| extra authorize parameters | fixed name and value pairs added to the authorize request, such as a vendor's `audience` |
+| post-sign-out address | where the person lands afterwards |
+
+**The vendor dialect stays configuration.** Auth0's hand-built `/v2/logout?client_id=…&returnTo=…` is an
+end-session template and its `audience` is an extra authorize parameter, so a vendor configuration
+package, which references no Platform package, supplies both and the quirk is written once there. A quirk
+the two settings cannot express becomes a new row in this table first, which is the rule of § 10.
+
+**The hook is the host's, above configuration.** A host that has a quirk neither setting expresses
+registers a callback per method: one may adjust the authorize request before it is sent, one may
+replace the end-session address after configuration has produced it. The callbacks receive and return
+Platform's own types, never an ASP.NET or IdentityModel type (I-I12 stated for this module). **The hook
+runs after configuration binds and cannot change which issuer, key source, audience or algorithm
+Platform trusts** (I-S3). Reaching for it is expected for some providers and is not a sign of doing it
+wrong; the documentation says so.
+
+**Sign-out cannot revoke an access token already issued.** It clears the session and sends the person to
+the issuer. The token stays valid at Platform until it expires, as path 4 states (I-S2). The
+documentation says so plainly.
+
+**Hosted and self-hosted follow § 10.** Two methods whenever the two deployments speak different protocol
+surfaces. Supabase Cloud and self-hosted Supabase are two vendor packages, the second stating that
+`GOTRUE_OAUTH_SERVER_ENABLED` must be on.
+
+**This pass builds the module and one fixture issuer, and no vendor package.** The fixture's discovery
+document has no end-session endpoint, so sign-out is proven against a provider that does not implement
+the standard one. A configuration source built as a vendor package would build it supplies that
+fixture's template.
+
 ---
 
 ## Module boundaries
@@ -439,6 +503,12 @@ not wait on the answer.
 package graph rule 1 and rule 2 govern, and it cannot violate rule 2 because it can reach no module to
 reference. The table above has no row for it because it places no capability — the capability it
 configures is Identity's.
+
+**The sign-in module** (*Data model*, § 11) is a module-tier package and likewise has no row: it places no
+one of the nine capabilities, it adds an interactive client to Identity's trust root. It depends on the
+framework's contracts and on the Identity module's issuer settings, and nothing depends on it, so the
+graph stays acyclic. No framework package references it (ADR-006 rule 1), and no module references it
+(rule 2).
 
 ### 2. The seam-admission test
 
@@ -697,27 +767,32 @@ issuer that is briefly unreachable is an outage to report, not a composition def
 8. **The invocation is audited** — actor, tenant, tool as the action, outcome — with no arguments, which
    the audit schema makes structural rather than a rule the Mcp module has to remember.
 
-### Path 4 — a person signs in and signs out, and Platform is on neither path
+### Path 4 — a person signs in and signs out; the sign-in module is on it when the host takes it
 
-Traced because the brief's Identity row and a vendor's sign-in both read as if Platform takes part, and
-it does not.
+Traced because the brief's Identity row and a vendor's sign-in both read as if Platform always takes
+part. Without the module it does not, and steps 1 and 3 below are the client's. With it (*Data model*,
+§ 11), they run on the host.
 
-1. **The client signs in at the issuer.** A browser application or a native client runs the
-   authorization-code flow with proof-key exchange against its issuer and receives an access token. No
-   Platform host is a party to the redirect, the callback or the code exchange.
-2. **The client presents the token as a bearer credential**, and path 1 begins. Step 1 of path 1 is the
-   generic path of *Data model*, § 10, or whichever provider the host registered for that issuer.
-3. **Sign-out is the client and the issuer.** The client discards its tokens and, where the vendor
-   supports it, sends the person to the issuer's end-session address. Vendor quirks on this path — a
-   logout address that is not the standard one, a required `audience` parameter on the authorize
-   request — are the client's to handle, not Platform's. A host behind a TLS-terminating proxy that
-   builds absolute addresses reads the original scheme through forwarded-header configuration, which is
-   deployment configuration and not an identity concern.
-4. **What sign-out cannot do at Platform.** An access token already issued stays valid at Platform until
-   it expires, because validation reads nothing that sign-out changes. That window is bounded by the
-   token lifetime the operator sets at the issuer. Authorization is not inside the window: no grant is
-   carried in the token (*Data model*, § 3), so a revoked membership or role denies on the next request
-   whatever the token says.
+1. **Begin.** The client asks the module to begin a method. The module generates a state value and a
+   proof key, stores both in a short-lived signed cookie, and redirects to the issuer's authorize
+   address with the method's extra parameters, then any host hook.
+2. **The issuer authenticates the person** and redirects to the callback with a code and the state.
+3. **Callback.** The module checks the state against the cookie. A mismatch or a missing cookie creates
+   no session (I-S1). It exchanges the code with the proof key and writes the session cookie.
+4. **The client reads its token** from the module's same-origin endpoint, presents it as a bearer
+   credential, and path 1 begins. Step 1 of path 1 is the generic path of *Data model*, § 10. The module
+   is not in path 1.
+5. **Sign-out.** The module clears the session and redirects to the end-session address: the template
+   if the method has one, the issuer's discovery value otherwise, then any host hook. Where the vendor
+   supports it the client may also discard its copy of the token.
+6. **What sign-out cannot do at Platform.** An access token already issued stays valid at Platform until
+   it expires, because validation reads nothing that sign-out changes (I-S2). That window is bounded by
+   the token lifetime the operator sets at the issuer. Authorization is not inside the window: no grant
+   is carried in the token (*Data model*, § 3), so a revoked membership or role denies on the next
+   request whatever the token says.
+7. **Without the module**, a client handles its own sign-in and sign-out against its issuer. A host
+   behind a TLS-terminating proxy that builds absolute addresses reads the original scheme through
+   forwarded-header configuration, which is deployment configuration and not an identity concern.
 
 ---
 
@@ -866,6 +941,17 @@ ambient context is restored, and the next request does not inherit it.
 is transactional; the only records written outside their action's transaction are audit rows for actions
 that changed nothing; the licence record is a single-row monotonic write; and the tool catalogue is
 in-memory and frozen. The one durable thing that grows without bound is the audit table, deliberately.
+
+### The sign-in module
+
+| Failure | Detected by | System does | Person sees | State left behind |
+|---|---|---|---|---|
+| callback state missing or not equal to the cookie's | comparison in the callback | creates no session, clears the begin cookie | a generic sign-in error, no detail about which half failed | none |
+| code exchange refused or the issuer unreachable | the exchange response or its failure | creates no session; the failure is logged with the issuer and no token | the same sign-in error, retryable by beginning again | none; no retry inside the request |
+| session cookie missing, unreadable or expired | decrypt or expiry check at the token endpoint | answers unauthenticated | the client begins again | none |
+| end-session address cannot be built | startup validation of the template's placeholders | fails startup naming the full key (I-I10 extended to this module) | — | none |
+| anti-forgery header absent on the token endpoint | the endpoint | refuses | nothing readable | none |
+| data-protection keys differ between instances | a session cookie one instance cannot decrypt | treated as a missing cookie | signed out, begins again | none. Operators share keys across instances; the documentation states it |
 
 ---
 
@@ -1182,6 +1268,10 @@ change rejected above, with more consumers to break.
 
 ### 11. Platform validates credentials; it does not host sign-in
 
+**Superseded 2026-10-08** for hosts that take the sign-in module ([`90-decisions.md`](90-decisions.md), 2026-10-08;
+*Data model*, § 11). The text below is the decision as made, kept because its rejections still bind:
+the module is stateless and does not widen the seam, which is how it answers each of them.
+
 **Chosen:** Platform is a resource server. It validates bearer credentials and never serves a sign-in
 page, a callback, a session or a sign-out endpoint (*Control flow*, path 4).
 
@@ -1248,6 +1338,34 @@ production path.
 
 **Reversibility: cheap.** Two methods can later collapse into one if the surfaces converge; a
 discriminator whose values already diverge cannot be split without breaking callers.
+
+### 14. The shape of the sign-in module
+
+**Chosen:** a stateless, optional module that hosts begin, callback, token and sign-out endpoints, keeps
+the session in an encrypted cookie, holds no refresh token and no client secret, takes vendor dialect as
+two configuration settings, and offers a host-registered hook above them (*Data model*, § 11).
+
+**Rejected:**
+
+- **A stateful backend-for-frontend with a session store.** It gives server-side revoke and refresh
+  custody, and costs an amendment to Identity's "no rows", a durable store with retention (#187), and
+  the hardest withdrawal of any option. Taken later it is additive; the stateless module does not
+  foreclose it.
+- **A client-side contract with no host.** Cheapest, and sign-out against a non-conforming provider
+  would be a fixture rather than a running method, which is the part of #94 that matters.
+- **Widening the authentication seam to read the cookie**, so the cookie authenticates the request
+  directly. It widens the seam for Mcp, where no cookie exists. Returning the token to the client keeps
+  the seam as it is.
+- **A vendor package that supplies the hook.** It would reference a Platform type and break I-I13. The
+  vendor supplies the two settings, and the hook belongs to the host that has a quirk.
+- **A raw callback with no configuration path.** The owner rejected it on 2026-08-09; the hook sits above
+  configuration for that reason.
+
+**Why:** it is the smallest thing that gives #94's hook a method to attach to without taking on session
+custody. The cost is the loss of forced logout, stated above.
+
+**Reversibility: cheap to add, moderate to withdraw.** The configuration keys and the endpoints become
+public contract once a host depends on them.
 
 ---
 
@@ -1356,3 +1474,18 @@ easily be brought back.
 The alternative is independent versioning from the start, which is more honest about what a module
 library is and avoids a later transition. It becomes the right answer as soon as a module ships on a
 cadence the framework does not, which is a question about consumers rather than about packaging.
+
+---
+
+### 5. Which host serves the sign-in module's endpoints?
+
+D5 ships the administration shell as static assets, so the module cannot assume a host the way a
+backend-for-frontend normally would. The sign-in endpoints need a process that can set an encrypted
+cookie and call an issuer's token endpoint.
+
+**Recommendation: the operated host that already takes `SubZeroDev.Platform.Identity`,** mapped
+beside the API. The cookie and the API then share an origin, which the token endpoint's same-origin
+rule needs. The contract (*Public surface* § 13) is written against this answer. The alternative, a
+dedicated sign-in host on a sibling origin, needs a cross-origin token handoff and a larger forgery
+surface, and is the right answer only if a consumer cannot put the module on its API host. Taken after
+this design, it changes the token endpoint and nothing else.

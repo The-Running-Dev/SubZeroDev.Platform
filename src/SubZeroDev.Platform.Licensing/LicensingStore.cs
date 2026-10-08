@@ -76,24 +76,26 @@ internal sealed class LicensingStore(IAmbientTransactionAccessor ambient, IProvi
             reader.GetString(7));
     }
 
-    /// <summary>Writes the row, replacing whatever stood before. Called <b>only</b> after the caller
-    /// has compared verification instants inside the same transaction (I-L3) and only on the
-    /// <see cref="LicenceVerificationOutcome.Verified"/> path — <b>no error path writes any
-    /// column</b> (I-L2, S12.3), which is what makes stored grace unextendable.</summary>
+    /// <summary>Writes the row <b>only if</b> no row stands or the stored verification instant is
+    /// earlier than <paramref name="record"/>'s — the monotonic guard (I-L3) as one conditional
+    /// statement. Called only on the <see cref="LicenceVerificationOutcome.Verified"/> path — <b>no
+    /// error path writes any column</b> (I-L2, S12.3), which is what makes stored grace
+    /// unextendable.</summary>
+    /// <remarks>The comparison lives in the statement, not in a read before it. Under PostgreSQL's
+    /// default READ COMMITTED a read-then-write lets two hosts both read "no row" or the same older
+    /// row, and the second insert then fails on the primary key instead of being judged by the guard
+    /// — which reported the later verification as <see cref="LicenceVerificationOutcome.Unavailable"/>
+    /// (S17.2). <c>ON CONFLICT ... DO UPDATE ... WHERE</c> waits for a concurrent writer and evaluates
+    /// the guard against the row that writer committed, on both providers. Instants are stored in
+    /// <see cref="IProviderCapability.FormatInstant"/>'s fixed-width form, so comparing the text
+    /// compares the instants — the same reliance <c>LeaseStore</c>'s conditional upsert makes.</remarks>
     /// <param name="record">The row to write.</param>
     /// <param name="cancellationToken">Cancels the write.</param>
-    /// <returns>A task that completes when the write does.</returns>
-    internal async Task WriteAsync(VerifiedLicenceRecord record, CancellationToken cancellationToken)
+    /// <returns>True when the row was written; false when a verification at the same or a later
+    /// instant already stands.</returns>
+    internal async Task<bool> TryWriteNewerAsync(VerifiedLicenceRecord record, CancellationToken cancellationToken)
     {
         var current = Current();
-
-        await using (var delete = current.Connection.CreateCommand())
-        {
-            delete.Transaction = current.Transaction;
-            delete.CommandText = "DELETE FROM verified_licence WHERE installation_key = @key;";
-            AddParameter(delete, "@key", SingleRowKey);
-            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
 
         await using var insert = current.Connection.CreateCommand();
         insert.Transaction = current.Transaction;
@@ -103,7 +105,17 @@ internal sealed class LicensingStore(IAmbientTransactionAccessor ambient, IProvi
                  document_fingerprint, key_id)
             VALUES
                 (@key, @tier, @features, @issuedAt, @expiresAt, @graceEndsAt, @verifiedAt,
-                 @fingerprint, @keyId);
+                 @fingerprint, @keyId)
+            ON CONFLICT (installation_key) DO UPDATE SET
+                tier = excluded.tier,
+                features = excluded.features,
+                issued_at = excluded.issued_at,
+                expires_at = excluded.expires_at,
+                grace_ends_at = excluded.grace_ends_at,
+                verified_at = excluded.verified_at,
+                document_fingerprint = excluded.document_fingerprint,
+                key_id = excluded.key_id
+            WHERE verified_licence.verified_at < excluded.verified_at;
             """;
 
         var claims = record.Claims;
@@ -122,7 +134,7 @@ internal sealed class LicensingStore(IAmbientTransactionAccessor ambient, IProvi
         AddParameter(insert, "@fingerprint", record.DocumentFingerprint);
         AddParameter(insert, "@keyId", record.KeyId);
 
-        await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 1;
     }
 
     private IAmbientTransaction Current() =>

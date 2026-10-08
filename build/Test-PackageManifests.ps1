@@ -7,7 +7,7 @@
     produced .nupkg set rather than trusting the build to have produced the
     right thing implicitly:
 
-    - Exactly the twelve framework and module packages are produced -- no sample
+    - Exactly the thirteen framework and module packages are produced -- no sample
       project is packable, so a passing `dotnet pack` over the solution
       already proves this; this script asserts it rather than assuming it.
     - Every package's version is 0.x (S9.6) -- the brief's stated
@@ -67,6 +67,7 @@ $expectedPackages = @(
     'SubZeroDev.Platform.Licensing'
     'SubZeroDev.Platform.Audit'
     'SubZeroDev.Platform.Mcp'
+    'SubZeroDev.Platform.SignIn'
 )
 
 $temporary = -not $OutputDirectory
@@ -149,7 +150,7 @@ try {
         }
     }
 
-    Write-Host "All twelve package manifests passed at $sharedVersion (S18.1)." -ForegroundColor Green
+    Write-Host "All thirteen package manifests passed at $sharedVersion (S18.1)." -ForegroundColor Green
 }
 finally {
     if ($temporary) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }

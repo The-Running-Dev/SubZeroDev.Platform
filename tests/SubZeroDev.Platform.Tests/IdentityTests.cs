@@ -79,6 +79,66 @@ public sealed class IdentityTests
         Assert.Equal(new PrincipalId(IssuerB, "alice"), authenticated.Value.Id);
     }
 
+    /// <summary>S19.5 — a well-formed token whose <c>iss</c> the provider does not trust is a
+    /// credential it does not claim, which is not the same answer as no credential at all.</summary>
+    [Fact]
+    public async Task S19_5_A_token_for_an_untrusted_issuer_is_not_claimed_and_no_header_is_still_anonymous()
+    {
+        var provider = new JwtBearerAuthenticationProvider("test-issuer-a", IssuerA, IssuerAKey);
+
+        var foreign = await provider.AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", $"Bearer {MintToken(IssuerBKey, IssuerB, "alice")}")),
+            CancellationToken.None);
+        var none = await provider.AuthenticateAsync(new StubAuthenticationRequest(), CancellationToken.None);
+
+        Assert.False(foreign.IsSuccess);
+        Assert.Equal(nameof(AuthenticationError.CredentialNotClaimed), foreign.Error.Code);
+        Assert.True(none.IsSuccess);
+        Assert.Equal(Principal.Anonymous, none.Value);
+    }
+
+    /// <summary>S19.7 — through the real pipeline, a token from an issuer no registered provider
+    /// trusts is refused as unauthenticated, never a server error, and never reaches an endpoint
+    /// that would have served an anonymous request. With the same providers, a trusted issuer's
+    /// token and no token at all both still succeed.</summary>
+    [Fact]
+    public async Task S19_7_An_untrusted_issuer_token_is_refused_unauthenticated_end_to_end()
+    {
+        var (app, client) = await WebHostUnderTest.StartAsync(services =>
+        {
+            services.AddSingleton<IAuthenticationProvider>(
+                new JwtBearerAuthenticationProvider("test-issuer-a", IssuerA, IssuerAKey));
+            services.AddSingleton<IAuthenticationProvider>(
+                new JwtBearerAuthenticationProvider("test-issuer-b", IssuerB, IssuerBKey));
+        });
+
+        try
+        {
+            using var untrusted = new HttpRequestMessage(HttpMethod.Get, "/");
+            untrusted.Headers.Add(
+                "Authorization", $"Bearer {MintToken(RandomNumberGenerator.GetBytes(32), "https://stranger.test", "mallory")}");
+
+            using var refused = await client.SendAsync(untrusted);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            var body = await refused.Content.ReadAsStringAsync();
+            Assert.Contains(nameof(AuthenticationError.CredentialRejected), body, StringComparison.Ordinal);
+            Assert.DoesNotContain(nameof(AuthenticationError.CredentialNotClaimed), body, StringComparison.Ordinal);
+
+            using var trusted = new HttpRequestMessage(HttpMethod.Get, "/");
+            trusted.Headers.Add("Authorization", $"Bearer {MintToken(IssuerBKey, IssuerB, "alice")}");
+            using var accepted = await client.SendAsync(trusted);
+            Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+
+            using var anonymous = await client.GetAsync("/");
+            Assert.Equal(HttpStatusCode.OK, anonymous.StatusCode);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
     /// <summary>S9.3 — an invalid credential is refused with <c>CredentialRejected</c> and the
     /// request does not proceed as anonymous.</summary>
     [Fact]
@@ -110,17 +170,12 @@ public sealed class IdentityTests
     }
 
     /// <summary>S8.10, completed — with the real provider wired through the full request pipeline
-    /// and no key cached, the request fails as unauthenticated rather than as a server error, and
-    /// the module holds nothing capable of issuing the outbound call S8.10 forbids: the Identity
-    /// assembly carries no reference to <c>System.Net.Http</c> at all, so there is no client left to
-    /// reach for one, cached or not.</summary>
+    /// and no key cached, the request fails as unauthenticated rather than as a server error. That
+    /// no key is fetched while a request is authenticated is asserted by observing outbound
+    /// fetches (S21.8, <c>KeyDiscoveryTests</c>), not by inspecting assembly references.</summary>
     [Fact]
-    public async Task S8_10_No_cached_key_fails_end_to_end_with_no_outbound_call_capability()
+    public async Task S8_10_No_cached_key_fails_end_to_end_as_unauthenticated()
     {
-        var identityAssembly = typeof(JwtBearerAuthenticationProvider).Assembly;
-        var referenced = identityAssembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
-        Assert.DoesNotContain("System.Net.Http", referenced);
-
         var (app, client) = await WebHostUnderTest.StartAsync(services => services.AddSingleton<IAuthenticationProvider>(
             new JwtBearerAuthenticationProvider("test-issuer-a", IssuerA, signingKey: null)));
 

@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-L8
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
-After grace, new paid-feature work is denied while accepted, running and scheduled work continues and existing data stays readable and exportable (Owner: Licensing, consumers.) Enforced by code — sample scenario.
+After grace, new paid-feature work is denied while accepted, running and scheduled work continues and existing data stays readable and exportable (Owner: Licensing, consumers.)

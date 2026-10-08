@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/TenancyTests.cs
 
 ## Statement
 With no resolver registered, `ICurrentTenant.Current` is `TenantId.Implicit` (Owner: Core.) Enforced by code — resolver chain.

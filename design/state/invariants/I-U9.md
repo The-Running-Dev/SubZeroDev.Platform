@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-U9
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
-An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) Enforced by code — the detection sites.
+An error condition is audited once per detection, not once per check (Owner: Licensing, Core.)

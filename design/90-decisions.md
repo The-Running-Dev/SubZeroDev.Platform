@@ -12,9 +12,216 @@ belongs in `docs/docs/adr/`.
 
 ## Open
 
-_(previously tracked out of this section: issue [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187))_
+_(previously tracked out of this section: issues [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187), [#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263), [#264](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/264), [#265](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/265))_
 
 ---
+
+### 2026-10-08 — #94: the sign-in module's callback is mapped at the method's `RedirectPath`
+Context: the contract (§ 13) lists the module's endpoints under `/signin/<method>` and also requires a configured `RedirectPath`. A callback at `/signin/<method>/callback` would make `RedirectPath` a second, redundant setting.
+Chosen: begin, token and signout are mapped under `/signin/<method>`; the callback is mapped at the configured `RedirectPath`, so the address registered with the provider is the address that serves it. Two methods may not share a `RedirectPath`; that fails startup as `InconsistentSettings`.
+Rejected: a fixed `/signin/<method>/callback` that ignores `RedirectPath`; a prefix-only `RedirectPath`.
+Reversibility: cheap before a host registers a redirect address with a provider; moderate after.
+
+### 2026-10-08 — #94: the id token is read without a signature check, and `{id_token_hint}` is always empty
+Context: the session holds no id token (I-S1), and Platform validates the access token on every request, so the id token's only job here is to name the subject.
+Chosen: the id token received directly from the token endpoint over TLS is decoded unverified, as OpenID Connect Core 3.1.3.7 permits, with `iss`, `aud`, `nonce` and `exp` checked; a failure is the generic sign-in error. `{id_token_hint}` expands to an empty string because no id token is kept. `Scopes` must include `openid`.
+Rejected: verifying the id token's signature (a second validation path beside Identity, and a keys dependency this package must not take, I-I12); keeping the id token in the cookie (widens I-S1 and the cookie size).
+Reversibility: cheap — verification and a hint can be added behind the same settings.
+
+### 2026-10-08 — #94: hooks adjust, and the module re-sets what it owns
+Context: I-S3 says a hook cannot change what Platform trusts; the contract does not say whether a hook may return a protected parameter.
+Chosen: `AdjustAuthorizeRequest` returns the full parameter set, which replaces the module's; the module then re-sets `response_type`, `client_id`, `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge` and `code_challenge_method`. `ReplaceEndSessionAddress` must return an absolute http or https address, or the sign-out fails. The anti-forgery header `X-Platform-SignIn` is required on the token endpoint only. After a successful callback the person is returned to `/`. Discovery-based sign-out appends `client_id` and `post_logout_redirect_uri`. An `http` issuer or endpoint is accepted only on a loopback host.
+Rejected: failing when a hook returns a protected name (an unhelpful failure at the first request); a configurable post-sign-in path (not in #94).
+Reversibility: cheap.
+
+### 2026-10-08 — #94: `SubZeroDev.Platform.SignIn` is the thirteenth package
+Context: the package scripts and `commercial-guide.md` count the checked packages.
+Chosen: SignIn joins the packed, manifest-checked and consumer-graph-checked set; the count moves from twelve to thirteen. It reads the generic path's `Issuer` keys from configuration rather than referencing Identity (I-C7).
+Rejected: shipping it unpacked; referencing Identity to read the issuers.
+Reversibility: cheap.
+
+### 2026-10-08 — The sign-in module is stateless, hosted on the Identity host, with a hook above vendor configuration
+Context: [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94). The owner ratified the 2026-10-07 proposal below, agreed all six premises of the `/design` pass and chose the minimal approach. The proposal left the session store, the callback host and the hook shape open.
+Chosen: an optional `SubZeroDev.Platform.SignIn` module (`10-design.md` *Data model* § 11, *Alternatives* § 14). The session is an encrypted cookie and the module owns no row. There is no refresh token and no client secret. The client reads its access token from a same-origin, anti-forgery-guarded endpoint, so the authentication seam is not widened. Vendor dialect is two configuration settings, an end-session template and extra authorize parameters, so a vendor package still references no Platform package (I-I13). The hook sits above configuration, is registered by the host, and cannot change what Platform trusts. Sign-out does not revoke an issued token. The endpoints are mapped on the operated host that takes Identity, recorded as a recommendation under *Open questions* 5. The 2026-09-26 accepted risk is superseded for a host that takes the module. Contract Unresolved item 4 is closed against this.
+Rejected: a stateful backend-for-frontend with a session store; a client-side contract with no host; widening the seam to read the cookie; a vendor package that supplies the hook; a raw callback with no configuration path.
+Reversibility: cheap to add, moderate to withdraw — the keys and endpoints become public contract once a host depends on them. A session store can be added later without removing this module.
+
+### 2026-10-07 — Platform hosts an optional sign-in module so #94's hook has a method to attach to (reverses 2026-09-26) [PROPOSED — owner to ratify]
+
+Context: [#94](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/94). The 2026-09-26 entry accepted red-team F1: with Platform a resource server (`10-design.md` *Alternatives* § 11), #94's first, third and fourth criteria — a hook per configured sign-in method, sign-out proven against a provider without the standard one, documentation that reaching for the hook is expected — describe a sign-in method Platform does not have. The owner ruled to reverse that choice rather than amend #94 down to the validation half.
+Chosen: [DECISION TO BE MADE BY THE OWNER — the three points below are the ones the 2026-09-25 entries and #94's thread say must be settled, with the reading most consistent with them.]
+1. **Placement.** Sign-in is a separate optional module, an ordinary client of Platform's authentication seam, as § 11's reversibility note already allows. The core stays protocol-only and a resource server. It references no vendor package (ADR-006 rule 1) and absence is invisible.
+2. **The hook.** The module exposes the underlying OpenID Connect options and events for each configured scheme through a post-configure callback: configuration binds first and the hook adjusts after, so the configuration path stays authoritative. Three quirk classes are in scope: non-standard endpoint construction (Auth0 `/v2/logout`), extra authorize-request parameters (`audience`), and nothing else. Scheme forcing behind a proxy is a deployment concern for `ForwardedHeaders` and is documented as out of the hook's scope.
+3. **Vendor packages.** The 2026-09-25 rule stands: a vendor package is a configuration source over the generic path, never a parallel implementation, and references no Platform package. `UseAuth0()` and its siblings write the module's settings, including the vendor's logout URL, once. Supabase Cloud and self-hosted Supabase are two methods that do not pretend to be one (self-hosted is not an OIDC provider until `GOTRUE_OAUTH_SERVER_ENABLED` is set; ADR-004).
+Consequences for the design: the authentication seam is not widened — the module owns the request, query and cookie surface and the session; the session is durable state, so Identity's "no rows" must be amended or the module must hold its own store; § 11's *Rejected* reasons are answered by that placement, not removed. The web shell is static assets, so the module's host is a separate decision.
+Rejected: widening the seam to carry cookies and queries (it widens it for Mcp too); a raw callback with no vendor package (invites vendor code in each consumer's host, the BlueLionheart failure #94 came from); amending #94 to the validation half (the owner's ruling).
+Reversibility: cheap to add as a module; expensive to withdraw once consumers hold sessions on it (§ 11).
+Supersedes: 2026-09-26 (accepted risk) — a later `/design` pass edits `10-design.md` § 11 and the contract's Unresolved item 4; this entry does not edit them.
+
+Open for the owner before this is ratified: (a) whether the session store is a new module-owned table or the module is stateless (signed cookie); (b) which host serves the callback given D5 ships only static assets; (c) which vendor package is first.
+
+### 2026-10-07 — The retained `Principal.Claims` stands; #92's criteria are amended to match
+
+Context: [#263](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/263), red-team F2. `10-design.md` retains the public `Principal.Claims` and states the no-permission-data rule as a contract obligation on a consumer's provider, not a structural guarantee. [#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92)'s first criterion asks that the principal carry no permission data and that the mistake be structurally impossible. The two cannot both hold. The owner ruled.
+Chosen: the design stands and #92 gives way. `Principal` keeps `Claims`, which is the raw authentication result and never a grant source. For Platform's own providers the rule is structural (I-I6, I-A2, I-A10 and the revoke-then-deny test). For a consumer's provider it is a contract obligation, with the same test shipped in `Platform.Testing` as a harness, as 2026-09-25 recorded. #92's criteria are reworded to say this. Contract Unresolved item 3 is closed.
+Rejected: removing or filtering `Claims` so that a token claim cannot grant, which would make the rule structural for consumers too. It is breaking at 0.x and cuts against `10-design.md` *Alternatives* § 5. It also does not hold while the raw authentication result stays reachable through DI, so it would promise more than it delivers. It would also be a contract and schema amendment, which is a `/spec` change and not a decision-log entry.
+Reversibility: cheap to relax, expensive to tighten, as 2026-09-25 recorded.
+
+### 2026-10-06 — Remove the per-repository SessionEnd cost hook
+Context: `.claude/settings.json` ran `pwsh … tools/Measure-Session.ps1` on `SessionEnd`, but that script no longer exists — it left this repository when the kit moved to a single home install, and the kit later ported it to Node as `measure-session.ts` — so the hook failed at the end of every session. The kit's setup installs one global `SessionEnd` hook in `~/.claude/settings.json` that logs every project.
+Chosen: remove this repository's `hooks.SessionEnd` entry, in the AgentKit sync to `v2026.10.06.1`. Nothing else in `settings.json` changes.
+Rejected: point it at `measure-session.ts` — the global hook already runs that script, so every session would be logged twice; leave it — it keeps failing at every session end.
+
+### 2026-10-01 — A credential no provider claims ends the chain rejected, not anonymous
+
+Context: the `/spec` #94 closing review. A provider answers `Principal.Anonymous` for a well-formed
+bearer token from an issuer it does not trust, so a token every registered provider declines ends the
+chain `Anonymous`. The test-grade provider already behaves this way, and the generic bearer path was
+specified the same way. `10-design.md` *Control flow*, path 1, step 1 says a bad token is rejected at
+the transport and only an absent one continues as `Anonymous`. The owner ruled that the chain end
+rejects.
+Chosen: a provider that sees a credential of its kind it does not claim answers a new variant,
+`AuthenticationError.CredentialNotClaimed`. The chain treats it as a pass and moves to the next
+provider. If no provider establishes a principal and none rejects, the chain answers
+`CredentialRejected`, naming the first provider in registry order that answered `CredentialNotClaimed`.
+`CredentialNotClaimed` never leaves the chain (I-I15). The test-grade provider and the generic bearer
+path both answer this way, and `/plan` slices the code change.
+Rejected: the chain reading the `Authorization` header itself, because Core would then know every
+credential format. Rejected: changing `IAuthenticationProvider`'s return type to a three-way result,
+which breaks every provider's signature for one case an error variant can carry. Rejected: keeping
+`Anonymous`, because a token from an untrusted issuer would succeed at being ignored, which path 1
+forbids.
+Reversibility: cheap until the slice lands. Moderate after, because a host's callers then see
+unauthenticated where they saw an anonymous answer.
+
+### 2026-09-30 — A generic-path settings defect is a `ConfigurationError` naming the full key
+
+Context: `/spec` #94. Path 2, step 8 requires a malformed or unrecognised generic-path setting to fail
+startup and name both the provider and the key. It does not say which error carries the failure.
+Chosen: `HostStartupError.Configuration`, carrying the existing `ConfigurationError` variant that fits
+the defect. `MissingRequiredSetting` covers a required key that is absent. `InconsistentSettings`
+covers two keys that exclude each other. `InvalidSetting` covers a bad value, an unrecognised key, and
+a value or section in the wrong place. The key is reported in full, as
+`Platform:Identity:Bearer:<name>:<setting>`, so one string names the provider and the setting.
+Rejected: a new `HostStartupError` code for the same fault. A settings defect is already a
+`ConfigurationError` everywhere else in the host, and a second code would give operators two things to
+search for. Rejected: carrying the provider name and the setting as separate fields. The full key is
+exactly what the operator searches their configuration for.
+Reversibility: cheap before a consumer ships. A new variant could be added later without removing
+these.
+
+### 2026-09-30 — The generic bearer path's configuration schema: one section per provider, fixed keys, bounded defaults
+
+Context: `/spec` #94. `10-design.md` *Data model* § 10 names the generic path's settings and makes
+their configuration schema public contract. It leaves the key names, the pattern syntax, the key
+formats, the defaults, the bounds and the refresh mechanics to this contract.
+Chosen: each child section `Platform:Identity:Bearer:<name>` is one provider, and `<name>` is its
+name. The keys are `Issuer` or `IssuerPattern`, `Discovery` or `SigningKeys`, `Audiences`,
+`Algorithms`, `ClockTolerance`, `SubjectClaim`, `DisplayNameClaim` and `KeyRefreshInterval`. A pattern
+carries `{tenantid}` exactly once and it matches one or more characters other than `/`, which is
+Entra's own template syntax. `Discovery` must be `https`, and `SigningKeys` is an inline JSON Web Key
+Set of public keys. Algorithms come from `RS*`, `PS*` and `ES*`, with a default of `RS256`, the one
+algorithm OpenID Connect requires every provider to support. `ClockTolerance` defaults to one minute
+and is capped at five. `KeyRefreshInterval` defaults to five minutes and lies between 30 seconds and
+one day. Every fetch has a fixed 30-second timeout, and the discovery document's `issuer` must equal
+the configured issuer or pattern ordinally. The background work is
+`platform.identity.key-refresh:<name>` and the readiness check is `platform.identity.key-set:<name>`. A
+token naming no key id is tried against the cached keys and never causes a fetch. Registering the
+Identity module and writing configuration is the whole registration, and a vendor method takes the
+provider name as an argument.
+Rejected: a regular-expression pattern, because one that matches too much accepts any issuer and no
+reviewer sees it. Rejected: a tenant list, which is configuration no issuer publishes. Rejected: JWK
+members spelled as configuration keys, because JOSE's own member names would collide with the rule
+that an unrecognised key fails startup. Rejected: plain-`http` discovery, because the test-grade
+provider already serves development. Rejected: the token library's own defaults, a five-minute
+tolerance and a twelve-hour refresh, under which a failed startup fetch leaves the host not-ready for
+twelve hours. Rejected: a configurable fetch timeout, one more public key with no requirement behind
+it. Rejected: a registration call per issuer, which makes a vendor package chain off Identity, as
+*Alternatives* § 12 refuses.
+Reversibility: moderate. Keys are public once a vendor package writes them. Keys can be added but never
+withdrawn, and a default never moves in the accepting direction.
+
+### 2026-09-29 — Twenty-one invariants without a whole-statement test are held by instruction, not code
+
+Context: `/align`. The #245 bootstrap copied each invariant's "Enforced by" prose into
+`Enforcement: code` without naming a test, so seventy-three rows failed the design-state check for
+missing Evidence. A row is `code` only when a test evidences the whole statement. Tests cover the whole
+statement for fifty-two rows. For nineteen they cover part of it. I-B6 has code and no test, and nothing
+implements I-A11 yet.
+Chosen: the fifty-two keep `code` and name their tests as Evidence. The other twenty-one become
+`instruction` and lose their "Enforced by code" clause. The nineteen partly tested rows name those
+tests as Evidence. Each row flips back to `code` in the change that adds the test covering the rest of
+its statement, and one tracker issue lists the gaps. I-A6 and I-L5 keep `code`, and their clauses stop
+citing a sample scenario and an offline CI run that do not exist.
+Rejected: keeping `code` and citing the partial tests, because the check would then pass on rows
+nothing fully proves. Rejected: `code, instruction` for the partly tested rows. It is true for most of
+them, but it hides which part lacks a test. The tracker issue says which part.
+Reversibility: cheap. Each row is one field.
+
+### 2026-09-28 — A provider failure is carried normalised, first-registered, and behind an audit failure
+
+Context: `/spec`, declaring the member the entry below routes to it. That entry fixes that a denial
+carries a provider's error in the shape `AuditFailure` takes and is answered as a retryable failure. It
+leaves open what the member carries when a provider returns a variant other than `ProviderUnavailable`,
+which provider it names when several fail, and which answer wins when the same denial also carries an
+`AuditFailure`.
+Chosen: the member is `ProviderFailure`, named like `AuditFailure`. It is always `ProviderUnavailable`
+naming the provider as the registry knows it, whatever the provider returned. It names the first
+provider in registry order that could not answer. Where both are set, `AuditFailure` decides the answer.
+`PermissionDenied` now requires that every provider answered, and a provider returns an error only when
+it could not answer.
+Rejected: carrying the provider's error as returned. A provider returning `PermissionDenied` would then
+reach the caller as a non-retryable error that the caller must still answer as retryable. A provider
+could also name another provider in a decision. *Error semantics* § 4 already settles the same shape for
+the audit sink, where the class decides, not the sink. Rejected: a collection of every failing
+provider. The caller's answer is the same for one failure or many, and a list reads as an inventory of
+the outage, which the decision does not claim to be. It also departs from the `AuditFailure` shape the
+entry below chose. Rejected: `ProviderFailure` deciding when both are set. Answering with the provider's
+code drops a `Required` write's failure from the response, which § 4 forbids.
+Reversibility: cheap until the slice lands; moderate after, since a consumer may read the member.
+
+### 2026-09-28 — A provider that cannot answer reaches the caller as a retryable failure, not as forbidden
+
+Context: `/align` over the tree at f4822a5. `20-contract.md` *Public surface* § 3 ("a denial the caller
+may retry") and *Error semantics* § 2 (`ProviderUnavailable`: retryable, "return a retryable failure;
+the denial stands for this request"), and `10-design.md` *Failure modes*, the database ("A denial from
+an unreachable store returns a retryable error code"), all promise a retryable answer. The evaluator
+(`src/SubZeroDev.Platform.Core/Authorization.cs`) discards a provider's error and counts that provider as
+having granted nothing, and `AuthorizationDecision` has nowhere to carry the error, so the Hosting
+pipeline answers `PermissionDenied`/403 while the Organizations store is unreachable. D5-S4's test
+asserts `ProviderUnavailable.IsRetryable` on the error alone, never what a caller receives.
+Chosen: the code changes to match the documents. When a denial is reached with at least one provider
+unable to answer, the decision carries that provider's error, in the shape `AuditFailure` already takes,
+and Hosting and Mcp answer it the way they already answer `AuditFailure`: a retryable failure, not
+forbidden. The denial still stands for the request, so failing closed is unchanged. The member is a
+public-surface addition: `/spec` declares it and `/plan` slices it.
+Rejected: rewriting the documents to make a provider failure an ordinary forbidden — it tells every
+client that an outage is a missing permission, records a policy denial no policy made, and withdraws
+"fails closed and still retryable" (*Error semantics* § 2); `EvaluateAsync` returning a failure result —
+breaks "returns a decision, never a failure result" (*Public surface* § 3) and every call site's return
+type.
+Reversibility: cheap until a consumer reads the new member; moderate after, since it is public surface.
+
+### 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
+
+Context: [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F1 (BLOCKING), against
+`10-design.md` @ 52794de. Under the resource-server decision below, a vendor configuration package
+supplies bearer-validation settings only, so the non-standard sign-out #94 was raised over (Auth0's
+hand-built `/v2/logout`) stays with each client — the hand-wiring #94 exists to remove — and #94's
+sign-out proof cannot be run against Platform. The decision is known and retained, with its
+alternatives (*Alternatives* § 11); its consequence for #94 was not recorded.
+Chosen: accepted risk. Platform stays a resource server. Recorded consequences: #94's first, third and
+fourth done-when criteria — a hook per configured sign-in method, sign-out proven against a
+non-conforming provider, documentation that reaching for the hook is expected — describe a sign-in
+method Platform does not have, and D5 does not deliver them; a vendor's sign-in and sign-out quirks are
+handled once per client, and a vendor configuration package does not reduce that; contract Unresolved
+item 4 is settled for the validation half only, and the `/spec` pass that closes it says so rather than
+treating #94 as satisfied.
+Rejected: defect — the finding names no higher-precedence source the retained decision contradicts; the
+brief's Identity row commits to integration seams for hosted authentication, not to sign-in. Not
+sustained — the consequence is real and was unrecorded.
+Reversibility: cheap — a backend-for-frontend can still be added as a module that is an ordinary client
+of Platform (*Alternatives* § 11).
 
 ### 2026-09-25 — Every permission provider takes grants from a source revocable before the credential expires
 

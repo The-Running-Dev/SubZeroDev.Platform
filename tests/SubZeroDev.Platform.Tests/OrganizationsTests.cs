@@ -493,6 +493,100 @@ public sealed class OrganizationsTests
         Assert.Contains(sink.Received, e => e.Action.Value == OrganizationsAuditActions.MembershipRevoked.Value);
     }
 
+    // #92 -------------------------------------------------------------------------------------
+
+    /// <summary>#92, I-A10 — a membership revoked between two requests is denied on the second under the
+    /// same principal, with no re-authentication, and a token that claims the role grants nothing.</summary>
+    [Fact]
+    public async Task Revoking_a_membership_denies_the_next_request_and_a_token_claim_grants_nothing()
+    {
+        var sink = new RecordingAuditSink(isDurable: true);
+        await using var host = await StartHostAsync(sink);
+        var api = host.Services.GetRequiredService<IOrganizationApi>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var provider = Assert.Single(host.Services.GetServices<IPermissionProvider>(), p => p.Name.Value == "Platform.Organizations");
+
+        Organization organization;
+        using (scopeFactory.Begin(TenantId.Implicit, Alice))
+        {
+            organization = (await api.CreateOrganizationAsync("Acme", CancellationToken.None)).Value;
+        }
+
+        var resource = new ResourceRef("Organization", organization.Id.ToString());
+
+        await PermissionProviderHarness.AssertRevokedGrantDeniesNextRequestAsync(
+            provider, Bob, organization.Tenant, resource, PlatformPermissions.AdministerOrganization,
+            grant: async () =>
+            {
+                string token;
+                using (scopeFactory.Begin(TenantId.Implicit, Alice))
+                {
+                    token = (await api.InviteAsync(
+                        organization.Id, OrganizationRole.Administrator, host.Clock.UtcNow.AddDays(1), CancellationToken.None)).Value.Token;
+                }
+
+                using (scopeFactory.Begin(TenantId.Implicit, Bob))
+                {
+                    Assert.True((await api.RedeemInvitationAsync(token, CancellationToken.None)).IsSuccess);
+                }
+            },
+            revoke: async () =>
+            {
+                using (scopeFactory.Begin(TenantId.Implicit, Alice))
+                {
+                    Assert.True((await api.RevokeMembershipAsync(organization.Id, Bob.Id, CancellationToken.None)).IsSuccess);
+                }
+            });
+
+        await PermissionProviderHarness.AssertTokenClaimsGrantNothingAsync(
+            provider, organization.Tenant, resource, PlatformPermissions.AdministerOrganization);
+    }
+
+    /// <summary>#92 — through the evaluator, the same principal is allowed while a member and denied on the
+    /// very next evaluation once revoked.</summary>
+    [Fact]
+    public async Task The_evaluator_denies_the_next_request_after_a_revoke_without_re_authentication()
+    {
+        var sink = new RecordingAuditSink(isDurable: true);
+        await using var host = await StartHostAsync(sink);
+        var api = host.Services.GetRequiredService<IOrganizationApi>();
+        var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var evaluator = host.Services.GetRequiredService<IAuthorizationEvaluator>();
+
+        Organization organization;
+        string token;
+        using (scopeFactory.Begin(TenantId.Implicit, Alice))
+        {
+            organization = (await api.CreateOrganizationAsync("Acme", CancellationToken.None)).Value;
+            token = (await api.InviteAsync(
+                organization.Id, OrganizationRole.Administrator, host.Clock.UtcNow.AddDays(1), CancellationToken.None)).Value.Token;
+        }
+
+        using (scopeFactory.Begin(TenantId.Implicit, Bob))
+        {
+            Assert.True((await api.RedeemInvitationAsync(token, CancellationToken.None)).IsSuccess);
+        }
+
+        var resource = new ResourceRef("Organization", organization.Id.ToString());
+
+        using (scopeFactory.Begin(organization.Tenant, Bob))
+        {
+            var before = await evaluator.EvaluateAsync(PlatformPermissions.AdministerOrganization, resource, CancellationToken.None);
+            Assert.Equal(AuthorizationOutcome.Allowed, before.Outcome);
+        }
+
+        using (scopeFactory.Begin(TenantId.Implicit, Alice))
+        {
+            Assert.True((await api.RevokeMembershipAsync(organization.Id, Bob.Id, CancellationToken.None)).IsSuccess);
+        }
+
+        using (scopeFactory.Begin(organization.Tenant, Bob))
+        {
+            var after = await evaluator.EvaluateAsync(PlatformPermissions.AdministerOrganization, resource, CancellationToken.None);
+            Assert.NotEqual(AuthorizationOutcome.Allowed, after.Outcome);
+        }
+    }
+
     // Helpers -----------------------------------------------------------------------------------
 
     private static async Task<string> ReadScalarAsync(IPlatformTestHost host, string sql)

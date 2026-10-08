@@ -27,7 +27,7 @@ public readonly record struct InvitationId(Guid Value)
 }
 
 /// <summary>A membership's role within its organization. Closed: there is no role-assignment table
-/// (I-A9, I-O11) — the role is this enum, stored as a column on the membership row.</summary>
+/// (I-A9) — the role is this enum, stored as a column on the membership row.</summary>
 public enum OrganizationRole
 {
     /// <summary>Created the organization. Exactly one per organization at creation, and never

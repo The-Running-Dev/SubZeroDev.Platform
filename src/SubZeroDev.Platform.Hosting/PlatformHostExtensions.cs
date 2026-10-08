@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -82,6 +83,11 @@ public static class PlatformHostExtensions
 
         var options = BindOptions(builder, role);
         builder.Services.AddSingleton(options);
+
+        // Registered as an instance so a module can read it from the collection in Register, which
+        // is handed no configuration (see IdentityModule): the host's own factory registration of
+        // IConfiguration is not readable before the container exists.
+        builder.Services.AddSingleton((IConfiguration)builder.Configuration);
 
         // Minted once per process, here rather than in Persistence: an installation with no
         // Persistence still has a stable identity, and the role is deliberately not encoded in it —

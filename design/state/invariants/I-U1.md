@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuditTests.cs
 
 ## Statement
 `AuditEvent` has no payload, changed-field list or free-form detail field (Owner: Abstractions.) Enforced by code — the type.

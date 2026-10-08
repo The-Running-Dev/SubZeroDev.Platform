@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-A7
-Enforcement: code
+Enforcement: instruction
 Consumes:
 Exposes:
 Binds:
@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs
 
 ## Statement
-The composition provider grants nothing at all in `Operated` (Owner: Core.) Enforced by code — the provider.
+The composition provider grants nothing at all in `Operated` (Owner: Core.)

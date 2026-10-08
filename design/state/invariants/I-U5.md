@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuditTests.cs
 
 ## Statement
 `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink.

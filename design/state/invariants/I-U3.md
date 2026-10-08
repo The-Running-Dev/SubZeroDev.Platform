@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/OrganizationsTests.cs
 
 ## Statement
 A successful action that wrote state writes its audit row in the same transaction (Owner: each writer.) Enforced by code — the ambient transaction.

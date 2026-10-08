@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/AuthorizationTests.cs
 
 ## Statement
 A provider returning an error denies and never grants (Owner: Core.) Enforced by code — the evaluator.

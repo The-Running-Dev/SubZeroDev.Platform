@@ -186,6 +186,109 @@ public sealed class PackageGraphTests
         Assert.Equal(["SubZeroDev.Platform.Mcp.LeakyType -> ModelContextProtocol.Protocol.Tool"], violations);
     }
 
+    // S20.10 ------------------------------------------------------------------------------------
+
+    private const string IdentityModelPrefix = "Microsoft.IdentityModel";
+
+    /// <summary>I-I12's containment half: the token libraries are referenced by Identity and by
+    /// no other Platform project.</summary>
+    [Fact]
+    public void I_I12_Microsoft_IdentityModel_is_referenced_by_no_package_other_than_Identity()
+    {
+        var graph = SdkReferenceGuard.Resolve(AllPlatformAssemblies(), IdentityModelPrefix);
+
+        var violations = SdkReferenceGuard.ReferencedOutside(graph, "SubZeroDev.Platform.Identity");
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void S20_10_the_reference_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["SubZeroDev.Platform.Mcp"] = new HashSet<string> { "Microsoft.IdentityModel.JsonWebTokens" },
+        };
+
+        var violations = SdkReferenceGuard.ReferencedOutside(broken, "SubZeroDev.Platform.Identity");
+
+        Assert.Equal(["SubZeroDev.Platform.Mcp -> Microsoft.IdentityModel.JsonWebTokens"], violations);
+    }
+
+    /// <summary>I-I12's surface half: no Platform public type exposes, returns, accepts or derives
+    /// from an IdentityModel type — Identity's own public types included.</summary>
+    [Fact]
+    public void I_I12_no_platform_public_type_exposes_returns_accepts_or_derives_from_an_IdentityModel_type()
+    {
+        var map = SdkTypeSurfaceGuard.Resolve(AllPlatformAssemblies());
+
+        var violations = SdkTypeSurfaceGuard.Violations(map, IdentityModelPrefix);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void S20_10_the_surface_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["SubZeroDev.Platform.Identity.LeakyType"] = new HashSet<string> { "Microsoft.IdentityModel.Tokens.SecurityKey" },
+        };
+
+        var violations = SdkTypeSurfaceGuard.Violations(broken, IdentityModelPrefix);
+
+        Assert.Equal(
+            ["SubZeroDev.Platform.Identity.LeakyType -> Microsoft.IdentityModel.Tokens.SecurityKey"],
+            violations);
+    }
+
+    // S23.2 ------------------------------------------------------------------------------------
+
+    private const string VendorFixture = "Vendor.ConfigurationFixture";
+
+    /// <summary>I-I13: a vendor configuration package references no Platform package. The compiler drops
+    /// a reference nothing uses, so the project file is read as well as the built assembly.</summary>
+    [Fact]
+    public void I_I13_the_vendor_configuration_fixture_references_no_Platform_package()
+    {
+        var repositoryRoot = FindRepositoryRoot(AppContext.BaseDirectory);
+        var project = Path.Combine(repositoryRoot, "tests", VendorFixture, $"{VendorFixture}.csproj");
+        var assembly = typeof(Vendor.ConfigurationFixture.VendorConfigurationExtensions).Assembly;
+
+        var graph = new Dictionary<string, IReadOnlySet<string>>
+        {
+            [$"{VendorFixture} (assembly)"] = ReferencedAssemblyNames(assembly.Location),
+            [$"{VendorFixture} (project file)"] = VendorPackageGuard.ProjectFileReferences(File.ReadAllText(project)),
+        };
+
+        Assert.Empty(VendorPackageGuard.PlatformReferences(graph));
+        Assert.Contains("Microsoft.Extensions.Configuration.Abstractions", graph[$"{VendorFixture} (project file)"]);
+    }
+
+    [Fact]
+    public void S23_2_the_vendor_check_fails_against_a_deliberately_broken_fixture()
+    {
+        var brokenProject = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+                <ProjectReference Include="..\..\src\SubZeroDev.Platform.Identity\SubZeroDev.Platform.Identity.csproj" />
+                <PackageReference Include="SubZeroDev.Platform.Core" Version="1.0.0" />
+              </ItemGroup>
+            </Project>
+            """;
+        var broken = new Dictionary<string, IReadOnlySet<string>>
+        {
+            ["Vendor.Broken"] = VendorPackageGuard.ProjectFileReferences(brokenProject),
+        };
+
+        var violations = VendorPackageGuard.PlatformReferences(broken);
+
+        Assert.Equal(
+            ["Vendor.Broken -> SubZeroDev.Platform.Core", "Vendor.Broken -> SubZeroDev.Platform.Identity"],
+            violations.Order(StringComparer.Ordinal));
+    }
+
     /// <summary>Every assembly outside Billing that is built alongside this test run: the six
     /// framework assemblies plus every other module. Billing itself is deliberately absent — I-C8
     /// bounds what may reference its types from <em>outside</em> it, not from within.</summary>
@@ -197,6 +300,7 @@ public sealed class PackageGraphTests
         typeof(SubZeroDev.Platform.Licensing.LicensingModule).Assembly,
         typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
         typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
+        typeof(SubZeroDev.Platform.SignIn.SignInModule).Assembly,
     ];
 
     /// <summary>Every framework assembly plus every module assembly built alongside this test
@@ -210,6 +314,7 @@ public sealed class PackageGraphTests
         typeof(SubZeroDev.Platform.Licensing.LicensingModule).Assembly,
         typeof(SubZeroDev.Platform.Audit.AuditModule).Assembly,
         typeof(SubZeroDev.Platform.Mcp.McpModule).Assembly,
+        typeof(SubZeroDev.Platform.SignIn.SignInModule).Assembly,
     ];
 
     private static IReadOnlyCollection<Assembly> FrameworkAssemblies() =>
@@ -439,7 +544,9 @@ internal static class SdkReferenceGuard
 
     /// <summary>Resolves the reference graph over a set of loaded assemblies, keeping only
     /// references whose name starts with <see cref="SdkAssemblyPrefix"/>.</summary>
-    internal static IReadOnlyDictionary<string, IReadOnlySet<string>> Resolve(IReadOnlyCollection<Assembly> assemblies)
+    internal static IReadOnlyDictionary<string, IReadOnlySet<string>> Resolve(
+        IReadOnlyCollection<Assembly> assemblies,
+        string assemblyPrefix = SdkAssemblyPrefix)
     {
         var graph = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
 
@@ -448,7 +555,7 @@ internal static class SdkReferenceGuard
             var references = assembly.GetReferencedAssemblies()
                 .Select(referenced => referenced.Name)
                 .Where(referencedName => referencedName is not null
-                    && referencedName.StartsWith(SdkAssemblyPrefix, StringComparison.Ordinal))
+                    && referencedName.StartsWith(assemblyPrefix, StringComparison.Ordinal))
                 .Cast<string>()
                 .ToHashSet(StringComparer.Ordinal);
 
@@ -460,13 +567,20 @@ internal static class SdkReferenceGuard
 
     /// <summary>I-M9: nothing but <c>SubZeroDev.Platform.Mcp</c> may reference the SDK.</summary>
     internal static IReadOnlyList<string> ReferencedOutsideMcp(
-        IReadOnlyDictionary<string, IReadOnlySet<string>> graph)
+        IReadOnlyDictionary<string, IReadOnlySet<string>> graph) =>
+        ReferencedOutside(graph, "SubZeroDev.Platform.Mcp");
+
+    /// <summary>The same containment, for any package that owns a dependency: nothing but
+    /// <paramref name="owner"/> may reference it. I-I12 reuses it for Identity.</summary>
+    internal static IReadOnlyList<string> ReferencedOutside(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> graph,
+        string owner)
     {
         var violations = new List<string>();
 
         foreach (var (package, references) in graph)
         {
-            if (package == "SubZeroDev.Platform.Mcp")
+            if (package == owner)
             {
                 continue;
             }
@@ -510,7 +624,8 @@ internal static class SdkTypeSurfaceGuard
 
     /// <summary>I-M9: nothing in <paramref name="typeReferencesByType"/> may name an SDK type.</summary>
     internal static IReadOnlyList<string> Violations(
-        IReadOnlyDictionary<string, IReadOnlySet<string>> typeReferencesByType)
+        IReadOnlyDictionary<string, IReadOnlySet<string>> typeReferencesByType,
+        string namespacePrefix = SdkNamespacePrefix)
     {
         var violations = new List<string>();
 
@@ -518,7 +633,7 @@ internal static class SdkTypeSurfaceGuard
         {
             violations.AddRange(
                 referenced
-                    .Where(name => name.StartsWith(SdkNamespacePrefix, StringComparison.Ordinal))
+                    .Where(name => name.StartsWith(namespacePrefix, StringComparison.Ordinal))
                     .Select(name => $"{type} -> {name}"));
         }
 
@@ -601,4 +716,33 @@ internal static class SdkTypeSurfaceGuard
             }
         }
     }
+}
+
+/// <summary>The checking logic behind I-I13, over an abstracted reference graph so the same function is
+/// proved against a broken fixture before it is trusted against the real one (S23.2).</summary>
+internal static class VendorPackageGuard
+{
+    private const string PlatformPrefix = "SubZeroDev.Platform.";
+
+    private static readonly System.Text.RegularExpressions.Regex ReferenceItem = new(
+        @"<(?:ProjectReference|PackageReference)\s[^>]*Include=""([^""]+)""",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>The names a project file's <c>ProjectReference</c> and <c>PackageReference</c> items
+    /// include, with the path and <c>.csproj</c> extension stripped from a project reference.</summary>
+    internal static IReadOnlySet<string> ProjectFileReferences(string projectXml) =>
+        ReferenceItem.Matches(projectXml)
+            .Select(match => match.Groups[1].Value.Replace('\\', '/'))
+            .Select(include => include[(include.LastIndexOf('/') + 1)..])
+            .Select(name => name.EndsWith(".csproj", StringComparison.Ordinal) ? name[..^".csproj".Length] : name)
+            .ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>I-I13: a vendor package may not reference any <c>SubZeroDev.Platform.*</c> package.</summary>
+    internal static IReadOnlyList<string> PlatformReferences(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> graph) =>
+        [
+            .. graph.SelectMany(entry => entry.Value
+                .Where(reference => reference.StartsWith(PlatformPrefix, StringComparison.Ordinal))
+                .Select(reference => $"{entry.Key} -> {reference}")),
+        ];
 }

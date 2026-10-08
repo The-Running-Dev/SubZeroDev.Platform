@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/EntitlementTests.cs
 
 ## Statement
 `EntitlementDecision.Sources` is non-empty **iff** `Granted` (Owner: Core.)

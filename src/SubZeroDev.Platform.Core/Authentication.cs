@@ -111,7 +111,14 @@ internal sealed class AuthenticationProviderRegistry : IAuthenticationProviderRe
 /// provider that establishes a principal ends it too. Only a provider that saw no credential of its
 /// kind defers to the next, and a chain in which every provider defers answers
 /// <see cref="Principal.Anonymous"/> — which is a success, to be denied later by authorization if it
-/// is denied at all.</para></remarks>
+/// is denied at all.</para>
+///
+/// <para>A provider that saw a credential of its kind it does not claim answers
+/// <see cref="AuthenticationError.CredentialNotClaimed"/>, which the chain consumes and moves on
+/// from. If no later provider claims it, the chain answers
+/// <see cref="AuthenticationError.CredentialRejected"/> naming the first not-claiming provider in
+/// registry order — a presented credential nobody accepts is not an absent one. The provider-level
+/// answer never reaches a caller.</para></remarks>
 internal sealed class AuthenticationChain(IAuthenticationProviderRegistry registry)
 {
     /// <summary>Authenticates one request against the registered providers.</summary>
@@ -124,6 +131,8 @@ internal sealed class AuthenticationChain(IAuthenticationProviderRegistry regist
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        string? firstDecliner = null;
+
         foreach (var provider in registry.Registered)
         {
             var authenticated = await provider
@@ -132,6 +141,12 @@ internal sealed class AuthenticationChain(IAuthenticationProviderRegistry regist
 
             if (!authenticated.IsSuccess)
             {
+                if (authenticated.Error.Code == nameof(AuthenticationError.CredentialNotClaimed))
+                {
+                    firstDecliner ??= provider.Name;
+                    continue;
+                }
+
                 return authenticated;
             }
 
@@ -141,6 +156,11 @@ internal sealed class AuthenticationChain(IAuthenticationProviderRegistry regist
             }
         }
 
-        return Result<Principal, AuthenticationError>.Success(Principal.Anonymous);
+        // A credential was presented, and no provider claimed it: that is a rejection, not an
+        // absent credential, so it must not degrade into Anonymous.
+        return firstDecliner is null
+            ? Result<Principal, AuthenticationError>.Success(Principal.Anonymous)
+            : Result<Principal, AuthenticationError>.Failure(
+                AuthenticationError.CredentialRejected(firstDecliner));
     }
 }

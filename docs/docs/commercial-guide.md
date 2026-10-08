@@ -20,7 +20,7 @@ Identity, Organizations, Billing, Licensing, Audit and Mcp. Each package name st
 `SubZeroDev.Platform.`. Authorization and entitlement are framework seams, not additional packages.
 The web shell is a separate frontend and is not a backend package dependency.
 
-The **Package Consumers** CI workflow uploads the twelve checked `.nupkg` files as the
+The **Package Consumers** CI workflow uploads the thirteen checked `.nupkg` files as the
 `d5-packages` artifact. A separate job downloads them into a fresh checkout, restores the
 sample solution using an isolated package cache, checks that every Platform reference resolved
 as a package at that version, then builds and runs the assertions and web/worker round trip.
@@ -51,13 +51,14 @@ For example, an operated host with Identity and durable audit registers:
 ```csharp
 builder.Services.AddSingleton<IPlatformModule, IdentityModule>();
 builder.Services.AddSingleton<IPlatformModule, AuditModule>();
-builder.Services.AddSingleton<IAuthenticationProvider>(authenticationProvider);
 builder.AddPlatformWebHost();
 builder.Services.AddPlatformPersistence();
 ```
 
-Here `authenticationProvider` is the deployment's implementation of `IAuthenticationProvider`.
-Import the Abstractions, Identity, Audit, Hosting and Persistence namespaces and Microsoft DI
+Identity registers a provider for each issuer the operator lists in configuration, so no
+authentication provider is registered by hand; see [Trusting an issuer](#trusting-an-issuer-from-configuration).
+A deployment whose issuer the schema below cannot describe still registers its own
+`IAuthenticationProvider`. Import the Abstractions, Identity, Audit, Hosting and Persistence namespaces and Microsoft DI
 extensions. Supply the required Platform settings before composing the host; the runnable
 [operated sample](https://github.com/The-Running-Dev/SubZeroDev.Platform/tree/main/samples/SubZeroDev.Platform.Sample.Web)
 shows the complete entry point and configuration, including migrations.
@@ -109,6 +110,135 @@ The operated sample uses a deterministic test issuer and deliberately permissive
 for its diagnostic surface. Its licence document is absent and it starts at Community. Those
 fixtures demonstrate composition; they are not production authentication keys or permission policy.
 
+## Trusting an issuer from configuration
+
+An operator trusts a token issuer by writing settings under `Platform:Identity:Bearer:<name>`,
+where `<name>` is a name the operator chooses for that provider. Each child section becomes one
+authentication provider, validated before anything is fetched. A settings file, environment
+variables and a vendor's configuration package all write the same keys, and Identity cannot tell
+which wrote them; where two write one key, the host's configuration precedence decides.
+
+| Key under `<name>` | Required | Default | Constraint |
+|---|---|---|---|
+| `Issuer` | exactly one of `Issuer` and `IssuerPattern` | none | The expected `iss`, compared ordinally. An absolute URI. |
+| `IssuerPattern` | exactly one of `Issuer` and `IssuerPattern` | none | An issuer string containing `{tenantid}` exactly once. The placeholder matches one or more characters, none of them `/`; every other character matches ordinally. |
+| `Discovery` | exactly one of `Discovery` and `SigningKeys` | none | The issuer's OpenID Connect discovery address: an absolute `https` URI. |
+| `SigningKeys` | exactly one of `Discovery` and `SigningKeys` | none | A fixed JSON Web Key Set, inline as one string. Public keys only. |
+| `Audiences` | yes | none | A non-empty array of non-empty strings; a token must name one in `aud`. |
+| `Algorithms` | no | `[RS256]` | Drawn from `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`. Never `HS*` or `none`. |
+| `ClockTolerance` | no | `00:01:00` | A non-negative duration of at most `00:05:00`. |
+| `SubjectClaim` | no | `sub` | The claim that becomes the principal's subject. |
+| `DisplayNameClaim` | no | none | The claim that becomes the display name. |
+| `KeyRefreshInterval` | no | `00:05:00` | Only with `Discovery`. From `00:00:30` to `1.00:00:00`. |
+
+A defect fails startup naming the full key, `Platform:Identity:Bearer:<name>:<setting>`, before any
+key is fetched. A missing required key, or neither of an either-or pair, is `MissingRequiredSetting`.
+Two keys that exclude each other, or `KeyRefreshInterval` beside `SigningKeys`, are
+`InconsistentSettings`. A value that breaks its constraint, and any key not in the table, are
+`InvalidSetting`. A failed key fetch never fails startup; it degrades readiness and the provider
+refuses tokens until keys arrive.
+
+**An issuer with fixed keys.**
+
+```json
+{ "Platform": { "Identity": { "Bearer": { "corp": {
+  "Issuer": "https://login.example.com",
+  "SigningKeys": "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"key-1\",\"n\":\"…\",\"e\":\"AQAB\"}]}",
+  "Audiences": [ "platform-api" ]
+} } } } }
+```
+
+**An issuer found through discovery.** The keys are fetched in the background and refreshed on
+`KeyRefreshInterval`, never on the request path.
+
+```json
+{ "Platform": { "Identity": { "Bearer": { "corp": {
+  "Issuer": "https://login.example.com",
+  "Discovery": "https://login.example.com/.well-known/openid-configuration",
+  "Audiences": [ "platform-api" ]
+} } } } }
+```
+
+**A multi-tenant issuer.** One entry trusts every customer tenant's issuer string. The principal's
+issuer is the concrete `iss` the token carries, so two tenants presenting the same subject are two
+principals. With `Discovery`, the discovery document's `issuer` must equal the pattern string itself.
+
+```json
+{ "Platform": { "Identity": { "Bearer": { "saas": {
+  "IssuerPattern": "https://{tenantid}.login.example.com",
+  "Discovery": "https://login.example.com/.well-known/openid-configuration",
+  "Audiences": [ "platform-api" ]
+} } } } }
+```
+
+**Where a vendor's quirk belongs.** A vendor ships its settings as a configuration source: a small
+package with one extension method on `IConfigurationBuilder` per protocol surface, taking the provider
+name and writing the keys above. It depends on the configuration abstraction and on no Platform
+package, so it cannot implement a parallel provider. A quirk the keys cannot express is not handled in
+Platform and not worked around in the vendor's package: it becomes a new generic-path key first, and a
+key the table does not name fails startup exactly as it would from a settings file.
+
+## Signing a person in (optional)
+
+Platform is a resource server: it checks the bearer token a caller already holds. A browser client
+with no sign-in of its own takes the optional `SubZeroDev.Platform.SignIn` package, which is an
+OpenID Connect authorization-code client with a proof key (S256). It is a public client: there is no
+client secret and no refresh token. A host that does not call `AddPlatformSignIn()` takes none of it.
+
+```csharp
+builder.Services.AddPlatformSignIn();          // before AddPlatformWebHost
+// ...
+app.MapPlatformSignIn();                        // on the host that takes Identity
+```
+
+Each method is one section, `SubZeroDev:SignIn:<Name>`. `Issuer` must equal the `Issuer` of a provider
+under `Platform:Identity:Bearer`, so the token the module obtains is one Identity will accept.
+
+| Key | Meaning |
+|---|---|
+| `Issuer`, `ClientId`, `RedirectPath` | Required. `RedirectPath` is where the callback is mapped; two methods may not share one. |
+| `Scopes` | Space-separated; must include `openid`. Default `openid`. |
+| `PostSignOutPath` | Where sign-out returns to. Default `/`. |
+| `EndSessionTemplate` | The provider's own sign-out address, with `{client_id}`, `{return_to}` and `{id_token_hint}` placeholders. Use it when the provider's discovery document lists no `end_session_endpoint`. |
+| `ExtraAuthorizeParameters:<name>` | Extra authorize-request parameters, such as `audience`. The names the module owns (`client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method`) fail startup. |
+
+A key the table does not name, a client-secret key included, fails startup naming the full key.
+
+Four endpoints are mapped per method: `GET /signin/<Name>/begin`, the callback at `RedirectPath`,
+`POST /signin/<Name>/token` and `POST /signin/<Name>/signout`. The session is an encrypted cookie
+holding the issuer, the subject, the access token and its expiry, and nothing else. The page reads its
+access token from the token endpoint with an `X-Platform-SignIn` header; the cookie itself is
+`HttpOnly`.
+
+**Reaching for the hook is expected for some providers, not a sign of doing it wrong.** When the two
+settings above cannot express a provider's dialect, register code for that one method and leave the
+rest to configuration:
+
+```csharp
+builder.Services.ConfigurePlatformSignIn("auth0", hooks =>
+{
+    hooks.AdjustAuthorizeRequest = context => ValueTask.FromResult<IReadOnlyDictionary<string, string>>(
+        new Dictionary<string, string>(context.Parameters) { ["audience"] = "https://api.example.com" });
+    hooks.ReplaceEndSessionAddress = context => ValueTask.FromResult(new Uri("https://tenant.example.com/v2/logout"));
+});
+```
+
+Configuration binds first and the hook adjusts after. A hook cannot change what Platform trusts: the
+module re-sets its own parameters (state, nonce, proof key, client and redirect) after the hook runs,
+and the token it holds is still checked by Identity like any other. Rewriting the scheme behind a
+proxy is a deployment concern for `ForwardedHeaders`, not a hook.
+
+What an operator must know:
+
+- **Sign-out clears the module's session. It does not revoke a token already issued**; that token
+  stays valid until it expires.
+- **Instances that serve one site must share Data Protection keys.** A cookie one instance wrote and
+  another cannot read is treated as no session.
+- **The cookie carries the access token**, so a provider that issues very large tokens may exceed the
+  browser's cookie limit.
+- The issuer's discovery document is read on first use, not at startup, and cached for an hour; an
+  unreachable issuer does not stop the host from starting.
+
 ## Security defaults and failures
 
 The request order is authenticate, resolve tenant, open the operation scope, authorize, check
@@ -148,6 +278,15 @@ initially defers; `FakePermissionProvider` and `FakeEntitlementContributor` init
 Configure their responses before registering them through the existing seams. Multiple instances
 need distinct names. Entitlement contributors use the keyed DI slot
 `EntitlementContributorRegistration.ServiceKey`; ordinary callers use the evaluator.
+
+A permission provider you register must take its grants from a source that can be revoked while the
+caller's credential is still valid, and never from the token. `PermissionProviderHarness` checks both
+against your own provider. `AssertRevokedGrantDeniesNextRequestAsync` takes your provider, a principal,
+the permission, and two callbacks that grant and revoke in the provider's own source; it fails if the
+provider still answers with the permission on the next request. `AssertTokenClaimsGrantNothingAsync`
+fails a provider that grants from a token's role or permission claims. `Principal.Claims` is public as
+the raw authentication result, so Platform cannot stop a provider reading it; these two checks are how
+the rule is held.
 
 Construct `AuditInspector` with the host's `FakeDurableAuditSink`. Its `Records` property returns
 read-only snapshots in arrival order. It cannot write or clear records and is not a durable-store

@@ -1,7 +1,7 @@
 # Design state — index
 
 The corpus-wide facts a single record cannot state alone: the unit table of contents, and the
-four reverse edges `design/10-design.md` § *Derived* forbids writing onto a record
+four reverse edges AgentKit's `design/10-design.md` § *Derived* forbids writing onto a record
 (`Invariant.BoundBy`, `Contract.Consumers`, `Decision.Affects`, `Question.Affects`). Every
 table below is a **projected** marked region (`AGENTS.md` § *Marked regions*) — rendered by
 `tools/Update-DesignProjection.ps1` from `design/state/`, and overwritten on every
@@ -23,6 +23,12 @@ true.
 | `unit/document/20-contract` | document | `design/20-contract.md` |
 | `unit/document/30-slices` | document | `design/30-slices.md` |
 | `unit/document/90-decisions` | document | `design/90-decisions.md` |
+| `unit/document/agent` | document | `agent.md` |
+| `unit/document/AGENTS` | document | `AGENTS.md` |
+| `unit/document/codex-PROFILES` | document | `codex/PROFILES.md` |
+| `unit/document/issue-template-bug` | document | `.github/ISSUE_TEMPLATE/bug.md` |
+| `unit/document/issue-template-story` | document | `.github/ISSUE_TEMPLATE/story.md` |
+| `unit/document/README` | document | `README.md` |
 | `unit/document/state-index` | document | `design/state-index.md` |
 | `unit/script/read-designstate` | script | `tools/Read-DesignState.ps1` |
 | `unit/script/test-designdrift` | script | `tools/Test-DesignDrift.ps1` |
@@ -45,6 +51,8 @@ true.
 | I-A8 | — |
 | I-A9 | — |
 | I-A10 | — |
+| I-A11 | — |
+| I-A12 | — |
 | I-B1 | — |
 | I-B2 | — |
 | I-B3 | — |
@@ -67,6 +75,15 @@ true.
 | I-I4 | — |
 | I-I5 | — |
 | I-I6 | — |
+| I-I7 | — |
+| I-I8 | — |
+| I-I9 | — |
+| I-I10 | — |
+| I-I11 | — |
+| I-I12 | — |
+| I-I13 | — |
+| I-I14 | — |
+| I-I15 | — |
 | I-L1 | — |
 | I-L2 | — |
 | I-L3 | — |
@@ -103,6 +120,9 @@ true.
 | I-R5 | — |
 | I-R6 | — |
 | I-R7 | — |
+| I-S1 | — |
+| I-S2 | — |
+| I-S3 | — |
 | I-T1 | — |
 | I-T2 | — |
 | I-T3 | — |
@@ -181,6 +201,13 @@ true.
 | decision/2026-09-25-platform-validates-credentials-never-conducts-sign-in | `unit/document/10-design` |
 | decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | `unit/document/10-design` |
 | decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | `unit/document/10-design` |
+| decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/90-decisions` |
+| decision/2026-09-28-provider-failure-carried-normalised-first-registered | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-29-untested-invariants-held-by-instruction | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-30-generic-bearer-path-configuration-schema | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-09-30-generic-path-settings-defect-is-configuration-error | `unit/document/20-contract`, `unit/document/90-decisions` |
+| decision/2026-10-01-unclaimed-credential-ends-chain-rejected | `unit/document/20-contract`, `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
@@ -212,6 +239,12 @@ commit the mirror was taken at; check it against `git log` before trusting an en
 | 25 | #68 | Development-environment automatic migration application is promised and was never built | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 187 | #187 | Audit retention is deferred out of D5 and the table grows without bound | 1, 2 | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | 224 | #224 | Re-enable McpInvocationTests.A_cancelled_call_writes_no_audit_record_and_never_completes_the_invoker once the SDK ships the cancellation fix | — | `4943900bd936ddd5ae4ce7f093d71caf09d30b32` |
+| 260 | #260 | Test the uncovered part of 21 invariants held by instruction | — | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 263 | #263 | Red-team F2 is a brief conflict between 10-design.md and #92's own criteria | 1, 2 | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 264 | #264 | Red-team F3 is a defect: the next-request revocation promise does not hold for mirrored issuer roles | 1, 2, 3 | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 265 | #265 | A provider that cannot answer still reaches the caller as forbidden | 1, 2 | `a1fa59377986e0d2e823dddd30080e138d787518` |
+| 273 | #273 | D5-S22 — One issuer serves many customer tenants | S22.1, S22.2, S22.3, S22.4, S22.5, S22.6 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
+| 274 | #274 | D5-S23 — A vendor's settings arrive as a configuration source | S23.1, S23.2, S23.3, S23.4, S23.5, S23.6 | `d8b525938ffd5fdec1346afadb7d6b51f36cd37c` |
 | milestone/5 | #80 | Decide which slice set the public site's roadmap page renders | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #81 | Settle the @subzerodev registry reservations — only signing in settles it | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |
 | milestone/6 | #85 | The engine writes the mutated blob to memory before persistence on two of its four write paths, and the four disagree with each other | — | `7158bcdedec0a5b27d358bd598f865429e0c0e5c` |

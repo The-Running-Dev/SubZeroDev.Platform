@@ -107,6 +107,30 @@ internal sealed class ActivityCapture : IDisposable
 
     internal ConcurrentBag<Activity> Stopped { get; } = [];
 
+    /// <summary>Waits for a stopped activity matching <paramref name="predicate"/>. A span can stop
+    /// after the code under test has already returned (the ASP.NET Core server activity stops once
+    /// the response is flushed), so reading <see cref="Stopped"/> immediately is a race.</summary>
+    internal async Task<Activity> WaitForStoppedAsync(Func<Activity, bool> predicate, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            var match = Stopped.FirstOrDefault(predicate);
+            if (match is not null)
+            {
+                return match;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    $"No matching activity stopped within the timeout; {Stopped.Count} other activities were captured.");
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
     internal static ActivityCapture ForPlatformSource() => new(PlatformTelemetry.ActivitySourceName);
 
     internal static ActivityCapture ForSource(string name) => new(name);

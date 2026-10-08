@@ -10,7 +10,7 @@ Live:
 Archival:
 Questions:
 Work:
-Evidence:
+Evidence: tests/SubZeroDev.Platform.Tests/LicensingTests.cs
 
 ## Statement
-Revocation is consulted on no path — not the request path, not startup, not readiness (Owner: Licensing.) Enforced by code — the offline CI run with outbound network unavailable.
+Revocation is consulted on no path — not the request path, not startup, not readiness (Owner: Licensing.) Enforced by code — no path calls a registered revocation check.
