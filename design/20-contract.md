@@ -1109,25 +1109,14 @@ roles and the permission itself, with nothing granted in the provider's own sour
 nothing. Each throws `InvalidOperationException` naming the breach, so any test framework reports it.
 
 `AssertIssuerRevocationDeniesWithinBoundAsync` is the same rule for an `IMirroredPermissionProvider`,
-revoking where the role lives — at the issuer — rather than in the mirror (#264). It is not in the tree
-yet, and is scaffolded here until the slice that materialises it replaces this block:
-
-```csharp
-public static Task AssertIssuerRevocationDeniesWithinBoundAsync(
-    IPlatformTestHost host,
-    IMirroredPermissionProvider provider,
-    Principal principal,
-    TenantId tenant,
-    ResourceRef? resource,
-    PermissionName permission,
-    Func<Task> grantAtIssuer,
-    Func<Task> revokeAtIssuer,
-    Func<Task> sync,
-    CancellationToken cancellationToken = default)
-```
+revoking where the role lives — at the issuer — rather than in the mirror (#264). It is declared in
+[`PermissionProviderHarness.cs`](../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs) and
+takes the started `IPlatformTestHost`, the provider, the principal, tenant, optional resource and
+permission, and three callbacks: grant at the issuer, revoke at the issuer, and sync.
 
 It evaluates through the host's own evaluator in an operation scope for `principal` and `tenant`, and
-moves only `host.Clock`. `provider` is the instance registered in `host`, and `sync` runs the consumer's
+moves only `host.Clock`. `provider` is the instance registered in `host` — any other instance is
+refused with `ArgumentException` before a callback runs — and `sync` runs the consumer's
 real sync against the fake issuer the two other callbacks change, stamping from the host's `IClock`. It
 grants at the issuer, syncs, and expects `Allowed` with `provider` among the sources. It revokes at the
 issuer **without syncing**, advances the clock past the host's `MirrorMaximumAge` by one tick, and

@@ -308,6 +308,20 @@ fails a provider that grants from a token's role or permission claims. `Principa
 the raw authentication result, so Platform cannot stop a provider reading it; these two checks are how
 the rule is held.
 
+A provider over roles the identity provider manages — a mirror your sync copies into your own tables —
+implements `IMirroredPermissionProvider`. Its sync records, with the rows it writes and in the same
+transaction, the instant it began reading the issuer, and records it only when that read succeeded; a
+failed or partial read leaves both the rows and the instant as they were. Platform then stops asking a
+mirror whose instant is older than `Platform:Authorization:MirrorMaximumAge`: it grants nothing and the
+check answers "try again". The maximum defaults to 15 minutes and must lie between 30 seconds and one
+day; set it above your sync interval plus the time one sync takes, or a healthy mirror goes stale
+between syncs. `AssertIssuerRevocationDeniesWithinBoundAsync` takes the started test host, your
+registered provider, a principal, tenant, resource and permission, and three callbacks: grant at a fake
+issuer, revoke there, and run your real sync against it, stamping from the host's clock. It fails if your
+provider does not grant after the grant and a sync, if another provider also grants the permission, if
+the grant survives past the maximum with no sync, or if the next sync does not carry the revocation or
+advance the instant. A mirrored provider runs both this and `AssertRevokedGrantDeniesNextRequestAsync`.
+
 Construct `AuditInspector` with the host's `FakeDurableAuditSink`. Its `Records` property returns
 read-only snapshots in arrival order. It cannot write or clear records and is not a durable-store
 query. The sink's in-memory records are scoped to the test's process. Testing has no fake organization,
