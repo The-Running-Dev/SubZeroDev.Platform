@@ -53,6 +53,14 @@ public sealed record AuthorizationDecision(
     /// rule (<c>design/20-contract.md</c>, Error semantics § 4): a denial that cannot be recorded is
     /// not answered as though it were.</summary>
     public AuditError? AuditFailure { get; init; }
+
+    /// <summary>Set only on a denial reached while at least one registered provider could not answer.
+    /// Always <see cref="AuthorizationError.ProviderUnavailable"/> naming the first such provider in
+    /// registry order, whatever that provider returned; never set on an allowed decision. The denial
+    /// stands for the request, and the caller answers a retryable failure carrying it rather than
+    /// forbidden. Where <see cref="AuditFailure"/> is also set, the audit failure decides the answer
+    /// (<c>design/20-contract.md</c>, Error semantics § 2 and § 4).</summary>
+    public AuthorizationError? ProviderFailure { get; init; }
 }
 
 /// <summary>Platform's own permission names. Public surface: a consumer's policy refers to them by

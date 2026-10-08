@@ -252,6 +252,58 @@ public sealed class McpInvocationTests
         Assert.Empty(records);
     }
 
+    /// <summary>S24.6 — a call whose permission provider cannot answer gets a tool result saying the
+    /// permission could not be checked and may be retried, never forbidden, and the invoker never
+    /// runs.</summary>
+    [Fact]
+    public async Task S24_6_A_call_whose_provider_cannot_answer_is_retryable_and_never_reaches_the_invoker()
+    {
+        var invoker = new StubToolInvoker("producer", (_, _) => ToolInvocationResult.Success("ok"));
+        await using var harness = await Harness.StartAsync(
+            exposed: [new ToolName("guarded")],
+            extra: [
+                new StubToolProducer("producer",
+                    new ToolDefinition(new ToolName("guarded"), "Guarded.", Schema(), UsePermission, null)),
+                invoker,
+            ],
+            providerError: AuthorizationError.PermissionDenied(UsePermission));
+
+        await using var client = await harness.ConnectAsync("alice");
+        var result = await client.CallToolAsync(
+            "guarded", new Dictionary<string, object?>(), cancellationToken: CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal(0, invoker.CallCount);
+        Assert.Contains("could not have its permission checked", TextOf(result), StringComparison.Ordinal);
+        Assert.Contains("may be retried", TextOf(result), StringComparison.Ordinal);
+        Assert.DoesNotContain("denied", TextOf(result), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>S24.7 — a decision carrying both an audit failure and a provider failure is answered
+    /// with the audit failure on Mcp too.</summary>
+    [Fact]
+    public async Task S24_7_A_call_carrying_both_failures_is_answered_with_the_audit_failure()
+    {
+        var invoker = new StubToolInvoker("producer", (_, _) => ToolInvocationResult.Success("ok"));
+        await using var harness = await Harness.StartAsync(
+            exposed: [new ToolName("guarded")],
+            extra: [
+                new StubToolProducer("producer",
+                    new ToolDefinition(new ToolName("guarded"), "Guarded.", Schema(), UsePermission, null)),
+                invoker,
+            ],
+            providerError: AuthorizationError.ProviderUnavailable(new PermissionProviderName("test-permission-provider")));
+
+        await using var client = await harness.ConnectAsync("alice");
+        harness.Audit.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable("mcp-invocation-tests")));
+        var result = await client.CallToolAsync(
+            "guarded", new Dictionary<string, object?>(), cancellationToken: CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal(0, invoker.CallCount);
+        Assert.Contains("could not be audited", TextOf(result), StringComparison.Ordinal);
+    }
+
     /// <summary>S15.1 — a session request carrying a different principal than the one the session was
     /// established with ends the exchange; the SDK's own session-principal binding is what enforces
     /// this (design/90-decisions.md, 2026-08-29), and this proves Platform's bridge onto
@@ -348,7 +400,8 @@ public sealed class McpInvocationTests
             IReadOnlyCollection<ToolName> exposed,
             IReadOnlyCollection<object>? extra = null,
             bool grantsPermission = true,
-            Action<Principal, TenantId, ResourceRef?>? onEvaluate = null)
+            Action<Principal, TenantId, ResourceRef?>? onEvaluate = null,
+            AuthorizationError? providerError = null)
         {
             var audit = new RecordingAuditSink("mcp-invocation-tests", isDurable: true);
 
@@ -363,6 +416,11 @@ public sealed class McpInvocationTests
                         (principal, tenant, resource) =>
                         {
                             onEvaluate?.Invoke(principal, tenant, resource);
+                            if (providerError is not null)
+                            {
+                                return Result<IReadOnlySet<PermissionName>, AuthorizationError>.Failure(providerError);
+                            }
+
                             return grantsPermission
                                 ? Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(
                                     new HashSet<PermissionName> { UsePermission })

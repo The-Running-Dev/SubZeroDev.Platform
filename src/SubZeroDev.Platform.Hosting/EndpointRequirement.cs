@@ -114,6 +114,17 @@ internal sealed class EndpointAuthorizationFilter(PermissionName permission, Fea
             return Results.Empty;
         }
 
+        if (decision.ProviderFailure is { } providerFailure)
+        {
+            // A denial reached while a provider could not answer stands for this request, but is
+            // answered as a retryable failure: an outage is not a missing permission (Error
+            // semantics § 2). Checked after AuditFailure, which decides the answer when both are set.
+            await WriteRefusalAsync(
+                http, providerFailure.Code, correlation, StatusCodes.Status503ServiceUnavailable)
+                .ConfigureAwait(false);
+            return Results.Empty;
+        }
+
         if (decision.Outcome != AuthorizationOutcome.Allowed)
         {
             // Authorization precedes entitlement, and a principal who may not perform an action

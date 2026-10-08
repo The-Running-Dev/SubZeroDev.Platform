@@ -273,6 +273,105 @@ public sealed class AuthorizationTests
         Assert.NotEqual(deniedOnVisible.Code, deniedOnHidden.Code);
     }
 
+    [Fact]
+    public void S24_1_ProviderFailure_is_an_init_only_nullable_AuthorizationError_on_the_decision()
+    {
+        var property = typeof(AuthorizationDecision).GetProperty(nameof(AuthorizationDecision.ProviderFailure))!;
+
+        Assert.Equal(typeof(AuthorizationError), property.PropertyType);
+        Assert.True(new System.Reflection.NullabilityInfoContext().Create(property).ReadState
+            == System.Reflection.NullabilityState.Nullable);
+        Assert.Contains(
+            property.SetMethod!.ReturnParameter.GetRequiredCustomModifiers(),
+            modifier => modifier.FullName == "System.Runtime.CompilerServices.IsExternalInit");
+    }
+
+    [Fact]
+    public async Task S24_2_A_first_provider_error_and_a_second_granting_nothing_deny_carrying_ProviderUnavailable_naming_the_first()
+    {
+        // The first provider's own error is deliberately not ProviderUnavailable: the decision
+        // normalises whatever it returned.
+        await using var host = await BuildHostAsync(services =>
+        {
+            services.AddSingleton<IPermissionProvider>(FailingProvider("first", AuthorizationError.PermissionDenied(TestPermission)));
+            services.AddSingleton<IPermissionProvider>(SilentProvider("second"));
+        });
+
+        var decision = await EvaluateAsync(host, FakePrincipals.System);
+
+        Assert.Equal(AuthorizationOutcome.Denied, decision.Outcome);
+        var failure = Assert.IsType<AuthorizationError>(decision.ProviderFailure);
+        Assert.Equal(AuthorizationError.ProviderUnavailable(new PermissionProviderName("first")).Code, failure.Code);
+        Assert.Equal(AuthorizationError.ProviderUnavailable(new PermissionProviderName("first")).Detail, failure.Detail);
+        Assert.True(failure.IsRetryable);
+    }
+
+    [Fact]
+    public async Task S24_3_With_the_second_and_third_providers_failing_ProviderFailure_names_the_second()
+    {
+        await using var host = await BuildHostAsync(services =>
+        {
+            services.AddSingleton<IPermissionProvider>(SilentProvider("first"));
+            services.AddSingleton<IPermissionProvider>(FailingProvider("second", AuthorizationError.ProviderUnavailable(new PermissionProviderName("second"))));
+            services.AddSingleton<IPermissionProvider>(FailingProvider("third", AuthorizationError.ProviderUnavailable(new PermissionProviderName("third"))));
+        });
+
+        var decision = await EvaluateAsync(host, FakePrincipals.System);
+
+        Assert.Equal(AuthorizationOutcome.Denied, decision.Outcome);
+        Assert.Equal(
+            AuthorizationError.ProviderUnavailable(new PermissionProviderName("second")).Detail,
+            decision.ProviderFailure?.Detail);
+    }
+
+    [Fact]
+    public async Task S24_4_One_provider_failing_and_another_granting_allow_with_no_ProviderFailure()
+    {
+        await using var host = await BuildHostAsync(services =>
+        {
+            services.AddSingleton<IPermissionProvider>(FailingProvider("broken", AuthorizationError.ProviderUnavailable(new PermissionProviderName("broken"))));
+            services.AddSingleton<IPermissionProvider>(GrantingProvider("granter"));
+        });
+
+        var decision = await EvaluateAsync(host, FakePrincipals.System);
+
+        Assert.Equal(AuthorizationOutcome.Allowed, decision.Outcome);
+        Assert.Null(decision.ProviderFailure);
+    }
+
+    [Fact]
+    public async Task S24_4_A_denial_in_which_every_provider_answered_has_no_ProviderFailure()
+    {
+        await using var host = await BuildHostAsync(services =>
+        {
+            services.AddSingleton<IPermissionProvider>(SilentProvider("first"));
+            services.AddSingleton<IPermissionProvider>(SilentProvider("second"));
+        });
+
+        var decision = await EvaluateAsync(host, FakePrincipals.System);
+
+        Assert.Equal(AuthorizationOutcome.Denied, decision.Outcome);
+        Assert.Null(decision.ProviderFailure);
+    }
+
+    [Fact]
+    public async Task S24_7_A_denial_whose_audit_failed_while_a_provider_failed_carries_both()
+    {
+        var sink = new RecordingAuditSink();
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable("recording")));
+        await using var host = await BuildHostAsync(services =>
+        {
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink>(sink));
+            services.AddSingleton<IPermissionProvider>(FailingProvider("broken", AuthorizationError.ProviderUnavailable(new PermissionProviderName("broken"))));
+        });
+
+        var decision = await EvaluateAsync(host, FakePrincipals.System);
+
+        Assert.Equal(AuthorizationOutcome.Denied, decision.Outcome);
+        Assert.NotNull(decision.AuditFailure);
+        Assert.NotNull(decision.ProviderFailure);
+    }
+
     private static async Task<IPlatformTestHost> BuildHostAsync(Action<IServiceCollection> configure) =>
         await PlatformTestHost.CreateBuilder().WithServices(configure).StartAsync(CancellationToken.None);
 
@@ -287,6 +386,15 @@ public sealed class AuthorizationTests
             return await evaluator.EvaluateAsync(permission ?? TestPermission, null, CancellationToken.None);
         }
     }
+
+    private static StubPermissionProvider SilentProvider(string name) =>
+        new(
+            name,
+            (_, _, _) => Result<IReadOnlySet<PermissionName>, AuthorizationError>.Success(
+                new HashSet<PermissionName>()));
+
+    private static StubPermissionProvider FailingProvider(string name, AuthorizationError error) =>
+        new(name, (_, _, _) => Result<IReadOnlySet<PermissionName>, AuthorizationError>.Failure(error));
 
     private static StubPermissionProvider GrantingProvider(string name) =>
         new(
