@@ -2,7 +2,7 @@
 Kind: invariant
 Status: active
 Anchor: I-T2
-Enforcement: instruction
+Enforcement: code
 Consumes:
 Exposes:
 Binds:

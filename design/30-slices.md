@@ -192,8 +192,8 @@ Out of scope: any change to the evaluator's behaviour beyond what a failing test
 (see *Outstanding*).
 
 ## S27 — Tenant isolation is proven for writes and for every entity type
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: a product team that stores customer data on Platform can rely on one tenant never writing
 another tenant's rows, and on isolation that does not depend on whether a type is shareable, because a
@@ -219,7 +219,7 @@ Acceptance:
 Out of scope: any new escape hatch for writes, and any change to the shared-read audit.
 
 ## S28 — Audit's guarantees are proven across every surface that writes it
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: a compliance reviewer can point at a test for each audit promise: that a record cannot be

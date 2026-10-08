@@ -1107,6 +1107,151 @@ public abstract class PersistenceContractTests : IAsyncLifetime
     /// <summary>Inserts directly against <c>platform_outbox</c> with a known id, so the caller can
     /// read it back afterward — the same bypass <see cref="InsertRawOutboxRowAsync"/> uses, with an
     /// id the caller controls instead of a random one.</summary>
+    [Fact]
+    public async Task S27_1_Inside_a_shared_read_scope_no_write_of_either_intent_reaches_another_tenants_row()
+    {
+        var source = new TestMigrationSource(
+            "Isolation",
+            TestMigration.Sql(
+                "0001_create",
+                "CREATE TABLE t_isolation (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, value TEXT NOT NULL, shared_at TEXT NULL);"));
+        await using var host = await StartAsync(sources: [source]);
+        Assert.True((await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        var unitOfWork = host.Services.GetRequiredService<IUnitOfWork>();
+        var ambient = host.Services.GetRequiredService<IAmbientTransactionAccessor>();
+        var scopes = host.Services.GetRequiredService<IOperationScopeFactory>();
+        var sharedRead = host.Services.GetRequiredService<ISharedReadScopeFactory>();
+        var tenantA = new TenantId(Guid.Parse("77777777-7777-7777-7777-777777777777"));
+        var tenantB = new TenantId(Guid.Parse("88888888-8888-8888-8888-888888888888"));
+
+        // Tenant B publishes the one row tenant A's shared-read scope makes visible.
+        using (scopes.Begin(tenantB, FakePrincipals.System))
+        {
+            var published = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token => ExecuteOnAmbientAsync(
+                    ambient,
+                    "INSERT INTO t_isolation (id, tenant, value, shared_at) VALUES (@id, @tenant, 'original', 'published');",
+                    "b-row",
+                    tenantB,
+                    token),
+                CancellationToken.None);
+            Assert.True(published.IsSuccess);
+        }
+
+        // An update, a delete and an insert, each carrying tenant B's id.
+        string[] writes =
+        [
+            "UPDATE t_isolation SET value = 'tampered' WHERE id = @id AND tenant = @tenant;",
+            "DELETE FROM t_isolation WHERE id = @id AND tenant = @tenant;",
+            "INSERT INTO t_isolation (id, tenant, value) VALUES (@id || '-forged', @tenant, 'forged');",
+        ];
+
+        using (scopes.Begin(tenantA, FakePrincipals.System))
+        {
+            // A scope opened before the unit of work: refused whatever intent the unit of work
+            // declares — a read-only intent is not a way round it.
+            using (sharedRead.Open<IsolationRow>().Value)
+            {
+                foreach (var intent in new[] { TransactionIntent.Write, TransactionIntent.ReadOnly })
+                {
+                    foreach (var write in writes)
+                    {
+                        var thrown = await Assert.ThrowsAsync<PlatformContractViolationException>(() =>
+                            unitOfWork.ExecuteAsync(
+                                intent,
+                                token => ExecuteOnAmbientAsync(ambient, write, "b-row", tenantB, token),
+                                CancellationToken.None));
+                        Assert.Equal("WriteInsideSharedReadScope", thrown.Error.Code);
+                    }
+                }
+            }
+
+            // A scope opened inside a read-only unit of work: refused from the moment it opens.
+            foreach (var write in writes)
+            {
+                var thrown = await Assert.ThrowsAsync<PlatformContractViolationException>(() =>
+                    unitOfWork.ExecuteAsync(
+                        TransactionIntent.ReadOnly,
+                        async token =>
+                        {
+                            using (sharedRead.Open<IsolationRow>().Value)
+                            {
+                                await ExecuteOnAmbientAsync(ambient, write, "b-row", tenantB, token);
+                            }
+                        },
+                        CancellationToken.None));
+                Assert.Equal("WriteInsideSharedReadScope", thrown.Error.Code);
+            }
+
+            // A scope opened inside a write unit of work: the scope itself is refused.
+            var refused = await Assert.ThrowsAsync<PlatformContractViolationException>(() =>
+                unitOfWork.ExecuteAsync(
+                    TransactionIntent.Write,
+                    _ =>
+                    {
+                        using (sharedRead.Open<IsolationRow>().Value)
+                        {
+                            return Task.CompletedTask;
+                        }
+                    },
+                    CancellationToken.None));
+            Assert.Equal("WriteInsideSharedReadScope", refused.Error.Code);
+        }
+
+        // Tenant B's row is exactly as it was published, and nothing was forged under its id.
+        Assert.Equal(1, await CountRowsAsync(_connectionString, "t_isolation", "b-row"));
+        Assert.Equal(0, await CountRowsAsync(_connectionString, "t_isolation", "b-row-forged"));
+        using (scopes.Begin(tenantB, FakePrincipals.System))
+        {
+            var value = await unitOfWork.ExecuteAsync(
+                TransactionIntent.ReadOnly,
+                async token =>
+                {
+                    var current = ambient.Current!;
+                    await using var select = current.Connection.CreateCommand();
+                    select.Transaction = current.Transaction;
+                    select.CommandText = "SELECT value FROM t_isolation WHERE id = 'b-row';";
+                    return (string?)await select.ExecuteScalarAsync(token);
+                },
+                CancellationToken.None);
+            Assert.True(value.IsSuccess);
+            Assert.Equal("original", value.Value);
+        }
+
+        // The refusal did not outlive the scope: the same tenant writes its own row normally after.
+        using (scopes.Begin(tenantA, FakePrincipals.System))
+        {
+            var own = await unitOfWork.ExecuteAsync(
+                TransactionIntent.Write,
+                token => ExecuteOnAmbientAsync(
+                    ambient,
+                    "INSERT INTO t_isolation (id, tenant, value) VALUES (@id, @tenant, 'mine');",
+                    "a-row",
+                    tenantA,
+                    token),
+                CancellationToken.None);
+            Assert.True(own.IsSuccess);
+        }
+
+        Assert.Equal(1, await CountRowsAsync(_connectionString, "t_isolation", "a-row"));
+    }
+
+    private static async Task ExecuteOnAmbientAsync(
+        IAmbientTransactionAccessor ambient, string sql, string id, TenantId tenant, CancellationToken cancellationToken)
+    {
+        var current = ambient.Current!;
+        await using var command = current.Connection.CreateCommand();
+        command.Transaction = current.Transaction;
+        command.CommandText = sql;
+        AddParameter(command, "@id", id);
+        AddParameter(command, "@tenant", tenant.ToString());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private sealed record IsolationRow(TenantId Tenant, string Id, DateTimeOffset? SharedAt) : IShareable;
+
     private static async Task<OutboxMessageId> InsertRawOutboxRowAtAsync(
         IPlatformTestHost host, DateTimeOffset? processedAt, DateTimeOffset? poisonedAt, string? lastError)
     {
@@ -1244,6 +1389,52 @@ public abstract class PersistenceContractTests : IAsyncLifetime
 
     protected abstract Task<RawOutboxRow?> ReadOutboxRowAsync(
         string connectionString, IProviderCapability capability, OutboxMessageId id);
+
+    // S27.3 -----------------------------------------------------------------------------------
+
+    /// <summary>The migrations Platform registered at D5's baseline commit (<c>d6daabf</c>, the
+    /// parent of D5-S1), by name. Each is up-only: an applied migration is never re-run, so one
+    /// changed after the fact silently diverges every database that already applied it.</summary>
+    private static readonly string[] BaselineMigrations =
+        ["0001_create_host_registration", "0002_create_outbox", "0003_create_background_work_lease"];
+
+    /// <summary>The tables those migrations create.</summary>
+    private static readonly string[] BaselineTables =
+        ["platform_background_work_lease", "platform_host_registration", "platform_outbox"];
+
+    [Fact]
+    public async Task S27_3_The_migrations_present_at_D5s_baseline_are_unmodified_and_still_produce_the_baseline_schema()
+    {
+        // The implicit tenant's stored form — the representation D3 and G2 fixed.
+        Assert.Equal("00000000-0000-0000-0000-000000000000", TenantId.Implicit.ToString());
+
+        await using var host = await StartAsync();
+        var runner = host.Services.GetRequiredService<IMigrationRunner>();
+        Assert.True((await runner.ApplyAsync(CancellationToken.None)).IsSuccess);
+
+        // Every baseline migration is still registered under its baseline name: a rename is a
+        // modification too — the history would record it as new and re-run it.
+        var platform = host.Services.GetServices<IModuleMigrationSource>()
+            .Single(source => source.Module == new ModuleName("Platform"));
+        Assert.Subset(
+            platform.Migrations.Select(migration => migration.Name).ToHashSet(StringComparer.Ordinal),
+            BaselineMigrations.ToHashSet(StringComparer.Ordinal));
+
+        // What they produce, column by column — the tenant column's type and nullability and every
+        // primary key among it — pinned per provider as captured from the baseline. A changed
+        // migration body that alters any of it fails here.
+        var schema = await DescribeSchemaAsync(_connectionString, BaselineTables);
+        Assert.Equal(BaselineSchema, schema);
+    }
+
+    /// <summary>The baseline tables' schema as <see cref="DescribeSchemaAsync"/> renders it, pinned
+    /// from the migrations as they stood at D5's baseline commit.</summary>
+    protected abstract IReadOnlyList<string> BaselineSchema { get; }
+
+    /// <summary>One line per column — <c>table.column type [NOT NULL] [PKn]</c> — then one per
+    /// secondary index, <c>table index(columns)</c>; tables in the order given, columns in declared
+    /// order.</summary>
+    protected abstract Task<IReadOnlyList<string>> DescribeSchemaAsync(string connectionString, IReadOnlyList<string> tables);
 
     private async Task<IPlatformTestHost> StartAsync(
         string? connectionString = null, IReadOnlyList<IModuleMigrationSource>? sources = null) =>

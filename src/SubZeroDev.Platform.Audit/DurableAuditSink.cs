@@ -6,11 +6,13 @@ namespace SubZeroDev.Platform.Audit;
 /// <summary>The sink an <c>Operated</c> host installs to satisfy I-C2: it declares
 /// <see cref="IsDurable"/>, so a host carrying this module starts where the same host without it
 /// fails with <c>HostStartupError.DurableAuditSinkRequired</c> (S13.6, S8.6).</summary>
-/// <remarks>Writes inside the ambient transaction when one is open — which is what makes a
-/// successful action's audit row commit or roll back atomically with the state change it audits —
-/// and against a transaction of its own, committed immediately, when none is: a denial, a read, or a
-/// failure dispatches ahead of any transaction the pipeline has opened
-/// (<c>design/20-contract.md</c>, Public surface §6).</remarks>
+/// <remarks>Writes inside the ambient transaction when a write transaction is open — which is what
+/// makes a successful action's audit row commit or roll back atomically with the state change it
+/// audits — and against a transaction of its own, committed immediately, otherwise: a denial, a
+/// read, or a failure dispatches ahead of any transaction the pipeline has opened
+/// (<c>design/20-contract.md</c>, Public surface §6). A read-only ambient transaction is never
+/// written into: inside a shared-read scope it refuses every write (I-T1), and a read's record
+/// does not depend on the read committing.</remarks>
 internal sealed class DurableAuditSink(
     AuditStore store, IAmbientTransactionAccessor ambient, IProviderCapability capability) : IAuditSink
 {
@@ -22,7 +24,7 @@ internal sealed class DurableAuditSink(
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
 
-        if (ambient.Current is { } current)
+        if (ambient.Current is { Intent: TransactionIntent.Write } current)
         {
             try
             {
