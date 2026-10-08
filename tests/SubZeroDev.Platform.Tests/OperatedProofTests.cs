@@ -153,7 +153,7 @@ public sealed class OperatedProofTests(PostgresContainerFixture fixture) : IClas
         }
 
         var verifications = new[] { VerifyAsync(older), VerifyAsync(newer) };
-        await WaitForBlockedSessionsAsync(gate, 2);
+        await WaitForWritesQueuedBehindAsync(connectionString, gate.ProcessID, verifications);
 
         await hold.RollbackAsync();
 
@@ -260,24 +260,49 @@ public sealed class OperatedProofTests(PostgresContainerFixture fixture) : IClas
     private static Task<Result<LicenceVerificationOutcome, LicensingError>> VerifyAsync(IPlatformTestHost host) =>
         host.Services.GetRequiredService<ILicenceVerifier>().VerifyOnceAsync(CancellationToken.None);
 
-    /// <summary>Waits until <paramref name="count"/> sessions on <paramref name="probe"/>'s database
-    /// are waiting on a lock — the observable point at which both verifications have read the stored
-    /// state and are attempting their writes.</summary>
-    private static async Task WaitForBlockedSessionsAsync(NpgsqlConnection probe, int count)
+    /// <summary>Waits until every one of <paramref name="verifications"/> is waiting on a lock held by
+    /// the gate session <paramref name="gatePid"/> — the observable point at which each has read the
+    /// stored state and queued its write behind the gate's uncommitted key.</summary>
+    /// <remarks>The probe runs on its own autocommit connection, never on the gate's. PostgreSQL
+    /// snapshots <c>pg_stat_activity</c> once per transaction, so a probe inside the gate's open
+    /// transaction never sees a backend that connected after its first poll — and a verification
+    /// that had to open a fresh pooled connection went uncounted until the timeout, which is how this
+    /// wait failed in CI and passed locally. Counting sessions blocked <em>by the gate</em>, rather
+    /// than any ungranted lock in the database, also pins the wait to the key the proof is about.</remarks>
+    private static async Task WaitForWritesQueuedBehindAsync(
+        string connectionString,
+        int gatePid,
+        IReadOnlyList<Task<Result<LicenceVerificationOutcome, LicensingError>>> verifications)
     {
+        await using var probe = new NpgsqlConnection(connectionString);
+        await probe.OpenAsync();
         await using var command = probe.CreateCommand();
-        command.CommandText = """
-            SELECT count(DISTINCT l.pid) FROM pg_locks l
-            JOIN pg_stat_activity a ON a.pid = l.pid
-            WHERE NOT l.granted AND a.datname = current_database();
-            """;
+        command.CommandText = "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid));";
+        command.Parameters.AddWithValue(gatePid);
 
         var deadline = DateTime.UtcNow.AddSeconds(30);
-        while ((long)(await command.ExecuteScalarAsync())! < count)
+        while ((long)(await command.ExecuteScalarAsync())! < verifications.Count)
         {
-            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {count} blocked session(s).");
+            // A verification that finished while the gate still holds the key never reached the
+            // write, so waiting longer cannot help — say what it answered instead.
+            var finished = verifications.FirstOrDefault(verification => verification.IsCompleted);
+            Assert.True(
+                finished is null,
+                $"A verification completed before queuing behind the gate: {Describe(finished)}.");
+            Assert.True(
+                DateTime.UtcNow < deadline,
+                $"Timed out waiting for {verifications.Count} write(s) blocked by the gate session {gatePid}.");
             await Task.Delay(10);
         }
+
+        static string Describe(Task<Result<LicenceVerificationOutcome, LicensingError>>? verification) =>
+            verification switch
+            {
+                null => "none",
+                { IsCompletedSuccessfully: false } => verification.Exception?.GetBaseException().Message ?? "cancelled",
+                _ when verification.Result.IsSuccess => verification.Result.Value.ToString(),
+                _ => verification.Result.Error.Code,
+            };
     }
 
     private static Task<IPlatformTestHost> StartOrganizationsHostAsync(string connectionString) =>
