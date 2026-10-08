@@ -1520,7 +1520,9 @@ The internal store is `InboxStore` in [`Inbox.cs`](../src/SubZeroDev.Platform.Pe
   capability member. The prune's bounded delete joins `PruneSql`'s identical text:
   `DELETE … WHERE (message_id, consumer) IN (SELECT … FROM platform_inbox i WHERE i.processed_at < @olderThan AND NOT EXISTS (SELECT 1 FROM platform_outbox o WHERE o.id = i.message_id) LIMIT @batch)`.
   `PruneWork` runs it hourly under its existing lease with `olderThan` = now and `PruneBatchSize`; no
-  new setting.
+  new setting. It runs after the three other targets, so a record whose outbox row was pruned goes in the
+  same pass, and repeats until a statement deletes fewer than `PruneBatchSize` rows. A failed statement
+  logs the shared `"Prune of {Target} failed: {Code}."` Warning and ends the repetition.
 - **Exactly-once is for database effects only.** A handler's external side effect — an e-mail, a call to
   a provider — is not inside the transaction, and the handler stays responsible for its idempotency.
 - **The lost-claim warning changes wording**, because a lost claim no longer re-applies database effects:
@@ -2348,7 +2350,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-P3** | No answer to a stale version — HTTP, MCP, log or audit — carries a version value, and gone, changed and another tenant's row get the same answer (Owner: Persistence, each consumer.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
 | **I-P4** | A handler is never invoked for a (message id, consumer) whose earlier invocation committed (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
 | **I-P5** | The inbox record commits in the same transaction as the handler's effects, and a handler failure leaves no record (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/OutboxDispatchTests.cs, tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs |
-| **I-P6** | An inbox record is pruned only once its outbox row no longer exists (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/PersistenceContractTests.cs |
+| **I-P6** | An inbox record is pruned only once its outbox row no longer exists (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/PruneLoggingTests.cs |
 | **I-P7** | Migrations are applied automatically only when the derived environment is `Development`; no setting can enable it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
 | **I-P8** | `IMigrationRunner.ApplyAsync` is the only path that writes migration history; development application and migrate mode both take the provider-native lock through it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
 | **I-P9** | Seeders run only in migrate mode, only after `ApplyAsync` succeeded, grouped in composed-module topological order and registration order within a module (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
