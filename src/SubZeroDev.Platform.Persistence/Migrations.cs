@@ -34,6 +34,30 @@ public interface IModuleMigrationSource
     IReadOnlyList<IModuleMigration> Migrations { get; }
 }
 
+/// <summary>A module's installation-wide seed data, written by migrate mode after every migration
+/// applied, on every run. Registered from <c>IPlatformModule.Register</c> through
+/// <c>TryAddEnumerable(ServiceDescriptor.Singleton&lt;ISeeder, T&gt;())</c>; a host composes seeders
+/// and never invokes them.</summary>
+/// <remarks>A seeder must converge: any number of runs, sequential or concurrent, leave the rows one
+/// run leaves. It writes insert-if-absent against a store constraint, not read-then-insert. Migrate
+/// mode opens no operation scope, so a seeder writes only inside one it opened through
+/// <c>IOperationScopeFactory.Begin(tenant, Principal.LocalSystem)</c>, and runs its own transactions
+/// through <see cref="IUnitOfWork"/>.</remarks>
+public interface ISeeder
+{
+    /// <summary>The module this seeder belongs to. Seeders run grouped by module, in the composed
+    /// modules' dependency order; a module no composed module names runs after those, by name.</summary>
+    ModuleName Module { get; }
+
+    /// <summary>The seeder's name, for reporting. Uniqueness is not checked.</summary>
+    string Name { get; }
+
+    /// <summary>Writes the seed data.</summary>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>A task that completes once the data is written. A throw stops the run.</returns>
+    Task SeedAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>One module's migration state, compared symmetrically: what it registers but has not
 /// applied, and what is applied but no longer registered.</summary>
 /// <param name="Module">The module.</param>

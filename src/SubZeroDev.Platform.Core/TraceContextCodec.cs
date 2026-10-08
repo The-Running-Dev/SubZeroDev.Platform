@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using SubZeroDev.Platform.Abstractions;
 
-namespace SubZeroDev.Platform.Observability;
+namespace SubZeroDev.Platform.Core;
 
-/// <summary>The W3C operations, implemented here because propagation is Observability's and
-/// declared in Abstractions because two packages with no edge to Observability perform them.</summary>
+/// <summary>The W3C operations, declared in Abstractions because two packages with no edge to
+/// Observability perform them, and implemented in Core because a process with no Observability —
+/// migrate mode, whose seeders open operation scopes — still has to originate a trace. Observability
+/// registers it for a consumer that composes telemetry without a Platform host.</summary>
 internal sealed class TraceContextCodec : ITraceContextCodec
 {
     private static readonly ActivitySource Source = new(PlatformTelemetry.ActivitySourceName);

@@ -151,26 +151,14 @@ public static class PlatformHostExtensions
 
     private static void AddCoreDefaults(IServiceCollection services)
     {
-        services.TryAddSingleton<IClock, SystemClock>();
-        services.TryAddSingleton<AmbientOperationScope>();
-        services.TryAddSingleton<IOperationScopeAccessor, OperationScopeAccessor>();
-        services.TryAddSingleton<IOperationScopeFactory, OperationScopeFactory>();
-        services.TryAddSingleton<ICurrentTenant, CurrentTenant>();
-        services.TryAddSingleton<ICurrentPrincipal, CurrentPrincipal>();
-        services.TryAddSingleton<ICurrentCorrelation, CurrentCorrelation>();
-        services.TryAddSingleton<ICurrentCulture, CurrentCulture>();
+        // Shared with migrate mode, so a seeder sees the same scope, accessors and clock a host has.
+        CoreDefaults.AddAmbientDefaults(services);
+
         services.TryAddSingleton<IModuleRegistry, ModuleRegistry>();
         services.TryAddSingleton<IHealthCheckRegistry, HealthCheckRegistry>();
         services.TryAddSingleton<IBackgroundWorkRegistry, BackgroundWorkRegistry>();
         services.TryAddSingleton<ISettingsFingerprint, SettingsFingerprint>();
 
-        services.TryAddSingleton<AuditSinkHealthState>();
-        services.TryAddSingleton<AuditEventFactory>();
-        services.TryAddSingleton<AuditSinkDispatcher>();
-        services.TryAddSingleton<IAuditSinkRegistry, AuditSinkRegistry>();
-        services.TryAddSingleton<IAuditWriter>(provider => new AuditWriter(
-            provider.GetRequiredService<AuditEventFactory>(),
-            provider.GetRequiredService<AuditSinkDispatcher>()));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuditSink, LogAuditSink>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHealthCheck, AuditSinkHealthCheck>());
 

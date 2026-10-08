@@ -471,8 +471,8 @@ Acceptance:
 Out of scope: moving Licensing's, Mcp's or Identity's existing startup hosted services onto the hooks; a role filter, ordering attribute or extra hooks; letting a hook register into a frozen registry.
 
 ## S37 — An operator's `migrate` run also writes each module's seed data, in module order, and re-running it changes nothing
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an operator, when I run `migrate`, each module's installation-wide seed data is written after the schema is current, in the order the modules depend on each other, and running `migrate` again leaves the data unchanged. If a seed step fails, I get a named error and a non-zero exit, and nothing after it runs.
 Touches:
@@ -500,7 +500,7 @@ Acceptance:
 Out of scope: seeding at development start; a seeding history table or per-seeder "already ran" tracking; a `Platform.Testing` seeder harness; per-tenant seeding when a tenant is created.
 
 ## S38 — A developer's local hosts bring their own database schema up to date when they start, and the two hosts never race each other to do it
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As a developer running the web and worker hosts locally in the Development environment, I no longer run `migrate` before starting them. Either host applies pending migrations at start, the second waits for the first, and a broken migration stops the host with its name. Outside Development nothing changes.

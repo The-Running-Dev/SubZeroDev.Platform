@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using OpenTelemetry.Trace;
 using SubZeroDev.Platform.Abstractions;
+using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Observability;
 
 namespace SubZeroDev.Platform.Tests;

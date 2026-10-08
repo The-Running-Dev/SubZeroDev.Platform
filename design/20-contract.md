@@ -1548,39 +1548,19 @@ variant, `ModuleInitialization(ModuleName module, string detail)`.
 
 ### 16. Migration application and seeding — `SubZeroDev.Platform.Persistence`
 
-`IMigrationRunner`, `IModuleMigration`, `IModuleMigrationSource` and migrate mode are declared in the tree,
-in [`Migrations.cs`](../src/SubZeroDev.Platform.Persistence/Migrations.cs) and
-[`MigrateMode.cs`](../src/SubZeroDev.Platform.Persistence/MigrateMode.cs). This section adds a seeder
-contract beside the runner, and states the development-environment application the D3 design promised
-(D3 contract, *Unresolved* 8).
-
-```csharp
-namespace SubZeroDev.Platform.Persistence;
-
-public interface ISeeder
-{
-    ModuleName Module { get; }
-    string Name { get; }
-    Task SeedAsync(CancellationToken cancellationToken);
-}
-```
-
-`MigrationError` ([`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs)) gains one variant:
-
-```csharp
-namespace SubZeroDev.Platform.Persistence;
-
-public sealed record MigrationError
-{
-    public static MigrationError SeedFailed(ModuleName module, string seeder, string detail);
-}
-```
+`IMigrationRunner`, `IModuleMigration`, `IModuleMigrationSource`, `ISeeder` and migrate mode are
+declared in the tree, in [`Migrations.cs`](../src/SubZeroDev.Platform.Persistence/Migrations.cs) and
+[`MigrateMode.cs`](../src/SubZeroDev.Platform.Persistence/MigrateMode.cs). `MigrationError.SeedFailed` is
+in [`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs). This section states the seeder rules
+the code does not show, and the development-environment application the D3 design promised (D3 contract,
+*Unresolved* 8).
 
 **Migrate mode.** `RunPlatformMigrateModeAsync`'s signature is unchanged, and it is still the operator's
 explicit operation. In order, it:
 
 1. binds settings, as today;
-2. registers the Core ambient defaults a host registers (operation scope, accessors, clock), then
+2. registers the Core ambient defaults a host registers (operation scope, accessors, clock, the
+   trace-context codec a scope originates from, and the audit writer a unit of work dispatches to), then
    Persistence;
 3. **resolves the module graph and calls each module's `Register` in topological order**. That is what
    `IPlatformModule.Register` already promises. A graph error prints `<code>: <detail>` and exits 1;
@@ -1616,7 +1596,9 @@ for anything else.
   leave the rows one run leaves. It writes insert-if-absent against a store constraint, not
   read-then-insert.
 - **Failure.** A seeder that throws stops the run. Later seeders do not run, and migrations and earlier
-  seeders' commits stay. Migrate mode prints `SeedFailed: <detail>` and exits 1.
+  seeders' commits stay. Migrate mode prints `SeedFailed: <detail>` and exits 1. A seeder the container
+  cannot construct stops the run before any seeder runs: migrate mode prints `Registration: <message>`
+  and exits 1.
 
 **Development-environment application.**
 
@@ -2307,7 +2289,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-P6** | An inbox record is pruned only once its outbox row no longer exists (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/PersistenceIntegrationTests.cs, tests/SubZeroDev.Platform.Tests/PruneLoggingTests.cs |
 | **I-P7** | Migrations are applied automatically only when the derived environment is `Development`; no setting can enable it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
 | **I-P8** | `IMigrationRunner.ApplyAsync` is the only path that writes migration history; development application and migrate mode both take the provider-native lock through it (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/DevelopmentMigrationTests.cs |
-| **I-P9** | Seeders run only in migrate mode, only after `ApplyAsync` succeeded, grouped in composed-module topological order and registration order within a module (Owner: Persistence.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
+| **I-P9** | Seeders run only in migrate mode, only after `ApplyAsync` succeeded, grouped in composed-module topological order and registration order within a module (Owner: Persistence.) | — | code | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
 | **I-P10** | A seeder converges: any number of sequential or concurrent runs leave the rows one run leaves (Owner: each seeder's module.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
 | **I-P11** | Migrate mode opens no operation scope for a seeder; a seeder writes only inside a scope it opened naming its tenant, as `Principal.LocalSystem` (Owner: Persistence for the first half; each seeder's module for the second.) | — | instruction | tests/SubZeroDev.Platform.Tests/SeedingTests.cs |
 | **I-R1** | Authorization precedes entitlement, and both precede any side effect (Owner: Hosting, Mcp.) Enforced by code — pipeline order. | — | code | tests/SubZeroDev.Platform.Tests/RequestOrderTests.cs |
