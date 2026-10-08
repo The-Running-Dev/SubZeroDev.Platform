@@ -66,11 +66,7 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
             }
         }
 
-        // TEMPORARY S25.2 mutation, reverted in the next commit: fresh roots lose their parent.
-        if (request.Trace.TraceParent.Contains("1234567890abcdef1234567890abcdef", StringComparison.Ordinal))
-        {
-            message.Headers.TryAddWithoutValidation("traceparent", request.Trace.TraceParent);
-        }
+        message.Headers.TryAddWithoutValidation("traceparent", request.Trace.TraceParent);
         if (request.Trace.TraceState is { } traceState)
         {
             message.Headers.TryAddWithoutValidation("tracestate", traceState);
