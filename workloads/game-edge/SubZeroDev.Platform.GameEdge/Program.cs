@@ -24,6 +24,12 @@ if (options is null
         + "and ForwardTimeout and ReadinessTimeout must both be positive.");
 }
 
+if (StreamingRoutes.Validate(options) is { Count: > 0 } streamingErrors)
+{
+    throw new InvalidOperationException(
+        "Configuration section 'GameEdge:StreamingRoutes' is invalid: " + string.Join(" ", streamingErrors));
+}
+
 builder.Services.AddSingleton(options);
 
 builder.Services.AddHttpClient<IGameWorkloadForwarder, GameWorkloadForwarder>();

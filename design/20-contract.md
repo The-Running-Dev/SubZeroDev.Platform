@@ -470,26 +470,14 @@ contract.
 | `StreamingRoutes:<n>:FirstByteTimeout` | yes, per entry | greater than zero and no greater than `ForwardTimeout`; no default |
 
 A breach fails startup with the edge's existing configuration failure, naming the full key (for
-example `GameEdge:StreamingRoutes:0:FirstByteTimeout`).
+example `GameEdge:StreamingRoutes:0:FirstByteTimeout`). An overlap names the later entry's key only.
 
-```csharp
-public sealed class GameEdgeOptions
-{
-    // G1 and G2 members unchanged: WorkloadBaseAddress, ForwardTimeout, ReadinessTimeout.
-    public IReadOnlyList<StreamingRoute> StreamingRoutes { get; init; } = [];
-}
-
-public sealed class StreamingRoute
-{
-    public required string PathPrefix { get; init; }
-    public required TimeSpan FirstByteTimeout { get; init; }
-}
-
-public sealed record StreamedResponse(int StatusCode, string? ContentType, Stream Body) : IAsyncDisposable
-{
-    public ValueTask DisposeAsync();
-}
-```
+`GameEdgeOptions.StreamingRoutes` and `StreamingRoute` (`PathPrefix`, `FirstByteTimeout`, both
+`required`) are declared in
+[`Options.cs`](../workloads/game-edge/SubZeroDev.Platform.GameEdge/Options.cs); G1's and G2's members
+of `GameEdgeOptions` are unchanged. `StreamedResponse(int StatusCode, string? ContentType, Stream Body)`,
+an `IAsyncDisposable` record, is declared in
+[`Forwarding.cs`](../workloads/game-edge/SubZeroDev.Platform.GameEdge/Forwarding.cs).
 
 `StreamedResponse.Body` owns the upstream response. Disposing it releases the workload connection,
 which is how a caller's disconnect reaches the workload.
@@ -1590,17 +1578,12 @@ for anything else.
 
 ### 17. The edge's streamed routes — `SubZeroDev.Platform.GameEdge`
 
-**Amends** G1's `IGameWorkloadForwarder` (*The edge — .NET*) with one method. `ForwardAsync`,
-`ForwardedRequest` and `ForwardedResponse` are unchanged.
-
-```csharp
-public interface IGameWorkloadForwarder
-{
-    // G1's ForwardAsync unchanged.
-    Task<Result<StreamedResponse, EdgeError>> ForwardStreamingAsync(
-        ForwardedRequest request, TimeSpan firstByteTimeout, CancellationToken cancellationToken);
-}
-```
+**Amends** G1's `IGameWorkloadForwarder` (*The edge — .NET*) with one method,
+`ForwardStreamingAsync(ForwardedRequest request, TimeSpan firstByteTimeout, CancellationToken
+cancellationToken)`, returning `Task<Result<StreamedResponse, EdgeError>>`. It is declared in
+[`Forwarding.cs`](../workloads/game-edge/SubZeroDev.Platform.GameEdge/Forwarding.cs). `ForwardAsync`,
+`ForwardedRequest` and `ForwardedResponse` are unchanged. `firstByteTimeout` bounds the wait for the
+workload's headers only; the body is read under the caller's token alone.
 
 `MapGameWorkloadForwarding` keeps its signature. For a request whose path matches a listed prefix
 (*Types* § 14), it calls `ForwardStreamingAsync` with that entry's `FirstByteTimeout`. Every other
@@ -2197,10 +2180,10 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-C11** | `ShutdownAsync` runs exactly once for each module whose `InitializeAsync` completed — on stop, or on disposal after a later startup step failed — and never for one whose `InitializeAsync` threw or never ran (Owner: Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
 | **I-C12** | A throwing `InitializeAsync` fails the host with `ModuleInitialization` naming the module, never degrades it, and its `Detail` carries no exception message (Owner: Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
 | **I-C13** | No lifecycle hook assumes it is the only process: every instance of every role runs every hook, and migrate mode runs none (Owner: Hosting; each module for its own hooks.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
-| **I-E1** | A request whose path matches no `GameEdge:StreamingRoutes` prefix is forwarded buffered, under one `ForwardTimeout`, with G1's answers including #106's after-headers `503`; with no route listed the edge is G1's edge unchanged (Owner: GameEdge.) | — | instruction | — |
-| **I-E2** | On a streamed route the edge commits the workload's status and `Content-Type` when the workload's headers arrive and flushes each piece of the body as it is read, never coalescing; `ForwardTimeout` does not apply and no edge deadline follows the headers (Owner: GameEdge.) | — | instruction | — |
-| **I-E3** | After a streamed route's headers are sent, a workload failure aborts the caller's response — no terminating chunk on HTTP/1.1, a reset stream on HTTP/2 — and the edge writes no byte of its own after headers: no status, envelope, frame or trailer (Owner: GameEdge.) | — | instruction | — |
-| **I-E4** | A streamed forward is exactly one attempt to the workload: the edge never retries it, before or after headers, and never resumes a stream (Owner: GameEdge.) | — | instruction | — |
+| **I-E1** | A request whose path matches no `GameEdge:StreamingRoutes` prefix is forwarded buffered, under one `ForwardTimeout`, with G1's answers including #106's after-headers `503`; with no route listed the edge is G1's edge unchanged (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs, workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/ForwardingTests.cs |
+| **I-E2** | On a streamed route the edge commits the workload's status and `Content-Type` when the workload's headers arrive and flushes each piece of the body as it is read, never coalescing; `ForwardTimeout` does not apply and no edge deadline follows the headers (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs |
+| **I-E3** | After a streamed route's headers are sent, a workload failure aborts the caller's response — no terminating chunk on HTTP/1.1, a reset stream on HTTP/2 — and the edge writes no byte of its own after headers: no status, envelope, frame or trailer (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs |
+| **I-E4** | A streamed forward is exactly one attempt to the workload: the edge never retries it, before or after headers, and never resumes a stream (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs |
 | **I-E5** | Each aborted stream is logged once as `EdgeStreamAborted` at `Warning` and counted once on `subzerodev.edge.stream.aborts`, carrying the configured prefix and never the request path, query, body or exception message; a caller disconnect is neither counted nor logged above `Debug` (Owner: GameEdge.) | — | instruction | — |
 | **I-I1** | The ambient principal is never null while an operation scope is open (Owner: Abstractions.) | — | code | tests/SubZeroDev.Platform.Tests/OperationScopeTests.cs, tests/SubZeroDev.Platform.Tests/PrincipalTests.cs |
 | **I-I2** | `PrincipalId.Issuer` and `.Subject` are never parsed, normalised, trimmed or case-folded by Platform (Owner: Abstractions.) | — | instruction | — |

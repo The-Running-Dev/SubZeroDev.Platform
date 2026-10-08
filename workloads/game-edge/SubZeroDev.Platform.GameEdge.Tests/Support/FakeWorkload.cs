@@ -33,6 +33,15 @@ internal sealed class FakeWorkload : IAsyncDisposable
     /// until the caller's own token cancels it — S7.6's "accepts the connection and never answers".</summary>
     public bool Hang { get; set; }
 
+    /// <summary>When set, answers every recorded request in place of the fixed response, so a test can
+    /// emit a body piece by piece (<see cref="EmitAsync"/>), hold it open, or destroy the socket
+    /// partway with <see cref="HttpContext.Abort"/> — S41's streamed routes.</summary>
+    public Func<HttpContext, Task>? Script { get; set; }
+
+    /// <summary>Completes when a scripted response is aborted from under the script — the edge
+    /// releasing its upstream connection, as S41.9's caller disconnect must.</summary>
+    public TaskCompletionSource ScriptAborted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private FakeWorkload(WebApplication app, string baseAddress)
     {
         _app = app;
@@ -65,6 +74,20 @@ internal sealed class FakeWorkload : IAsyncDisposable
                 bodyStream.ToArray(),
                 traceParent));
 
+            if (fake.Script is { } script)
+            {
+                using var registration = context.RequestAborted.Register(() => fake.ScriptAborted.TrySetResult());
+                try
+                {
+                    await script(context);
+                }
+                catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+                {
+                }
+
+                return;
+            }
+
             if (fake.Hang)
             {
                 await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
@@ -88,6 +111,14 @@ internal sealed class FakeWorkload : IAsyncDisposable
 
         fake = new FakeWorkload(app, baseAddress);
         return fake;
+    }
+
+    /// <summary>Writes <paramref name="text"/> and flushes it, so it leaves the workload as one piece
+    /// rather than waiting on the next.</summary>
+    public static async Task EmitAsync(HttpContext context, string text)
+    {
+        await context.Response.WriteAsync(text, context.RequestAborted);
+        await context.Response.Body.FlushAsync(context.RequestAborted);
     }
 
     public async ValueTask DisposeAsync() => await _app.DisposeAsync().ConfigureAwait(false);
