@@ -846,7 +846,7 @@ provider are declared in
 
 | Key | Required | Constraint |
 |---|---|---|
-| `Platform:Authorization:MirrorMaximumAge` | no | At least `00:00:30` and at most `1.00:00:00`. Default `00:15:00`. **Unset means the default; no value means unbounded.** |
+| `Platform:Authorization:MirrorMaximumAge` | no | At least `00:00:30` and at most `1.00:00:00`. Default `00:15:00`. **Unset means the default; no value makes it unbounded.** |
 
 - **`EvaluateAsync` takes no principal and no tenant.** Both come from the ambient operation scope,
   which fixed them for the request's lifetime. A parameter for either would let a call site evaluate
