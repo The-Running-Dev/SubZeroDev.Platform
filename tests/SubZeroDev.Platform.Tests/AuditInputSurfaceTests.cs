@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Billing;
 using SubZeroDev.Platform.Core;
+using SubZeroDev.Platform.Identity;
 using SubZeroDev.Platform.Licensing;
 using SubZeroDev.Platform.Mcp;
 using SubZeroDev.Platform.Organizations;
@@ -41,6 +42,7 @@ public sealed class AuditInputSurfaceTests
         [typeof(IAuditWriter).FullName!] = DriveAuditWriterAsync,
         ["SubZeroDev.Platform.Core.AuthorizationEvaluator"] = DriveAuthorizationEvaluatorAsync,
         ["SubZeroDev.Platform.Billing.BillingApi"] = DriveBillingAsync,
+        ["SubZeroDev.Platform.Identity.AccountApi"] = DriveAccountsAsync,
         ["SubZeroDev.Platform.Licensing.LicenceVerifier"] = DriveLicensingAsync,
         ["SubZeroDev.Platform.Mcp.PlatformMcpTool"] = DriveMcpToolAsync,
         ["SubZeroDev.Platform.Organizations.OrganizationApi"] = DriveOrganizationsAsync,
@@ -310,6 +312,34 @@ public sealed class AuditInputSurfaceTests
             Assert.True((await writer.SetAsync(banner, SettingLayer.User, Payload, CancellationToken.None)).IsSuccess);
             Assert.True((await writer.ClearAsync(banner, SettingLayer.User, CancellationToken.None)).IsSuccess);
             Assert.False((await writer.SetAsync(banner, SettingLayer.Global, Secret, CancellationToken.None)).IsSuccess);
+        }
+
+        await probe.SealAsync(host.Services);
+    }
+
+    private static async Task DriveAccountsAsync(Probe probe)
+    {
+        await using var host = await StartHostAsync(probe, services =>
+        {
+            services.AddSingleton<IPlatformModule, IdentityModule>();
+            services.AddSingleton<IPlatformModule, IdentityAccountsModule>();
+            services.AddSingleton<IAuthenticationProvider>(new JwtBearerAuthenticationProvider(
+                "s28-identity", "issuer-a", AccountTests.IssuerAKey));
+        });
+        var api = host.Services.GetRequiredService<IAccountApi>();
+        var scopes = host.Services.GetRequiredService<IOperationScopeFactory>();
+
+        // A create takes no caller value; what the credential carried rides on the principal's claims,
+        // and an email or a profile claim must reach neither the record nor a log line. (The display
+        // name is the log's actor label for every surface, so it is not this surface's input.) The
+        // principal comes through the chain: only a principal an Identity provider established can create.
+        var token = AccountTests.Mint(AccountTests.IssuerAKey, "issuer-a", "alice", Secret, "Alice", profile: Payload);
+        var authenticated = await host.Services.GetRequiredService<AuthenticationChain>().AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", $"Bearer {token}")), CancellationToken.None);
+        using (scopes.Begin(TenantId.Implicit, authenticated.Value))
+        {
+            Assert.True((await api.CreateAccountAsync(CancellationToken.None)).IsSuccess);
+            Assert.False((await api.CreateAccountAsync(CancellationToken.None)).IsSuccess);
         }
 
         await probe.SealAsync(host.Services);

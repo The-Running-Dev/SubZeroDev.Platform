@@ -270,30 +270,38 @@ public sealed class IdentityTests
         Assert.Equal(nameof(AuthenticationError.CredentialRejected), authenticated.Error.Code);
     }
 
-    /// <summary>S9.5 — an architecture test: the Identity module declares no entity type, no
-    /// <c>DbContext</c> and no migration. Structurally this holds because the assembly carries no
-    /// reference at all to Persistence, where every one of those concepts is declared or
-    /// implemented — a later addition of any of them would need that reference and trip this test
-    /// immediately.</summary>
+    /// <summary>S9.5, as D5-S46 rewrote it — an architecture test: the Identity module contributes no
+    /// migration unless the host registers <see cref="IdentityAccountsModule"/>, and declares no
+    /// <c>DbContext</c>. The one migration source in the assembly is the account store's, and only
+    /// that module registers it (I-I21).</summary>
     [Fact]
-    public void S9_5_The_module_declares_no_entity_type_no_DbContext_and_no_migration()
+    public void S9_5_No_migration_source_unless_IdentityAccountsModule_is_registered()
     {
         var identityAssembly = typeof(IdentityModule).Assembly;
-        var persistenceAssemblyName = typeof(ITenantOwned).Assembly.GetName().Name;
 
-        var referenced = identityAssembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
-        Assert.DoesNotContain(persistenceAssemblyName, referenced);
+        var identityOnly = new ServiceCollection();
+        identityOnly.AddSingleton(ConfiguredBearerTests.Configure(new Dictionary<string, string?>()));
+        new IdentityModule().Register(identityOnly);
+        Assert.DoesNotContain(identityOnly, descriptor => descriptor.ServiceType == typeof(IModuleMigrationSource));
 
-        Assert.DoesNotContain(
-            identityAssembly.GetTypes(),
-            type => typeof(IModuleMigrationSource).IsAssignableFrom(type));
+        var withStore = new ServiceCollection();
+        new IdentityAccountsModule().Register(withStore);
+        var registered = Assert.Single(withStore, descriptor => descriptor.ServiceType == typeof(IModuleMigrationSource));
+
+        var sources = identityAssembly.GetTypes()
+            .Where(type => typeof(IModuleMigrationSource).IsAssignableFrom(type))
+            .ToArray();
+        Assert.Equal([registered.ImplementationType!], sources);
+        Assert.Equal("IdentityAccountsMigrationSource", sources[0].Name);
+
         Assert.DoesNotContain(
             identityAssembly.GetTypes(),
             type => type.Name.Contains("DbContext", StringComparison.Ordinal));
     }
 
     /// <summary>I-I4 — Platform declares no user entity and no directory. The persistence half is
-    /// <see cref="S9_5_The_module_declares_no_entity_type_no_DbContext_and_no_migration"/>; this is
+    /// <see cref="S9_5_No_migration_source_unless_IdentityAccountsModule_is_registered"/> and the
+    /// account tables' fixed columns (S46.9); this is
     /// the naming half, over every type the module declares, so a user or directory type that holds
     /// no storage at all still trips it.</summary>
     [Fact]

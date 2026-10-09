@@ -817,8 +817,8 @@ Out of scope: a cache or invalidation; a settings page in the shell; cleanup of 
 accounts.
 
 ## S46 — A person who creates an account is the same principal on every later request, and two sign-ins that report the same email stay two different people
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an Automator user or a GEaaS player, I can turn the identity I signed in with into an account. Every
 later request with that sign-in acts as the account. A different sign-in that happens to report my email is never
@@ -852,7 +852,7 @@ Acceptance:
 Out of scope: linking and unlinking, which are S47 and S48. Also out: just-in-time creation, account deletion, any email or profile field, and HTTP endpoints, which are the host's.
 
 ## S47 — A person signed in to their account can add a second sign-in method by completing that sign-in, and in no other way
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As a player or Automator user already signed in, I can sign in with a second provider and attach it to my
