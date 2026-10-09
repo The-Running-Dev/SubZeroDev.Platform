@@ -852,8 +852,8 @@ Acceptance:
 Out of scope: linking and unlinking, which are S47 and S48. Also out: just-in-time creation, account deletion, any email or profile field, and HTTP endpoints, which are the host's.
 
 ## S47 — A person signed in to their account can add a second sign-in method by completing that sign-in, and in no other way
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As a player or Automator user already signed in, I can sign in with a second provider and attach it to my
 account, so either sign-in reaches the same account afterwards. Nobody can attach a sign-in to my account, or mine
@@ -883,7 +883,7 @@ Acceptance:
 Out of scope: merging two accounts, linking from the sign-in callback or any hook, and a configurable freshness window.
 
 ## S48 — A person can remove a sign-in method from their account, but never the last one
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an account holder, I can see which sign-ins reach my account and remove one I no longer use. I cannot

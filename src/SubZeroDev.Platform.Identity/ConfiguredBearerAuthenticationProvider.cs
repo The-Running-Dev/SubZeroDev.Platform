@@ -12,7 +12,7 @@ namespace SubZeroDev.Platform.Identity;
 /// surface (I-I12).</summary>
 /// <remarks>Never fetches key material while authenticating (I-I8): keys are fixed at construction or
 /// read from a cache that only startup and the refresh work item fill.</remarks>
-internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationProvider
+internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationProvider, ISecondCredentialProvider
 {
     private const string AuthorizationHeader = "Authorization";
     private const string BearerPrefix = "Bearer ";
@@ -68,6 +68,24 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
             return Result<Principal, AuthenticationError>.Success(Principal.Anonymous);
         }
 
+        var (validated, _) = await ValidateAsync(token).ConfigureAwait(false);
+        return validated;
+    }
+
+    /// <inheritdoc/>
+    async Task<SecondCredentialValidation> ISecondCredentialProvider.ValidateSecondCredentialAsync(
+        string token, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+
+        var (validated, parsed) = await ValidateAsync(token).ConfigureAwait(false);
+        var issuedAt = validated.IsSuccess ? ReadIssuedAt(parsed!) : null;
+        return SecondCredential.Check(validated, issuedAt, now, _settings.ClockTolerance);
+    }
+
+    /// <summary>Validates a token and, once it is read, answers it alongside the result.</summary>
+    private async Task<(Result<Principal, AuthenticationError> Result, JsonWebToken? Token)> ValidateAsync(string token)
+    {
         JsonWebToken parsed;
         try
         {
@@ -75,22 +93,22 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         }
         catch (Exception ex) when (ex is SecurityTokenException or ArgumentException or JsonException)
         {
-            return Rejected();
+            return (Rejected(), null);
         }
 
         if (string.IsNullOrEmpty(parsed.Issuer))
         {
-            return Rejected();
+            return (Rejected(), parsed);
         }
 
         if (!_settings.Claims(parsed.Issuer))
         {
-            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialNotClaimed(Name));
+            return (Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialNotClaimed(Name)), parsed);
         }
 
         if (_settings.SigningKeys is null && _cache?.Current is null)
         {
-            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.KeyMaterialUnavailable(Name));
+            return (Result<Principal, AuthenticationError>.Failure(AuthenticationError.KeyMaterialUnavailable(Name)), parsed);
         }
 
         TokenValidationResult validated;
@@ -100,18 +118,18 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Failed();
+            return (Failed(), parsed);
         }
 
         if (!validated.IsValid)
         {
             // A fault in the library itself, as opposed to a defect in the token's own content.
-            return validated.Exception is null or SecurityTokenException ? Rejected() : Failed();
+            return (validated.Exception is null or SecurityTokenException ? Rejected() : Failed(), parsed);
         }
 
         if (!TryReadPayloadString(parsed, _settings.SubjectClaim, out var subject) || subject.Length == 0)
         {
-            return Rejected();
+            return (Rejected(), parsed);
         }
 
         string? displayName = null;
@@ -124,11 +142,11 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
 
         var identity = new ClaimsIdentity(validated.ClaimsIdentity.Claims, authenticationType: Name);
 
-        return Result<Principal, AuthenticationError>.Success(new Principal(
+        return (Result<Principal, AuthenticationError>.Success(new Principal(
             new PrincipalId(parsed.Issuer, subject),
             PrincipalKind.Account,
             displayName,
-            new ClaimsPrincipal(identity)));
+            new ClaimsPrincipal(identity))), parsed);
     }
 
     private Result<Principal, AuthenticationError> Rejected() =>
@@ -158,6 +176,26 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         }
 
         return false;
+    }
+
+    /// <summary>Reads <c>iat</c> as a whole number of seconds since the epoch; absent, or any other
+    /// JSON kind, is no issued-at.</summary>
+    private static DateTimeOffset? ReadIssuedAt(JsonWebToken token)
+    {
+        try
+        {
+            using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
+            return payload.RootElement.ValueKind == JsonValueKind.Object
+                && payload.RootElement.TryGetProperty("iat", out var element)
+                && element.ValueKind == JsonValueKind.Number
+                && element.TryGetInt64(out var seconds)
+                    ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+                    : null;
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentOutOfRangeException)
+        {
+            return null;
+        }
     }
 
     private static bool TryReadBearerToken(IAuthenticationRequest request, out string token)

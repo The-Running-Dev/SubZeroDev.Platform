@@ -9,17 +9,21 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.Core;
 using SubZeroDev.Platform.Hosting;
 using SubZeroDev.Platform.Identity;
 using SubZeroDev.Platform.Persistence;
+using SubZeroDev.Platform.SignIn;
 using SubZeroDev.Platform.Testing;
 
 namespace SubZeroDev.Platform.Tests;
 
-/// <summary>D5-S46: the optional account store. Creating an account, the mapping from a linked
-/// identity to its account's principal, and a host that does not opt in behaving exactly as before.</summary>
+/// <summary>D5-S46 and S47: the optional account store. Creating an account, the mapping from a linked
+/// identity to its account's principal, a host that does not opt in behaving exactly as before, and
+/// linking a second sign-in by completing it.</summary>
 public sealed class AccountTests
 {
     internal static readonly byte[] IssuerAKey = RandomNumberGenerator.GetBytes(32);
@@ -418,25 +422,507 @@ public sealed class AccountTests
         Assert.Equal(created.Value.Id.ToPrincipalId(), next.Id);
     }
 
+    // S47.1 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.1 — a freshly issued second token links its pair to the account, and the next
+    /// request with it is the account principal.</summary>
+    [Fact]
+    public async Task S47_1_A_fresh_second_token_links_and_the_next_request_with_it_is_the_account()
+    {
+        await using var host = await StartHostAsync();
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.Equal(new PrincipalId(IssuerB, "alice-b"), (await AuthenticateAsync(host, TokenB())).Id);
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), TokenB(host.Clock.UtcNow));
+
+        Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+        Assert.Equal(created.Value.Id, linked.Value.Id);
+        Assert.Equal(
+            [new PrincipalId(IssuerA, "alice"), new PrincipalId(IssuerB, "alice-b")],
+            linked.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(host.Clock.UtcNow, Assert.Single(linked.Value.Identities, i => i.Identity.Issuer == IssuerB).LinkedAt);
+        Assert.Equal(2, await LinkRowsAsync(host));
+
+        var next = await AuthenticateAsync(host, TokenB());
+        Assert.Equal(created.Value.Id.ToPrincipalId(), next.Id);
+        Assert.Equal("Alice B", next.DisplayName);
+    }
+
+    /// <summary>S47.1 — an account's identities are listed in the order they were linked, not in key
+    /// order.</summary>
+    [Fact]
+    public async Task S47_1_Identities_are_listed_in_link_order()
+    {
+        await using var host = await StartHostAsync();
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenB()));
+        host.Clock.Advance(TimeSpan.FromMinutes(1));
+
+        var linked = await LinkAsync(
+            host,
+            await AuthenticateAsync(host, TokenB()),
+            Mint(IssuerAKey, IssuerA, "alice", SharedEmail, "Alice A", issuedAt: host.Clock.UtcNow));
+
+        Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+        Assert.Equal(
+            [new PrincipalId(IssuerB, "alice-b"), new PrincipalId(IssuerA, "alice")],
+            linked.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(
+            [created.Value.CreatedAt, host.Clock.UtcNow],
+            linked.Value.Identities.Select(i => i.LinkedAt));
+    }
+
+    /// <summary>S47.1 — the order is the link time's, not the order rows happen to come back in: with
+    /// the first-inserted row's link time moved after the second's, it is listed second.</summary>
+    [Fact]
+    public async Task S47_1_Identities_are_ordered_by_link_time_not_by_row_order()
+    {
+        await using var host = await StartHostAsync();
+        Assert.True((await CreateAsync(host, await AuthenticateAsync(host, TokenA()))).IsSuccess);
+        Assert.True((await LinkAsync(host, await AuthenticateAsync(host, TokenA()), TokenB(host.Clock.UtcNow))).IsSuccess);
+        var later = host.Services.GetRequiredService<IProviderCapability>().FormatInstant(host.Clock.UtcNow.AddHours(1));
+        Assert.True(await ExecuteAsync(host, $"UPDATE identity_account_link SET linked_at = '{later}' WHERE subject = 'alice';"));
+
+        var read = await GetCurrentAsync(host, await AuthenticateAsync(host, TokenA()));
+
+        Assert.Equal(
+            [new PrincipalId(IssuerB, "alice-b"), new PrincipalId(IssuerA, "alice")],
+            read.Value.Identities.Select(i => i.Identity));
+    }
+
+    /// <summary>S47.1 — the second credential is read as given, and a null one is a programming
+    /// error.</summary>
+    [Fact]
+    public async Task S47_1_A_null_second_credential_throws()
+    {
+        await using var host = await StartHostAsync();
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.True(created.IsSuccess);
+
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            async () => await LinkAsync(host, await AuthenticateAsync(host, TokenA()), null!));
+    }
+
+    // S47.2 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.2 — on the test-grade provider (no clock tolerance) a second token issued more
+    /// than five minutes before the call, after it, or with no <c>iat</c> at all is refused, and
+    /// nothing is written.</summary>
+    [Theory]
+    [InlineData(-7 * 60, false)]
+    [InlineData(-5 * 60 - 1, false)]
+    [InlineData(-5 * 60, true)]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(null, false)]
+    public async Task S47_2_A_second_token_must_be_issued_within_five_minutes_of_the_call(int? secondsFromNow, bool links)
+    {
+        await using var host = await StartHostAsync();
+        Assert.True((await CreateAsync(host, await AuthenticateAsync(host, TokenA()))).IsSuccess);
+        var token = secondsFromNow is { } offset ? TokenB(host.Clock.UtcNow.AddSeconds(offset)) : TokenB();
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), token);
+
+        if (links)
+        {
+            Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+            Assert.Equal(2, await LinkRowsAsync(host));
+            return;
+        }
+
+        Assert.Equal(nameof(AccountError.SecondCredentialRejected), linked.Error.Code);
+        Assert.False(linked.Error.IsRetryable);
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Equal(new PrincipalId(IssuerB, "alice-b"), (await AuthenticateAsync(host, TokenB())).Id);
+    }
+
+    /// <summary>S47.2 — on the test-grade provider only <c>iat</c> is an issued-at: a token whose one
+    /// numeric claim is a fresh <c>auth_time</c> is unreadable, so it is refused and writes nothing.</summary>
+    [Fact]
+    public async Task S47_2_A_numeric_claim_other_than_iat_is_not_an_issued_at()
+    {
+        await using var host = await StartHostAsync();
+        Assert.True((await CreateAsync(host, await AuthenticateAsync(host, TokenA()))).IsSuccess);
+        var token = Mint(IssuerBKey, IssuerB, "alice-b", SharedEmail, "Alice B", numericClaim: ("auth_time", host.Clock.UtcNow));
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), token);
+
+        Assert.Equal(nameof(AccountError.SecondCredentialRejected), linked.Error.Code);
+        Assert.Equal(1, await LinkRowsAsync(host));
+    }
+
+    /// <summary>S47.2 — on the generic path the provider's <c>ClockTolerance</c> (one minute) widens
+    /// the window on either side: seven minutes old is refused, five and a half is not, and a token
+    /// with no <c>iat</c> is refused.</summary>
+    [Theory]
+    [InlineData(-7 * 60, false)]
+    [InlineData(-6 * 60 - 1, false)]
+    [InlineData(-5 * 60 - 30, true)]
+    [InlineData(30, true)]
+    [InlineData(61, false)]
+    [InlineData(null, false)]
+    public async Task S47_2_On_the_generic_path_ClockTolerance_widens_the_window(int? secondsFromNow, bool links)
+    {
+        await using var host = await StartGenericHostAsync();
+        var now = host.Clock.UtcNow;
+        Assert.True((await CreateAsync(host, await AuthenticateAsync(host, Bearer(MintGeneric(GenericA, "alice"))))).IsSuccess);
+        var token = MintGeneric(GenericB, "alice-b", secondsFromNow is { } offset ? now.AddSeconds(offset) : null);
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, Bearer(MintGeneric(GenericA, "alice"))), token);
+
+        if (links)
+        {
+            Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+            Assert.Contains(new PrincipalId(GenericB, "alice-b"), linked.Value.Identities.Select(i => i.Identity));
+            Assert.Equal(linked.Value.Id.ToPrincipalId(), (await AuthenticateAsync(host, Bearer(token))).Id);
+            return;
+        }
+
+        Assert.Equal(nameof(AccountError.SecondCredentialRejected), linked.Error.Code);
+        Assert.Equal(1, await LinkRowsAsync(host));
+    }
+
+    // S47.3 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.3 — a principal with no account cannot link: B's unlinked sign-in linking a C
+    /// token answers <c>NotAnAccount</c>, and nothing is written.</summary>
+    [Fact]
+    public async Task S47_3_Linking_under_a_principal_with_no_account_answers_NotAnAccount()
+    {
+        await using var host = await StartHostAsync();
+        var tokenC = Mint(IssuerAKey, IssuerA, "carol", "c@example.test", "Carol", issuedAt: host.Clock.UtcNow);
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenB()), tokenC);
+        var anonymous = await LinkAsync(host, Principal.Anonymous, tokenC);
+
+        Assert.Equal(nameof(AccountError.NotAnAccount), linked.Error.Code);
+        Assert.Equal(nameof(AccountError.NotAnAccount), anonymous.Error.Code);
+        Assert.Equal(0, await AccountRowsAsync(host));
+        Assert.Equal(0, await LinkRowsAsync(host));
+    }
+
+    /// <summary>S47.3 — a provider's principal whose subject happens to equal an account id is not
+    /// that account's principal: linking under it answers <c>NotAnAccount</c> and writes nothing.</summary>
+    [Fact]
+    public async Task S47_3_A_principal_whose_subject_is_an_account_id_is_not_that_account()
+    {
+        await using var host = await StartHostAsync();
+        var x = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.True(x.IsSuccess);
+        var lookalike = await AuthenticateAsync(
+            host, Mint(IssuerBKey, IssuerB, x.Value.Id.Value, SharedEmail, "Mallory"));
+        var tokenC = Mint(IssuerAKey, IssuerA, "carol", "c@example.test", "Carol", issuedAt: host.Clock.UtcNow);
+
+        var linked = await LinkAsync(host, lookalike, tokenC);
+
+        Assert.Equal(nameof(AccountError.NotAnAccount), linked.Error.Code);
+        Assert.Equal(1, await LinkRowsAsync(host));
+    }
+
+    /// <summary>S47.3 — an account principal whose account row is gone by the time of the call has no
+    /// account: linking answers <c>NotAnAccount</c>, not <c>IdentityAlreadyLinked</c>, and writes
+    /// nothing.</summary>
+    [Fact]
+    public async Task S47_3_Linking_to_an_account_that_no_longer_exists_answers_NotAnAccount()
+    {
+        await using var host = await StartHostAsync();
+        Assert.True((await CreateAsync(host, await AuthenticateAsync(host, TokenA()))).IsSuccess);
+        var principal = await AuthenticateAsync(host, TokenA());
+        Assert.True(await ExecuteAsync(host, "DELETE FROM identity_account_link;"));
+        Assert.True(await ExecuteAsync(host, "DELETE FROM identity_account;"));
+
+        var linked = await LinkAsync(host, principal, TokenB(host.Clock.UtcNow));
+
+        Assert.Equal(nameof(AccountError.NotAnAccount), linked.Error.Code);
+        Assert.Equal(0, await LinkRowsAsync(host));
+    }
+
+    // S47.4 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.4 — a pair already linked to another account is not moved: linking it answers
+    /// <c>IdentityAlreadyLinked</c> and both accounts keep their identities.</summary>
+    [Fact]
+    public async Task S47_4_A_pair_linked_to_another_account_answers_IdentityAlreadyLinked()
+    {
+        await using var host = await StartHostAsync();
+        await PairLinkedElsewhereIsRefusedAsync(host);
+    }
+
+    internal static async Task PairLinkedElsewhereIsRefusedAsync(IPlatformTestHost host)
+    {
+        var x = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        var y = await CreateAsync(host, await AuthenticateAsync(host, TokenB()));
+        Assert.True(x.IsSuccess);
+        Assert.True(y.IsSuccess);
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), TokenB(host.Clock.UtcNow));
+
+        Assert.Equal(nameof(AccountError.IdentityAlreadyLinked), linked.Error.Code);
+        Assert.False(linked.Error.IsRetryable);
+        Assert.Equal(2, await LinkRowsAsync(host));
+        Assert.Equal(
+            [new PrincipalId(IssuerA, "alice")],
+            (await GetCurrentAsync(host, await AuthenticateAsync(host, TokenA()))).Value.Identities.Select(i => i.Identity));
+        Assert.Equal(
+            [new PrincipalId(IssuerB, "alice-b")],
+            (await GetCurrentAsync(host, await AuthenticateAsync(host, TokenB()))).Value.Identities.Select(i => i.Identity));
+        Assert.Equal(y.Value.Id.ToPrincipalId(), (await AuthenticateAsync(host, TokenB())).Id);
+    }
+
+    /// <summary>S47.4 — two concurrent links of one pair to the same account both succeed and leave
+    /// one row: the loser of the insert learns the pair is already this account's.</summary>
+    [Fact]
+    public async Task S47_4_Two_concurrent_links_of_one_pair_to_one_account_both_succeed()
+    {
+        await using var host = await StartHostAsync();
+        await ConcurrentLinksToOneAccountSucceedAsync(host);
+    }
+
+    internal static async Task ConcurrentLinksToOneAccountSucceedAsync(IPlatformTestHost host)
+    {
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.True(created.IsSuccess);
+        var account = await AuthenticateAsync(host, TokenA());
+        var second = TokenB(host.Clock.UtcNow);
+
+        using var go = new ManualResetEventSlim();
+        var links = Enumerable.Range(0, 4)
+            .Select(_ => Task.Run(async () =>
+            {
+                go.Wait();
+                return await LinkAsync(host, account, second);
+            }))
+            .ToArray();
+        go.Set();
+        var results = await Task.WhenAll(links);
+
+        Assert.All(results, result => Assert.True(result.IsSuccess, result.IsSuccess ? null : result.Error.Code));
+        Assert.All(results, result => Assert.Equal(2, result.Value.Identities.Count));
+        Assert.Equal(2, await LinkRowsAsync(host));
+    }
+
+    // S47.5 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.5 — linking a pair the account already holds succeeds, adds no row and writes no
+    /// record.</summary>
+    [Fact]
+    public async Task S47_5_Linking_a_pair_the_account_holds_succeeds_and_writes_nothing()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        host.Clock.Advance(TimeSpan.FromMinutes(1));
+
+        var linked = await LinkAsync(
+            host,
+            await AuthenticateAsync(host, TokenA()),
+            Mint(IssuerAKey, IssuerA, "alice", SharedEmail, "Alice A", issuedAt: host.Clock.UtcNow));
+
+        Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+        Assert.Equal(created.Value, linked.Value with { Identities = created.Value.Identities });
+        Assert.Equal(created.Value.Identities, linked.Value.Identities);
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Equal(IdentityAuditActions.AccountCreated, Assert.Single(sink.Received).Action);
+    }
+
+    // S47.6 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.6 — a second token Identity's providers do not accept is refused, whatever the
+    /// cause: an issuer none trusts, a trusted issuer's token signed with the wrong key, a token
+    /// that is not a token, and a token naming the account issuer. A consumer's provider is never
+    /// asked.</summary>
+    [Theory]
+    [InlineData("untrusted issuer")]
+    [InlineData("wrong key")]
+    [InlineData("not a token")]
+    [InlineData("account issuer")]
+    public async Task S47_6_A_token_no_Identity_provider_accepts_answers_SecondCredentialRejected(string kind)
+    {
+        var impostorKey = RandomNumberGenerator.GetBytes(32);
+        await using var host = await StartHostAsync(extra: services =>
+        {
+            services.AddSingleton<IAuthenticationProvider>(new ConsumerAccountProvider());
+            services.AddSingleton<IAuthenticationProvider>(
+                new JwtBearerAuthenticationProvider("impostor", AccountId.PrincipalIssuer, impostorKey));
+        });
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.True(created.IsSuccess);
+        var now = host.Clock.UtcNow;
+
+        var token = kind switch
+        {
+            "untrusted issuer" => Mint(RandomNumberGenerator.GetBytes(32), "https://unknown.test", "mallory", SharedEmail, "M", issuedAt: now),
+            "wrong key" => Mint(RandomNumberGenerator.GetBytes(32), IssuerB, "alice-b", SharedEmail, "Alice B", issuedAt: now),
+            "not a token" => "not-a-token",
+            _ => Mint(impostorKey, AccountId.PrincipalIssuer, new string('b', 32), SharedEmail, "M", issuedAt: now),
+        };
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), token);
+
+        Assert.Equal(nameof(AccountError.SecondCredentialRejected), linked.Error.Code);
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Equal(1, await AccountRowsAsync(host));
+    }
+
+    // S47.7 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.7 — a link writes one Required record naming the account, with the account
+    /// principal as the actor.</summary>
+    [Fact]
+    public async Task S47_7_A_link_writes_one_Required_record_naming_the_account()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), TokenB(host.Clock.UtcNow));
+
+        Assert.True(linked.IsSuccess);
+        Assert.Equal(2, sink.Received.Count);
+        var record = sink.Received[1];
+        Assert.Equal(IdentityAuditActions.IdentityLinked, record.Action);
+        Assert.Equal("platform.identity.identity-linked", record.Action.Value);
+        Assert.Equal(AuditClass.Required, record.Class);
+        Assert.Equal(AuditOutcome.Allowed, record.Outcome);
+        Assert.Equal(new ResourceRef("Account", created.Value.Id.Value), record.Resource);
+        Assert.Equal(created.Value.Id.ToPrincipalId(), record.Actor);
+    }
+
+    /// <summary>S47.7 — a link whose record cannot be written writes no link, and the second sign-in
+    /// stays its own pair.</summary>
+    [Fact]
+    public async Task S47_7_A_link_whose_record_fails_writes_no_link()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        Assert.True((await CreateAsync(host, await AuthenticateAsync(host, TokenA()))).IsSuccess);
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable(sink.Name)));
+
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), TokenB(host.Clock.UtcNow));
+
+        Assert.Equal(nameof(AccountError.StoreUnavailable), linked.Error.Code);
+        Assert.True(linked.Error.IsRetryable);
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Equal(new PrincipalId(IssuerB, "alice-b"), (await AuthenticateAsync(host, TokenB())).Id);
+    }
+
+    // S47.8 -----------------------------------------------------------------------------------
+
+    /// <summary>S47.8 — end to end through the sign-in module: sign in with method A and create the
+    /// account, sign in with method B, link B's token under A's, and a request bearing B's token
+    /// resolves to the account. Before the link it resolved to B's own pair.</summary>
+    [Fact]
+    public async Task S47_8_End_to_end_a_second_sign_in_linked_through_the_sign_in_module_resolves_to_the_account()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"platform-accounts-{Guid.NewGuid():N}.db");
+        using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            connection.Open();
+            using var pragma = connection.CreateCommand();
+            pragma.CommandText = "PRAGMA journal_mode=wal;";
+            pragma.ExecuteNonQuery();
+        }
+
+        var issuers = new TwoIssuers();
+        var settings = new Dictionary<string, string?> { ["Platform:Persistence:ConnectionString"] = $"Data Source={path}" };
+        foreach (var (method, issuer) in new[] { ("a", TwoIssuers.A), ("b", TwoIssuers.B) })
+        {
+            foreach (var (key, value) in ConfiguredBearerTests.Valid(method, issuer: issuer))
+            {
+                settings[key] = value;
+            }
+
+            settings[$"SubZeroDev:SignIn:{method}:Issuer"] = issuer;
+            settings[$"SubZeroDev:SignIn:{method}:ClientId"] = TwoIssuers.ClientId;
+            settings[$"SubZeroDev:SignIn:{method}:RedirectPath"] = $"/signin-callback-{method}";
+        }
+
+        var (app, plain) = await WebHostUnderTest.StartAsync(
+            services =>
+            {
+                services.AddPlatformPersistence();
+                services.AddSingleton<IPlatformModule, IdentityModule>();
+                services.AddSingleton<IPlatformModule, IdentityAccountsModule>();
+                services.AddSingleton(new SignInTransport(() => issuers));
+                services.AddPlatformSignIn();
+            },
+            settings: settings,
+            mapEndpoints: web =>
+            {
+                web.MapPlatformSignIn();
+                web.MapGet("/whoami", (ICurrentPrincipal principal) => Results.Text(principal.Current.Id.ToString()))
+                    .ExemptFromPlatformAuthorization("S47.8 test endpoint returning the principal it observes; not a product surface.");
+            });
+        plain.Dispose();
+
+        try
+        {
+            Assert.True((await app.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None)).IsSuccess);
+            var tokenA = await SignInAsync(app, issuers, "a");
+            var created = await CreateAsync(
+                app.Services, await AuthenticateAsync(app.Services, Bearer(tokenA)));
+            Assert.True(created.IsSuccess);
+
+            var tokenB = await SignInAsync(app, issuers, "b");
+            using var client = new HttpClient { BaseAddress = new Uri(app.Urls.First()) };
+            Assert.Equal(new PrincipalId(TwoIssuers.B, "alice-b").ToString(), await WhoAmIAsync(client, tokenB));
+
+            var linked = await LinkAsync(app.Services, await AuthenticateAsync(app.Services, Bearer(tokenA)), tokenB);
+
+            Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+            Assert.Equal(created.Value.Id.ToPrincipalId().ToString(), await WhoAmIAsync(client, tokenB));
+            Assert.Equal(created.Value.Id.ToPrincipalId().ToString(), await WhoAmIAsync(client, tokenA));
+        }
+        finally
+        {
+            await app.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
+            {
+                File.Delete(path + suffix);
+            }
+        }
+    }
+
     // Helpers ---------------------------------------------------------------------------------
 
     internal static string TokenA() => Mint(IssuerAKey, IssuerA, "alice", SharedEmail, "Alice A");
 
     internal static string TokenB() => Mint(IssuerBKey, IssuerB, "alice-b", SharedEmail, "Alice B");
 
+    /// <summary>B's token carrying an <c>iat</c>: a second credential.</summary>
+    internal static string TokenB(DateTimeOffset issuedAt) =>
+        Mint(IssuerBKey, IssuerB, "alice-b", SharedEmail, "Alice B", issuedAt: issuedAt);
+
     internal static JwtBearerAuthenticationProvider ProviderA() => new("test-issuer-a", IssuerA, IssuerAKey);
 
     internal static JwtBearerAuthenticationProvider ProviderB() => new("test-issuer-b", IssuerB, IssuerBKey);
 
     /// <summary>A test-grade HS256 token carrying <c>sub</c>, <c>email</c>, <c>name</c> and, when given,
-    /// <c>profile</c>.</summary>
+    /// <c>profile</c>, a numeric <c>iat</c> and one other numeric claim.</summary>
     internal static string Mint(
-        byte[] key, string issuer, string subject, string email, string name, string? profile = null)
+        byte[] key,
+        string issuer,
+        string subject,
+        string email,
+        string name,
+        string? profile = null,
+        DateTimeOffset? issuedAt = null,
+        (string Name, DateTimeOffset Value)? numericClaim = null)
     {
-        var claims = new Dictionary<string, string> { ["iss"] = issuer, ["sub"] = subject, ["email"] = email, ["name"] = name };
+        var claims = new Dictionary<string, object> { ["iss"] = issuer, ["sub"] = subject, ["email"] = email, ["name"] = name };
         if (profile is not null)
         {
             claims["profile"] = profile;
+        }
+
+        if (numericClaim is { } numeric)
+        {
+            claims[numeric.Name] = numeric.Value.ToUnixTimeSeconds();
+        }
+
+        if (issuedAt is { } iat)
+        {
+            claims["iat"] = iat.ToUnixTimeSeconds();
         }
 
         var header = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new { alg = "HS256", typ = "JWT" }));
@@ -456,6 +942,92 @@ public sealed class AccountTests
         var request = new HttpRequestMessage(HttpMethod.Get, "/whoami");
         request.Headers.Add("Authorization", $"Bearer {token}");
         return request;
+    }
+
+    private const string GenericA = "https://generic-a.test";
+    private const string GenericB = "https://generic-b.test";
+
+    /// <summary>A host with two generic-path providers, <c>a</c> and <c>b</c>, each with a one-minute
+    /// <c>ClockTolerance</c>, and no test-grade provider.</summary>
+    private static Task<IPlatformTestHost> StartGenericHostAsync() =>
+        StartHostAsync(testGrade: false, configure: builder =>
+        {
+            foreach (var (name, issuer) in new[] { ("a", GenericA), ("b", GenericB) })
+            {
+                foreach (var (key, value) in ConfiguredBearerTests.Valid(name, issuer: issuer))
+                {
+                    builder.WithSetting(key["Platform:".Length..], value!);
+                }
+
+                builder.WithSetting($"Identity:Bearer:{name}:ClockTolerance", "00:01:00");
+            }
+        });
+
+    /// <summary>A generic-path RS256 token, valid by wall-clock time, carrying a numeric <c>iat</c>
+    /// when given.</summary>
+    private static string MintGeneric(string issuer, string subject, DateTimeOffset? issuedAt = null)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["iss"] = issuer,
+            ["aud"] = ConfiguredBearerTests.Audience,
+            ["sub"] = subject,
+            ["exp"] = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds(),
+        };
+        if (issuedAt is { } iat)
+        {
+            payload["iat"] = iat.ToUnixTimeSeconds();
+        }
+
+        return new JsonWebTokenHandler().CreateToken(
+            JsonSerializer.Serialize(payload),
+            new SigningCredentials(new RsaSecurityKey(ConfiguredBearerTests.Rsa) { KeyId = "key-1" }, SecurityAlgorithms.RsaSha256));
+    }
+
+    internal static Task<Result<Account, AccountError>> LinkAsync(IPlatformTestHost host, Principal principal, string token) =>
+        LinkAsync(host.Services, principal, token);
+
+    private static async Task<Result<Account, AccountError>> LinkAsync(
+        IServiceProvider services, Principal principal, string token)
+    {
+        var api = services.GetRequiredService<IAccountApi>();
+        using (services.GetRequiredService<IOperationScopeFactory>().Begin(TenantId.Implicit, principal))
+        {
+            return await api.LinkAsync(token, CancellationToken.None);
+        }
+    }
+
+    /// <summary>Completes one sign-in method end to end and reads the access token it hands the
+    /// browser.</summary>
+    private static async Task<string> SignInAsync(WebApplication app, TwoIssuers issuers, string method)
+    {
+        var cookies = new CookieContainer();
+        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies, UseCookies = true })
+        {
+            BaseAddress = new Uri(app.Urls.First()),
+        };
+
+        var begin = await client.GetAsync($"/signin/{method}/begin");
+        Assert.Equal(HttpStatusCode.Found, begin.StatusCode);
+        var query = System.Web.HttpUtility.ParseQueryString(begin.Headers.Location!.Query);
+        issuers.Nonce = query["nonce"]!;
+
+        var callback = await client.GetAsync($"/signin-callback-{method}?code=abc&state={Uri.EscapeDataString(query["state"]!)}");
+        Assert.Equal(HttpStatusCode.Found, callback.StatusCode);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/signin/{method}/token");
+        request.Headers.Add("X-Platform-SignIn", "1");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return body.RootElement.GetProperty("accessToken").GetString()!;
+    }
+
+    private static async Task<string> WhoAmIAsync(HttpClient client, string token)
+    {
+        using var response = await client.SendAsync(WhoAmI(token));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadAsStringAsync();
     }
 
     /// <summary>A host composing <see cref="IdentityModule"/>, the store unless
@@ -604,6 +1176,73 @@ public sealed class AccountTests
                     : Principal.Anonymous));
     }
 
+    /// <summary>Two sign-in issuers behind one transport, routed by host. Each answers discovery and
+    /// a token exchange whose access token is a generic-path RS256 token issued now, for
+    /// <c>alice</c> at A and <c>alice-b</c> at B. The SignIn tests' own fixture issuer is private and
+    /// answers for a single issuer with an opaque access token, so it cannot stand in here.</summary>
+    private sealed class TwoIssuers : HttpMessageHandler
+    {
+        internal const string A = "https://signin-a.test";
+        internal const string B = "https://signin-b.test";
+        internal const string ClientId = "web-client";
+
+        internal string Nonce { get; set; } = string.Empty;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var issuer = request.RequestUri!.GetLeftPart(UriPartial.Authority);
+            var subject = issuer switch
+            {
+                A => "alice",
+                B => "alice-b",
+                _ => null,
+            };
+            if (subject is null)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/.well-known/openid-configuration")
+            {
+                return Task.FromResult(Json(new Dictionary<string, string>
+                {
+                    ["issuer"] = issuer,
+                    ["authorization_endpoint"] = issuer + "/authorize",
+                    ["token_endpoint"] = issuer + "/token",
+                }));
+            }
+
+            if (request.Method == HttpMethod.Post && request.RequestUri.AbsolutePath == "/token")
+            {
+                var now = DateTimeOffset.UtcNow;
+                var accessToken = new JsonWebTokenHandler().CreateToken(
+                    JsonSerializer.Serialize(new Dictionary<string, object>
+                    {
+                        ["iss"] = issuer,
+                        ["aud"] = ConfiguredBearerTests.Audience,
+                        ["sub"] = subject,
+                        ["iat"] = now.ToUnixTimeSeconds(),
+                        ["exp"] = now.AddMinutes(10).ToUnixTimeSeconds(),
+                    }),
+                    new SigningCredentials(new RsaSecurityKey(ConfiguredBearerTests.Rsa) { KeyId = "key-1" }, SecurityAlgorithms.RsaSha256));
+                var idToken = Part(new { alg = "none" }) + "."
+                    + Part(new { iss = issuer, aud = ClientId, sub = subject, nonce = Nonce, exp = now.AddMinutes(5).ToUnixTimeSeconds() })
+                    + ".sig";
+                return Task.FromResult(Json(new { access_token = accessToken, id_token = idToken, expires_in = 600, token_type = "Bearer" }));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        }
+
+        private static string Part(object value) => Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(value));
+
+        private static HttpResponseMessage Json(object value) =>
+            new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json"),
+            };
+    }
+
     private sealed class FailureToggle
     {
         public volatile bool Failing;
@@ -669,7 +1308,7 @@ public sealed class AccountTests
     }
 }
 
-/// <summary>S46.3 and S46.8 on PostgreSQL: the link's primary key, not a check before the insert,
+/// <summary>S46.3, S46.8, S47.4 on PostgreSQL: the link's primary key, not a check before the insert,
 /// is what keeps one identity on one account under concurrency.</summary>
 public sealed class AccountPostgresTests(PostgresContainerFixture fixture) : IClassFixture<PostgresContainerFixture>
 {
@@ -687,7 +1326,91 @@ public sealed class AccountPostgresTests(PostgresContainerFixture fixture) : ICl
         await AccountTests.SecondLinkIsRefusedAsync(host);
     }
 
-    private async Task<IPlatformTestHost> StartAsync()
+    [Fact]
+    public async Task S47_4_A_pair_linked_to_another_account_answers_IdentityAlreadyLinked()
+    {
+        await using var host = await StartAsync();
+        await AccountTests.PairLinkedElsewhereIsRefusedAsync(host);
+    }
+
+    [Fact]
+    public async Task S47_4_Two_concurrent_links_of_one_pair_to_one_account_both_succeed()
+    {
+        await using var host = await StartAsync();
+        await AccountTests.ConcurrentLinksToOneAccountSucceedAsync(host);
+    }
+
+    /// <summary>S47.4 — the race, forced: a concurrent transaction holds an uncommitted link of the
+    /// same pair while <c>LinkAsync</c> runs, so its check sees no holder and its insert waits on the
+    /// primary key. When the other transaction commits a link to the same account, the call succeeds
+    /// and writes nothing of its own; when it commits a link to another account, the call answers
+    /// <c>IdentityAlreadyLinked</c>.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task S47_4_A_link_that_loses_the_race_reads_which_account_won(bool sameAccount)
+    {
+        var (host, connectionString) = await StartWithConnectionStringAsync();
+        await using var _ = host;
+        var x = await AccountTests.CreateAsync(host, await AccountTests.AuthenticateAsync(host, AccountTests.TokenA()));
+        var y = await AccountTests.CreateAsync(
+            host,
+            await AccountTests.AuthenticateAsync(
+                host, AccountTests.Mint(AccountTests.IssuerAKey, AccountTests.IssuerA, "carol", "c@example.test", "Carol")));
+        Assert.True(x.IsSuccess);
+        Assert.True(y.IsSuccess);
+        var winner = sameAccount ? x.Value.Id.Value : y.Value.Id.Value;
+        var principal = await AccountTests.AuthenticateAsync(host, AccountTests.TokenA());
+        var second = AccountTests.TokenB(host.Clock.UtcNow);
+
+        await using var other = new Npgsql.NpgsqlConnection(connectionString);
+        await other.OpenAsync();
+        await using var transaction = await other.BeginTransactionAsync();
+        await using (var insert = other.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText = "INSERT INTO identity_account_link (issuer, subject, account, linked_at) VALUES (@i, 'alice-b', @a, '2026-01-01T00:00:00.0000000+00:00');";
+            insert.Parameters.AddWithValue("i", AccountTests.IssuerB);
+            insert.Parameters.AddWithValue("a", winner);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var link = AccountTests.LinkAsync(host, principal, second);
+        await WaitForLockWaitAsync(connectionString);
+        await transaction.CommitAsync();
+        var linked = await link;
+
+        if (sameAccount)
+        {
+            Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+            Assert.Equal(2, linked.Value.Identities.Count);
+        }
+        else
+        {
+            Assert.Equal(nameof(AccountError.IdentityAlreadyLinked), linked.Error.Code);
+        }
+
+        Assert.Equal(3, await AccountTests.LinkRowsAsync(host));
+    }
+
+    /// <summary>Waits until some session in the database is blocked on a lock.</summary>
+    private static async Task WaitForLockWaitAsync(string connectionString)
+    {
+        await using var probe = new Npgsql.NpgsqlConnection(connectionString);
+        await probe.OpenAsync();
+        await using var command = probe.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock';";
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while ((long)(await command.ExecuteScalarAsync())! == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "LinkAsync never waited on the other transaction's link.");
+            await Task.Delay(20);
+        }
+    }
+
+    private async Task<IPlatformTestHost> StartAsync() => (await StartWithConnectionStringAsync()).Host;
+
+    private async Task<(IPlatformTestHost Host, string ConnectionString)> StartWithConnectionStringAsync()
     {
         var database = $"test_{Guid.NewGuid():N}";
         await using (var admin = new Npgsql.NpgsqlConnection(fixture.AdminConnectionString))
@@ -703,8 +1426,9 @@ public sealed class AccountPostgresTests(PostgresContainerFixture fixture) : ICl
             Database = database,
         }.ConnectionString;
 
-        return await AccountTests.StartHostAsync(
+        var host = await AccountTests.StartHostAsync(
             provider: PersistenceProvider.PostgreSql,
             configure: builder => builder.WithSetting("Persistence:ConnectionString", connectionString));
+        return (host, connectionString);
     }
 }
