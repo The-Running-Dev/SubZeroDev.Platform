@@ -4,11 +4,15 @@
     <ProjectReference Include="..\SubZeroDev.Platform.Abstractions\SubZeroDev.Platform.Abstractions.csproj" />
     <ProjectReference Include="..\SubZeroDev.Platform.Core\SubZeroDev.Platform.Core.csproj" />
     <ProjectReference Include="..\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+    <ProjectReference Include="..\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <!-- D5-S46: the optional account store, on the same providers Persistence supports. -->
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
     <!-- D5-S20: token validation for the generic bearer path. Per design/90-decisions.md,
          2026-09-25 ("Token validation adopts Microsoft.IdentityModel") — referenced by this project
          and by no other, and no type from either appears in a Platform public surface (I-I12). -->

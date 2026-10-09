@@ -118,9 +118,24 @@ internal sealed class AuthenticationProviderRegistry : IAuthenticationProviderRe
 /// from. If no later provider claims it, the chain answers
 /// <see cref="AuthenticationError.CredentialRejected"/> naming the first not-claiming provider in
 /// registry order — a presented credential nobody accepts is not an absent one. The provider-level
-/// answer never reaches a caller.</para></remarks>
-internal sealed class AuthenticationChain(IAuthenticationProviderRegistry registry)
+/// answer never reaches a caller.</para>
+///
+/// <para>A principal a provider establishes then passes through every registered
+/// <see cref="IPrincipalMapping"/>, in registration order, before the chain answers it. A host that
+/// registers none answers the provider's principal unchanged.</para></remarks>
+internal sealed class AuthenticationChain(
+    IAuthenticationProviderRegistry registry,
+    IEnumerable<IPrincipalMapping> mappings)
 {
+    private readonly IPrincipalMapping[] _mappings = [.. mappings];
+
+    /// <summary>A chain that maps no principal.</summary>
+    /// <param name="registry">The registered providers.</param>
+    public AuthenticationChain(IAuthenticationProviderRegistry registry)
+        : this(registry, [])
+    {
+    }
+
     /// <summary>Authenticates one request against the registered providers.</summary>
     /// <param name="request">The transport's credential surface.</param>
     /// <param name="cancellationToken">Cancels the authentication.</param>
@@ -152,7 +167,7 @@ internal sealed class AuthenticationChain(IAuthenticationProviderRegistry regist
 
             if (authenticated.Value.Kind != PrincipalKind.Anonymous)
             {
-                return authenticated;
+                return await MapAsync(provider, authenticated, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -163,4 +178,41 @@ internal sealed class AuthenticationChain(IAuthenticationProviderRegistry regist
             : Result<Principal, AuthenticationError>.Failure(
                 AuthenticationError.CredentialRejected(firstDecliner));
     }
+
+    private async Task<Result<Principal, AuthenticationError>> MapAsync(
+        IAuthenticationProvider provider,
+        Result<Principal, AuthenticationError> established,
+        CancellationToken cancellationToken)
+    {
+        foreach (var mapping in _mappings)
+        {
+            established = await mapping
+                .MapAsync(provider, established.Value, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!established.IsSuccess)
+            {
+                return established;
+            }
+        }
+
+        return established;
+    }
+}
+
+/// <summary>Keeps, replaces or rejects the principal a provider established. It runs after the
+/// provider has validated its credential and before the request observes the principal. Internal:
+/// the module that owns a mapping registers it, and a consumer's own provider establishes the
+/// principal it means.</summary>
+internal interface IPrincipalMapping
+{
+    /// <summary>Maps one established principal.</summary>
+    /// <param name="provider">The provider that established it.</param>
+    /// <param name="principal">The principal it established. Never <see cref="Principal.Anonymous"/>.</param>
+    /// <param name="cancellationToken">Cancels the mapping.</param>
+    /// <returns>The principal the request observes, or why authentication fails.</returns>
+    Task<Result<Principal, AuthenticationError>> MapAsync(
+        IAuthenticationProvider provider,
+        Principal principal,
+        CancellationToken cancellationToken);
 }

@@ -402,14 +402,18 @@ public sealed class ConfiguredBearerTests
     // S20.11 ------------------------------------------------------------------------------------
 
     /// <summary>S20.11 — no public .NET type carries these settings: Identity's public surface
-    /// gains nothing.</summary>
+    /// gains nothing from them. D5-S46's account types are the only additions.</summary>
     [Fact]
     public void S20_11_Identity_exposes_no_public_settings_type()
     {
         var exported = typeof(IdentityModule).Assembly.GetExportedTypes().Select(t => t.Name).Order().ToArray();
 
         Assert.Equal(
-            ["IdentityModule", "JwtBearerAuthenticationProvider", "UpstreamProxyAuthenticationProvider"],
+            [
+                "Account", "AccountError", "AccountId", "IAccountApi", "IdentityAccountsModule",
+                "IdentityAuditActions", "IdentityModule", "JwtBearerAuthenticationProvider", "LinkedIdentity",
+                "UpstreamProxyAuthenticationProvider",
+            ],
             exported);
     }
 
