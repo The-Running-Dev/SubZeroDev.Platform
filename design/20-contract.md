@@ -599,7 +599,7 @@ pair (*Types*, § 1).
   present together. **No unique constraint spans hosts** — appends must not contend.
 - **Append-only, enforced by the module's surface having no update or delete path.** The retention
   prune (*Public surface* § 6) deletes whole rows by age. It is background work, not a surface.
-- **Migration story: one additive migration, `0002_index_audit_event_occurred_at`**, creating the
+- **Migration story: one additive migration, `0002_create_audit_event_occurred_at_index`**, creating the
   instant-only index on both providers. It is unconditional: the schema does not depend on whether
   retention is set. **Retention itself is not a migration.** It is a setting read at startup, so turning
   it on, changing it or turning it off needs no schema change. Rows already pruned are not recoverable.
@@ -1040,6 +1040,11 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
   `ContractViolation` variant, rather than returning an error: it is a defect in the caller, not a
   runtime condition — the distinction
   [`Results.cs`](../src/SubZeroDev.Platform.Abstractions/Results.cs) already draws.
+- **A write-intent unit of work opened inside the scope throws the same variant, and so does
+  `Open<TEntity>` called inside a write transaction already open** — before the audit record is
+  written, so an escape that never opens is never recorded. A `ReadOnly` unit of work inside the
+  scope has its writes refused by the database, and the refusal is reported as the same variant
+  (S27, `90-decisions.md` 2026-10-08).
 - **One audit record per scope, not per row.** A listing that returns four hundred published rows is
   one escape; four hundred records would make the audit trail unreadable at precisely the point it
   matters.
@@ -2001,7 +2006,7 @@ Three variants are added to the existing set in
 
 | Variant | Raised when |
 |---|---|
-| `WriteInsideSharedReadScope` | a write was attempted while a shared-read scope was open |
+| `WriteInsideSharedReadScope` | a write was attempted while a shared-read scope was open, or a scope was opened inside a write transaction (S27) |
 | `GuardedWriteOutsideWriteTransaction` | `IVersionGuard.ExecuteAsync` was called with no ambient transaction, or inside one opened `ReadOnly` |
 | `GuardedWriteNotSingleRow` | a guarded write matched more than one row — its key predicate is wrong |
 
