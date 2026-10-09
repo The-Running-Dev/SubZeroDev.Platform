@@ -19,7 +19,7 @@ namespace SubZeroDev.Platform.Identity;
 /// <param name="signingKey">The issuer's cached signing key, or <see langword="null"/> when none is
 /// cached yet.</param>
 public sealed class JwtBearerAuthenticationProvider(string name, string issuer, byte[]? signingKey)
-    : IAuthenticationProvider
+    : IAuthenticationProvider, ISecondCredentialProvider
 {
     private const string AuthorizationHeader = "Authorization";
     private const string BearerPrefix = "Bearer ";
@@ -40,13 +40,30 @@ public sealed class JwtBearerAuthenticationProvider(string name, string issuer, 
             return Task.FromResult(Result<Principal, AuthenticationError>.Success(Principal.Anonymous));
         }
 
+        return Task.FromResult(Validate(token, out _));
+    }
+
+    /// <inheritdoc/>
+    Task<SecondCredentialValidation> ISecondCredentialProvider.ValidateSecondCredentialAsync(
+        string token, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+
+        // The test-grade provider has no clock tolerance setting.
+        var validated = Validate(token, out var issuedAt);
+        return Task.FromResult(SecondCredential.Check(validated, issuedAt, now, TimeSpan.Zero));
+    }
+
+    private Result<Principal, AuthenticationError> Validate(string token, out DateTimeOffset? issuedAt)
+    {
+        issuedAt = null;
+
         if (!BearerCredential.TryReadUnverifiedIssuer(token, out var tokenIssuer))
         {
             // Bearer scheme, but not even shaped like a signed credential -- this is the one shape
             // no provider trusting a different issuer could claim either, so it is a rejection
             // rather than a defer.
-            return Task.FromResult(Result<Principal, AuthenticationError>.Failure(
-                AuthenticationError.CredentialRejected(name)));
+            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialRejected(name));
         }
 
         if (!string.Equals(tokenIssuer, issuer, StringComparison.Ordinal))
@@ -56,20 +73,17 @@ public sealed class JwtBearerAuthenticationProvider(string name, string issuer, 
             // register one provider per issuer without the first one reached ending the chain for
             // every other. It is not "no credential": the chain rejects the request if no provider
             // claims the token, rather than letting it proceed as anonymous.
-            return Task.FromResult(Result<Principal, AuthenticationError>.Failure(
-                AuthenticationError.CredentialNotClaimed(name)));
+            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialNotClaimed(name));
         }
 
         if (signingKey is null)
         {
-            return Task.FromResult(Result<Principal, AuthenticationError>.Failure(
-                AuthenticationError.KeyMaterialUnavailable(name)));
+            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.KeyMaterialUnavailable(name));
         }
 
-        if (!BearerCredential.TryValidateSignature(token, issuer, signingKey, out var subject, out var claims))
+        if (!BearerCredential.TryValidateSignature(token, issuer, signingKey, out var subject, out var claims, out issuedAt))
         {
-            return Task.FromResult(Result<Principal, AuthenticationError>.Failure(
-                AuthenticationError.CredentialRejected(name)));
+            return Result<Principal, AuthenticationError>.Failure(AuthenticationError.CredentialRejected(name));
         }
 
         var identity = new ClaimsIdentity(
@@ -82,7 +96,7 @@ public sealed class JwtBearerAuthenticationProvider(string name, string issuer, 
             DisplayName: claims.TryGetValue("name", out var displayName) ? displayName : null,
             Claims: new ClaimsPrincipal(identity));
 
-        return Task.FromResult(Result<Principal, AuthenticationError>.Success(principal));
+        return Result<Principal, AuthenticationError>.Success(principal);
     }
 
     private static bool TryReadBearerToken(IAuthenticationRequest request, out string token)

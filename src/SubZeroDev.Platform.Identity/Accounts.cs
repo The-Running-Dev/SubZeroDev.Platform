@@ -55,6 +55,17 @@ public interface IAccountApi
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>The account, or why it was not read.</returns>
     Task<Result<Account, AccountError>> GetCurrentAccountAsync(CancellationToken cancellationToken);
+
+    /// <summary>Links a second sign-in to the ambient account principal's account: the only way a
+    /// second identity joins an account (I-I18). <paramref name="secondCredential"/> is validated by
+    /// Identity's own providers, with no mapping, and must carry an <c>iat</c> no more than five
+    /// minutes before the call. The link and a <see cref="AuditClass.Required"/> audit row share one
+    /// transaction. A pair the account already holds succeeds and writes nothing.</summary>
+    /// <param name="secondCredential">A compact bearer token for the second sign-in, read by the host
+    /// from a request header, never from a body.</param>
+    /// <param name="cancellationToken">Cancels the link.</param>
+    /// <returns>The account with its identities, or why the pair was not linked.</returns>
+    Task<Result<Account, AccountError>> LinkAsync(string secondCredential, CancellationToken cancellationToken);
 }
 
 /// <summary>Identity's own audited action names. Each is <see cref="AuditClass.Required"/>.</summary>

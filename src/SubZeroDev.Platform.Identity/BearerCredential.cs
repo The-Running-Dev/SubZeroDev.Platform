@@ -24,7 +24,7 @@ internal static class BearerCredential
     {
         issuer = null;
 
-        if (!TryReadPayload(token, out var payload, out _, out _))
+        if (!TryReadPayload(token, out var payload, out _, out _, out _))
         {
             return false;
         }
@@ -49,18 +49,21 @@ internal static class BearerCredential
     /// <param name="signingKey">The cached signing key. Never fetched here.</param>
     /// <param name="subject">The subject claim, when validation succeeds.</param>
     /// <param name="claims">Every string claim the payload carried, when validation succeeds.</param>
+    /// <param name="issuedAt">The numeric <c>iat</c> claim, when the payload carried one.</param>
     /// <returns>Whether the token validated.</returns>
     internal static bool TryValidateSignature(
         string token,
         string expectedIssuer,
         byte[] signingKey,
         [NotNullWhen(true)] out string? subject,
-        out IReadOnlyDictionary<string, string> claims)
+        out IReadOnlyDictionary<string, string> claims,
+        out DateTimeOffset? issuedAt)
     {
         subject = null;
         claims = EmptyClaims;
+        issuedAt = null;
 
-        if (!TryReadPayload(token, out var payload, out var header, out var payloadSegment))
+        if (!TryReadPayload(token, out var payload, out var header, out var payloadSegment, out var payloadIssuedAt))
         {
             return false;
         }
@@ -93,21 +96,27 @@ internal static class BearerCredential
 
         subject = subjectClaim;
         claims = payload;
+        issuedAt = payloadIssuedAt;
         return true;
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyClaims =
         new Dictionary<string, string>();
 
+    /// <summary>Reads the payload's claims. Every claim is a string except <c>iat</c>, which is a
+    /// whole number of seconds since the epoch, as a token's issuer writes it; any other non-string
+    /// claim makes the token unreadable.</summary>
     private static bool TryReadPayload(
         string token,
         out IReadOnlyDictionary<string, string> payload,
         out string header,
-        out string payloadSegment)
+        out string payloadSegment,
+        out DateTimeOffset? issuedAt)
     {
         payload = EmptyClaims;
         header = "";
         payloadSegment = "";
+        issuedAt = null;
 
         var segments = token.Split('.');
         if (segments.Length != 3)
@@ -115,21 +124,35 @@ internal static class BearerCredential
             return false;
         }
 
-        Dictionary<string, string>? parsed;
+        var parsed = new Dictionary<string, string>();
+        DateTimeOffset? parsedIssuedAt = null;
         try
         {
-            parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(Base64UrlDecode(segments[1]));
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+            using var document = JsonDocument.Parse(Base64UrlDecode(segments[1]));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
 
-        if (parsed is null)
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Value.ValueKind == JsonValueKind.String)
+                {
+                    parsed[property.Name] = property.Value.GetString()!;
+                }
+                else if (property.NameEquals("iat")
+                    && property.Value.ValueKind == JsonValueKind.Number
+                    && property.Value.TryGetInt64(out var seconds))
+                {
+                    parsedIssuedAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                }
+                else
+                {
+                    return false;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentOutOfRangeException)
         {
             return false;
         }
@@ -137,6 +160,7 @@ internal static class BearerCredential
         header = segments[0];
         payloadSegment = segments[1];
         payload = parsed;
+        issuedAt = parsedIssuedAt;
         return true;
     }
 
