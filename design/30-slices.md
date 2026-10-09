@@ -793,8 +793,8 @@ Out of scope: endpoints for products to call (products map their own); optimisti
 Organizations granting the two names.
 
 ## S45 — Both hosts see a change on their next read, and the sample proves it on both databases
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an operator running a web host and a worker against one database, I change a setting on
 one and the other uses it on its next read without a restart. The Local sample shows a self-hosted
@@ -817,7 +817,7 @@ Out of scope: a cache or invalidation; a settings page in the shell; cleanup of 
 accounts.
 
 ## S46 — A person who creates an account is the same principal on every later request, and two sign-ins that report the same email stay two different people
-**Status:** queued
+**Status:** in progress
 Status: todo
 
 Delivers: As an Automator user or a GEaaS player, I can turn the identity I signed in with into an account. Every

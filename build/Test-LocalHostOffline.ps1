@@ -4,8 +4,10 @@
 
 .DESCRIPTION
     The caller owns the network guard and runs this script under the guarded operating-system user.
-    This script starts the built, dependency-free local sample in Production from a clean writable
-    directory and proves readiness, liveness and the local root endpoint through loopback. CI then
+    This script migrates the built, dependency-free local sample's SQLite database in a clean
+    writable directory, starts the sample in Production against it, and proves readiness, liveness,
+    the local root endpoint through loopback, and the runtime setting the sample changes and reads
+    back (S45.3). CI then
     inspects the guard's rejected-packet counter and fails if the sample attempted any non-loopback
     connection.
 
@@ -13,7 +15,7 @@
     Repository root. Defaults to the current directory.
 
 .PARAMETER DataDirectory
-    Clean writable directory for the isolated user's process logs.
+    Clean writable directory for the isolated user's process logs and the sample's database.
 #>
 [CmdletBinding()]
 param(
@@ -38,6 +40,9 @@ $sampleDirectory = Join-Path $Root 'samples' 'SubZeroDev.Platform.Sample.Local' 
 $sampleExecutable = Join-Path $sampleDirectory 'SubZeroDev.Platform.Sample.Local'
 $stdoutPath = Join-Path $DataDirectory 'sample-local.out.log'
 $stderrPath = Join-Path $DataDirectory 'sample-local.err.log'
+$migrateStdoutPath = Join-Path $DataDirectory 'sample-local-migrate.out.log'
+$migrateStderrPath = Join-Path $DataDirectory 'sample-local-migrate.err.log'
+$settingLine = 'Runtime setting Sample.Local.MaxConcurrentRuns: 8 (Global)'
 $baseUri = 'http://127.0.0.1:5299'
 
 if (-not (Test-Path -LiteralPath $sampleExecutable)) {
@@ -48,14 +53,28 @@ if (-not (Test-Path -LiteralPath $sampleExecutable)) {
 $env:ASPNETCORE_ENVIRONMENT = 'Production'
 $env:ASPNETCORE_URLS = $baseUri
 
+# The sample's working directory is its build output, which the isolated user may not write; the
+# database lives beside the logs instead.
+$env:Platform__Persistence__ConnectionString = "Data Source=$(Join-Path $DataDirectory 'sample-local.db')"
+
 function Show-Logs {
-    foreach ($path in @($stdoutPath, $stderrPath)) {
+    foreach ($path in @($migrateStdoutPath, $migrateStderrPath, $stdoutPath, $stderrPath)) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $content = Get-Content -LiteralPath $path -Raw
         if ([string]::IsNullOrWhiteSpace($content)) { continue }
         Write-Host "----- $(Split-Path -Leaf $path)"
         Write-Host $content
     }
+}
+
+# Production applies no migration at startup, and a pending one fails readiness: migrate mode runs
+# first, as a deployment's would.
+$migrateProcess = Start-Process -FilePath $sampleExecutable -ArgumentList 'migrate' `
+    -WorkingDirectory $sampleDirectory -NoNewWindow -PassThru -Wait `
+    -RedirectStandardOutput $migrateStdoutPath -RedirectStandardError $migrateStderrPath
+if ($migrateProcess.ExitCode -ne 0) {
+    Show-Logs
+    throw "The local sample's migrate mode exited $($migrateProcess.ExitCode)."
 }
 
 $hostProcess = $null
@@ -97,6 +116,22 @@ try {
         throw "Local root returned HTTP $($rootResponse.StatusCode)."
     }
 
+    # Printed once the host has started, which can be just after readiness first answers.
+    $settingPrinted = $false
+    foreach ($attempt in 1..10) {
+        if ((Get-Content -LiteralPath $stdoutPath -Raw) -match [regex]::Escape($settingLine)) {
+            $settingPrinted = $true
+            break
+        }
+
+        Start-Sleep -Seconds 1
+    }
+
+    if (-not $settingPrinted) {
+        Show-Logs
+        throw "The local sample did not print '$settingLine'."
+    }
+
     if ([LocalHostSignal]::kill($hostProcess.Id, [LocalHostSignal]::SIGTERM) -ne 0) {
         throw "SIGTERM failed for local sample process $($hostProcess.Id)."
     }
@@ -111,7 +146,7 @@ try {
         throw "The local sample exited $($hostProcess.ExitCode) after SIGTERM."
     }
 
-    Write-Host 'The local sample served readiness, liveness and root, and shut down cleanly.'
+    Write-Host 'The local sample served readiness, liveness and root, printed the runtime setting it changed, and shut down cleanly.'
 }
 finally {
     if ($null -ne $hostProcess -and -not $hostProcess.HasExited) {

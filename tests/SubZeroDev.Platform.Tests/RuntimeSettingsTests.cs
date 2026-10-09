@@ -874,7 +874,7 @@ public sealed class RuntimeSettingsTests
                 extra?.Invoke(services);
             });
 
-    private static async Task<Result<SettingError>> SetAsync<T>(
+    internal static async Task<Result<SettingError>> SetAsync<T>(
         IPlatformTestHost host, SettingDefinition<T> setting, SettingLayer layer, T value, TenantId tenant, Principal principal)
         where T : notnull
     {
@@ -923,7 +923,7 @@ public sealed class RuntimeSettingsTests
     }
 
     /// <summary>Grants one permission, and only on the one setting it names.</summary>
-    private sealed class SettingGrantProvider(PermissionName permission, SettingName setting) : IPermissionProvider
+    internal sealed class SettingGrantProvider(PermissionName permission, SettingName setting) : IPermissionProvider
     {
         public PermissionProviderName Name { get; } = new("Tests.RuntimeSettings");
 
