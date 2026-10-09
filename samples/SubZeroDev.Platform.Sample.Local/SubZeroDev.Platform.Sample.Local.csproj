@@ -2,16 +2,22 @@
 
   <!-- D5-S1.6: this host has no package or project reference to Identity, Organizations, Billing
        or Licensing, by name — the local composition profile is identity-free, billing-free and
-       licence-free. It references Hosting alone: Persistence is optional, and this sample proves
-       the smallest deployment shape rather than the round-trip one Sample.Web/Worker exercise.
+       licence-free. It references Hosting, plus RuntimeSettings and the Persistence it stores
+       through (S45): an optional module a self-hosted installation composes, not a commercial one.
+       It proves the smallest deployment shape rather than the round-trip one Sample.Web/Worker
+       exercise.
        See SubZeroDev.Platform.Sample.Web.csproj for what UsePlatformPackages/PlatformPackageVersion
        switch. -->
   <ItemGroup Condition="'$(UsePlatformPackages)' != 'true'">
     <ProjectReference Include="..\..\src\SubZeroDev.Platform.Hosting\SubZeroDev.Platform.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.Persistence\SubZeroDev.Platform.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\SubZeroDev.Platform.RuntimeSettings\SubZeroDev.Platform.RuntimeSettings.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UsePlatformPackages)' == 'true'">
     <PackageReference Include="SubZeroDev.Platform.Hosting" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.Persistence" Version="$(PlatformPackageVersion)" />
+    <PackageReference Include="SubZeroDev.Platform.RuntimeSettings" Version="$(PlatformPackageVersion)" />
   </ItemGroup>
 
   <PropertyGroup>

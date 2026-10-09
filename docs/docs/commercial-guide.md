@@ -15,8 +15,8 @@ defines the bounded capability set.
 ## Packages and the sample
 
 All .NET packages share one explicitly unstable 0.x version. The six framework packages are
-Abstractions, Core, Hosting, Observability, Persistence and Testing. The six module packages are
-Identity, Organizations, Billing, Licensing, Audit and Mcp. Each package name starts with
+Abstractions, Core, Hosting, Observability, Persistence and Testing. The eight module packages are
+Identity, SignIn, Organizations, Billing, Licensing, Audit, Mcp and RuntimeSettings. Each package name starts with
 `SubZeroDev.Platform.`. Authorization and entitlement are framework seams, not additional packages.
 The web shell is a separate frontend and is not a backend package dependency.
 
@@ -258,6 +258,11 @@ Writing global or tenant values needs `Platform.RuntimeSettings.WriteGlobal` or 
 Local, the system principal holds both. In Operated, your own permission provider grants them, and
 nothing in Platform does. Every change is audited without its value. The module maps no endpoints, so
 map your own. Never put a secret in a setting: a name that looks like one fails startup.
+
+The module owns a migration, so register it before the `migrate` branch, as the Local sample does.
+There is no cache: every read goes to the database, so a change made on the web host is what the
+worker reads next, with no restart. Concurrent writes to one setting leave one value, the last to
+commit, and one audit record each.
 
 ## Security defaults and failures
 

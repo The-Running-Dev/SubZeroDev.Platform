@@ -188,7 +188,9 @@ Built-in defaults
 
 Runtime settings are not a configuration source and are not in this chain. They are read from the
 RuntimeSettings module at the point of use, layered user over tenant over global over a declared
-default, and no runtime setting overrides a startup option (design: *Data model* § 13).
+default, and no runtime setting overrides a startup option (design: *Data model* § 13). Every read
+goes to the store, with no cache, so a value changed on one host of an installation is what each of
+its hosts reads next.
 
 Requirements:
 
