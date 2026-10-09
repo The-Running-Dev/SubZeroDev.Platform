@@ -66,6 +66,17 @@ public interface IAccountApi
     /// <param name="cancellationToken">Cancels the link.</param>
     /// <returns>The account with its identities, or why the pair was not linked.</returns>
     Task<Result<Account, AccountError>> LinkAsync(string secondCredential, CancellationToken cancellationToken);
+
+    /// <summary>Removes one pair from the ambient account principal's account, unless it is the
+    /// account's last (I-I19). It may be the pair the caller is presenting: that credential is its raw
+    /// pair from the next request on. The removal and a <see cref="AuditClass.Required"/> audit row
+    /// share one transaction, which holds the account row's lock, so two concurrent unlinks of an
+    /// account's last two pairs cannot both succeed.</summary>
+    /// <param name="identity">The pair to remove.</param>
+    /// <param name="cancellationToken">Cancels the unlink.</param>
+    /// <returns>The account with its remaining identities, or why the pair was not removed. A pair
+    /// another account holds answers exactly as a pair no account holds.</returns>
+    Task<Result<Account, AccountError>> UnlinkAsync(PrincipalId identity, CancellationToken cancellationToken);
 }
 
 /// <summary>Identity's own audited action names. Each is <see cref="AuditClass.Required"/>.</summary>

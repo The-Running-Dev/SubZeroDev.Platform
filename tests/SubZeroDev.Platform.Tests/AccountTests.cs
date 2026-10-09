@@ -885,6 +885,274 @@ public sealed class AccountTests
 
     // Helpers ---------------------------------------------------------------------------------
 
+    // S48.1 -----------------------------------------------------------------------------------
+
+    /// <summary>S48.1 — an account holding A, linked first, and B, linked second, answers both, in that
+    /// order, under either token.</summary>
+    [Fact]
+    public async Task S48_1_Either_sign_in_reads_both_identities_in_link_order()
+    {
+        await using var host = await StartHostAsync();
+        await LinkedPairAsync(host);
+
+        var underA = await GetCurrentAsync(host, await AuthenticateAsync(host, TokenA()));
+        var underB = await GetCurrentAsync(host, await AuthenticateAsync(host, TokenB()));
+
+        PrincipalId[] expected = [new(IssuerA, "alice"), new(IssuerB, "alice-b")];
+        Assert.Equal(expected, underA.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(expected, underB.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(underA.Value.Id, underB.Value.Id);
+    }
+
+    // S48.2 -----------------------------------------------------------------------------------
+
+    /// <summary>S48.2 — unlinking B under A's token leaves the account with A only, B's token is its raw
+    /// pair on the next request, and one Required record names the account.</summary>
+    [Fact]
+    public async Task S48_2_Unlinking_a_second_sign_in_leaves_the_first_and_frees_the_second()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        var x = await LinkedPairAsync(host);
+
+        var unlinked = await UnlinkAsync(host, await AuthenticateAsync(host, TokenA()), new PrincipalId(IssuerB, "alice-b"));
+
+        Assert.True(unlinked.IsSuccess, unlinked.IsSuccess ? null : unlinked.Error.Code);
+        Assert.Equal(x, unlinked.Value.Id);
+        Assert.Equal([new PrincipalId(IssuerA, "alice")], unlinked.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Equal(new PrincipalId(IssuerB, "alice-b"), (await AuthenticateAsync(host, TokenB())).Id);
+        Assert.Equal(x.ToPrincipalId(), (await AuthenticateAsync(host, TokenA())).Id);
+
+        Assert.Equal(3, sink.Received.Count);
+        var record = sink.Received[2];
+        Assert.Equal(IdentityAuditActions.IdentityUnlinked, record.Action);
+        Assert.Equal("platform.identity.identity-unlinked", record.Action.Value);
+        Assert.Equal(AuditClass.Required, record.Class);
+        Assert.Equal(AuditOutcome.Allowed, record.Outcome);
+        Assert.Equal(new ResourceRef("Account", x.Value), record.Resource);
+        Assert.Equal(x.ToPrincipalId(), record.Actor);
+    }
+
+    /// <summary>S48.2 — an unlink whose record cannot be written removes nothing.</summary>
+    [Fact]
+    public async Task S48_2_An_unlink_whose_record_fails_removes_nothing()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        var x = await LinkedPairAsync(host);
+        sink.FailNextWith(_ => Result<AuditError>.Failure(AuditError.SinkUnavailable(sink.Name)));
+
+        var unlinked = await UnlinkAsync(host, await AuthenticateAsync(host, TokenA()), new PrincipalId(IssuerB, "alice-b"));
+
+        Assert.Equal(nameof(AccountError.StoreUnavailable), unlinked.Error.Code);
+        Assert.True(unlinked.Error.IsRetryable);
+        Assert.Equal(2, await LinkRowsAsync(host));
+        Assert.Equal(x.ToPrincipalId(), (await AuthenticateAsync(host, TokenB())).Id);
+    }
+
+    // S48.3 -----------------------------------------------------------------------------------
+
+    /// <summary>S48.3 — the account's only identity cannot be unlinked, and the refusal writes
+    /// nothing.</summary>
+    [Fact]
+    public async Task S48_3_The_last_identity_cannot_be_unlinked()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        var x = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+
+        var unlinked = await UnlinkAsync(host, await AuthenticateAsync(host, TokenA()), new PrincipalId(IssuerA, "alice"));
+
+        Assert.Equal(nameof(AccountError.LastIdentity), unlinked.Error.Code);
+        Assert.False(unlinked.Error.IsRetryable);
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Single(sink.Received);
+        Assert.Equal(x.Value.Id.ToPrincipalId(), (await AuthenticateAsync(host, TokenA())).Id);
+    }
+
+    // S48.4 -----------------------------------------------------------------------------------
+
+    /// <summary>S48.4 — a pair another account holds and a pair no account holds answer alike, so an
+    /// unlink is no way to learn which pairs other accounts hold; neither writes anything.</summary>
+    [Fact]
+    public async Task S48_4_A_pair_held_elsewhere_and_a_pair_held_nowhere_answer_alike()
+    {
+        var sink = new RecordingAuditSink("accounts", isDurable: true);
+        await using var host = await StartHostAsync(sink: sink);
+        await LinkedPairAsync(host);
+        var carol = Mint(IssuerAKey, IssuerA, "carol", "c@example.test", "Carol");
+        var y = await CreateAsync(host, await AuthenticateAsync(host, carol));
+        Assert.True(y.IsSuccess);
+        var account = await AuthenticateAsync(host, TokenA());
+
+        var elsewhere = await UnlinkAsync(host, account, new PrincipalId(IssuerA, "carol"));
+        var nowhere = await UnlinkAsync(host, account, new PrincipalId(IssuerB, "nobody"));
+
+        Assert.Equal(nameof(AccountError.IdentityNotLinked), elsewhere.Error.Code);
+        Assert.Equal(elsewhere.Error.Code, nowhere.Error.Code);
+        Assert.Equal(elsewhere.Error.Detail, nowhere.Error.Detail);
+        Assert.Equal(elsewhere.Error.IsRetryable, nowhere.Error.IsRetryable);
+        Assert.False(elsewhere.Error.IsRetryable);
+        Assert.Equal(3, await LinkRowsAsync(host));
+        Assert.Equal(y.Value.Id.ToPrincipalId(), (await AuthenticateAsync(host, carol)).Id);
+        Assert.Equal(3, sink.Received.Count);
+    }
+
+    /// <summary>S48.4 — pairs match ordinally on both halves: a pair differing only in case is not
+    /// the account's.</summary>
+    [Fact]
+    public async Task S48_4_A_pair_differing_only_in_case_is_not_linked()
+    {
+        await using var host = await StartHostAsync();
+        await LinkedPairAsync(host);
+
+        var unlinked = await UnlinkAsync(host, await AuthenticateAsync(host, TokenA()), new PrincipalId(IssuerB, "Alice-B"));
+
+        Assert.Equal(nameof(AccountError.IdentityNotLinked), unlinked.Error.Code);
+        Assert.Equal(2, await LinkRowsAsync(host));
+    }
+
+    /// <summary>S48.4 — unlinking under a principal with no account answers <c>NotAnAccount</c>.</summary>
+    [Fact]
+    public async Task S48_4_Unlinking_under_a_principal_with_no_account_answers_NotAnAccount()
+    {
+        await using var host = await StartHostAsync();
+        await LinkedPairAsync(host);
+        var carol = await AuthenticateAsync(host, Mint(IssuerAKey, IssuerA, "carol", "c@example.test", "Carol"));
+
+        var unlinked = await UnlinkAsync(host, carol, new PrincipalId(IssuerB, "alice-b"));
+        var anonymous = await UnlinkAsync(host, Principal.Anonymous, new PrincipalId(IssuerB, "alice-b"));
+
+        Assert.Equal(nameof(AccountError.NotAnAccount), unlinked.Error.Code);
+        Assert.Equal(nameof(AccountError.NotAnAccount), anonymous.Error.Code);
+        Assert.Equal(2, await LinkRowsAsync(host));
+    }
+
+    /// <summary>S48.4 — a provider principal whose subject equals an account id is not that account:
+    /// unlinking answers <c>NotAnAccount</c> and removes nothing.</summary>
+    [Fact]
+    public async Task S48_4_A_principal_whose_subject_is_an_account_id_is_not_that_account()
+    {
+        await using var host = await StartHostAsync();
+        var x = await LinkedPairAsync(host);
+        var lookalike = await AuthenticateAsync(
+            host, Mint(IssuerBKey, IssuerB, x.Value, "m@example.test", "Mallory"));
+
+        var unlinked = await UnlinkAsync(host, lookalike, new PrincipalId(IssuerB, "alice-b"));
+
+        Assert.Equal(nameof(AccountError.NotAnAccount), unlinked.Error.Code);
+        Assert.Equal(2, await LinkRowsAsync(host));
+    }
+
+    /// <summary>S48.4 — an account principal whose account row is gone answers <c>NotAnAccount</c>.</summary>
+    [Fact]
+    public async Task S48_4_Unlinking_from_an_account_that_no_longer_exists_answers_NotAnAccount()
+    {
+        await using var host = await StartHostAsync();
+        await LinkedPairAsync(host);
+        var principal = await AuthenticateAsync(host, TokenA());
+        Assert.True(await ExecuteAsync(host, "DELETE FROM identity_account_link;"));
+        Assert.True(await ExecuteAsync(host, "DELETE FROM identity_account;"));
+
+        var unlinked = await UnlinkAsync(host, principal, new PrincipalId(IssuerB, "alice-b"));
+
+        Assert.Equal(nameof(AccountError.NotAnAccount), unlinked.Error.Code);
+    }
+
+    /// <summary>S48.2 — the pair is both halves: unlinking (B, <c>alice</c>) leaves (A, <c>alice</c>),
+    /// which shares its subject.</summary>
+    [Fact]
+    public async Task S48_2_Unlinking_one_pair_leaves_another_with_the_same_subject()
+    {
+        await using var host = await StartHostAsync();
+        var x = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.True(x.IsSuccess);
+        var account = await AuthenticateAsync(host, TokenA());
+        var sameSubject = Mint(IssuerBKey, IssuerB, "alice", SharedEmail, "Alice B", issuedAt: host.Clock.UtcNow);
+        Assert.True((await LinkAsync(host, account, sameSubject)).IsSuccess);
+
+        var unlinked = await UnlinkAsync(host, account, new PrincipalId(IssuerB, "alice"));
+
+        Assert.True(unlinked.IsSuccess, unlinked.IsSuccess ? null : unlinked.Error.Code);
+        Assert.Equal([new PrincipalId(IssuerA, "alice")], unlinked.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(1, await LinkRowsAsync(host));
+    }
+
+    // S48.5 -----------------------------------------------------------------------------------
+
+    /// <summary>S48.5 — the pair the caller is presenting may be unlinked while another remains, and
+    /// that token is its raw pair from the next request on.</summary>
+    [Fact]
+    public async Task S48_5_Unlinking_the_presented_sign_in_frees_it_from_the_next_request()
+    {
+        await using var host = await StartHostAsync();
+        var x = await LinkedPairAsync(host);
+        var presenting = await AuthenticateAsync(host, TokenB());
+        Assert.Equal(x.ToPrincipalId(), presenting.Id);
+
+        var unlinked = await UnlinkAsync(host, presenting, new PrincipalId(IssuerB, "alice-b"));
+
+        Assert.True(unlinked.IsSuccess, unlinked.IsSuccess ? null : unlinked.Error.Code);
+        Assert.Equal([new PrincipalId(IssuerA, "alice")], unlinked.Value.Identities.Select(i => i.Identity));
+        Assert.Equal(new PrincipalId(IssuerB, "alice-b"), (await AuthenticateAsync(host, TokenB())).Id);
+        Assert.Equal(x.ToPrincipalId(), (await AuthenticateAsync(host, TokenA())).Id);
+    }
+
+    // S48.6 -----------------------------------------------------------------------------------
+
+    /// <summary>S48.6 — two concurrent unlinks of an account's two identities: exactly one succeeds,
+    /// the other answers <c>LastIdentity</c>, and the account keeps one identity.</summary>
+    [Fact]
+    public async Task S48_6_Two_concurrent_unlinks_leave_one_identity()
+    {
+        await using var host = await StartHostAsync();
+        await ConcurrentUnlinksLeaveOneIdentityAsync(host);
+    }
+
+    internal static async Task ConcurrentUnlinksLeaveOneIdentityAsync(IPlatformTestHost host)
+    {
+        var x = await LinkedPairAsync(host);
+        var account = await AuthenticateAsync(host, TokenA());
+
+        using var go = new ManualResetEventSlim();
+        var unlinks = new[] { new PrincipalId(IssuerA, "alice"), new PrincipalId(IssuerB, "alice-b") }
+            .Select(identity => Task.Run(async () =>
+            {
+                go.Wait();
+                return await UnlinkAsync(host, account, identity);
+            }))
+            .ToArray();
+        go.Set();
+        var results = await Task.WhenAll(unlinks);
+
+        Assert.Single(results, result => result.IsSuccess);
+        Assert.Single(results, result => !result.IsSuccess && result.Error.Code == nameof(AccountError.LastIdentity));
+        Assert.Equal(1, await LinkRowsAsync(host));
+        Assert.Single((await GetCurrentAsync(host, account)).Value.Identities);
+        Assert.Equal(x, (await GetCurrentAsync(host, account)).Value.Id);
+    }
+
+    /// <summary>X created from A, then B linked: the account both tokens reach.</summary>
+    internal static async Task<AccountId> LinkedPairAsync(IPlatformTestHost host)
+    {
+        var created = await CreateAsync(host, await AuthenticateAsync(host, TokenA()));
+        Assert.True(created.IsSuccess);
+        var linked = await LinkAsync(host, await AuthenticateAsync(host, TokenA()), TokenB(host.Clock.UtcNow));
+        Assert.True(linked.IsSuccess, linked.IsSuccess ? null : linked.Error.Code);
+        return created.Value.Id;
+    }
+
+    internal static async Task<Result<Account, AccountError>> UnlinkAsync(
+        IPlatformTestHost host, Principal principal, PrincipalId identity)
+    {
+        var api = host.Services.GetRequiredService<IAccountApi>();
+        using (host.Services.GetRequiredService<IOperationScopeFactory>().Begin(TenantId.Implicit, principal))
+        {
+            return await api.UnlinkAsync(identity, CancellationToken.None);
+        }
+    }
+
     internal static string TokenA() => Mint(IssuerAKey, IssuerA, "alice", SharedEmail, "Alice A");
 
     internal static string TokenB() => Mint(IssuerBKey, IssuerB, "alice-b", SharedEmail, "Alice B");
@@ -1393,15 +1661,54 @@ public sealed class AccountPostgresTests(PostgresContainerFixture fixture) : ICl
         Assert.Equal(3, await AccountTests.LinkRowsAsync(host));
     }
 
-    /// <summary>Waits until some session in the database is blocked on a lock.</summary>
-    private static async Task WaitForLockWaitAsync(string connectionString)
+    [Fact]
+    public async Task S48_6_Two_concurrent_unlinks_leave_one_identity()
+    {
+        await using var host = await StartAsync();
+        await AccountTests.ConcurrentUnlinksLeaveOneIdentityAsync(host);
+    }
+
+    /// <summary>S48.6 — the race, forced: another transaction has locked the account row and removed
+    /// A, uncommitted, as a concurrent unlink would. An unlink of B waits on the account row, then sees
+    /// the account as it stands after that commit and answers <c>LastIdentity</c>.</summary>
+    [Fact]
+    public async Task S48_6_An_unlink_waits_for_a_concurrent_unlink_and_then_sees_the_last_identity()
+    {
+        var (host, connectionString) = await StartWithConnectionStringAsync();
+        await using var _ = host;
+        var x = await AccountTests.LinkedPairAsync(host);
+        var principal = await AccountTests.AuthenticateAsync(host, AccountTests.TokenA());
+
+        await using var other = new Npgsql.NpgsqlConnection(connectionString);
+        await other.OpenAsync();
+        await using var transaction = await other.BeginTransactionAsync();
+        await using (var unlink = other.CreateCommand())
+        {
+            unlink.Transaction = transaction;
+            unlink.CommandText = "SELECT id FROM identity_account WHERE id = @a FOR UPDATE; DELETE FROM identity_account_link WHERE account = @a AND subject = 'alice';";
+            unlink.Parameters.AddWithValue("a", x.Value);
+            await unlink.ExecuteNonQueryAsync();
+        }
+
+        var unlinked = AccountTests.UnlinkAsync(host, principal, new PrincipalId(AccountTests.IssuerB, "alice-b"));
+        await WaitForLockWaitAsync(connectionString, unlinked);
+        await transaction.CommitAsync();
+        var result = await unlinked;
+
+        Assert.Equal(nameof(AccountError.LastIdentity), result.IsSuccess ? "success" : result.Error.Code);
+        Assert.Equal(1, await AccountTests.LinkRowsAsync(host));
+    }
+
+    /// <summary>Waits until some session in the database is blocked on a lock, or until
+    /// <paramref name="call"/> finishes without having waited.</summary>
+    private static async Task WaitForLockWaitAsync(string connectionString, Task? call = null)
     {
         await using var probe = new Npgsql.NpgsqlConnection(connectionString);
         await probe.OpenAsync();
         await using var command = probe.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock';";
         var deadline = DateTime.UtcNow.AddSeconds(30);
-        while ((long)(await command.ExecuteScalarAsync())! == 0)
+        while ((long)(await command.ExecuteScalarAsync())! == 0 && call is not { IsCompleted: true })
         {
             Assert.True(DateTime.UtcNow < deadline, "LinkAsync never waited on the other transaction's link.");
             await Task.Delay(20);
