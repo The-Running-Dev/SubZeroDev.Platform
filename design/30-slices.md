@@ -883,8 +883,8 @@ Acceptance:
 Out of scope: merging two accounts, linking from the sign-in callback or any hook, and a configurable freshness window.
 
 ## S48 — A person can remove a sign-in method from their account, but never the last one
-**Status:** in progress
-Status: todo
+**Status:** shipped
+Status: done
 
 Delivers: As an account holder, I can see which sign-ins reach my account and remove one I no longer use. I cannot
 lock myself out by removing the last.

@@ -189,6 +189,64 @@ internal sealed class AccountApi(
             : Result<Account, AccountError>.Failure(AccountError.NotAnAccount());
     }
 
+    public async Task<Result<Account, AccountError>> UnlinkAsync(
+        PrincipalId identity, CancellationToken cancellationToken)
+    {
+        var principal = currentPrincipal.Current;
+        if (!IsAccountPrincipal(principal))
+        {
+            return Result<Account, AccountError>.Failure(AccountError.NotAnAccount());
+        }
+
+        var account = new AccountId(principal.Id.Subject);
+        AccountError? refused = null;
+
+        var result = await unitOfWork.ExecuteAsync(
+            TransactionIntent.Write,
+            async token =>
+            {
+                if (!await store.LockAccountAsync(account, token).ConfigureAwait(false)
+                    || await store.FindAccountAsync(account, token).ConfigureAwait(false) is not { } held)
+                {
+                    refused = AccountError.NotAnAccount();
+                    return null;
+                }
+
+                if (!held.Identities.Any(linked => linked.Identity == identity))
+                {
+                    refused = AccountError.IdentityNotLinked();
+                    return null;
+                }
+
+                if (held.Identities.Count == 1)
+                {
+                    refused = AccountError.LastIdentity();
+                    return null;
+                }
+
+                await store.DeleteLinkAsync(identity, account, token).ConfigureAwait(false);
+                await auditWriter.WriteAsync(
+                    IdentityAuditActions.IdentityUnlinked,
+                    new ResourceRef("Account", account.Value),
+                    AuditOutcome.Allowed,
+                    AuditClass.Required,
+                    token).ConfigureAwait(false);
+
+                return await store.FindAccountAsync(account, token).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+        {
+            logger.LogWarning("Account unlink failed: {Code}.", result.Error.Code);
+            return Result<Account, AccountError>.Failure(AccountError.StoreUnavailable());
+        }
+
+        return result.Value is { } remaining
+            ? Result<Account, AccountError>.Success(remaining)
+            : Result<Account, AccountError>.Failure(refused ?? AccountError.NotAnAccount());
+    }
+
     /// <summary>Whether a principal is an account principal: kind <see cref="PrincipalKind.Account"/>
     /// and issuer <see cref="AccountId.PrincipalIssuer"/>. Both are needed.</summary>
     internal static bool IsAccountPrincipal(Principal principal) =>

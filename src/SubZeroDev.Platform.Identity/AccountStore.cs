@@ -48,6 +48,39 @@ internal sealed class AccountStore(IAmbientTransactionAccessor ambient, IProvide
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Locks one account row until the ambient transaction ends, so every write that must
+    /// see the account's identities as they stand serializes on it (I-I19). On PostgreSQL a row lock;
+    /// on SQLite a write transaction already holds the database's write lock from its first statement.
+    /// Whether the account exists.</summary>
+    internal async Task<bool> LockAccountAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        var current = Current();
+        await using var command = current.Connection.CreateCommand();
+        command.Transaction = current.Transaction;
+        command.CommandText = capability.Provider == PersistenceProvider.PostgreSql
+            ? "SELECT id FROM identity_account WHERE id = @id FOR UPDATE;"
+            : "SELECT id FROM identity_account WHERE id = @id;";
+        AddParameter(command, "@id", account.Value);
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+    }
+
+    /// <summary>Deletes one link row of one account.</summary>
+    internal async Task DeleteLinkAsync(
+        PrincipalId identity, AccountId account, CancellationToken cancellationToken)
+    {
+        var current = Current();
+        await using var command = current.Connection.CreateCommand();
+        command.Transaction = current.Transaction;
+        command.CommandText = """
+            DELETE FROM identity_account_link
+            WHERE issuer = @issuer AND subject = @subject AND account = @account;
+            """;
+        AddParameter(command, "@issuer", identity.Issuer);
+        AddParameter(command, "@subject", identity.Subject);
+        AddParameter(command, "@account", account.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Whether an exception raised while writing is a unique-constraint violation. The
     /// account's own key is 128 random bits, so on these inserts it is the link's primary key.</summary>
     internal static bool IsUniqueViolation(Exception exception) => exception switch
