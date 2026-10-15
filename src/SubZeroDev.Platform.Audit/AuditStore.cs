@@ -122,15 +122,63 @@ internal sealed class AuditStore(IProviderCapability capability)
 
 /// <summary>Creates <c>audit_event</c> — the one table <c>design/20-contract.md</c>'s Persisted
 /// schemas §1 names — and, since D5-S32, the <c>occurred_at</c> index the retention prune deletes
-/// through. The index is created whether or not retention is configured, so a database's schema never
-/// depends on a setting. No migration ever deletes rows: only <see cref="AuditPruneWork"/> does, and
-/// only when <c>Platform:Audit:RetentionDays</c> is set.</summary>
+/// through, and since #306 the trigger that refuses an update. The index is created whether or not
+/// retention is configured, so a database's schema never depends on a setting. No migration ever
+/// deletes rows: only <see cref="AuditPruneWork"/> does, and only when
+/// <c>Platform:Audit:RetentionDays</c> is set.</summary>
 internal sealed class AuditMigrationSource : IModuleMigrationSource
 {
     public ModuleName Module { get; } = new("Audit");
 
     public IReadOnlyList<IModuleMigration> Migrations { get; } =
-        [new CreateAuditTableMigration(), new CreateAuditOccurredAtIndexMigration()];
+        [new CreateAuditTableMigration(), new CreateAuditOccurredAtIndexMigration(), new RejectAuditUpdateMigration()];
+}
+
+/// <summary>#306: I-U7 at the schema level. A trigger refuses every <c>UPDATE</c> of an
+/// <c>audit_event</c> row, so a record cannot be changed after it is written even by a statement issued
+/// directly against the database rather than through the module. <c>DELETE</c> is deliberately left
+/// alone: the retention prune deletes whole rows by age.</summary>
+internal sealed class RejectAuditUpdateMigration : IModuleMigration
+{
+    public string Name => "0003_reject_audit_event_update";
+
+    public async Task ApplyAsync(
+        DbConnection connection, DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        string[] statements = connection is Microsoft.Data.Sqlite.SqliteConnection
+            ?
+            [
+                """
+                CREATE TRIGGER trg_audit_event_reject_update BEFORE UPDATE ON audit_event
+                BEGIN
+                    SELECT RAISE(ABORT, 'audit_event is append-only: an audit record is never updated (I-U7)');
+                END;
+                """,
+            ]
+            :
+            [
+                """
+                CREATE FUNCTION audit_event_reject_update() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'audit_event is append-only: an audit record is never updated (I-U7)'
+                        USING ERRCODE = 'restrict_violation';
+                END;
+                $$;
+                """,
+                """
+                CREATE TRIGGER trg_audit_event_reject_update BEFORE UPDATE ON audit_event
+                FOR EACH ROW EXECUTE FUNCTION audit_event_reject_update();
+                """,
+            ];
+
+        foreach (var statement in statements)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = statement;
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
 }
 
 /// <summary>D5-S32: the index the retention prune's oldest-first, bounded delete reads. Without it,

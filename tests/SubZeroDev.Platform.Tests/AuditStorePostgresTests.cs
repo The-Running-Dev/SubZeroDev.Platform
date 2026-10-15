@@ -80,6 +80,39 @@ public sealed class AuditStorePostgresTests(PostgresContainerFixture fixture) : 
         Assert.Equal("test.append.new", Assert.Single(remaining.Value).Action.Value);
     }
 
+    /// <summary>S28.3 / #306 on the second provider: an <c>UPDATE</c> issued directly against
+    /// PostgreSQL is refused by 0003's trigger and the row is unchanged, while the retention prune's
+    /// <c>DELETE</c> (S32_9 above) still runs.</summary>
+    [Fact]
+    public async Task S28_3_A_direct_update_against_the_audit_table_is_rejected_and_the_row_is_unchanged()
+    {
+        var connectionString = await AcquireConnectionStringAsync();
+
+        await using var host = await StartHostAsync(connectionString);
+        var migrated = await host.Services.GetRequiredService<IMigrationRunner>().ApplyAsync(CancellationToken.None);
+        Assert.True(migrated.IsSuccess);
+
+        var tenant = new TenantId(Guid.NewGuid());
+        var actor = new Principal(new PrincipalId("postgres-update", "subject"), PrincipalKind.Account, "A", null);
+        await WriteOneAsync(host, tenant, actor, "update");
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using (var update = connection.CreateCommand())
+        {
+            update.CommandText = "UPDATE audit_event SET outcome = 'Denied';";
+            var refused = await Assert.ThrowsAsync<PostgresException>(() => update.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.RestrictViolation, refused.SqlState);
+        }
+
+        await using (var read = connection.CreateCommand())
+        {
+            read.CommandText = "SELECT outcome FROM audit_event;";
+            Assert.Equal(nameof(AuditOutcome.Allowed), (string)(await read.ExecuteScalarAsync())!);
+        }
+    }
+
     /// <summary><see cref="AuditClass.Required"/>, not <see cref="AuditClass.Recorded"/>: a
     /// contention run pushes a shared Postgres connection pool hard enough that an individual write
     /// can meet a transient, retryable failure, and <c>Required</c> is what makes that failure

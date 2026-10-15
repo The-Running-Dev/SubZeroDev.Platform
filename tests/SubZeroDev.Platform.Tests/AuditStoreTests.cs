@@ -240,6 +240,47 @@ public sealed class AuditStoreTests
             readMembers);
     }
 
+    // S28.3 / #306 ----------------------------------------------------------------------------
+
+    [Fact]
+    public async Task S28_3_A_direct_update_against_the_audit_table_is_rejected_and_the_row_is_unchanged()
+    {
+        var database = TemporaryPath();
+        try
+        {
+            await using var host = await StartHostAsync(database);
+            var scopeFactory = host.Services.GetRequiredService<IOperationScopeFactory>();
+            var writer = host.Services.GetRequiredService<IAuditWriter>();
+
+            using (scopeFactory.Begin(TenantOne, ActorA))
+            {
+                Assert.True((await writer.WriteAsync(
+                    new AuditAction("test.update"), null, AuditOutcome.Denied, AuditClass.Required,
+                    CancellationToken.None)).IsSuccess);
+            }
+
+            // Issued directly against the database, outside the module: the schema alone refuses it.
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+                $"Data Source={database};Pooling=False"))
+            {
+                await connection.OpenAsync();
+                await using var update = connection.CreateCommand();
+                update.CommandText = "UPDATE audit_event SET outcome = 'Allowed';";
+
+                var refused = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(
+                    () => update.ExecuteNonQueryAsync());
+                Assert.Contains("append-only", refused.Message, StringComparison.Ordinal);
+            }
+
+            var row = await ReadRawColumnsAsync(host, "outcome");
+            Assert.Equal(nameof(AuditOutcome.Denied), row["outcome"]);
+        }
+        finally
+        {
+            DeleteSqliteFiles(database);
+        }
+    }
+
     // S13.5 -----------------------------------------------------------------------------------
 
     [Fact]
