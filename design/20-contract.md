@@ -597,11 +597,16 @@ pair (*Types*, § 1).
   because every index is a write cost on the path every security-sensitive action takes.
 - **Constraints:** every column non-null except the two resource columns, which are null together or
   present together. **No unique constraint spans hosts** — appends must not contend.
-- **Append-only, enforced by the module's surface having no update or delete path.** The retention
-  prune (*Public surface* § 6) deletes whole rows by age. It is background work, not a surface.
-- **Migration story: one additive migration, `0002_create_audit_event_occurred_at_index`**, creating the
+- **Append-only, enforced twice.** The module's surface has no update or delete path, and a
+  `BEFORE UPDATE` trigger, `trg_audit_event_reject_update`, refuses every update of a row on both
+  providers, so a statement issued directly against the database cannot change a record either
+  (I-U7). On PostgreSQL the trigger calls the function `audit_event_reject_update()` and fails with
+  SQLSTATE `23001` (`restrict_violation`). **Deletes are not refused**: the retention prune
+  (*Public surface* § 6) deletes whole rows by age. It is background work, not a surface.
+- **Migration story: two additive migrations.** `0002_create_audit_event_occurred_at_index` creates the
   instant-only index on both providers. It is unconditional: the schema does not depend on whether
-  retention is set. **Retention itself is not a migration.** It is a setting read at startup, so turning
+  retention is set. `0003_reject_audit_event_update` creates the update trigger (#306). It changes no
+  row, and no existing row needs it to have been present when the row was written. **Retention itself is not a migration.** It is a setting read at startup, so turning
   it on, changing it or turning it off needs no schema change. Rows already pruned are not recoverable.
 
 ### 2. Organizations — `SubZeroDev.Platform.Organizations`
@@ -2285,7 +2290,7 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-U4** | A denial, a read, or a failure that wrote nothing writes its row in its own transaction after the outcome is known (Owner: each writer.) | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs |
 | **I-U5** | `Action`, `Resource.Type` and `Resource.Id` pass through the redaction boundary before storage and before logging (Owner: Core.) Enforced by code — the writer, not the sink. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
 | **I-U6** | No secret value or payload reaches a stored record or a log line, through **any** audited input surface (Owner: all.) | — | code | tests/SubZeroDev.Platform.Tests/AuditInputSurfaceTests.cs, tests/SubZeroDev.Platform.Tests/AuditTests.cs, tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/McpInvocationTests.cs, tests/SubZeroDev.Platform.Tests/TelemetryRedactionTests.cs, tests/SubZeroDev.Platform.Tests/OperatedScenarioTests.cs |
-| **I-U7** | Audit records are never updated, and no surface exposes an update or a delete; the only delete is the retention prune, which removes whole rows by age (Owner: Audit store.) | — | instruction | tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs |
+| **I-U7** | Audit records are never updated, and no surface exposes an update or a delete; the only delete is the retention prune, which removes whole rows by age (Owner: Audit store.) | — | code | tests/SubZeroDev.Platform.Tests/AuditStoreTests.cs, tests/SubZeroDev.Platform.Tests/AuditStorePostgresTests.cs, tests/SubZeroDev.Platform.Tests/AuditRetentionTests.cs |
 | **I-U8** | Audit rows are not totally ordered across hosts and nothing relies on the opposite (Owner: all.) | — | instruction | — |
 | **I-U9** | An error condition is audited once per detection, not once per check (Owner: Licensing, Core.) | — | code | tests/SubZeroDev.Platform.Tests/AuditDetectionTests.cs, tests/SubZeroDev.Platform.Tests/LicensingTests.cs |
 | **I-U10** | Audit-write failure degrades readiness in both classes (Owner: Core.) Enforced by code — `platform.audit.sink`. | — | code | tests/SubZeroDev.Platform.Tests/AuditTests.cs |
