@@ -38,8 +38,8 @@ Neither the design nor the contract settles these, and none is a slice's to sett
 | Contract Unresolved 2 — how the frozen entitlement-contributor set reaches the settings-fingerprint input | **S8**, which is where I-C4 lands. The two shapes change different public declarations — a second parameter on `Compute`, or a projected `[Fingerprinted]` property. Determined either way: the names are inside the hashed input and `SettingsFingerprint`'s format version changes |
 | Design Open question 2 — how the administration shell is delivered | **S16**. The recommendation is a separate front-end build with no .NET package; the alternative is a .NET-hosted UI. Neither introduces a .NET declaration, so nothing before S16 changes shape either way |
 | Design Open question 4 — whether the D5 packages version in lockstep with the framework or independently | **S18**. The recommendation is lockstep for the whole of D5 |
-| Design Open question 3 — whether ADR-006's vocabulary is corrected now that five infrastructure packages land in its module tier | **Not blocking any slice.** It is an ADR amendment and therefore the repository owner's; the placement in *Module boundaries* does not wait on the answer. Recorded here so `/slice` does not read the silence as settled |
-| Issue #94's disposition once S23 lands. By the 2026-09-26 decision, D5 does not deliver #94's criteria 1, 3 and 4 (the sign-in hook, the sign-out proof and the hook documentation), and criterion 2 holds in validation terms only | **Not blocking any slice.** It is the repository owner's call whether #94 closes with those criteria recorded as accepted risk, or is split so they stay tracked. Recorded here so `/track` does not close #94 as fully delivered |
+| Design Open question 3 — whether ADR-006's vocabulary is corrected now that five infrastructure packages land in its module tier | **Not blocking any slice.** It is an ADR amendment and therefore the repository owner's; the placement in *Module boundaries* does not wait on the answer. Recorded here so `/next` does not read the silence as settled |
+| Issue #94's disposition once S23 lands. By the 2026-09-26 decision, D5 does not deliver #94's criteria 1, 3 and 4 (the sign-in hook, the sign-out proof and the hook documentation), and criterion 2 holds in validation terms only | **Not blocking any slice.** It is the repository owner's call whether #94 closes with those criteria recorded as accepted risk, or is split so they stay tracked. Recorded here so #94 is not closed as fully delivered |
 
 ## How this document is kept
 
@@ -49,8 +49,8 @@ retired id, including one that never got an issue. Removing a criterion leaves a
 criterion takes the next unused number.
 
 When a slice ships and its issue closes, its body is retired to a one-line entry under `## Landed`. The
-index carries no criteria, because the issue is then the record of what was accepted — `/track` does
-not sync a landed slice and must not re-derive its criteria from the index.
+index carries no criteria, because the issue is then the record of what was accepted — nothing
+re-derives a landed slice's criteria from the index.
 
 Every slice carries a `**Status:**` line reading `shipped`, `in progress` or `queued`, immediately
 under its heading. [`build/Test-SliceStatusMarkers.ps1`](../build/Test-SliceStatusMarkers.ps1) fails the

@@ -1339,8 +1339,8 @@ failure nobody would look for, because it presents as a working system denying a
 paid for.
 
 **Reversibility: expensive.** This is the public shape product code is written against. Changing it
-later rewrites every call site in every consumer, which is why it is settled here rather than at
-`/spec`.
+later rewrites every call site in every consumer, which is why it is settled here rather than in
+`20-contract.md`.
 
 ### 3. The shared-resource escape — an audited read scope, a per-row flag, or a cross-tenant permission
 
