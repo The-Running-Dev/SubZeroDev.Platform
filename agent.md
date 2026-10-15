@@ -63,9 +63,9 @@ and preferences belong in `AGENTS.md`.
   log.** A decision that overrides a table is not finished until the table says so.
 - **A new invariant starts as `Enforcement: instruction` and becomes `code` only in the commit
   that adds its test.** "Enforced by code" in a statement records where the mechanism is meant
-  to live, not that a test proves it. `Test-DesignState.ps1` requires Evidence on every `code`
-  row, and a row is `code` only when a test evidences the *whole* statement. The #245 bootstrap
-  copied each statement's "Enforced by" prose into `Enforcement: code` with no Evidence. #259
+  to live, not that a test proves it. The design-state checker (`Test-DesignState.ps1`, since
+  retired) required Evidence on every `code` row, and a row is `code` only when a test evidences
+  the *whole* statement. The #245 bootstrap copied each statement's "Enforced by" prose into `Enforcement: code` with no Evidence. #259
   then declared I-A11 as `code` before anything implemented it. **Cost: the checker failed on
   seventy-three rows. Reconciling them (#261) found nineteen that were only partly tested, one
   with no test at all, and one that was not implemented. Five statements cited a sample scenario

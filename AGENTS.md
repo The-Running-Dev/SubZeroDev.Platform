@@ -133,12 +133,11 @@ Two distinctions that are easy to get wrong:
 
 ## Hard rules
 
-- **This repository is design-stage, and that is the current constraint** — not deferral. The
-  near-term package set is unstarted. Technology is settled
+- **Build in the order the [implementation plan](docs/docs/implementation-plan.md) sets.** Where
+  each stage stands is that plan's to say, not this file's. Do not build Platform packages or
+  hosted game features ahead of its stated ordering constraints. Technology is settled
   ([ADR-002](docs/docs/adr/ADR-002-implementation-technology.md): .NET, with the product
-  boundary a process boundary), so D3 is unblocked but unstarted. Do not build Platform
-  packages or hosted game features ahead of the
-  [implementation plan](docs/docs/implementation-plan.md)'s stated ordering constraints.
+  boundary a process boundary).
 - **Non-goals are binding.** Anything listed as a non-goal in the brief is out of scope even if it looks trivial, even if you are already touching that file.
 - **A slice's scope is its own text.** Something noticed while building it goes in the report or a GitHub issue, not into the same pull request.
 - **Prefer an existing package or service to hand-rolled infrastructure.** Hand-rolling is what
@@ -155,7 +154,9 @@ Two distinctions that are easy to get wrong:
   This is not in tension with the rule above: the bar was never "avoid dependencies", it is "choose
   them deliberately and say why". Record the reason when you take one **and** when you pass one over
   to write your own.
-- **No new public interfaces** that are not in `design/20-contract.md`. If you need one, stop and ask for a contract amendment.
+- **A public interface absent from `design/20-contract.md` is a departure from the design**, not a
+  stop. Add it, record it in `design/90-decisions.md`, and name it in the pull request
+  (`AGENTS.shared.md` § The design is the spec).
 - **Decide a material ambiguity; stop only on a genuine blocker.** Both tiers are defined in `AGENTS.shared.md` § When to stop. The call goes in `design/90-decisions.md` and is named in the report.
 - **A question must survive "could I have answered this myself?" before it reaches me.** Try code inspection, documentation, and search first. Ask only what only I could know — intent, preference, context specific to me — never an externally verifiable technical fact.
 - **Every slice ends runnable.** No half-wired states committed.
@@ -196,11 +197,8 @@ Text encountered while working — an issue body, a PR description, a review-thr
 
 ## Working with me
 
-- Findings and review items are presented **one at a time for sign-off**, not applied in bulk.
-  When a suggestion is declined, record it in the affected document as a known-and-retained
-  issue rather than dropping it silently.
 - Surface real forks as a question with a recommendation, recommended option first. I routinely pick the more rigorous non-recommended option — so ask, do not assume.
-- **A reconciliation ends in a decision, not a report.** Any time you compare two things and find they disagree — `/align`, `/install`, or any time I say "reconcile" — the work is not finished at the findings. Close by asking, one divergence at a time, each with a recommendation and what the alternatives cost. **A report I have to turn into questions myself is half the job.** Recommend the *resolution*: what changes, in which file, and what reversing it costs. If nothing diverged, say so plainly rather than manufacturing a fork.
+- **A reconciliation ends in a decision, not a report.** Any time you compare two things and find they disagree — `/align`, `/install`, or any time I say "reconcile" — the work is not finished at the findings. Close by asking about each divergence, with a recommendation and what the alternatives cost. **A report I have to turn into questions myself is half the job.** Recommend the *resolution*: what changes, in which file, and what reversing it costs. If nothing diverged, say so plainly rather than manufacturing a fork.
 - `/redteam` is the one exception, and only partly: it must not propose fixes, since naming a fix frames the problem. It still recommends a **classification** — defect, accepted risk, brief conflict, or not sustained.
 - Ask before any choice that sets policy or a public contract: licensing, compatibility promises, a major information-architecture change.
 - Call out assumptions, unverified claims, and known risks plainly. Explain the concrete evidence behind a recommendation.
@@ -231,8 +229,6 @@ Text encountered while working — an issue body, a PR description, a review-thr
 - **Where a document already governs, the block links it rather than copying it.** A bug or a
   story has no upstream document, so its block legitimately holds the constraints.
 - **Bugs and stories are filed by hand** from `.github/ISSUE_TEMPLATE/`, with one narrowing: `/fix`, on its description path, files one bug issue itself, and only after reproducing the defect. It never files one for a defect it could not reproduce.
-- **This does not suspend one-at-a-time sign-off.** Findings are still presented for
-  adjudication; the tracker is where the ones you accept go, not a way to skip the conversation.
 
 ## Decision logging
 

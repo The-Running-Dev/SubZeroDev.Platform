@@ -1,11 +1,10 @@
 # Slices — commercial (D5)
 
 **Document status:** Slices. Derived from [`10-design.md`](10-design.md) and
-[`20-contract.md`](20-contract.md). The contract is authoritative for every signature named below;
-**no slice may introduce one that is absent from it.** Where a slice needs a declaration the contract
-does not carry — a module's own API surface is the likeliest place, since `20-contract.md`
-§ *Public surface* 10 names what each module exposes without declaring it — the slice **stops and asks
-for a contract amendment rather than inventing one.**
+[`20-contract.md`](20-contract.md). The contract is authoritative for every signature named below.
+Where a slice needs a declaration the contract does not carry — a module's own API surface is the likeliest place, since `20-contract.md`
+§ *Public surface* 10 names what each module exposes without declaring it — the slice adds it, records
+the departure in [`90-decisions.md`](90-decisions.md) and names it in its pull request.
 
 Each slice is vertical: it runs, and its acceptance criteria are observable from outside the code that
 satisfies them. One repository is in scope, this one, plus the two sample hosts and the shell that S1
