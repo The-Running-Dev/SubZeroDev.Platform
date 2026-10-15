@@ -7,9 +7,9 @@
     Starts the web and worker samples against a single SQLite store in a non-Development
     environment, and proves S1's health and readiness, S3's peer registration, and S5.3's
     kill-and-restart delivery. Shared by two callers: .github/workflows/build.yml (against project
-    references) and .github/workflows/release.yml's verify-restore job (against the packages just
-    published to GitHub Packages, per S9.2/S9.3) -- one script rather than two near-identical
-    copies drifting apart.
+    references) and build/Test-PublishedPackages.ps1, release.yml's post-publish check (against
+    the packages just published to GitHub Packages, per S9.2/S9.3) -- one script rather than two
+    near-identical copies drifting apart.
 
     Assumes both samples are already built at samples/*/bin/Release/net10.0 (via `dotnet build -c
     Release`, with whichever MSBuild properties the caller needs) and that
