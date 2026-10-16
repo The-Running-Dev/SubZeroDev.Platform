@@ -910,7 +910,7 @@ this plan, because none of them is work a slice here can do.
 |---|---|
 | An upstream release | [#224](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/224) `ModelContextProtocol` fix (csharp-sdk PR 1377 still unmerged; 2.2.0 is the latest release) |
 | The repository owner, outside the code | [#81](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/81) an owner checklist, not a slice · [#25](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/25) stays open until the exposed credential is rotated; the rule itself is recorded |
-| Another repository | [#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97) Adventures adopting the packages as a hosted consumer; that work is planned in its own repository |
+| Another repository | [#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97) Adventures served as a workload behind Platform's edge ([Adventures#9](https://github.com/The-Running-Dev/SubZeroDev.Adventures/issues/9) stage 3); that work is planned in its own repository |
 | No issue yet | WebSocket through the edge. S41 covers streamed HTTP responses only and adds no upgrade path |
 
 ---

@@ -136,14 +136,26 @@ consumer needs bespoke wiring has not proven anything.
 > assertion against the sample built on the restored packages, which proves pack, publish and
 > authenticated restore. But the sample is Platform's own, and a framework proving itself against
 > its own sample has not met the sentence above in the spirit it was written.
-> The owner ruled on 2026-10-08 ([#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97))
-> that `SubZeroDev.Adventures`, a real product with real players, becomes a hosted consumer. It
-> will restore the packages from the feed, and that restore is the outside proof. The adoption work
-> lives in the Adventures repository. Each gap it finds is filed here as D4 extraction evidence.
+> The outside proof has two halves ([#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97),
+> owner's ruling of 2026-10-17, superseding 2026-10-08's).
+>
+> - **The package half.** `SubZeroDev.GameEngine`'s static host restores
+>   `SubZeroDev.Platform.Hosting` from the feed and calls `AddPlatformWebHost()` and nothing else.
+>   Its own tests assert the liveness and readiness probes. Correlation ids and telemetry come from
+>   the same call, but no test there asserts them. Migrations are not exercised, because the host
+>   has no persistence.
+> - **The hosting half.** `SubZeroDev.Adventures`, a real product with real players, is served
+>   through Platform's edge as a workload. Its API is Node, so it consumes no package. It needs
+>   separate liveness and readiness, migrations on start under an advisory lock, and an honest
+>   answer from the edge when the backend is stopped
+>   ([Adventures#9](https://github.com/The-Running-Dev/SubZeroDev.Adventures/issues/9) stage 3).
+>   That work lives in the Adventures repository, and each gap it finds is filed here as D4
+>   extraction evidence.
+>
 > Adventures' identity replacement stays evidence only
 > ([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)), and no Identity
-> package is created from it. Until Adventures runs on the restored packages, **D3 is built but not
-> proven.**
+> package is created from it. Until Adventures is served through the edge, and an outside consumer
+> exercises migrations, **D3 is built but not proven.**
 
 ### D4 — Extraction, on evidence *(ecosystem Phase 5)*
 
@@ -257,7 +269,7 @@ points. "Deferred" means G2's binding non-goals sent it to G3 or G4, not that it
 
 **For G3.** Read `principal.ts`, `store/ownedStore.ts` and `persistence.ts` `sessionOwner` in the POC. Decide on purpose
 whether an unknown id and someone else's id look the same: the POC's decorator lets unknown ids through to a 404 and
-refuses owned ones with a 403. Adventures is a hosted consumer of Platform packages
+refuses owned ones with a 403. Adventures is a workload behind Platform's edge, not a package consumer
 ([#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97)); its identity is evidence only
 ([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)).
 
