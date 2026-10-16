@@ -151,6 +151,13 @@ consumer needs bespoke wiring has not proven anything.
 >   ([Adventures#9](https://github.com/The-Running-Dev/SubZeroDev.Adventures/issues/9) stage 3).
 >   That work lives in the Adventures repository, and each gap it finds is filed here as D4
 >   extraction evidence.
+>   Stage 3 shipped in
+>   [Adventures#84](https://github.com/The-Running-Dev/SubZeroDev.Adventures/pull/84).
+>   - **Proven:** its anonymous routes are served through the edge byte for byte, and the edge
+>     answers an honest `503` when the API or its database is down.
+>   - **Waiting on G3:** anything needing a signed-in player, because which of a caller's headers
+>     cross the edge is G3's question
+>     ([#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340)).
 >
 > Adventures' identity replacement stays evidence only
 > ([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)), and no Identity
@@ -271,7 +278,10 @@ points. "Deferred" means G2's binding non-goals sent it to G3 or G4, not that it
 whether an unknown id and someone else's id look the same: the POC's decorator lets unknown ids through to a 404 and
 refuses owned ones with a 403. Adventures is a workload behind Platform's edge, not a package consumer
 ([#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97)); its identity is evidence only
-([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)).
+([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)). Decide who owns a caller's credential at
+the edge, passed through to the workload or terminated there. That ruling sets which headers the edge forwards, and
+[#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340) lists the ones Adventures needs and the security
+notes either answer must keep.
 
 **For G4.** Read the POC's `campaigns/` and `content-cell.ts`, and its issues #27-#31: publishing without a rebuild, and
 content that must not be able to brick the server. This plan does not yet assume either.
