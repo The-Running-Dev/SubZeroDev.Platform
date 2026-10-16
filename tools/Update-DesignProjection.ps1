@@ -296,14 +296,14 @@ function Get-AgentProjectionContent {
     $title = $Record.Scalars['Title']
     $sliceId = $null
     # An effort-qualified title (`D5-S7 - ...`) names the same slice: the tag separates one
-    # effort's numbering from another's on the tracker, and /slice reads the effort's own
+    # effort's numbering from another's on the tracker, and /next reads the effort's own
     # slices document, where the slice is plain S7. `(?=\s|$)` rather than `\b`, as in
     # Test-DesignDrift.ps1, so a criterion bug titled `S7.3 ...` is not taken for slice S7.
     if ($title -and $title -match '^\s*(?:[A-Za-z]+\d+-)?(S\d+)(?=\s|$)') { $sliceId = $Matches[1] }
 
     $lines = [System.Collections.Generic.List[string]]::new()
     if ($sliceId) {
-        $lines.Add("Run ``/slice $sliceId``.")
+        $lines.Add("Run ``/next $sliceId``.")
     } else {
         $lines.Add("Run the work item for issue #$($Record.Scalars['Issue']).")
     }
@@ -318,7 +318,7 @@ function Get-AgentProjectionContent {
         $lines.Add("- **Criteria mirrored:** $($criteria -join ', ')")
     }
     $lines.Add('')
-    $lines.Add('Stop conditions and procedure: `skills/slice/SKILL.md`. Not restated here.')
+    $lines.Add('Stop conditions and procedure: `/next` and `AGENTS.md`. Not restated here.')
     ,@($lines)
 }
 
