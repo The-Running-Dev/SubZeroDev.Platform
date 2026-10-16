@@ -33,7 +33,11 @@ if (StreamingRoutes.Validate(options) is { Count: > 0 } streamingErrors)
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<EdgeTelemetry>();
 
-builder.Services.AddHttpClient<IGameWorkloadForwarder, GameWorkloadForwarder>();
+// No cookie container. The factory's default handler keeps one, and the pooled handler serves every
+// caller, so a workload's Set-Cookie was stored once and replayed on every later caller's request —
+// one player's session handed to the next (#339). A cookie belongs to a caller, never to the edge.
+builder.Services.AddHttpClient<IGameWorkloadForwarder, GameWorkloadForwarder>()
+    .UseSocketsHttpHandler((handler, _) => handler.UseCookies = false);
 
 // The probe is a singleton because the check that holds it is one, and it asks the factory for a
 // client per probe rather than capturing one — see GameWorkloadProbe's own note.
