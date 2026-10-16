@@ -45,6 +45,33 @@ public sealed class EdgeHostTests
     }
 
     [Fact]
+    public async Task A_cookie_the_workload_sets_for_one_caller_is_never_sent_on_anothers_request()
+    {
+        // #339: the factory's default handler keeps a cookie container, and the pooled handler is
+        // shared by every request — so a workload's Set-Cookie was stored once and replayed on every
+        // later caller's forward, handing a stranger the first caller's session.
+        await using var workload = await FakeWorkload.StartAsync();
+        var cookiesReceived = new List<string?>();
+        workload.Script = async context =>
+        {
+            cookiesReceived.Add(context.Request.Headers.TryGetValue("Cookie", out var cookie) ? cookie.ToString() : null);
+            context.Response.Headers.SetCookie = "sza_session=first-callers-session; Path=/; HttpOnly";
+            await FakeWorkload.EmitAsync(context, "{}");
+        };
+
+        await using var factory = CreateFactory(new Uri(workload.BaseAddress));
+        using var firstCaller = factory.CreateClient();
+        using var secondCaller = factory.CreateClient();
+
+        using var first = await firstCaller.PostAsync("/v1/create-session", new StringContent("{}"));
+        using var second = await secondCaller.PostAsync("/v1/whoami", new StringContent("{}"));
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal([null, null], cookiesReceived);
+    }
+
+    [Fact]
     public async Task S7_3_liveness_is_healthy_and_readiness_is_unhealthy_while_the_workload_is_down()
     {
         var closedPort = FindClosedPort();
