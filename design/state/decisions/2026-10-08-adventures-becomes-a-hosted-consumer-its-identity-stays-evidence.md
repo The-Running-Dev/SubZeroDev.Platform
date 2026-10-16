@@ -1,8 +1,8 @@
 # decision/2026-10-08-adventures-becomes-a-hosted-consumer-its-identity-stays-evidence
 Date: 2026-10-08
 Anchor: 2026-10-08 — #97, #100: Adventures becomes a hosted consumer; its identity stays evidence (supersedes g1 2026-08-09)
-Status: accepted
-SupersededBy:
+Status: superseded
+SupersededBy: decision/2026-10-17-adventures-is-a-workload-behind-platform-s-edge-not-a-package-consumer
 StatedIn: "unit/document/90-decisions § 2026-10-08 — #97, #100: Adventures becomes a hosted consumer; its identity stays evidence (supersedes g1 2026-08-09)"
 
 ## Claim

@@ -271,6 +271,7 @@ true.
 | decision/2026-10-08-the-engine-owns-the-in-memory-rollback-on-a-failed-persistence-write | `unit/document/90-decisions` |
 | decision/2026-10-08-the-public-roadmap-renders-the-active-effort-s-slices | `unit/document/90-decisions` |
 | decision/2026-10-08-the-user-layer-exists-only-for-an-account-per-tenant-the-implicit-tenant-has-no-tenant-lay | `unit/document/90-decisions` |
+| decision/2026-10-17-adventures-is-a-workload-behind-platform-s-edge-not-a-package-consumer | `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
