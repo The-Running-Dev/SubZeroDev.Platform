@@ -36,8 +36,15 @@ builder.Services.AddSingleton<EdgeTelemetry>();
 // No cookie container. The factory's default handler keeps one, and the pooled handler serves every
 // caller, so a workload's Set-Cookie was stored once and replayed on every later caller's request —
 // one player's session handed to the next (#339). A cookie belongs to a caller, never to the edge.
+// No redirect following either. The default handler chases a workload's 3xx itself — a request the
+// caller never made, to wherever Location points — and hands back the destination's answer as the
+// workload's. A redirect is the caller's to follow; whether Location reaches it is G3's ruling (#340).
 builder.Services.AddHttpClient<IGameWorkloadForwarder, GameWorkloadForwarder>()
-    .UseSocketsHttpHandler((handler, _) => handler.UseCookies = false);
+    .UseSocketsHttpHandler((handler, _) =>
+    {
+        handler.UseCookies = false;
+        handler.AllowAutoRedirect = false;
+    });
 
 // The probe is a singleton because the check that holds it is one, and it asks the factory for a
 // client per probe rather than capturing one — see GameWorkloadProbe's own note.
