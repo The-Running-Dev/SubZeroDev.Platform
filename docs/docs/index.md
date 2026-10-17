@@ -5,8 +5,9 @@ sidebar_position: 0
 
 # SubZeroDev.Platform — Documentation
 
-The reusable application framework and hosting layer for SubZeroDev products. **Design
-stage — no packages have been built.**
+The reusable application framework and hosting layer for SubZeroDev products. **The packages are
+built** and publish to a private feed at an explicitly unstable 0.x; the
+[implementation plan](implementation-plan.md) owns what has shipped and what is open.
 
 Read in this order. Each document says what it owns; decisions live in their own records.
 
@@ -28,6 +29,13 @@ Supporting specifications, moved from the ecosystem staging tree:
 [Tenancy, Billing, Licensing](tenancy-billing-licensing.md) ·
 [Observability](observability.md)
 
+## Guides
+
+How to work with what each effort shipped, rather than why it was designed that way:
+
+- [Durable Sessions (G2)](guide.md) — the hosted game service's PostgreSQL store and its concurrency rule
+- [Commercial Platform (D5)](commercial-guide.md) — the module packages, registration and the sample
+
 ## Decisions
 
 Reasoning, consequences and rejected alternatives live in the record, never restated
@@ -40,6 +48,8 @@ elsewhere:
 - [ADR-005 — Boundary contracts are projected, not authored](adr/ADR-005-service-contract.md)
 - [ADR-006 — Platform is a framework plus optional application modules](adr/ADR-006-application-modules.md)
 - [ADR-007 — SkyNet HR is a second hosted workload, and the edge becomes a Platform package](adr/ADR-007-second-hosted-workload.md)
+- [ADR-008 — Standalone Observability fails fast on invalid OTLP configuration](adr/ADR-008-observability-startup-failure.md)
+- [ADR-009 — Identity is a framework seam plus a module that owns no users](adr/ADR-009-identity-package.md)
 
 ## The one rule underneath all of it
 
