@@ -507,7 +507,10 @@ fixture's template.
 ### 12. The edge's streamed routes — opted in per route, committed at the workload's headers
 
 **Added 2026-10-08** ([`90-decisions.md`](90-decisions.md), 2026-10-08, #110). The edge's design is
-G1's (`g1/10-design.md`), as amended by G2's readiness change; both are archived. This section
+G1's (`g1/10-design.md`), as amended by G2's readiness change; both are archived. Two 2026-10-17
+entries in [`90-decisions.md`](90-decisions.md) supersede G1's text where it describes a narrower edge: the
+edge forwards every path except its own two probes, `/mcp` included, rather than one version-and-operation
+route template, and its readiness probes the workload's readiness endpoint, not its liveness. This section
 declares only what streaming adds, and the contract's *Types* § 14, *Public surface* § 17 and *Error
 semantics* § 14 name each G1 declaration they amend.
 
