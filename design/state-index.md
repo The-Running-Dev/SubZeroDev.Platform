@@ -272,6 +272,8 @@ true.
 | decision/2026-10-08-the-public-roadmap-renders-the-active-effort-s-slices | `unit/document/90-decisions` |
 | decision/2026-10-08-the-user-layer-exists-only-for-an-account-per-tenant-the-implicit-tenant-has-no-tenant-lay | `unit/document/90-decisions` |
 | decision/2026-10-17-adventures-is-a-workload-behind-platform-s-edge-not-a-package-consumer | `unit/document/90-decisions` |
+| decision/2026-10-17-the-edge-forwards-every-path-mcp-included-rather-than-one-version-and-operation-template | `unit/document/90-decisions` |
+| decision/2026-10-17-the-edge-s-readiness-probes-the-workload-s-readiness-endpoint-not-its-liveness | `unit/document/90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered
