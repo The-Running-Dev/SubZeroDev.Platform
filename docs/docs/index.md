@@ -33,8 +33,11 @@ Supporting specifications, moved from the ecosystem staging tree:
 
 How to work with what each effort shipped, rather than why it was designed that way:
 
+- [Getting Started (D3)](getting-started.md) — consuming the packages from the feed: a minimal host, persistence and releases
+- [Hosting the Engine (G1)](hosting-guide.md) — the engine behind the game edge, and the byte-identity proof
 - [Durable Sessions (G2)](guide.md) — the hosted game service's PostgreSQL store and its concurrency rule
 - [Commercial Platform (D5)](commercial-guide.md) — the module packages, registration and the sample
+- [Game Edge](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/workloads/game-edge/README.md) — configuring and running the edge, and what crosses it. Lives beside the workload
 
 ## Decisions
 
