@@ -15,8 +15,9 @@ running host.
 
 ## Packages and the feed
 
-All .NET packages share one explicitly unstable 0.x version (`0.1.0` today); breaking changes are
-permitted between releases, and the version in `src/Directory.Build.props` is the single source. The
+All .NET packages share one explicitly unstable 0.x version (the latest release is `0.2.0`);
+breaking changes are permitted between releases. A release's version is its tag;
+`VersionPrefix` in `src/Directory.Build.props` is only the default for a local build. The
 six framework packages are `SubZeroDev.Platform.` followed by Abstractions, Core, Hosting,
 Observability, Persistence and Testing. Their boundaries and done-criteria are owned by
 [The Minimal Package Set](minimal-platform-packages.md); the eight optional module packages are
@@ -66,8 +67,8 @@ from another repository; GameEngine supplies a read-only secret.
 Reference Hosting and Persistence at the release version, then register the host:
 
 ```powershell
-dotnet add MyProduct package SubZeroDev.Platform.Hosting --version 0.1.0
-dotnet add MyProduct package SubZeroDev.Platform.Persistence --version 0.1.0
+dotnet add MyProduct package SubZeroDev.Platform.Hosting --version 0.2.0
+dotnet add MyProduct package SubZeroDev.Platform.Persistence --version 0.2.0
 ```
 
 ```csharp
