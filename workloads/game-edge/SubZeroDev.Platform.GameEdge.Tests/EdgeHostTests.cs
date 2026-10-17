@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using SubZeroDev.Platform.GameEdge.Tests.Support;
 
@@ -69,6 +70,35 @@ public sealed class EdgeHostTests
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
         Assert.Equal([null, null], cookiesReceived);
+    }
+
+    [Fact]
+    public async Task A_redirect_the_workload_answers_is_returned_to_the_caller_not_followed_by_the_edge()
+    {
+        // The factory's default handler follows redirects, so a workload's 302 was chased by the edge
+        // itself — a second request the caller never made, to wherever Location pointed, with the
+        // caller handed the destination's answer as if it were the workload's.
+        await using var workload = await FakeWorkload.StartAsync();
+        workload.Script = async context =>
+        {
+            if (context.Request.Path == "/v1/start")
+            {
+                context.Response.StatusCode = StatusCodes.Status302Found;
+                context.Response.Headers.Location = "/v1/landed";
+                return;
+            }
+
+            await FakeWorkload.EmitAsync(context, "{}");
+        };
+
+        await using var factory = CreateFactory(new Uri(workload.BaseAddress));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        using var response = await client.PostAsync("/v1/start", new StringContent("{}"));
+
+        Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+        var recorded = Assert.Single(workload.Requests);
+        Assert.Equal("/v1/start", recorded.PathAndQuery);
     }
 
     [Fact]
