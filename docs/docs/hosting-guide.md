@@ -4,9 +4,6 @@ sidebar_label: Hosting the Engine (G1)
 sidebar_position: 13.5
 ---
 
-> Generated from `design/g1/` by `/docs`. Do not edit by hand — edit the
-> design docs and regenerate. `/align` reports when this has gone stale.
-
 # Hosting the Game Engine
 
 G1 put the Game Engine behind a network boundary and proved that doing so did not change the

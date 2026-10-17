@@ -4,9 +4,6 @@ sidebar_label: Durable Sessions (G2)
 sidebar_position: 14
 ---
 
-> Generated from `design/` by `/docs`. Do not edit by hand — edit the
-> design docs and regenerate. `/align` reports when this has gone stale.
-
 # Durable sessions
 
 G1 held every session in an in-process `Map`: fast, and gone on restart. G2 gives
