@@ -457,7 +457,9 @@ public sealed record EndSessionContext(string Method, Uri Address);
 ### 14. The edge's streamed routes — `SubZeroDev.Platform.GameEdge`
 
 The edge's contract is G1's (`g1/20-contract.md`, *Edge — options, forwarding, and readiness*), as
-amended by G2. This section declares only what #110 adds. It **amends** G1's `GameEdgeOptions` with
+amended by G2 (`LivenessTimeout` renamed `ReadinessTimeout`) and by two 2026-10-17 entries in
+[`90-decisions.md`](90-decisions.md): the edge forwards every path except its own two probes, `/mcp`
+included, and its readiness probes the workload's readiness endpoint. This section declares only what #110 adds. It **amends** G1's `GameEdgeOptions` with
 one optional property, and adds two types.
 
 Settings, read from configuration under `GameEdge:StreamingRoutes`, a list. The schema is public
