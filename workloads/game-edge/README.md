@@ -20,10 +20,9 @@ file does not restate it.
 | The edge does not | Ruled by |
 |---|---|
 | Authorize anything, or hold any per-session state, connection affinity or cache | [G1 design](../../design/g1/10-design.md) ("The .NET edge"); invariant 41 in the [G1 contract](../../design/g1/20-contract.md) |
-| Know the workload's REST paths: it forwards by prefix, so an unknown operation reaches the workload and is answered there | [G1 decisions](../../design/g1/90-decisions.md), 2026-08-08 "The edge forwards by prefix and does not consult the contract" |
+| Know the workload's REST paths: it forwards every path without consulting the contract, so an unknown operation reaches the workload and is answered there | [G1 decisions](../../design/g1/90-decisions.md), 2026-08-08 "The edge forwards by prefix and does not consult the contract" |
 | Retry, or record an attempt: a retry of an action whose outcome is unknown is a second action | [G1 contract](../../design/g1/20-contract.md), `EdgeError` and invariant 43 |
 | Carry the caller's credentials to the workload, or the workload's cookies back | [#339](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/339), [#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340) |
-| Route the workload's MCP surface (an MCP caller addresses the workload directly) | [G1 design](../../design/g1/10-design.md), "The MCP surface is not reachable through the edge" |
 | Proxy a WebSocket upgrade | [Streaming decision, 2026-10-08](../../design/state/decisions/2026-10-08-the-edge-streams-per-route-with-its-own-first-byte-budget-and-aborts-a-broken-stream.md) |
 
 ## Configuration
@@ -84,8 +83,13 @@ reach the workload.
 
 **Signed-in flows therefore do not work through the edge.** A workload that keeps sessions in a
 cookie, signs players in over OIDC, or relies on browser cross-origin headers sees every caller
-as anonymous. Anonymous reads work. Until G3 rules, such routes should call the workload
-directly (#340 records this for Adventures).
+as anonymous. Anonymous reads work. Such routes cannot be served through the edge until G3
+rules ([#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340)).
+
+**MCP is forwarded like any other path.** G1's design routes only the JSON wire through the edge
+and names MCP as a stated gap ([G1 design](../../design/g1/10-design.md), "The MCP surface is not
+reachable through the edge"), but the catch-all forwards `/mcp/*` too. The edge does nothing
+MCP-specific; whether it should cover MCP is open for G3.
 
 ## Probes
 
