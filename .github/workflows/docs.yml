@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   docs:
     permissions: { contents: read, pages: write, id-token: write }
-    uses: The-Running-Dev/GitHub-ActionTemplates/.github/workflows/docs.yml@v0
+    uses: The-Running-Dev/GitHub-ActionTemplates/.github/workflows/docs.yml@v1
     with:
       output: artifacts/docs
       pre-build: |
