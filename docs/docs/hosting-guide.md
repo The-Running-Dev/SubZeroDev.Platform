@@ -229,10 +229,12 @@ contention proofs and the port-conformance suite.
 - **A second in-memory instance looks like missing data, not corruption.** Each instance holds
   its own sessions, so a session created on one is `unknown_session` on the other. Nothing
   enforced single-instance in G1.
-- **The MCP surface bypasses the edge.** The edge is specified to route the JSON wire only, so an
-  MCP caller addresses the workload directly. Harmless while reachability is trusted-local; it
-  stops being harmless once authorization is enforced at the edge (G3).
-- **The edge cannot reject an unknown operation.** It forwards by prefix and does not read the
+- **The design leaves MCP out of the edge, but the code forwards it.** G1's design routes only the
+  JSON wire through the edge and names MCP as a stated gap. The forwarding route maps every path,
+  though, so `/mcp/*` reaches the workload through the edge like anything else, and the edge does
+  nothing MCP-specific. Whether the edge should cover MCP is left open for G3, which enforces
+  authorization at the edge.
+- **The edge cannot reject an unknown operation.** It forwards every path and does not read the
   contract, so `unknown_operation` always comes from the workload.
 - **A forward that fails after the headers arrive is still `workload_unreachable`.** A workload
   that dies mid-response is the same lost hop to the caller as one that never connected.
