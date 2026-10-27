@@ -123,6 +123,9 @@ describe("S6.2 — readWritePauseMs at its default of 0 is inert", () => {
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     try {
       const persistence = opened.value.persistenceForRequest();
+      // Every write here is accepted, so each carries the next revision, as the engine's own
+      // `submitAction` stamps it (`revision` is `0` on the first write, `+1` per accepted write).
+      let revision = 0;
       const row = (blob: string) => ({
         sessionId: "s6-2",
         blob,
@@ -131,6 +134,7 @@ describe("S6.2 — readWritePauseMs at its default of 0 is inert", () => {
         replayCompatible: true,
         createdAt: "2026-01-01T00:00:00.000Z" as unknown as string,
         updatedAt: "2026-01-01T00:00:00.000Z" as unknown as string,
+        revision: revision++,
       });
       await persistence.sessions.put(row("{}"));
 
@@ -182,21 +186,23 @@ describe("S6.3 — perturbation: with the version predicate removed, both concur
     const schema = await createTestSchema();
     const realPool = openTestPool(schema.schema);
     try {
-      // The guarded update's own text, with only its version predicate stripped — everything else
+      // The guarded update's own text, with only its version predicates stripped — everything else
       // about the statement, including the tenant and expiry predicates, is untouched. This is the
       // one substitution the design names as the gate's own red-run: "the update's `where` clause
-      // not asserting the version" (`design/10-design.md`, *Control flow* 3).
+      // not asserting the version" (`design/10-design.md`, *Control flow* 3). Both version
+      // predicates go — the store's own `version` and the engine's `revision` — since either
+      // alone would still reject the second of two writers carrying the same observed version.
       const unguardedPool: Queryable = {
         query: async <T extends Record<string, unknown> = Record<string, unknown>>(
           text: string,
           values?: readonly unknown[],
         ): Promise<{ rows: T[]; rowCount: number | null }> => {
-          // The bind protocol rejects a value with no corresponding placeholder, so dropping the
-          // predicate's `$11` from the text means dropping its trailing bind value too.
-          const guarded = text.includes(" and version = $11 and expires_at > now()");
-          const rewritten = guarded ? text.replace(" and version = $11 and expires_at > now()", " and expires_at > now()") : text;
-          const forwarded = guarded && values ? values.slice(0, -1) : values;
-          const result = await realPool.query(rewritten, forwarded as unknown[] | undefined);
+          // `$11` is not the last bind value any longer, so it stays bound — to a predicate that
+          // is always true — rather than being dropped, which would renumber every later one.
+          // `$12` is still the `set` list's own revision, so only its predicate goes.
+          const predicate = " and version = $11 and revision = $12 - 1 and expires_at > now()";
+          const rewritten = text.includes(predicate) ? text.replace(predicate, " and $11::bigint is not null and expires_at > now()") : text;
+          const result = await realPool.query(rewritten, values as unknown[] | undefined);
           return { rows: result.rows as T[], rowCount: result.rowCount };
         },
       };
@@ -213,6 +219,8 @@ describe("S6.3 — perturbation: with the version predicate removed, both concur
           engineCreatedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
           engineUpdatedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
           profileId: null,
+          revision: 0,
+          initialization: null,
         },
         ENGINE_VERSION_UNDER_TEST,
         2_592_000,
@@ -235,6 +243,8 @@ describe("S6.3 — perturbation: with the version predicate removed, both concur
         engineCreatedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
         engineUpdatedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
         profileId: null,
+        revision: 1,
+        initialization: null,
       });
 
       const [outcomeA, outcomeB] = await Promise.all([
@@ -266,6 +276,7 @@ describe("S6.4 — a direct adapter call with a stale read-version is rejected a
         replayCompatible: true,
         createdAt: "2026-01-01T00:00:00.000Z" as unknown as string,
         updatedAt: "2026-01-01T00:00:00.000Z" as unknown as string,
+        revision: 0,
       });
       await persistence.sessions.get("s6-4"); // this adapter now believes version 1
 
@@ -283,6 +294,7 @@ describe("S6.4 — a direct adapter call with a stale read-version is rejected a
             replayCompatible: true,
             createdAt: "2026-01-01T00:00:00.000Z" as unknown as string,
             updatedAt: "2026-01-01T00:00:00.000Z" as unknown as string,
+            revision: 1,
           });
         } catch (error) {
           caught = error;

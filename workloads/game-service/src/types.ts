@@ -18,7 +18,13 @@ import type {
   WireVersion,
 } from "@subzerodev/service-contract";
 import type { EngineErrorCode, SemanticVersion } from "@subzerodev/service-contract";
-import type { ProfileStore, SessionPersistence, SessionStore, StoredSessionRecord } from "@the-running-dev/game-engine";
+import type {
+  ProfileStore,
+  SessionInitialization,
+  SessionPersistence,
+  SessionStore,
+  StoredSessionRecord,
+} from "@the-running-dev/game-engine";
 export type { ProfileStore, SessionPersistence };
 export type { SessionStore };
 
@@ -162,6 +168,13 @@ export interface SessionRow {
   readonly engineUpdatedAt: EngineInstant;
   readonly profileId: string | null;
   readonly version: SessionRowVersion;
+  /** The engine's own compare-and-swap field (`StoredSessionRecord.revision`, engine `0.12.0`),
+   *  stored beside `version` rather than replacing it: `version` is this store's guard, `revision`
+   *  is the engine's, and a write must satisfy both. */
+  readonly revision: number;
+  /** `null` is *absent*, not `{}` — the engine distinguishes an unknown initialization from a
+   *  known-empty one. */
+  readonly initialization: SessionInitialization | null;
   readonly engineVersion: SemanticVersion;
   readonly rowCreatedAt: DatabaseInstant;
   readonly rowUpdatedAt: DatabaseInstant;
@@ -177,6 +190,7 @@ export interface SaveRow {
   readonly savedAtSeq: number;
   readonly audience: ProjectionAudience;
   readonly profileId: string | null;
+  readonly initialization: SessionInitialization | null;
   readonly engineVersion: SemanticVersion;
   readonly rowCreatedAt: DatabaseInstant;
   readonly expiresAt: DatabaseInstant;
@@ -208,6 +222,19 @@ export interface ProfileTerminalRow {
   readonly campaignId: string;
   readonly terminalId: string;
   readonly rowCreatedAt: DatabaseInstant;
+}
+
+/** `profile_kind_data`'s own row — `PlayerProfile.kindData` (engine `0.12.0`, profile
+ *  `formatVersion: 3`), one row per `(profile, kindId)`. `data` is the record's opaque `data` as
+ *  JSON text: a record for a kind this build does not register round-trips uninterpreted. */
+export interface ProfileKindDataRow {
+  readonly tenantId: TenantId;
+  readonly profileId: string;
+  readonly kindId: string;
+  readonly dataVersion: number;
+  readonly data: string;
+  readonly rowCreatedAt: DatabaseInstant;
+  readonly rowUpdatedAt: DatabaseInstant;
 }
 
 // ---------------------------------------------------------------------------- store: the guarded write and lifecycle

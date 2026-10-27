@@ -61,7 +61,9 @@ const STORED_SESSION_RECORD_KEYS = new Set([
   "replayCompatible",
   "createdAt",
   "updatedAt",
+  "revision",
   "profileId",
+  "initialization",
 ]);
 
 async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
@@ -77,6 +79,7 @@ async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome
     replayCompatible: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    revision: 0,
   };
   await target.persistence.sessions.put(sessionRecord);
   const gotSession = await target.persistence.sessions.get(sessionId);
@@ -306,6 +309,7 @@ async function checkProfileWriteFailure(target: ConformanceTarget): Promise<Outc
     replayCompatible: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    revision: 0,
   };
   // "A session write issued in the same operation before the profile write" — the two ports
   // offer no single composite operation, so the closest faithful rendering is issuing the
@@ -314,10 +318,11 @@ async function checkProfileWriteFailure(target: ConformanceTarget): Promise<Outc
   await target.persistence.sessions.put(sessionRecord);
 
   const saveResult = await target.profiles.save({
-    formatVersion: 2,
+    formatVersion: 3,
     profileId,
     achievements: [{ campaignId: FIXTURE_CAMPAIGN_ID, achievementId: "unreachable" }],
     terminals: [],
+    kindData: [],
   });
   const failedAsExpected = !saveResult.ok && saveResult.warnings.some((warning) => warning.code === "profile_write_failed");
   if (!failedAsExpected) {
@@ -354,7 +359,7 @@ async function upsertOneAchievement(store: ProfileStore, profileId: string, achi
   const { profile } = await store.load(profileId);
   const already = profile.achievements.some((achievement) => achievement.achievementId === achievementId && achievement.campaignId === FIXTURE_CAMPAIGN_ID);
   const achievements = already ? profile.achievements : [...profile.achievements, { campaignId: FIXTURE_CAMPAIGN_ID, achievementId }];
-  const result = await store.save({ formatVersion: 2, profileId, achievements, terminals: [] });
+  const result = await store.save({ formatVersion: 3, profileId, achievements, terminals: [], kindData: [] });
   return result.ok;
 }
 
@@ -362,7 +367,7 @@ async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome
   const profileId = freshId("conformance-union-profile");
   // A baseline row to upsert against — the durable store's `save` is an upsert either way, but
   // this keeps the two targets on the same footing before the racing/sequential calls below.
-  const baseline = await target.profiles.save({ formatVersion: 2, profileId, achievements: [], terminals: [] });
+  const baseline = await target.profiles.save({ formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] });
   if (!baseline.ok) {
     return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "seeding the achievement-union baseline failed" });
   }
@@ -409,10 +414,11 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
   const retainedId = "durable-keeps-me-in-memory-drops-me";
 
   const seeded = await target.profiles.save({
-    formatVersion: 2,
+    formatVersion: 3,
     profileId,
     achievements: [{ campaignId: FIXTURE_CAMPAIGN_ID, achievementId: retainedId }],
     terminals: [],
+    kindData: [],
   });
   if (!seeded.ok) {
     return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "seeding the merge-divergence baseline achievement failed" });
@@ -421,7 +427,7 @@ async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<
   // The raw `profiles.save` call, deliberately omitting the achievement just seeded — this is
   // the store's own merge behaviour under test, not a caller's calling convention (S9.5's
   // `upsertOneAchievement` is the latter).
-  const omitting = await target.profiles.save({ formatVersion: 2, profileId, achievements: [], terminals: [] });
+  const omitting = await target.profiles.save({ formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] });
   if (!omitting.ok) {
     return err({ code: "MethodDiverged", method: "profiles.save", target: target.label, detail: "the achievement-omitting save itself failed" });
   }
@@ -706,10 +712,10 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
     persistence: inMemoryReferencePersistence(),
     profiles,
     async seedCorruptProfile(profileId: string): Promise<void> {
-      // `formatVersion` 99 — a format neither `isValidPlayerProfile` (2) nor
-      // `isValidPlayerProfileV1` (1) accepts, the same malformation the durable target seeds as
-      // `format_version = 99`. `2` itself stopped being a malformation once `PlayerProfile`
-      // gained `terminals` — it is this build's own current format, not a corrupt one.
+      // `formatVersion` 99 — a format none of the engine's profile readers (3, 2, 1) accepts, the
+      // same malformation the durable target seeds as `format_version = 99`. `2` stopped being a
+      // malformation once `PlayerProfile` gained `terminals`, and `3` is this build's own current
+      // format, so neither is a corrupt one.
       raw.set(profileId, { formatVersion: 99, profileId, achievements: [] });
       store = createInMemoryProfileStore({ raw, onSave });
     },
@@ -801,7 +807,7 @@ export async function openDurableConformanceTarget(
     profiles: store.profiles,
     async seedCorruptProfile(profileId: string): Promise<void> {
       // `format_version = 99` — same reasoning as the in-memory target's own sentinel above:
-      // neither `1` nor `2` is a malformation any longer.
+      // none of `1`, `2` or `3` is a malformation any longer.
       await seedPool.query(
         "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 99, now()) " +
           "on conflict (tenant_id, profile_id) do update set format_version = 99, row_updated_at = now()",

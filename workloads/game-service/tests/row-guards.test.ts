@@ -23,6 +23,7 @@ function sessionRecord(id: string, overrides: Partial<StoredSessionRecord> = {})
     replayCompatible: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    revision: 0,
     ...overrides,
   };
 }
@@ -167,7 +168,7 @@ describe("S13.3 — the same seeding against profile/profile_achievement rows yi
     const store = opened.value;
     try {
       const profileId = "s13-3-profile";
-      await store.profiles.save({ formatVersion: 2, profileId, achievements: [{ campaignId: "c", achievementId: "a" }], terminals: [] });
+      await store.profiles.save({ formatVersion: 3, profileId, achievements: [{ campaignId: "c", achievementId: "a" }], terminals: [], kindData: [] });
 
       const raw = await RawSchemaClient.connect(schema.schema);
       try {

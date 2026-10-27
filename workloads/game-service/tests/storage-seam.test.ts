@@ -26,7 +26,7 @@ function rawSeam(): StorageSeam {
       },
     },
     profiles: {
-      load: async (profileId: string) => ({ profile: { formatVersion: 2, profileId, achievements: [], terminals: [] }, warnings: [] }),
+      load: async (profileId: string) => ({ profile: { formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] }, warnings: [] }),
       save: async () => ({ ok: true, warnings: [] }),
     },
     lifecycle: {
