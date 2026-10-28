@@ -185,6 +185,27 @@ declares conformant conditionally rather than identically — the durable store'
 additive where the engine's in-memory one replaces, and what stands in for identical behaviour
 there is a property asserted directly against the engine's own caller.
 
+## Run the mixed-version adapter regressions
+
+From `workloads/game-service`, with PostgreSQL provisioned:
+
+```bash
+npm ci
+npx vitest run tests/mixed-version.test.ts
+```
+
+Each test uses one disposable schema and the real pre-upgrade and candidate adapters, with
+separate pools. The old adapter, migrations and engine are pinned test fixtures;
+[`tests/fixtures/pre-upgrade/README.md`](tests/fixtures/pre-upgrade/README.md) records their
+provenance and regeneration. The tests cover shared profile/session/save data, initialization,
+alternating writers, and old-code rollback with the upgraded schema retained. They also cover
+revision drift between the original upgrade migration and its append-only correction.
+
+The old profile decoder must read a normal new-adapter write without warnings; changing the
+candidate to store profile format 3 prematurely makes that assertion fail. New-only formats and
+kind state are outside the shared-payload guarantee. These are adapter and runtime checks against
+PostgreSQL, not evidence that a production rolling deployment has been exercised.
+
 ## Regenerate and publish the contract package
 
 Nothing in this repository authors, edits or regenerates the contract (S3.15) — the row set, the

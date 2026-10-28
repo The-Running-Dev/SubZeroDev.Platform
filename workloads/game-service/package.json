@@ -27,6 +27,7 @@
     "pg": "^8.23.0"
   },
   "devDependencies": {
+    "@the-running-dev/game-engine-previous": "file:./tests/fixtures/pre-upgrade/vendor/the-running-dev-game-engine-0.10.0.tgz",
     "@types/node": "^22.9.0",
     "@types/pg": "^8.23.1",
     "tsx": "^4.19.2",

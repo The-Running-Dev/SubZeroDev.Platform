@@ -545,7 +545,7 @@ describe("S3.16 — migrateToHead is idempotent and safe under concurrent caller
         expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "profile_kind_data", "profile_terminal", "save", "session"].sort());
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(3);
+        expect(migrationRows.rows).toHaveLength(4);
       } finally {
         await raw.close();
       }
