@@ -77,14 +77,14 @@ function freshSchemaName(): SchemaName {
   return `s3_test_${process.pid}_${counter}_${suffix}` as unknown as SchemaName;
 }
 
-/** Creates a fresh schema, migrates it to head, and returns a `StoreConnection` scoped to it.
- *  Throws if migration fails — every S3 test needs a schema at head to mean anything, so there is
- *  no useful partial state for a caller to inspect. */
-export async function createTestSchema(): Promise<TestSchema> {
+/** Creates a fresh schema and returns a scoped connection. Defaults to the current migration
+ *  head; mixed-version tests can supply the pinned old migrator before seeding and upgrading.
+ *  Throws if migration fails — no caller can usefully inspect a partial schema. */
+export async function createTestSchema(migrate: typeof migrateToHead = migrateToHead): Promise<TestSchema> {
   const schema = freshSchemaName();
   const connection = connectionFor(schema);
 
-  const migrated = await migrateToHead(connection);
+  const migrated = await migrate(connection);
   if (!migrated.ok) {
     throw new Error(`migrateToHead failed for test schema ${String(schema)}: ${JSON.stringify(migrated.error)}`);
   }

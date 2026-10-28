@@ -11,9 +11,11 @@
 import { Pool, types as pgTypes } from "pg";
 import type { CustomTypesConfig, PoolClient, PoolConfig } from "pg";
 import type {
+  KindProfileRecord,
   ProfileLoadResult,
   ProfileSaveResult,
   ProfileStore,
+  SessionInitialization,
   SessionPersistence,
   SessionPersistenceConflict,
   StoredSaveRecord,
@@ -31,6 +33,7 @@ import type {
   LifecycleState,
   Outcome,
   ProfileAchievementRow,
+  ProfileKindDataRow,
   ProfileRow,
   ProfileTerminalRow,
   ProjectionAudience,
@@ -72,7 +75,7 @@ const CONFLICT_BRAND = "SessionPersistenceConflict" as const;
  *  has connected yet — exported so both sites construct it from one definition. */
 export function corruptProfileResult(profileId: string): ProfileLoadResult {
   return {
-    profile: { formatVersion: 2, profileId, achievements: [], terminals: [] },
+    profile: { formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] },
     warnings: [{ code: "profile_corrupt", profileId }],
   };
 }
@@ -177,7 +180,7 @@ export function sessionSelectStatement(tenantId: TenantId, sessionId: string): S
   return {
     text:
       "select tenant_id, session_id, blob, audience, attempt_counter, replay_compatible, " +
-      "engine_created_at, engine_updated_at, profile_id, version, engine_version, " +
+      "engine_created_at, engine_updated_at, profile_id, version, revision, initialization, engine_version, " +
       "row_created_at, row_updated_at, expires_at " +
       "from session where tenant_id = $1 and session_id = $2 and expires_at > now()",
     values: [tenantId, sessionId],
@@ -193,6 +196,10 @@ export interface SessionRowInput {
   readonly engineCreatedAt: EngineInstant;
   readonly engineUpdatedAt: EngineInstant;
   readonly profileId: string | null;
+  /** The engine's `StoredSessionRecord.revision`, carried through as the record states it. */
+  readonly revision: number;
+  /** `SessionInitialization` as JSON text; `null` is *absent* (see `SessionRow.initialization`). */
+  readonly initialization: string | null;
 }
 
 export function sessionInsertStatement(
@@ -204,8 +211,9 @@ export function sessionInsertStatement(
   return {
     text:
       "insert into session (tenant_id, session_id, blob, audience, attempt_counter, replay_compatible, " +
-      "engine_created_at, engine_updated_at, profile_id, version, engine_version, row_updated_at, expires_at) " +
-      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, now(), now() + make_interval(secs => $11))",
+      "engine_created_at, engine_updated_at, profile_id, version, engine_version, row_updated_at, expires_at, " +
+      "revision, initialization) " +
+      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, now(), now() + make_interval(secs => $11), $12, $13)",
     values: [
       tenantId,
       row.sessionId,
@@ -218,12 +226,21 @@ export function sessionInsertStatement(
       row.profileId,
       engineVersion,
       sessionIdleTtlSeconds,
+      row.revision,
+      row.initialization,
     ],
   };
 }
 
 /** `engine_created_at` is absent from the `set` list deliberately — it is the engine's `Clock`
- *  output at creation and never changes after (only `sessionInsertStatement` writes it). */
+ *  output at creation and never changes after (only `sessionInsertStatement` writes it).
+ *
+ *  Two guards, both in the one predicate: `version = $11` is this store's own compare-and-swap
+ *  against the request's read, and `revision = $12 - 1` is the engine's (`04-core.md` §7.2: an
+ *  adapter that detects concurrent writers accepts a `put` for an existing id only when the stored
+ *  `revision` is `record.revision - 1`). Either failing affects zero rows, and `writeSessionRow`'s
+ *  zero-rows re-read classifies it — a live row whose `version` still matches can only have failed
+ *  the revision guard, which is a `conflict` exactly as a moved `version` is. */
 export function sessionGuardedUpdateStatement(
   tenantId: TenantId,
   row: SessionRowInput,
@@ -235,8 +252,9 @@ export function sessionGuardedUpdateStatement(
     text:
       "update session set blob = $3, audience = $4, attempt_counter = $5, replay_compatible = $6, " +
       "engine_updated_at = $7, profile_id = $8, engine_version = $9, version = version + 1, " +
+      "revision = $12, initialization = $13, " +
       "row_updated_at = now(), expires_at = now() + make_interval(secs => $10) " +
-      "where tenant_id = $1 and session_id = $2 and version = $11 and expires_at > now()",
+      "where tenant_id = $1 and session_id = $2 and version = $11 and revision = $12 - 1 and expires_at > now()",
     values: [
       tenantId,
       row.sessionId,
@@ -249,6 +267,8 @@ export function sessionGuardedUpdateStatement(
       engineVersion,
       sessionIdleTtlSeconds,
       observedVersion,
+      row.revision,
+      row.initialization,
     ],
   };
 }
@@ -264,7 +284,7 @@ export function saveSelectStatement(tenantId: TenantId, saveId: string): Stateme
   return {
     text:
       "select tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
-      "engine_version, row_created_at, expires_at " +
+      "initialization, engine_version, row_created_at, expires_at " +
       "from save where tenant_id = $1 and save_id = $2 and expires_at > now()",
     values: [tenantId, saveId],
   };
@@ -276,7 +296,7 @@ export function saveListByProfileStatement(tenantId: TenantId, profileId: string
   return {
     text:
       "select tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
-      "engine_version, row_created_at, expires_at " +
+      "initialization, engine_version, row_created_at, expires_at " +
       "from save where tenant_id = $1 and profile_id = $2 and expires_at > now()",
     values: [tenantId, profileId],
   };
@@ -290,6 +310,8 @@ export interface SaveRowInput {
   readonly savedAtSeq: number;
   readonly audience: ProjectionAudience;
   readonly profileId: string | null;
+  /** `SessionInitialization` as JSON text; `null` is *absent*. */
+  readonly initialization: string | null;
 }
 
 /** An upsert, not a bare insert: `saves.put` is a re-put-safe port method. Every host column
@@ -304,11 +326,12 @@ export function saveUpsertStatement(
   return {
     text:
       "insert into save (tenant_id, save_id, campaign_id, blob, saved_at, saved_at_seq, audience, profile_id, " +
-      "engine_version, expires_at) " +
-      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(secs => $10)) " +
+      "engine_version, expires_at, initialization) " +
+      "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(secs => $10), $11) " +
       "on conflict (tenant_id, save_id) do update set " +
       "campaign_id = excluded.campaign_id, blob = excluded.blob, saved_at = excluded.saved_at, " +
       "saved_at_seq = excluded.saved_at_seq, audience = excluded.audience, profile_id = excluded.profile_id, " +
+      "initialization = excluded.initialization, " +
       "engine_version = excluded.engine_version, expires_at = excluded.expires_at",
     values: [
       tenantId,
@@ -321,6 +344,7 @@ export function saveUpsertStatement(
       row.profileId,
       engineVersion,
       saveTtlSeconds,
+      row.initialization,
     ],
   };
 }
@@ -386,10 +410,36 @@ interface RawSessionRow {
   readonly engine_updated_at: string;
   readonly profile_id: string | null;
   readonly version: bigint;
+  readonly revision: number;
+  readonly initialization: string | null;
   readonly engine_version: string;
   readonly row_created_at: Date;
   readonly row_updated_at: Date;
   readonly expires_at: Date;
+}
+
+/** `initialization` is JSON text, so a value can be a `string` and still not be a
+ *  `SessionInitialization` — parsed and checked here, returning `undefined` for anything that is
+ *  not a plain object, so the column checkers below can name it rather than let `JSON.parse` throw
+ *  out of the mapping. `kindProfileData` is `unknown` to the engine, so nothing inside is checked. */
+function parseInitialization(text: string): SessionInitialization | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as SessionInitialization)
+    : undefined;
+}
+
+function isValidInitializationColumn(value: unknown): boolean {
+  return value === null || (typeof value === "string" && parseInitialization(value) !== undefined);
+}
+
+function initializationColumn(initialization: SessionInitialization | undefined): string | null {
+  return initialization === undefined ? null : JSON.stringify(initialization);
 }
 
 /** S13.1: a `select` succeeding is not itself proof the row is usable — a column whose SQL type
@@ -408,6 +458,8 @@ function firstInvalidSessionColumn(raw: Record<string, unknown>): string | null 
   if (typeof raw["engine_updated_at"] !== "string") return "engine_updated_at";
   if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
   if (typeof raw["version"] !== "bigint") return "version";
+  if (typeof raw["revision"] !== "number") return "revision";
+  if (!isValidInitializationColumn(raw["initialization"])) return "initialization";
   if (typeof raw["engine_version"] !== "string") return "engine_version";
   if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
   if (!(raw["row_updated_at"] instanceof Date)) return "row_updated_at";
@@ -436,6 +488,7 @@ function firstInvalidSaveColumn(raw: Record<string, unknown>): string | null {
   if (typeof raw["saved_at_seq"] !== "number") return "saved_at_seq";
   if (typeof raw["audience"] !== "string") return "audience";
   if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
+  if (!isValidInitializationColumn(raw["initialization"])) return "initialization";
   if (typeof raw["engine_version"] !== "string") return "engine_version";
   if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
   if (!(raw["expires_at"] instanceof Date)) return "expires_at";
@@ -454,6 +507,8 @@ function toSessionRow(raw: RawSessionRow): SessionRow {
     engineUpdatedAt: raw.engine_updated_at as EngineInstant,
     profileId: raw.profile_id,
     version: raw.version as SessionRowVersion,
+    revision: raw.revision,
+    initialization: raw.initialization === null ? null : (parseInitialization(raw.initialization) ?? null),
     engineVersion: raw.engine_version as SemanticVersion,
     rowCreatedAt: raw.row_created_at as DatabaseInstant,
     rowUpdatedAt: raw.row_updated_at as DatabaseInstant,
@@ -462,7 +517,8 @@ function toSessionRow(raw: RawSessionRow): SessionRow {
 }
 
 /** `profileId: null` on the row maps to an *absent* `profileId` key on the record, never a member
- *  holding `undefined` (invariant 48; `20-contract.md`, "the durable rows"). */
+ *  holding `undefined` (invariant 48; `20-contract.md`, "the durable rows"). `initialization`
+ *  follows the same rule. */
 function toStoredSessionRecord(row: SessionRow): StoredSessionRecord {
   return {
     sessionId: row.sessionId,
@@ -472,7 +528,9 @@ function toStoredSessionRecord(row: SessionRow): StoredSessionRecord {
     replayCompatible: row.replayCompatible,
     createdAt: row.engineCreatedAt,
     updatedAt: row.engineUpdatedAt,
+    revision: row.revision,
     ...(row.profileId !== null ? { profileId: row.profileId } : {}),
+    ...(row.initialization !== null ? { initialization: row.initialization } : {}),
   };
 }
 
@@ -485,6 +543,7 @@ interface RawSaveRow {
   readonly saved_at_seq: number;
   readonly audience: string;
   readonly profile_id: string | null;
+  readonly initialization: string | null;
   readonly engine_version: string;
   readonly row_created_at: Date;
   readonly expires_at: Date;
@@ -492,7 +551,7 @@ interface RawSaveRow {
 
 /** Every column `saveSelectStatement` returns, not merely the subset the engine record carries —
  *  the same raw → row → record path `sessions.get` takes, so the two reads have one shape rather
- *  than two. `firstInvalidSaveColumn` has already checked all ten, which is what makes the casts
+ *  than two. `firstInvalidSaveColumn` has already checked all eleven, which is what makes the casts
  *  below assertions about a validated row rather than hopes about an unvalidated one. */
 function toSaveRow(raw: RawSaveRow): SaveRow {
   return {
@@ -504,6 +563,7 @@ function toSaveRow(raw: RawSaveRow): SaveRow {
     savedAtSeq: raw.saved_at_seq,
     audience: raw.audience as ProjectionAudience,
     profileId: raw.profile_id,
+    initialization: raw.initialization === null ? null : (parseInitialization(raw.initialization) ?? null),
     engineVersion: raw.engine_version as SemanticVersion,
     rowCreatedAt: raw.row_created_at as DatabaseInstant,
     expiresAt: raw.expires_at as DatabaseInstant,
@@ -568,6 +628,33 @@ function firstInvalidProfileTerminalColumn(raw: Record<string, unknown>): string
   return null;
 }
 
+interface RawProfileKindDataRow {
+  readonly tenant_id: string;
+  readonly profile_id: string;
+  readonly kind_id: string;
+  readonly data_version: number;
+  readonly data: string;
+  readonly row_created_at: Date;
+  readonly row_updated_at: Date;
+}
+
+/** `profile_kind_data`'s own select — same shape and same reasoning as the two mirrors above, plus
+ *  one check they do not need: `data` is JSON text, and text that does not parse is as unreadable
+ *  as a widened column. */
+function firstInvalidProfileKindDataColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["kind_id"] !== "string") return "kind_id";
+  if (typeof raw["data_version"] !== "number") return "data_version";
+  if (typeof raw["data"] !== "string") return "data";
+  try {
+    JSON.parse(raw["data"]);
+  } catch {
+    return "data";
+  }
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
+  if (!(raw["row_updated_at"] instanceof Date)) return "row_updated_at";
+  return null;
+}
+
 function toProfileRow(raw: RawProfileRow): ProfileRow {
   return {
     tenantId: raw.tenant_id as TenantId,
@@ -598,6 +685,24 @@ function toProfileTerminalRow(raw: RawProfileTerminalRow): ProfileTerminalRow {
   };
 }
 
+function toProfileKindDataRow(raw: RawProfileKindDataRow): ProfileKindDataRow {
+  return {
+    tenantId: raw.tenant_id as TenantId,
+    profileId: raw.profile_id,
+    kindId: raw.kind_id,
+    dataVersion: raw.data_version,
+    data: raw.data,
+    rowCreatedAt: raw.row_created_at as DatabaseInstant,
+    rowUpdatedAt: raw.row_updated_at as DatabaseInstant,
+  };
+}
+
+/** The engine's own `kindData` order (`upsertKindProfileData`): by `kindId`, compared with `<` —
+ *  code-unit order, not a locale collation, so the database's own ordering is not used. */
+function compareKindId(a: KindProfileRecord, b: KindProfileRecord): number {
+  return a.kindId < b.kindId ? -1 : a.kindId > b.kindId ? 1 : 0;
+}
+
 /** Host columns stop here (invariant 48): `tenantId`, `engineVersion`, `rowCreatedAt` and
  *  `expiresAt` are on `SaveRow` and on no `StoredSaveRecord`. `profileId: null` maps to an *absent*
  *  key, never a member holding `undefined` — the same rule `toStoredSessionRecord` applies. */
@@ -610,6 +715,7 @@ function toStoredSaveRecord(row: SaveRow): StoredSaveRecord {
     savedAtSeq: row.savedAtSeq,
     audience: row.audience,
     ...(row.profileId !== null ? { profileId: row.profileId } : {}),
+    ...(row.initialization !== null ? { initialization: row.initialization } : {}),
   };
 }
 
@@ -762,6 +868,8 @@ export async function openDurableStore(
             engineCreatedAt: record.createdAt as EngineInstant,
             engineUpdatedAt: record.updatedAt as EngineInstant,
             profileId: record.profileId ?? null,
+            revision: record.revision,
+            initialization: initializationColumn(record.initialization),
           };
           const outcome = await writeSessionRow(
             pool,
@@ -806,6 +914,7 @@ export async function openDurableStore(
             savedAtSeq: record.savedAtSeq,
             audience: record.audience,
             profileId: record.profileId ?? null,
+            initialization: initializationColumn(record.initialization),
           };
           const statement = saveUpsertStatement(tenantId, input, engineVersion, bounds.saveTtlSeconds);
           try {
@@ -883,7 +992,7 @@ export async function openDurableStore(
       }
       if (profileRows.rows.length === 0) {
         return {
-          profile: { formatVersion: 2, profileId, achievements: [], terminals: [] },
+          profile: { formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] },
           warnings: [{ code: "profile_missing", profileId }],
         };
       }
@@ -898,21 +1007,24 @@ export async function openDurableStore(
       }
 
       const profileRow = toProfileRow(firstRow);
-      // `formatVersion` migrates 1 → 2, and the migration is total (engine `04-core.md` §7.1: "no
-      // field is renamed, removed or re-typed"): a version-1 profile never had a `profile_terminal`
-      // row to begin with, so reading it back as `formatVersion: 2` with whatever `terminals` the
-      // query below returns (empty, for that profile) *is* the migration — nothing to transform.
-      // Any other stored value is a format this release cannot read, and stays `profile_corrupt`.
-      if (profileRow.formatVersion !== 1 && profileRow.formatVersion !== 2) {
+      // `formatVersion` migrates 1 → 3 and 2 → 3, and both migrations are total (engine `04-core.md`
+      // §7.1: "no field is renamed, removed or re-typed"): a version-1 profile never had a
+      // `profile_terminal` row, and neither a version-1 nor a version-2 profile ever had a
+      // `profile_kind_data` row, so reading either back as `formatVersion: 3` with whatever the
+      // queries below return (empty, for that profile) *is* the migration — nothing to transform.
+      // `3` is accepted though this release never writes it (see `save`): reading it first is what
+      // lets the next release write it. Any other stored value is a format this release cannot read,
+      // and stays `profile_corrupt`.
+      if (profileRow.formatVersion !== 1 && profileRow.formatVersion !== 2 && profileRow.formatVersion !== 3) {
         return corruptProfileResult(profileId);
       }
 
-      // Two more queries, not one joined with either — see `RawProfileRow`'s own comment: a query
-      // joining `profile_achievement` and `profile_terminal` would cross-product one profile's
-      // achievements with its terminals. Run together since neither depends on the other.
-      let achievementRows, terminalRows;
+      // Three more queries, not one joined across them — see `RawProfileRow`'s own comment: a query
+      // joining the mirrors would cross-product one profile's rows in each. Run together since none
+      // depends on another.
+      let achievementRows, terminalRows, kindDataRows;
       try {
-        [achievementRows, terminalRows] = await Promise.all([
+        [achievementRows, terminalRows, kindDataRows] = await Promise.all([
           pool.query<RawProfileAchievementRow>(
             "select tenant_id, profile_id, campaign_id, achievement_id, row_created_at " +
               "from profile_achievement where tenant_id = $1 and profile_id = $2",
@@ -921,6 +1033,11 @@ export async function openDurableStore(
           pool.query<RawProfileTerminalRow>(
             "select tenant_id, profile_id, campaign_id, terminal_id, row_created_at " +
               "from profile_terminal where tenant_id = $1 and profile_id = $2",
+            [tenantId, profileId],
+          ),
+          pool.query<RawProfileKindDataRow>(
+            "select tenant_id, profile_id, kind_id, data_version, data, row_created_at, row_updated_at " +
+              "from profile_kind_data where tenant_id = $1 and profile_id = $2",
             [tenantId, profileId],
           ),
         ]);
@@ -933,6 +1050,9 @@ export async function openDurableStore(
       if (terminalRows.rows.some((row) => firstInvalidProfileTerminalColumn(row as unknown as Record<string, unknown>) !== null)) {
         return corruptProfileResult(profileId);
       }
+      if (kindDataRows.rows.some((row) => firstInvalidProfileKindDataColumn(row as unknown as Record<string, unknown>) !== null)) {
+        return corruptProfileResult(profileId);
+      }
 
       const achievements = achievementRows.rows
         .map(toProfileAchievementRow)
@@ -940,13 +1060,23 @@ export async function openDurableStore(
       const terminals = terminalRows.rows
         .map(toProfileTerminalRow)
         .map((row) => ({ campaignId: row.campaignId, terminalId: row.terminalId }));
+      const kindData = kindDataRows.rows
+        .map(toProfileKindDataRow)
+        .map((row): KindProfileRecord => ({ kindId: row.kindId, dataVersion: row.dataVersion, data: JSON.parse(row.data) as unknown }))
+        .sort(compareKindId);
       return {
-        profile: { formatVersion: 2, profileId, achievements, terminals },
+        profile: { formatVersion: 3, profileId, achievements, terminals, kindData },
         warnings: [],
       };
     },
     async save(profile) {
       try {
+        // Stored as `2`, not `3`: this release is the read-support half of the two-step
+        // (`design/g2/20-contract.md`, the `profile` table's *Migration story*). An instance still
+        // on the previous release reads `1` and `2` only, so a `3` written here would read there as
+        // `profile_corrupt` for the length of a rolling deploy. `kindData` lives in its own table,
+        // which that release never queries, so `2` loses nothing — `load` above reads
+        // `profile_kind_data` whatever the stored version. Writing `3` is the next release's step.
         await pool.query(
           "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 2, now()) " +
             "on conflict (tenant_id, profile_id) do update set format_version = 2, row_updated_at = now()",
@@ -978,6 +1108,26 @@ export async function openDurableStore(
               profile.profileId,
               profile.terminals.map((terminal) => terminal.campaignId),
               profile.terminals.map((terminal) => terminal.terminalId),
+            ],
+          );
+        }
+        // Unlike the two mirrors above, a kind's record is *replaced*, not merely added: the engine
+        // rewrites one kind's `data` per terminal (`upsertKindProfileData`), so the stored row takes
+        // the saved value. Kinds the saved profile does not carry are kept, the same additive rule
+        // the mirrors follow — the engine never removes a kind's record.
+        if (profile.kindData.length > 0) {
+          await pool.query(
+            "insert into profile_kind_data (tenant_id, profile_id, kind_id, data_version, data) " +
+              "select $1, $2, kind_id, data_version, data " +
+              "from unnest($3::text[], $4::integer[], $5::text[]) as kind_data(kind_id, data_version, data) " +
+              "on conflict (tenant_id, profile_id, kind_id) do update set " +
+              "data_version = excluded.data_version, data = excluded.data, row_updated_at = now()",
+            [
+              tenantId,
+              profile.profileId,
+              profile.kindData.map((record) => record.kindId),
+              profile.kindData.map((record) => record.dataVersion),
+              profile.kindData.map((record) => JSON.stringify(record.data)),
             ],
           );
         }

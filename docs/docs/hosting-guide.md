@@ -44,7 +44,7 @@ listener never binds; so does a contract whose major version the workload does n
 
 Both surfaces are generated from one table of rows, **held as data** in the external
 `SubZeroDev.ServiceContract` repository and consumed here as the vendored package
-`@subzerodev/service-contract` 0.6.0. Nothing in this repository authors, edits or regenerates
+`@subzerodev/service-contract` 0.7.0. Nothing in this repository authors, edits or regenerates
 it, and request and response schemas are generated from the engine's own types. Removing a row
 removes a route and a tool together. The current table has thirteen rows:
 

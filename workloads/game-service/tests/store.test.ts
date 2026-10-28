@@ -56,6 +56,7 @@ function sessionRecord(id: string, overrides: Partial<StoredSessionRecord> = {})
     replayCompatible: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    revision: 0,
     ...overrides,
   };
 }
@@ -103,7 +104,7 @@ describe("S3.1 — insert then guarded update", () => {
         expect(first.rows[0]?.version).toBe(1n);
 
         await persistence.sessions.get("s3-1"); // populates the read-version map with version 1
-        await persistence.sessions.put(sessionRecord("s3-1", { blob: '{"changed":true}' }));
+        await persistence.sessions.put(sessionRecord("s3-1", { blob: '{"changed":true}', revision: 1 }));
 
         const second = await raw.query<{ version: bigint }>("select version from session where session_id = $1", [
           "s3-1",
@@ -247,6 +248,8 @@ describe("S3.6 — a re-read that itself fails is classified conflict, never a S
         engineCreatedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
         engineUpdatedAt: "2026-01-01T00:00:00.000Z" as EngineInstant,
         profileId: null,
+        revision: 0,
+        initialization: null,
       };
 
       const inserted = await writeSessionRow(pool, tenantId, ENGINE_VERSION_A, 2_592_000, 0, versions, input);
@@ -353,6 +356,8 @@ describe("S3.9 — tenant_id in every statement", () => {
       engineCreatedAt: "x" as EngineInstant,
       engineUpdatedAt: "x" as EngineInstant,
       profileId: null,
+      revision: 0,
+      initialization: null,
     };
     const saveInput = {
       saveId: "sv1",
@@ -362,6 +367,7 @@ describe("S3.9 — tenant_id in every statement", () => {
       savedAtSeq: 0,
       audience: "player" as const,
       profileId: null,
+      initialization: null,
     };
     const sweeps = sweepStatements(tenantId, 10);
     const statements = [
@@ -536,10 +542,10 @@ describe("S3.16 — migrateToHead is idempotent and safe under concurrent caller
           "select table_name from information_schema.tables where table_schema = current_schema() and table_type = 'BASE TABLE'",
         );
         const names = tables.rows.map((row) => row.table_name).sort();
-        expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "profile_terminal", "save", "session"].sort());
+        expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "profile_kind_data", "profile_terminal", "save", "session"].sort());
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(2);
+        expect(migrationRows.rows).toHaveLength(4);
       } finally {
         await raw.close();
       }
@@ -572,6 +578,105 @@ describe("S3.17 — the version column round-trips as bigint", () => {
       } finally {
         await raw.close();
       }
+    });
+  });
+});
+
+describe("Engine 0.12.0 — the guarded update asserts the engine's revision as well as the store's version", () => {
+  it("classifies a put whose revision does not follow the stored one as conflict, at a current version", async () => {
+    await withSchema(async (_schema, store) => {
+      const persistence = store.persistenceForRequest();
+      await persistence.sessions.put(sessionRecord("rev-1"));
+      await persistence.sessions.get("rev-1"); // map now holds version 1, which is still current
+
+      let caught: unknown;
+      try {
+        // Revision 0 again: the row already holds 0, so the next accepted write must carry 1.
+        await persistence.sessions.put(sessionRecord("rev-1", { blob: '{"stale":true}', revision: 0 }));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).name).toBe(SESSION_PERSISTENCE_CONFLICT);
+      expect((caught as DurableWriteConflict).outcome).toBe("conflict");
+    });
+  });
+
+  it("round-trips revision, and keeps an absent initialization absent rather than `{}`", async () => {
+    await withSchema(async (_schema, store) => {
+      const persistence = store.persistenceForRequest();
+      await persistence.sessions.put(sessionRecord("rev-2"));
+      await persistence.sessions.put(sessionRecord("rev-3", { initialization: { kindProfileData: { level: 2 } } }));
+      await persistence.saves.put(saveRecord("save-rev-2"));
+      await persistence.saves.put(saveRecord("save-rev-3", { initialization: {} }));
+
+      const fresh = store.persistenceForRequest();
+      const absent = await fresh.sessions.get("rev-2");
+      expect(absent?.revision).toBe(0);
+      expect(absent).toBeDefined();
+      expect(absent !== null && absent !== undefined && "initialization" in absent).toBe(false);
+      expect((await fresh.sessions.get("rev-3"))?.initialization).toEqual({ kindProfileData: { level: 2 } });
+      const absentSave = await fresh.saves.get("save-rev-2");
+      expect(absentSave).toBeDefined();
+      expect(absentSave !== null && absentSave !== undefined && "initialization" in absentSave).toBe(false);
+      expect((await fresh.saves.get("save-rev-3"))?.initialization).toEqual({});
+    });
+  });
+});
+
+describe("Engine 0.12.0 — profile kindData, and the format_version two-step", () => {
+  it("replaces a kind's record per save, keeps kinds a later save omits, and loads them sorted by kindId", async () => {
+    await withSchema(async (_schema, store) => {
+      const profileId = "kind-data-1";
+      await store.profiles.save({
+        formatVersion: 3,
+        profileId,
+        achievements: [],
+        terminals: [],
+        kindData: [
+          { kindId: "world-graph", dataVersion: 1, data: { visits: 1 } },
+          { kindId: "simulation", dataVersion: 1, data: { weeks: 4 } },
+        ],
+      });
+      await store.profiles.save({
+        formatVersion: 3,
+        profileId,
+        achievements: [],
+        terminals: [],
+        kindData: [{ kindId: "world-graph", dataVersion: 2, data: { visits: 2 } }],
+      });
+
+      const loaded = await store.profiles.load(profileId);
+      expect(loaded.warnings).toEqual([]);
+      expect(loaded.profile.formatVersion).toBe(3);
+      expect(loaded.profile.kindData).toEqual([
+        { kindId: "simulation", dataVersion: 1, data: { weeks: 4 } },
+        { kindId: "world-graph", dataVersion: 2, data: { visits: 2 } },
+      ]);
+    });
+  });
+
+  it("stores format_version 2 — read support for 3 ships before write support — and still loads a stored 3", async () => {
+    await withSchema(async (schema, store) => {
+      const profileId = "kind-data-2";
+      await store.profiles.save({ formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] });
+
+      const raw = await RawSchemaClient.connect(schema.schema);
+      try {
+        const stored = await raw.query<{ format_version: number }>(
+          "select format_version from profile where profile_id = $1",
+          [profileId],
+        );
+        expect(stored.rows[0]?.format_version).toBe(2);
+
+        // What the next release will write must already read cleanly here.
+        await raw.query("update profile set format_version = 3 where profile_id = $1", [profileId]);
+      } finally {
+        await raw.close();
+      }
+      const loaded = await store.profiles.load(profileId);
+      expect(loaded.warnings).toEqual([]);
+      expect(loaded.profile.formatVersion).toBe(3);
     });
   });
 });
