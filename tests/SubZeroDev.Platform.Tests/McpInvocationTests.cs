@@ -383,7 +383,7 @@ public sealed class McpInvocationTests
 
     /// <summary>S15.1 — a session request carrying a different principal than the one the session was
     /// established with ends the exchange; the SDK's own session-principal binding is what enforces
-    /// this (design/90-decisions.md, 2026-08-29), and this proves Platform's bridge onto
+    /// this (design/d5/90-decisions.md, 2026-08-29), and this proves Platform's bridge onto
     /// <c>HttpContext.User</c> actually engages it.</summary>
     [Fact]
     public async Task A_session_request_carrying_a_different_principal_ends_the_exchange()
