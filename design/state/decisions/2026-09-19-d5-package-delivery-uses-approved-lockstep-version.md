@@ -3,7 +3,7 @@ Date: 2026-09-19
 Anchor: 2026-09-19 — D5 package delivery uses the approved lockstep version
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-19 — D5 package delivery uses the approved lockstep version"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-19 — D5 package delivery uses the approved lockstep version"
 
 ## Claim
 Context — S18 needed the answer to `10-design.md` § Open questions 4 before producing package artifacts. Ben approved lockstep on 2026-09-17, recorded on issue #186.

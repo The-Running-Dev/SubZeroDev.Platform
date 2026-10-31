@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The licensed installation is the database, and expiry and grace are stored as verified
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The licensed installation is the database, and expiry and grace are stored as verified"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The licensed installation is the database, and expiry and grace are stored as verified"
 
 ## Claim
 Context — the brief's licensing criteria require that an operational verification error uses stored claims without extending their recorded expiry or grace, that a tampered document never grants a tier, that a fresh installation continues at Community, and that a backwards clock is detected without any claim to resist deliberate manipulation. Machine activation and seat enforcement are non-goals.

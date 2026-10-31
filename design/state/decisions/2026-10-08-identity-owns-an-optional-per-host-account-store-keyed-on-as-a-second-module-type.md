@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #93: Identity owns an optional, per-host account store keyed on (issuer, subject), as a second module type
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #93: Identity owns an optional, per-host account store keyed on (issuer, subject), as a second module type"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #93: Identity owns an optional, per-host account store keyed on (issuer, subject), as a second module type"
 
 ## Claim
 Context — [#93](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/93) boxes 3–4. Ben ruled 2026-10-08: "Identity owns an optional account store keyed on (provider, subject), with explicit authenticated linking." Brief decision 6 makes it per host; decision 5 (no linking across products) and #98 (a principal is not an account) stand; ADR-009 decision 4 is amended in place.

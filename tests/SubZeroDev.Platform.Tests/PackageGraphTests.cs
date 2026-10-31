@@ -105,7 +105,7 @@ public sealed class PackageGraphTests
     // S16.6 -------------------------------------------------------------------------------------
 
     /// <summary>I-W1's first half: no backend package references the shell. The shell is a
-    /// front-end build with no .NET package at all (<c>design/20-contract.md</c> § <em>Types</em>
+    /// front-end build with no .NET package at all (<c>design/d5/20-contract.md</c> § <em>Types</em>
     /// 11) — checked here as no <c>.csproj</c> under <c>src/</c> or <c>samples/</c> naming
     /// <c>shell</c> in a project or package reference, and the shell's own directory carrying no
     /// <c>.csproj</c> for one to reference.</summary>
@@ -820,7 +820,7 @@ internal static class VendorPackageGuard
 /// type, field, property, event, method and parameter names, and the types and members it
 /// references from elsewhere — read from the compiled metadata, and none may name an owner. The
 /// owner words are the ones the contract gives the concept: an owner, and the organization that is
-/// one (<c>design/20-contract.md</c>, "An organization holds a tenant; it is not one").</summary>
+/// one (<c>design/d5/20-contract.md</c>, "An organization holds a tenant; it is not one").</summary>
 internal static class OwnerConceptGuard
 {
     internal static readonly IReadOnlyCollection<string> OwnerWords = ["Owner", "Organization"];

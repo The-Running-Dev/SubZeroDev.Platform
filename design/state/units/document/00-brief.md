@@ -11,5 +11,7 @@ Work:
 Evidence:
 
 ## Owns
-The D5 problem statement, who it is for, the nine-capability scope, and the definition of done —
-hand-authored and outranking every other D5 design document.
+The active effort's problem statement, who it is for, its scope and its definition of done —
+hand-authored and outranking every other design document of that effort. The slot is empty between
+efforts: no file exists at the anchor until the next effort's brief is written. The last occupant,
+D5's, is `unit/document/d5-00-brief`.

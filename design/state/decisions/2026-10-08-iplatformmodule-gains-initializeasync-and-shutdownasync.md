@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #63: `IPlatformModule` gains `InitializeAsync` and `ShutdownAsync`
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #63: `IPlatformModule` gains `InitializeAsync` and `ShutdownAsync`"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #63: `IPlatformModule` gains `InitializeAsync` and `ShutdownAsync`"
 
 ## Claim
 Context — `IPlatformModule` had only `Register`. Modules that need start-time work each register a hosted service, ordered by registration rather than the graph.

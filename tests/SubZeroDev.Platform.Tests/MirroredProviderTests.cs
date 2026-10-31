@@ -48,7 +48,7 @@ public sealed class MirroredProviderTests
     public void S39_1_The_contract_points_at_the_tree_instead_of_scaffolding_the_declarations()
     {
         var contract = File.ReadAllText(Path.Combine(
-            S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory), "design", "20-contract.md"));
+            S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory), "design", "d5", "20-contract.md"));
 
         Assert.DoesNotContain("public interface IMirroredPermissionProvider", contract, StringComparison.Ordinal);
         Assert.DoesNotContain("public sealed record AuthorizationOptions", contract, StringComparison.Ordinal);

@@ -3,7 +3,7 @@ using SubZeroDev.Platform.Abstractions;
 namespace SubZeroDev.Platform.RuntimeSettings;
 
 /// <summary>Why a setting could not be read or written. <see cref="Detail"/> names the setting and
-/// the layer and never a value (<c>design/20-contract.md</c>, Error semantics §15).</summary>
+/// the layer and never a value (<c>design/d5/20-contract.md</c>, Error semantics §15).</summary>
 public sealed record SettingError : PlatformError
 {
     private SettingError(string code, bool isRetryable, string detail)
@@ -88,7 +88,7 @@ public sealed record SettingError : PlatformError
 
 /// <summary>Why the setting catalogue could not be built. Raised at startup only, as the inner error
 /// of <c>HostStartupError.Registration</c>, and never retryable (I-ST2;
-/// <c>design/20-contract.md</c>, Error semantics §9).</summary>
+/// <c>design/d5/20-contract.md</c>, Error semantics §9).</summary>
 public sealed record SettingCatalogError : PlatformError
 {
     private SettingCatalogError(string code, string detail)

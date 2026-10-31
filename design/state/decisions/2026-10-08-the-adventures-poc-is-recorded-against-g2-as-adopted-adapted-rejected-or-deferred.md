@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #86: the Adventures POC is recorded against G2 as adopted, adapted, rejected or deferred
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #86: the Adventures POC is recorded against G2 as adopted, adapted, rejected or deferred"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #86: the Adventures POC is recorded against G2 as adopted, adapted, rejected or deferred"
 
 ## Claim
 Context — [#86](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/86) asked what G2 did with each idea in the Adventures proof of concept. G2 shipped without that list. Ben ruled 2026-10-08: an adopt/adapt/reject record.

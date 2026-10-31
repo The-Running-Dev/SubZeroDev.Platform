@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #60: optimistic concurrency is an opt-in `IVersioned` column checked by `IVersionGuard`
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #60: optimistic concurrency is an opt-in `IVersioned` column checked by `IVersionGuard`"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #60: optimistic concurrency is an opt-in `IVersioned` column checked by `IVersionGuard`"
 
 ## Claim
 Context — [#60](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/60). Two hosts writing the same row during a restart overlap (Automator's API and worker, BarStrad's staff and table) silently overwrote each other. Ben ruled 2026-10-08: opt-in optimistic concurrency.

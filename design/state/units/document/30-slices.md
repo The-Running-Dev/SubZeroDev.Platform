@@ -11,6 +11,7 @@ Work:
 Evidence:
 
 ## Owns
-The vertical slice plan derived from `10-design.md` and `20-contract.md`: the risk ordering, each
-slice's acceptance criteria while outstanding, and the landed/outstanding split. A slice may not
-introduce a declaration the contract does not carry.
+The active effort's vertical slice plan, derived from its `10-design.md` and `20-contract.md`: the
+risk ordering, each slice's acceptance criteria while outstanding, and the landed/outstanding split.
+The slot is empty between efforts: no file exists at the anchor until the next effort's slices are
+written. The last occupant, D5's, is `unit/document/d5-30-slices`.

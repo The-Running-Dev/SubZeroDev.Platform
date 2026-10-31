@@ -34,7 +34,7 @@ public enum SettingLayer
 
 /// <summary>One declared runtime setting: its name, the layers it may be set at, its default and its
 /// rule. Only the three factories construct one, so a setting is a boolean, a 64-bit integer or text
-/// and nothing else (<c>design/20-contract.md</c>, Types §15).</summary>
+/// and nothing else (<c>design/d5/20-contract.md</c>, Types §15).</summary>
 public abstract class SettingDefinition
 {
     private protected SettingDefinition(SettingName name, IReadOnlySet<SettingLayer> layers)
@@ -121,7 +121,7 @@ public sealed class SettingDefinition<T> : SettingDefinition
     public bool IsValid(T value) => value is not null && rule(value);
 
     /// <summary>Parses a stored value: <c>true</c>/<c>false</c>, an invariant-culture integer, or the
-    /// text as given (<c>design/20-contract.md</c>, Schemas §9). Validity under the rule is checked
+    /// text as given (<c>design/d5/20-contract.md</c>, Schemas §9). Validity under the rule is checked
     /// separately.</summary>
     internal bool TryParse(string stored, out T value)
     {

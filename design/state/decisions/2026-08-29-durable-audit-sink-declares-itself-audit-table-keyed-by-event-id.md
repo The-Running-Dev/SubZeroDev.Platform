@@ -3,7 +3,7 @@ Date: 2026-08-29
 Anchor: 2026-08-29 — A durable audit sink declares itself, and the audit table is keyed by event id
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-29 — A durable audit sink declares itself, and the audit table is keyed by event id"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-29 — A durable audit sink declares itself, and the audit table is keyed by event id"
 
 ## Claim
 Context — `10-design.md` makes `Operated` with no durable audit sink a startup failure, but a sink's durability is not discoverable by trying it, and the audit record's storage shape is not stated.

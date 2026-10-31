@@ -185,7 +185,7 @@ having if it is applied at the moment it is inconvenient.
 
 Identity, Authorization, Organizations, Tenancy, Billing, Licensing, Audit, shared web UI and
 `Platform.Mcp`. The bounded scope and authoritative done-criteria are in the
-[D5 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md#definition-of-done).
+[D5 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d5/00-brief.md#definition-of-done).
 
 **Done when** the assertion-driven sample proves all nine capabilities in both the operated and
 identity-free local compositions, including the brief's negative cases, database matrix,
@@ -196,7 +196,7 @@ for registration, composition, security defaults, failure semantics and the asse
 
 The sample is the executable proof, **not an external consumer**. The retained consumer-evidence
 objection for Authorization, Licensing, Audit and shared web UI remains unresolved in the
-[D5 decision log](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/90-decisions.md).
+[D5 decision log](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d5/90-decisions.md).
 Public registry publishing and onboarding any named consumer are separate work.
 
 > **The tenant column does not wait for this stage.** It ships with Persistence in D3.

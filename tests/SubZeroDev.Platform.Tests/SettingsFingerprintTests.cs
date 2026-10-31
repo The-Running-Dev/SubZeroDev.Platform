@@ -29,7 +29,7 @@ public sealed class SettingsFingerprintTests
     public void Matches_the_byte_exact_specification_against_a_hand_computed_vector()
     {
         // Computed independently against System.Security.Cryptography.SHA256 over the exact byte
-        // layout design/20-contract.md specifies: "szdfp4", then each of the twelve
+        // layout design/d5/20-contract.md specifies: "szdfp4", then each of the twelve
         // currently-[Fingerprinted] entries (D5-S1 adds CompositionProfile, D5-S32 adds
         // Audit:RetentionDays, D5-S39 adds Authorization:MirrorMaximumAge under the same version),
         // path-sorted ordinally, length-prefixed. D5-S8 bumped the version when

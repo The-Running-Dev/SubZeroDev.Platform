@@ -251,7 +251,7 @@ public sealed class LicensingTests : IDisposable
 
         // Separately named in the audit record. The resource reference is where the outcome goes,
         // because AuditEvent carries no free-form detail member and none may be added
-        // (design/20-contract.md, Audit §6) — so this is the only place the record can keep them apart.
+        // (design/d5/20-contract.md, Audit §6) — so this is the only place the record can keep them apart.
         var invalidRecord = Assert.Single(RecordsFor(invalidSink, "Invalid:Community"));
         var unavailableRecord = Assert.Single(RecordsFor(unavailableSink, "Unavailable:Community"));
         Assert.Empty(RecordsFor(invalidSink, "Unavailable:Community"));
@@ -809,7 +809,7 @@ public sealed class LicensingTests : IDisposable
 
     /// <summary>Verification is triggered explicitly rather than left to the startup hosted service,
     /// because the test host applies migrations after start — and because a slice that runs
-    /// verification on a timer is exactly what <c>design/10-design.md</c> forbids, so there is no tick
+    /// verification on a timer is exactly what <c>design/d5/10-design.md</c> forbids, so there is no tick
     /// to wait for.</summary>
     private static Task<Result<LicenceVerificationOutcome, LicensingError>> VerifyAsync(IPlatformTestHost host) =>
         host.Services.GetRequiredService<ILicenceVerifier>().VerifyOnceAsync(CancellationToken.None);

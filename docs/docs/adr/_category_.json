@@ -4,6 +4,6 @@
   "link": {
     "type": "generated-index",
     "title": "Architecture Decision Records",
-    "description": "Decisions with their context, consequences and rejected alternatives. Each has exactly one home here; design/90-decisions.md indexes them."
+    "description": "Decisions with their context, consequences and rejected alternatives. Each has exactly one home here; design/d5/90-decisions.md indexes them."
   }
 }

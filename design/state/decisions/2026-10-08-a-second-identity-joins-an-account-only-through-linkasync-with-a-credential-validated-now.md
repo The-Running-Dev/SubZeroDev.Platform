@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #93: a second identity joins an account only through `LinkAsync`, with a credential validated now and issued within five minutes
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #93: a second identity joins an account only through `LinkAsync`, with a credential validated now and issued within five minutes"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #93: a second identity joins an account only through `LinkAsync`, with a credential validated now and issued within five minutes"
 
 ## Claim
 Context — [#93](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/93). "Explicit authenticated linking" means the caller is authenticated as the account and completes sign-in with the second identity in the same flow, never by email or any other claim.

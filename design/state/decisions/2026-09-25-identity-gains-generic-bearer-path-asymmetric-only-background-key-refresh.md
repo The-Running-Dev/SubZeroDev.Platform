@@ -3,7 +3,7 @@ Date: 2026-09-25
 Anchor: 2026-09-25 — Identity gains a production-grade generic bearer path, asymmetric only, with background key refresh
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/10-design § 10. The generic bearer path, and vendor dialect as configuration"
+StatedIn: "unit/document/d5-10-design § 10. The generic bearer path, and vendor dialect as configuration"
 
 ## Claim
 Context — ADR-009 left the production bearer provider open, and #94's vendor packages need a generic path to be sugar over.

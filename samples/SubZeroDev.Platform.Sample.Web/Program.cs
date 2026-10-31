@@ -158,7 +158,7 @@ app.MapPost("/orders", async (
     return result.IsSuccess ? Results.Ok(result.Value) : Results.Problem(result.Error.Detail);
 }).RequiresPlatformAuthorization(OperatedComposition.SamplePermissions.CreateOrder, feature: null);
 
-// D5-S16: the administration shell's four reads and one write — design/20-contract.md § Public
+// D5-S16: the administration shell's four reads and one write — design/d5/20-contract.md § Public
 // surface 11, I-W1. Every route it calls is mapped here as an ordinary endpoint, declared the same
 // way every other endpoint above is, so it is callable without the shell.
 app.MapAdminEndpoints();

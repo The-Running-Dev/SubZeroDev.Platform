@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #110: the edge streams per route, with its own first-byte budget, and aborts a broken stream
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #110: the edge streams per route, with its own first-byte budget, and aborts a broken stream"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #110: the edge streams per route, with its own first-byte budget, and aborts a broken stream"
 
 ## Claim
 Context — [#110](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/110), reconciling [#106](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/106). The edge buffered every response, which breaks SkyNet HR's SSE console (its own decision D10), and #106 made a buffered route's mid-body death an honest `503`. Ben ruled 2026-10-08: streaming is a per-route opt-in at the edge with its own time-to-first-byte budget, and a failure mid-stream aborts the stream.

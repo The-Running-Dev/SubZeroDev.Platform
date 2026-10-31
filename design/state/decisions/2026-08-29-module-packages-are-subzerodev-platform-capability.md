@@ -3,7 +3,7 @@ Date: 2026-08-29
 Anchor: 2026-08-29 — Module packages are `SubZeroDev.Platform.<Capability>`
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-29 — Module packages are `SubZeroDev.Platform.<Capability>`"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-29 — Module packages are `SubZeroDev.Platform.<Capability>`"
 
 ## Claim
 Context — `10-design.md` names the six module units — Identity, Organizations, Billing, Licensing, the audit store and Mcp — but fixes a package name for only one of them, `Platform.Mcp`, and the contract has to name the assembly each declaration lives in.

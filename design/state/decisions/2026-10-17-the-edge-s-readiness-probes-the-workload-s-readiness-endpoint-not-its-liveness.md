@@ -3,7 +3,7 @@ Date: 2026-10-17
 Anchor: 2026-10-17 — The edge's readiness probes the workload's readiness endpoint, not its liveness (supersedes g1 2026-08-08, in part)
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-17 — The edge's readiness probes the workload's readiness endpoint, not its liveness (supersedes g1 2026-08-08, in part)"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-17 — The edge's readiness probes the workload's readiness endpoint, not its liveness (supersedes g1 2026-08-08, in part)"
 
 ## Claim
 Context — G1's "The edge is not ready when the workload is unreachable" chose a readiness check that "probes the workload's liveness endpoint rather than any game operation". G2's S10 ("The edge asks the right question", 2026-08-19) changed the probe to the workload's `/readyz` and renamed `LivenessTimeout` to `ReadinessTimeout`. The reason was G2's durable store: once the store existed, a workload could be alive but unable to serve. S10 was a slice, so no decision entry recorded the change, and the G1 entry still reads as current.

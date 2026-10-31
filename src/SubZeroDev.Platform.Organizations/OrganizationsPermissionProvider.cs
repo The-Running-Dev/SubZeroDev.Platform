@@ -13,7 +13,7 @@ namespace SubZeroDev.Platform.Organizations;
 /// <see cref="GrantsAsync"/> names one organization (<c>Type == "Organization"</c>), the same way any
 /// other resource-scoped permission
 /// check in this codebase must be — the evaluator's own pipeline check is never resource-scoped
-/// (<c>design/20-contract.md</c>, Public surface §11), so an organization-administration call site
+/// (<c>design/d5/20-contract.md</c>, Public surface §11), so an organization-administration call site
 /// makes its own explicit, resource-scoped <c>IAuthorizationEvaluator.EvaluateAsync</c> call, exactly
 /// as that section describes.</remarks>
 internal sealed class OrganizationsPermissionProvider(IUnitOfWork unitOfWork, OrganizationStore store) : IPermissionProvider

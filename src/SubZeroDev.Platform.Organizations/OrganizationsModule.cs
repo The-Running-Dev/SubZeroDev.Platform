@@ -8,7 +8,7 @@ namespace SubZeroDev.Platform.Organizations;
 /// <summary>D5-S10's module: the organization API, its own <see cref="ITenantResolver"/> and
 /// <see cref="IPermissionProvider"/>, and the three tables it owns. Depends on the framework's
 /// principal and tenant contracts and has no knowledge of Identity or Billing
-/// (<c>design/20-contract.md</c>, Public surface §10).</summary>
+/// (<c>design/d5/20-contract.md</c>, Public surface §10).</summary>
 public sealed class OrganizationsModule : IPlatformModule
 {
     /// <inheritdoc/>

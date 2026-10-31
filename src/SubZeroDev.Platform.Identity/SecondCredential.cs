@@ -26,7 +26,7 @@ internal interface ISecondCredentialProvider
 /// <param name="Cause">Why it was refused, when it was.</param>
 internal readonly record struct SecondCredentialValidation(Principal? Principal, bool Claimed, string Cause);
 
-/// <summary>The issued-at rule for a second credential (<c>design/20-contract.md</c>, Public surface
+/// <summary>The issued-at rule for a second credential (<c>design/d5/20-contract.md</c>, Public surface
 /// §19, I-I18): the token proves the person completed that sign-in moments ago, not that they once
 /// held a token.</summary>
 internal static class SecondCredential

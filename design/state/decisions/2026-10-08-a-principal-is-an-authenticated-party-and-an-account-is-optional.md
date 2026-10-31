@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #98: a principal is an authenticated party, and an account is optional
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #98: a principal is an authenticated party, and an account is optional"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #98: a principal is an authenticated party, and an account is optional"
 
 ## Claim
 Context — [#98](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/98). BarStrad's principal is a table and SkyNet HR's is an operator asserted by a proxy, and neither is an account. The Automator and GEaaS have accounts.

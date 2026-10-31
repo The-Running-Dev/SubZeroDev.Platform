@@ -3,7 +3,7 @@ Date: 2026-09-05
 Anchor: 2026-09-05 — An endpoint declares its permission and its feature, and a mapped endpoint declaring neither fails startup
 Status: superseded
 SupersededBy: decision/2026-09-21-platform-takes-two-endpoint-exemptions-probes-and-mcp-transport
-StatedIn: "unit/document/90-decisions § 2026-09-05 — An endpoint declares its permission and its feature, and a mapped endpoint declaring neither fails startup"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-05 — An endpoint declares its permission and its feature, and a mapped endpoint declaring neither fails startup"
 
 ## Claim
 Context — `20-contract.md` § *Public surface* 11 fixed the order — authorize at step 4, check entitlement at step 5 when the endpoint admits new paid-feature work — without saying how either step learns what the endpoint requires. I-R1 claims the order is enforced by **code, pipeline order**, which is only true if the pipeline knows what to check; and I-R5's premise, that some endpoints are deliberately not entitlement-gated, was carried by nothing but this document.

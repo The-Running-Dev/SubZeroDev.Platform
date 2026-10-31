@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — Placement recorded for all nine capabilities under ADR-006, and no dependency taken
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — Placement recorded for all nine capabilities under ADR-006, and no dependency taken"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — Placement recorded for all nine capabilities under ADR-006, and no dependency taken"
 
 ## Claim
 Context — the brief makes it a completion condition that `/design` records framework-versus-module placement for every capability under ADR-006 with none left `Undecided`, and `AGENTS.md` requires every gap to be checked against existing packages before it is written, with the reason recorded either way.

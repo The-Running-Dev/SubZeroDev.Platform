@@ -3,7 +3,7 @@ Date: 2026-09-28
 Anchor: 2026-09-28 — A provider failure is carried normalised, first-registered, and behind an audit failure
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/20-contract § 2. Authorization — `SubZeroDev.Platform.Abstractions`", "unit/document/90-decisions § 2026-09-28 — A provider failure is carried normalised, first-registered, and behind an audit failure"
+StatedIn: "unit/document/d5-20-contract § 2. Authorization — `SubZeroDev.Platform.Abstractions`", "unit/document/d5-90-decisions § 2026-09-28 — A provider failure is carried normalised, first-registered, and behind an audit failure"
 
 ## Claim
 Context — `/spec` declaring `AuthorizationDecision.ProviderFailure`: the 2026-09-28 retryable-failure decision left open what the member carries for a variant other than `ProviderUnavailable`, which provider it names when several fail, and which answer wins alongside `AuditFailure`.

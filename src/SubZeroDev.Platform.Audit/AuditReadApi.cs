@@ -28,7 +28,7 @@ public sealed record AuditReadError : PlatformError
 }
 
 /// <summary>The audit record's read API — scoped by tenant, instant range, actor and correlation
-/// (<c>design/20-contract.md</c>, Public surface §10). <b>Exposes no update and no delete</b>: there
+/// (<c>design/d5/20-contract.md</c>, Public surface §10). <b>Exposes no update and no delete</b>: there
 /// is no member here, or anywhere in this module's public surface, that could apply one (S13.4).</summary>
 public interface IAuditReadApi
 {

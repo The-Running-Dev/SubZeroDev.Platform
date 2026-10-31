@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — Entitlement is decided at admission and carried with the work
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — Entitlement is decided at admission and carried with the work"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — Entitlement is decided at admission and carried with the work"
 
 ## Claim
 Context — the brief and `tenancy-billing-licensing.md` both require that expiry degrades features and never touches running or scheduled work — after the recorded thirty-day grace, new paid-feature work is denied while accepted, running and scheduled work continues.

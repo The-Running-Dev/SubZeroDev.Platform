@@ -26,7 +26,7 @@ public readonly record struct ToolProducerName(string Value)
 }
 
 /// <summary>A tool as its producer supplies it. Carries no exposure: a producer cannot expose
-/// itself (design/20-contract.md § Public surface 10 — exposure is a fact configuration decides,
+/// itself (design/d5/20-contract.md § Public surface 10 — exposure is a fact configuration decides,
 /// never one a producer can assert).</summary>
 /// <param name="Name">The tool's name, unique across every producer.</param>
 /// <param name="Description">A human-readable description of what the tool does.</param>

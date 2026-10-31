@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The ambient principal is total, and a principal id is issuer plus subject
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The ambient principal is total, and a principal id is issuer plus subject"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The ambient principal is total, and a principal id is issuer plus subject"
 
 ## Claim
 Context — `IOperationScope.Principal` is `ClaimsPrincipal?` and `IAuditable.CreatedBy` is `string?` because D3 had no identity. The brief requires allowed, denied and failed actions each to persist an actor, and admits accountless and delegated principals as first-class rather than degraded.

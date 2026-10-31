@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #62: the dispatcher records an inbox row before each handler, so database effects are exactly-once
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #62: the dispatcher records an inbox row before each handler, so database effects are exactly-once"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #62: the dispatcher records an inbox row before each handler, so database effects are exactly-once"
 
 ## Claim
 Context — [#62](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/62). Outbox delivery is at-least-once and every handler re-implemented its own duplicate check, or none. Ben ruled 2026-10-08: an inbox seam.

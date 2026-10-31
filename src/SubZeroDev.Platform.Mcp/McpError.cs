@@ -2,7 +2,7 @@ using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Mcp;
 
-/// <summary>D5-S15's own error type (design/20-contract.md § 8). Authorization and entitlement
+/// <summary>D5-S15's own error type (design/d5/20-contract.md § 8). Authorization and entitlement
 /// refusals are deliberately not here — they are raised by the same <see cref="IAuthorizationEvaluator"/>
 /// and <see cref="IEntitlementEvaluator"/> the HTTP path uses, so a denial means the same thing on
 /// both surfaces. Nor is a principal change on an established session: the adopted SDK answers that

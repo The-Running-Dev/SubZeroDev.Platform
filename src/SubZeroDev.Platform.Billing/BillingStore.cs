@@ -238,7 +238,7 @@ internal sealed class BillingStore(IAmbientTransactionAccessor ambient, IProvide
 }
 
 /// <summary>Creates <c>plan</c>, <c>subscription</c> and <c>provider_event_receipt</c> — the three
-/// tables <c>design/20-contract.md</c>'s Persisted schemas §3 names. Nothing here stores an
+/// tables <c>design/d5/20-contract.md</c>'s Persisted schemas §3 names. Nothing here stores an
 /// entitlement (I-B4): a plan transition is one row changing, never a fan-out.</summary>
 internal sealed class BillingMigrationSource : IModuleMigrationSource
 {
@@ -256,7 +256,7 @@ internal sealed class CreateBillingTablesMigration : IModuleMigration
         var isSqlite = connection is SqliteConnection;
         var blobType = isSqlite ? "BLOB" : "BYTEA";
 
-        // A plan's feature set is stored as its own rows, not a serialised blob (design/20-contract.md,
+        // A plan's feature set is stored as its own rows, not a serialised blob (design/d5/20-contract.md,
         // Persisted schemas §3): a feature name is found with one indexed lookup rather than parsing
         // every plan. The empty-string feature name is the sentinel row that lets a plan with zero
         // features still exist as a row.

@@ -8,7 +8,7 @@ namespace SubZeroDev.Platform.Billing;
 
 /// <summary>D5-S11's module: the billing administration API, its own <see cref="IEntitlementContributor"/>
 /// and the three tables it owns. Depends only on the framework's own contracts — no knowledge of
-/// Identity, Organizations or Licensing (<c>design/20-contract.md</c>, Public surface §10).</summary>
+/// Identity, Organizations or Licensing (<c>design/d5/20-contract.md</c>, Public surface §10).</summary>
 public sealed class BillingModule : IPlatformModule
 {
     /// <inheritdoc/>

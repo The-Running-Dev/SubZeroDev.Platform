@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #61: seeding is `ISeeder`, run by migrate mode after migrations, each seeder stating its tenant
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #61: seeding is `ISeeder`, run by migrate mode after migrations, each seeder stating its tenant"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #61: seeding is `ISeeder`, run by migrate mode after migrations, each seeder stating its tenant"
 
 ## Claim
 Context — D3's `NoAmbientOperationScope` remedy names "a seeder" and none existed. The owner ruled for an `ISeeder` beside `IMigrationRunner`, run by migrate mode.

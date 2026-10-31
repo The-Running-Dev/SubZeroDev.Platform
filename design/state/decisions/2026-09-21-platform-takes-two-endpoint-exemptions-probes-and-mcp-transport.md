@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — Platform takes two endpoint exemptions: the probes and the Mcp transport
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — Platform takes two endpoint exemptions: the probes and the Mcp transport"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — Platform takes two endpoint exemptions: the probes and the Mcp transport"
 
 ## Claim
 Context — the 2026-09-05 entry below says the probes are the only exemption Platform takes. The Mcp transport endpoint also carries `ExemptFromPlatformAuthorization`, because its permission varies per call and it authorizes and checks entitlement per tool call. That entry is not rewritten; this one amends it.

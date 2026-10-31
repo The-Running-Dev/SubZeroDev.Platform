@@ -8,7 +8,7 @@ namespace SubZeroDev.Platform.Licensing;
 
 /// <summary>The in-memory current licence state, and the only thing
 /// <see cref="LicensingEntitlementContributor"/> reads. Held in memory so entitlement answers are
-/// unaffected by the store being down (<c>design/20-contract.md</c> § <em>Entitlement</em>:
+/// unaffected by the store being down (<c>design/d5/20-contract.md</c> § <em>Entitlement</em>:
 /// "Licensing's answers from the record it read at startup"), and so that a thousand requests against
 /// one expired licence touch neither the store nor the audit trail (S12.3, S12.14).</summary>
 internal sealed class LicenceStateHolder : ILicenceState
@@ -32,7 +32,7 @@ internal sealed class LicenceStateHolder : ILicenceState
 }
 
 /// <summary>Runs verification. <b>Not on the request path and not on a timer.</b></summary>
-/// <remarks><c>design/10-design.md</c> § <em>Background work</em> is explicit that D5 adds
+/// <remarks><c>design/d5/10-design.md</c> § <em>Background work</em> is explicit that D5 adds
 /// "no retention job, no revocation poll, no licence re-verification timer", and its startup sequence
 /// (step 6) is equally explicit that licence verification "runs once". Licence state therefore changes
 /// when a host restarts or when a host is asked to re-verify — a timer would be a second writer
@@ -216,7 +216,7 @@ internal sealed class LicenceVerifier(
             await auditWriter.WriteAsync(
                 PlatformAuditActions.LicenceStateChanged,
                 // The outcome is named in the resource reference because AuditEvent carries no
-                // free-form detail member and none may be added (design/20-contract.md, Audit §6) —
+                // free-form detail member and none may be added (design/d5/20-contract.md, Audit §6) —
                 // this is the only place the record can keep Invalid and Unavailable apart.
                 new ResourceRef("VerifiedLicence", $"{outcome}:{Redaction.RedactValue(tier.Value)}"),
                 outcome == LicenceVerificationOutcome.Verified ? AuditOutcome.Allowed : AuditOutcome.Failed,

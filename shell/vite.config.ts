@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // D5-S16: a separate front-end build with no .NET package a backend could
-// reference (design/10-design.md, Open questions 2). It is served as static
+// reference (design/d5/10-design.md, Open questions 2). It is served as static
 // assets by whatever host chooses to serve it; this config only builds those
 // assets, it does not decide who serves them.
 export default defineConfig({

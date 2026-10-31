@@ -169,7 +169,7 @@ D5 is not complete until all of the following hold:
 ## Environment and operating assumptions
 
 - **Technology:** .NET, with the boundary between Platform and a hosted product remaining a process
-  and image boundary — [ADR-002](../docs/docs/adr/ADR-002-implementation-technology.md).
+  and image boundary — [ADR-002](../../docs/docs/adr/ADR-002-implementation-technology.md).
 - **Operated SaaS:** multiple concurrent host instances are supported against PostgreSQL. Agent and
   browser clients connect across an untrusted network; confidentiality belongs to the deployment
   transport, while Platform owns authentication and authorization at that transport boundary.

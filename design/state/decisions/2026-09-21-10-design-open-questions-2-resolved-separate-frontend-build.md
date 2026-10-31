@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — `10-design.md` § Open questions 2 resolved: the shell is a separate front-end build
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — `10-design.md` § Open questions 2 resolved: the shell is a separate front-end build"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — `10-design.md` § Open questions 2 resolved: the shell is a separate front-end build"
 
 ## Claim
 Context — the question was open since `/design`; `/align` surfaced it with no slice depending on it.

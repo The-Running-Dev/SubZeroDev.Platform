@@ -3,7 +3,7 @@ Date: 2026-09-03
 Anchor: 2026-09-03 — A consumer declaring `Operated` supplies the profile's two registrations itself
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-03 — A consumer declaring `Operated` supplies the profile's two registrations itself"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-03 — A consumer declaring `Operated` supplies the profile's two registrations itself"
 
 ## Claim
 Context — S8 makes I-C1 and I-C2 real — an `Operated` host with no authentication provider, or with no sink declaring `IsDurable`, refuses to start. The packages that supply those are Identity (S9) and the audit store (S13), both of which land *after* S8. Every `Operated` host in this repository — the web and worker samples, the game-edge workload, the test host — therefore stopped starting the moment the gate went in, and S8.12 forbids degrading instead of failing.

@@ -3,7 +3,7 @@ Date: 2026-09-02
 Anchor: 2026-09-02 — `ISharedReadScopeFactory` gains `IsOpenFor<TEntity>()`
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-02 — `ISharedReadScopeFactory` gains `IsOpenFor<TEntity>()`"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-02 — `ISharedReadScopeFactory` gains `IsOpenFor<TEntity>()`"
 
 ## Claim
 Context — `20-contract.md` § *Public surface* 7 declared `ISharedReadScopeFactory` with `Open<TEntity>()` only, and invariant I-T2 named its enforcement "code — model-build filter" — EF Core vocabulary. But `SubZeroDev.Platform.Persistence` has no EF Core dependency and imposes no repository or ORM (`design/d3/90-decisions.md`, 2026-08-03): a consumer's own data-access code enlists against the ambient connection and writes its own queries. With only `Open<TEntity>()` declared, nothing public let a consumer's own query code ask whether a scope is currently open, so I-T2 was unimplementable by anyone outside this repository's own test project.

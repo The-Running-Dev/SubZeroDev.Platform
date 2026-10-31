@@ -3,7 +3,7 @@ Date: 2026-09-26
 Anchor: 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver"
 
 ## Claim
 Context — red-team F1 (`design/redteam/2026-09-25-10-design.md`): under the resource-server decision a vendor configuration package supplies bearer-validation settings only, so #94's non-standard sign-out stays with each client and its sign-out proof cannot run against Platform.

@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The framework owns the questions; modules own the answers
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The framework owns the questions; modules own the answers"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The framework owns the questions; modules own the answers"
 
 ## Claim
 Context — `/design` for D5. Nine capabilities that are coupled in use — Authorization must audit, Mcp must authorize, Organizations must provision tenants, Billing and Licensing must both answer one entitlement question — under ADR-006 rule 1 (no framework package references a module) and rule 2 (no module references another). Those two rules together admit very few arrangements, and most obvious designs violate one of them on the first coupling.

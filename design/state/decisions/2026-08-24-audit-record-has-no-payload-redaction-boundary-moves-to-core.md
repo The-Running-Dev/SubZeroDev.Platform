@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Core
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Core"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The audit record has no payload, and the redaction boundary moves to Core"
 
 ## Claim
 Context — `platform-specification.md` lists "changed fields where appropriate" among audit fields. The brief requires tests that push representative secrets through every audited input surface and assert that neither values nor payloads reach the stored record or the logs.

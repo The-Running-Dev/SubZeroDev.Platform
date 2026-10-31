@@ -4,7 +4,7 @@ using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.Audit;
 
-/// <summary>Reads and writes the one <c>audit_event</c> table exactly as <c>design/20-contract.md</c>,
+/// <summary>Reads and writes the one <c>audit_event</c> table exactly as <c>design/d5/20-contract.md</c>,
 /// Persisted schemas §1 names its columns — the actor stored as two columns, the primary key the
 /// event id with no tenant prefix (S13.5), and no unique constraint spanning hosts (S13.7). Every
 /// member is handed the connection and transaction to use rather than reading
@@ -120,7 +120,7 @@ internal sealed class AuditStore(IProviderCapability capability)
     }
 }
 
-/// <summary>Creates <c>audit_event</c> — the one table <c>design/20-contract.md</c>'s Persisted
+/// <summary>Creates <c>audit_event</c> — the one table <c>design/d5/20-contract.md</c>'s Persisted
 /// schemas §1 names — and, since D5-S32, the <c>occurred_at</c> index the retention prune deletes
 /// through, and since #306 the trigger that refuses an update. The index is created whether or not
 /// retention is configured, so a database's schema never depends on a setting. No migration ever
@@ -216,7 +216,7 @@ internal sealed class CreateAuditTableMigration : IModuleMigration
         // spans hosts, so concurrent appends from two hosts never contend (S13.7). The actor is two
         // columns — issuer and subject — because PrincipalId.ToString() is not injective and must
         // never be split to recover the pair (I-I3, S13.2). The two resource columns are null
-        // together or present together (design/20-contract.md, Persisted schemas §1).
+        // together or present together (design/d5/20-contract.md, Persisted schemas §1).
         await using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;

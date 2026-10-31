@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #80: the public roadmap renders the active effort's slices
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #80: the public roadmap renders the active effort's slices"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #80: the public roadmap renders the active effort's slices"
 
 ## Claim
 Context — [#80](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/80). The site's roadmap has rendered `design/d3/30-slices.md`, a closed effort's ledger, ever since the archive move. It shows D3's non-goals, one of which ("self-host only") D5 no longer holds.

@@ -4,7 +4,7 @@ using SubZeroDev.Platform.Abstractions;
 namespace SubZeroDev.Platform.Licensing;
 
 /// <summary>The tier a licence document claims. An opaque stable name: Platform is not a licensor and
-/// owns no tier vocabulary beyond the well-known baseline. <c>design/20-contract.md</c>, Types §9.</summary>
+/// owns no tier vocabulary beyond the well-known baseline. <c>design/d5/20-contract.md</c>, Types §9.</summary>
 /// <param name="Value">The tier's stable name.</param>
 public readonly record struct LicenceTier(string Value)
 {
@@ -23,7 +23,7 @@ public readonly record struct LicenceTier(string Value)
 
 /// <summary>The outcome of one verification. Recorded and logged; never returned to a caller as an
 /// error, because verification never fails a host and never fails a request (I-L9, S12.12).
-/// <c>design/20-contract.md</c>, Error semantics §7.</summary>
+/// <c>design/d5/20-contract.md</c>, Error semantics §7.</summary>
 public enum LicenceVerificationOutcome
 {
     /// <summary>Signature valid against an accepted key, payload well formed. Writes the record,
@@ -47,7 +47,7 @@ public enum LicenceVerificationOutcome
 }
 
 /// <summary>The claims in force. Derived from the stored record; never from the document.
-/// <c>design/20-contract.md</c>, Types §9.</summary>
+/// <c>design/d5/20-contract.md</c>, Types §9.</summary>
 /// <param name="Tier">The tier the verified document claimed.</param>
 /// <param name="Features">The features the tier grants.</param>
 /// <param name="IssuedAt">When the document was issued.</param>
@@ -66,7 +66,7 @@ public sealed record LicenceClaims(
     DateTimeOffset VerifiedAt);
 
 /// <summary>One accepted signing key. A deployment supplies an ordered set.
-/// <c>design/20-contract.md</c>, Types §9.</summary>
+/// <c>design/d5/20-contract.md</c>, Types §9.</summary>
 /// <param name="KeyId">The key's id, as the document names it. The stored record names which key
 /// verified, so rotation is observable.</param>
 /// <param name="PublicKey">The public key. <see cref="RSA"/> and <see cref="ECDsa"/> are the two
@@ -76,7 +76,7 @@ public sealed record LicenceSigningKey(
     string KeyId,
     AsymmetricAlgorithm PublicKey);
 
-/// <summary>Why a licensing operation did not complete. <c>design/20-contract.md</c>, Error semantics
+/// <summary>Why a licensing operation did not complete. <c>design/d5/20-contract.md</c>, Error semantics
 /// §7 — exactly one variant, because the four <see cref="LicenceVerificationOutcome"/> values are
 /// outcomes rather than errors.</summary>
 public sealed record LicensingError : PlatformError
@@ -144,7 +144,7 @@ public sealed record LicensingOptions
 }
 
 /// <summary>The revocation extension point: registered by a consumer, or absent.
-/// <c>design/10-design.md</c> § <em>Licensing</em> names it as one of this module's exposed
+/// <c>design/d5/10-design.md</c> § <em>Licensing</em> names it as one of this module's exposed
 /// extension points.</summary>
 /// <remarks><b>D5 registers this seam and never calls it</b> (I-L5, S12.13). It is consulted on no
 /// path a deployment without outbound network takes — never the request path, never startup, never
@@ -165,7 +165,7 @@ public interface IRevocationCheck
 }
 
 /// <summary>A read of the current licence claims, for the shell's licence view
-/// (<c>design/20-contract.md</c> § <em>Public surface</em>, "Licensing"). <b>Exposes no verify-now
+/// (<c>design/d5/20-contract.md</c> § <em>Public surface</em>, "Licensing"). <b>Exposes no verify-now
 /// call on the request path</b>, and answers wholly from memory, so an unreachable store cannot
 /// change what a request is entitled to.</summary>
 public interface ILicenceState

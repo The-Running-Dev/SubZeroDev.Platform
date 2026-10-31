@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — Required audit failures are surfaced, never discarded
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — Required audit failures are surfaced, never discarded"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — Required audit failures are surfaced, never discarded"
 
 ## Claim
 Context — `/align` found three paths where a `Required` audit write's failure was dropped: the authorization evaluator's denial record, `SharedRead.Open`'s escape record, and a `SinkRejected` under `Required`, which the writer answered as success. I-C7 and I-C8's tests passed vacuously, written before these paths existed.

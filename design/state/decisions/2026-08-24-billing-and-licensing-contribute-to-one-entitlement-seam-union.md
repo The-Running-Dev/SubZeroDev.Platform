@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — Billing and Licensing contribute to one entitlement seam, resolved as a union
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — Billing and Licensing contribute to one entitlement seam, resolved as a union"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — Billing and Licensing contribute to one entitlement seam, resolved as a union"
 
 ## Claim
 Context — the brief requires product code to consume entitlements and never subscription state, and `tenancy-billing-licensing.md` forbids any code path outside the billing module branching on it. Licensing answers the same "may this feature be used" question from a different source, and both may be absent.

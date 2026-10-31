@@ -8,7 +8,7 @@ namespace SubZeroDev.Platform.Audit;
 
 /// <summary>D5-S13's module: the durable audit store — one table, an <see cref="IAuditSink"/>
 /// declaring <see cref="IAuditSink.IsDurable"/>, and the read API scoped by tenant, instant range,
-/// actor and correlation (<c>design/20-contract.md</c>, Public surface §10). Depends only on the
+/// actor and correlation (<c>design/d5/20-contract.md</c>, Public surface §10). Depends only on the
 /// framework's own contracts — no knowledge of Identity, Organizations, Billing or
 /// Licensing.</summary>
 public sealed class AuditModule : IPlatformModule

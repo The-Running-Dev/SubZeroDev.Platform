@@ -81,7 +81,7 @@ public sealed record ConfigurationError : PlatformError
 }
 
 /// <summary>A rejected audit sink registration. The <c>DuplicateProviderName</c> variant's code
-/// matches the vocabulary <c>design/20-contract.md</c>'s Startup section fixes for every registry
+/// matches the vocabulary <c>design/d5/20-contract.md</c>'s Startup section fixes for every registry
 /// D5 adds — permission providers, entitlement contributors and tenant resolvers raise the same code
 /// from their own registries when their own slices land.</summary>
 public sealed record AuditSinkRegistrationError : PlatformError

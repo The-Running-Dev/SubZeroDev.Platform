@@ -4,7 +4,7 @@ using SubZeroDev.Platform.Core;
 namespace SubZeroDev.Platform.Persistence;
 
 /// <summary>The writer <c>AddPlatformPersistence</c> installs in place of Core's — the sink's
-/// enlistment in the ambient transaction (<c>design/30-slices.md</c> § S3). A successful action that
+/// enlistment in the ambient transaction (<c>design/d5/30-slices.md</c> § S3). A successful action that
 /// wrote state (<see cref="AuditOutcome.Allowed"/>, with a write-intent transaction open) enlists its
 /// audit event on that transaction rather than dispatching it: <see cref="UnitOfWork"/> flushes every
 /// enlisted event right before commit, so rolling the action back leaves no dispatched event and

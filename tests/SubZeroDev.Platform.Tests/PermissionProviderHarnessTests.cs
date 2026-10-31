@@ -44,7 +44,7 @@ public sealed class PermissionProviderHarnessTests
     public void S40_1_The_contract_points_at_the_tree_instead_of_scaffolding_the_method()
     {
         var contract = File.ReadAllText(Path.Combine(
-            S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory), "design", "20-contract.md"));
+            S17MutationFixtures.FindRepositoryRoot(AppContext.BaseDirectory), "design", "d5", "20-contract.md"));
 
         Assert.DoesNotContain("public static Task AssertIssuerRevocationDeniesWithinBoundAsync(", contract, StringComparison.Ordinal);
         Assert.DoesNotContain("scaffolded here until the slice that materialises it", contract, StringComparison.Ordinal);

@@ -3,7 +3,7 @@ Date: 2026-09-25
 Anchor: 2026-09-25 — Platform validates credentials and never conducts a sign-in
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/10-design § Path 4 — a person signs in and signs out, and Platform is on neither path"
+StatedIn: "unit/document/d5-10-design § Path 4 — a person signs in and signs out, and Platform is on neither path"
 
 ## Claim
 Context — #94's done-when includes sign-out; `IAuthenticationRequest` carries headers only, and Mcp uses the same seam.

@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #25: a channel credential never leaves the server
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #25: a channel credential never leaves the server"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #25: a channel credential never leaves the server"
 
 ## Claim
 Context — [#25](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/25). A live Discord webhook is committed in the BarStrad repository, and a second reaches its browser bundle.

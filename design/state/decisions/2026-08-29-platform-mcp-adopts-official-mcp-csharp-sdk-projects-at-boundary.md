@@ -3,7 +3,7 @@ Date: 2026-08-29
 Anchor: 2026-08-29 — `Platform.Mcp` adopts the official MCP C# SDK and projects to it at the boundary
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-29 — `Platform.Mcp` adopts the official MCP C# SDK and projects to it at the boundary"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-29 — `Platform.Mcp` adopts the official MCP C# SDK and projects to it at the boundary"
 
 ## Claim
 Context — `10-design.md` § *Open questions* 1 made the ADR-004 §4 evaluation a gate on `/contract`, because the answer decides whether tool registration and invocation are Platform's own contracts or a projection of somebody else's. `minimal-platform-packages.md` §3a's finding that three foundational .NET libraries changed licence within one year made licence durability a first-class criterion. The evaluation was run on 2026-08-29 against the sources, not from memory, per `AGENTS.md`, *Verification*.

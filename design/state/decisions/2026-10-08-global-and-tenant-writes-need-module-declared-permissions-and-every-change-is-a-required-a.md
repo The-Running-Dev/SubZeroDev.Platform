@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #58: global and tenant writes need module-declared permissions, and every change is a Required audit record without its value
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #58: global and tenant writes need module-declared permissions, and every change is a Required audit record without its value"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #58: global and tenant writes need module-declared permissions, and every change is a Required audit record without its value"
 
 ## Claim
 Context — [#58](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/58). A setting change is an administrative act, and role policy belongs to the product.

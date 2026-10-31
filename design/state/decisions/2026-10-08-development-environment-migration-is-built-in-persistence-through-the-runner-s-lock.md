@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #68: development-environment migration is built, in Persistence, through the runner's lock
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #68: development-environment migration is built, in Persistence, through the runner's lock"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #68: development-environment migration is built, in Persistence, through the runner's lock"
 
 ## Claim
 Context — D3 promised automatic migration in development and left four questions open (D3 contract, *Unresolved* 8). The owner ruled to build it.

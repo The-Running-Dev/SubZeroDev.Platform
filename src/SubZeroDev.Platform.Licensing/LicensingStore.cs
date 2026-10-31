@@ -4,7 +4,7 @@ using SubZeroDev.Platform.Persistence;
 
 namespace SubZeroDev.Platform.Licensing;
 
-/// <summary>One stored verified-licence row, exactly as <c>design/20-contract.md</c>, Persisted
+/// <summary>One stored verified-licence row, exactly as <c>design/d5/20-contract.md</c>, Persisted
 /// schemas §4 names its columns.</summary>
 /// <param name="Claims">The claims the row carries.</param>
 /// <param name="DocumentFingerprint">A fingerprint of the document verified.</param>
@@ -149,7 +149,7 @@ internal sealed class LicensingStore(IAmbientTransactionAccessor ambient, IProvi
     }
 }
 
-/// <summary>Creates <c>verified_licence</c> — the one table <c>design/20-contract.md</c>'s Persisted
+/// <summary>Creates <c>verified_licence</c> — the one table <c>design/d5/20-contract.md</c>'s Persisted
 /// schemas §4 names. <b>Migration story: none</b> beyond this: a fresh installation has no row, and
 /// no row means <see cref="LicenceTier.Community"/>.</summary>
 internal sealed class LicensingMigrationSource : IModuleMigrationSource

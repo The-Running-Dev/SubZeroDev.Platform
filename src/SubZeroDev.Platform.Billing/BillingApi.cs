@@ -6,7 +6,7 @@ using SubZeroDev.Platform.Persistence;
 namespace SubZeroDev.Platform.Billing;
 
 /// <summary>The billing administration API and inbound provider event seam —
-/// <c>design/20-contract.md</c>, Modules, "Billing" (Touches, S11).</summary>
+/// <c>design/d5/20-contract.md</c>, Modules, "Billing" (Touches, S11).</summary>
 public interface IBillingApi
 {
     /// <summary>Registers or replaces a plan's display name and feature set. Idempotent: no error

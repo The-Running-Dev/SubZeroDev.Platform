@@ -12,18 +12,18 @@ and S16 create inside it.
 
 **The ordering is the design's risk ordering.** The riskiest thing in this design is not any one
 capability — it is the single idea every capability is generated from:
-[ADR-006](../docs/docs/adr/ADR-006-application-modules.md) rules 1 and 2 held **structurally**, so that
+[ADR-006](../../docs/docs/adr/ADR-006-application-modules.md) rules 1 and 2 held **structurally**, so that
 the framework can own nine questions while six modules own the answers and no module can reach another.
 If that cannot be enforced by the build, the shape is wrong and everything downstream rests on a
 preference. S1 therefore builds the enforcement
 before there is anything to enforce it against, and proves it bites by failing it against a
 deliberately broken graph — the standard
-[`minimal-platform-packages.md`](../docs/docs/minimal-platform-packages.md) §2 sets. S2 takes the one
+[`minimal-platform-packages.md`](../../docs/docs/minimal-platform-packages.md) §2 sets. S2 takes the one
 change that is cheap now and expensive after a consumer ships. S3 to S8 are the framework seams, each
 placed where it first becomes checkable, ending with the fixed request order every later slice plugs
 into rather than retrofits. S6 sits as early as its prerequisites allow because the deliberately shared
 resource is the part of tenancy no library provides and the part
-[`second-consumer-packages.md`](../docs/docs/second-consumer-packages.md) §3 names as how isolation
+[`second-consumer-packages.md`](../../docs/docs/second-consumer-packages.md) §3 names as how isolation
 quietly stops holding. S9 to S16 are the six modules and the shell. S17 is the proof the brief's
 definition of done actually asks for, and S18 is public delivery.
 
@@ -52,7 +52,7 @@ index carries no criteria, because the issue is then the record of what was acce
 re-derives a landed slice's criteria from the index.
 
 Every slice carries a `**Status:**` line reading `shipped`, `in progress` or `queued`, immediately
-under its heading. [`build/Test-SliceStatusMarkers.ps1`](../build/Test-SliceStatusMarkers.ps1) fails the
+under its heading. [`build/Test-SliceStatusMarkers.ps1`](../../build/Test-SliceStatusMarkers.ps1) fails the
 documentation gate when the markers are inconsistent: at most one slice in progress, at least one in
 progress while any is queued, and no shipped slice ordered after a queued one.
 
@@ -98,11 +98,11 @@ the service could not check their permission and that they may retry. Today they
 permission. An operator reading the answer can tell an outage from a real refusal.
 
 Touches:
-- **[`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs)** (Abstractions):
+- **[`Authorization.cs`](../../src/SubZeroDev.Platform.Abstractions/Authorization.cs)** (Abstractions):
   `AuthorizationDecision.ProviderFailure`, as `20-contract.md` *Types* § 2 scaffolds it
-- **[`Authorization.cs`](../src/SubZeroDev.Platform.Core/Authorization.cs)** (Core): the evaluator
-- **[`EndpointRequirement.cs`](../src/SubZeroDev.Platform.Hosting/EndpointRequirement.cs)** (Hosting)
-  and **[`McpToolAdapter.cs`](../src/SubZeroDev.Platform.Mcp/McpToolAdapter.cs)** (Mcp): where a decision
+- **[`Authorization.cs`](../../src/SubZeroDev.Platform.Core/Authorization.cs)** (Core): the evaluator
+- **[`EndpointRequirement.cs`](../../src/SubZeroDev.Platform.Hosting/EndpointRequirement.cs)** (Hosting)
+  and **[`McpToolAdapter.cs`](../../src/SubZeroDev.Platform.Mcp/McpToolAdapter.cs)** (Mcp): where a decision
   is answered
 - **[`20-contract.md`](20-contract.md)**: the *Types* § 2 scaffold, and the I-A11 and I-A12 records
 - **`tests/`**
@@ -141,7 +141,7 @@ Delivers: a contributor whose pull request touches nothing near tracing no longe
 random. When CI does fail on the tracing test, the failure means fresh-root tracing really broke.
 
 Touches:
-- **[`trace-evidence.test.ts`](../workloads/game-service/tests/trace-evidence.test.ts)** and its
+- **[`trace-evidence.test.ts`](../../workloads/game-service/tests/trace-evidence.test.ts)** and its
   `tests/support/` helpers
 
 Depends on: none
@@ -531,12 +531,12 @@ a consumer's mirror, knows the longest a removed role can keep granting. A calle
 from a mirror whose sync has stopped is told to retry, not let in and not told they lack permission.
 
 Touches:
-- **[`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs)** (Abstractions):
+- **[`Authorization.cs`](../../src/SubZeroDev.Platform.Abstractions/Authorization.cs)** (Abstractions):
   `IMirroredPermissionProvider`, as `20-contract.md` *Public surface* § 3 scaffolds it
-- **[`Authorization.cs`](../src/SubZeroDev.Platform.Core/Authorization.cs)** (Core): the evaluator, which
+- **[`Authorization.cs`](../../src/SubZeroDev.Platform.Core/Authorization.cs)** (Core): the evaluator, which
   now takes `IClock` and the authorization options
-- **[`PlatformOptions.cs`](../src/SubZeroDev.Platform.Core/PlatformOptions.cs)** and
-  **[`PlatformOptionsBinder.cs`](../src/SubZeroDev.Platform.Core/PlatformOptionsBinder.cs)** (Core):
+- **[`PlatformOptions.cs`](../../src/SubZeroDev.Platform.Core/PlatformOptions.cs)** and
+  **[`PlatformOptionsBinder.cs`](../../src/SubZeroDev.Platform.Core/PlatformOptionsBinder.cs)** (Core):
   `AuthorizationOptions`, bound from `Authorization:MirrorMaximumAge`. The member joins the fingerprint
   under S32's `szdfp4` format version, so the two changes make one bump; this slice updates the golden
   vector, not the version
@@ -589,10 +589,10 @@ the consumer's sync does not carry the removal. Today the only test removes the 
 whatever the sync does.
 
 Touches:
-- **[`PermissionProviderHarness.cs`](../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs)**
+- **[`PermissionProviderHarness.cs`](../../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs)**
   (Testing): `AssertIssuerRevocationDeniesWithinBoundAsync`
 - **[`20-contract.md`](20-contract.md)**: the *Public surface* § 9 scaffold becomes a pointer
-- **[`commercial-guide.md`](../docs/docs/commercial-guide.md)**: the *Consumer tests* paragraph
+- **[`commercial-guide.md`](../../docs/docs/commercial-guide.md)**: the *Consumer tests* paragraph
 - **`tests/`**: `tests/SubZeroDev.Platform.Tests/PermissionProviderHarnessTests.cs`, which gains a fake
   issuer, a fake mirror over the test host's persistence, and three mirrors that misbehave
 

@@ -1,9 +1,13 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   assertConsistent,
+  betweenEfforts,
+  lastArchivedLedger,
+  loadSlices,
+  nonGoals,
   parseSlices,
   currentSlice,
   queuedSlices,
@@ -271,47 +275,94 @@ describe("assertConsistent — the invariants Test-SliceStatusMarkers.ps1 also c
   });
 });
 
-describe("the active design/30-slices.md — the ledger the site renders", () => {
-  const activeRaw = readFileSync(
-    join(
-      dirname(fileURLToPath(import.meta.url)).replace(
-        /[\\/]src[\\/]roadmap$/,
-        "",
+describe("loadSlices — an absent ledger is a state, a malformed one is an error", () => {
+  it("gives no slices for an absent ledger, which is the between-efforts state", () => {
+    expect(loadSlices(undefined)).toEqual([]);
+  });
+
+  it("does not mistake an empty or malformed ledger for an absent one", () => {
+    expect(() => loadSlices("")).toThrow(/no '## ' headings/);
+    expect(() => loadSlices("## Not a slice\n")).toThrow(
+      /no 'S<n> — ' slice headings/,
+    );
+  });
+
+  it("parses and checks a present ledger", () => {
+    expect(loadSlices(validFixture).map((s) => s.id)).toEqual([
+      "S1",
+      "S2",
+      "S3",
+    ]);
+    expect(() =>
+      loadSlices(
+        validFixture.replace("**Status:** in progress", "**Status:** queued"),
       ),
-      "..",
-      "design",
-      "30-slices.md",
-    ),
-    "utf8",
-  );
+    ).toThrow(/no slice is marked 'in progress'/);
+  });
+});
+
+const siteRoot = dirname(fileURLToPath(import.meta.url)).replace(
+  /[\\/]src[\\/]roadmap$/,
+  "",
+);
+const activePath = join(siteRoot, "..", "design", "30-slices.md");
+
+describe("the last archived ledger the between-efforts page links", () => {
+  it("exists, so the link cannot rot when an effort is archived and this constant is not moved", () => {
+    expect(lastArchivedLedger.path).toMatch(/^design\/[^/]+\/30-slices\.md$/);
+    expect(existsSync(join(siteRoot, "..", lastArchivedLedger.path))).toBe(
+      true,
+    );
+  });
+});
+
+describe("the active design/30-slices.md — the ledger the site renders", () => {
+  it("is rendered exactly when it exists: absent means the between-efforts state, with no non-goals", () => {
+    expect(betweenEfforts).toBe(!existsSync(activePath));
+    if (betweenEfforts) {
+      expect(slices).toEqual([]);
+      expect(totalCount).toBe(0);
+      expect(shippedCount).toBe(0);
+      expect(currentSlice).toBeUndefined();
+      expect(queuedSlices).toEqual([]);
+      expect(nonGoals).toEqual([]);
+    } else {
+      expect(nonGoals.length).toBeGreaterThan(0);
+    }
+  });
 
   // One test, so a merge that breaks the count or the markers fails here at
   // the causing commit. The expected numbers are read from the ledger's text
-  // directly, not from the parser under test.
-  it("counts every slice once, from S1 to the highest id the ledger names, and is consistent", () => {
-    const highest = Math.max(
-      ...[...activeRaw.matchAll(/\bS(\d+)\b/g)].map((m) => Number(m[1])),
-    );
-    const landed = activeRaw.slice(activeRaw.indexOf("\n## Landed"));
-    const shippedInLedger =
-      [...activeRaw.matchAll(/^\*\*Status:\*\*\s*shipped/gm)].length +
-      [...landed.matchAll(/^\|\s*\*\*S\d+\*\*\s*\|/gm)].length +
-      [...landed.matchAll(/^- \*\*S\d+ — .+?\*\* — shipped:/gm)].length;
+  // directly, not from the parser under test. Between efforts there is no
+  // ledger to check, and the test says so by skipping rather than passing.
+  it.skipIf(!existsSync(activePath))(
+    "counts every slice once, from S1 to the highest id the ledger names, and is consistent",
+    () => {
+      const activeRaw = readFileSync(activePath, "utf8");
+      const highest = Math.max(
+        ...[...activeRaw.matchAll(/\bS(\d+)\b/g)].map((m) => Number(m[1])),
+      );
+      const landed = activeRaw.slice(activeRaw.indexOf("\n## Landed"));
+      const shippedInLedger =
+        [...activeRaw.matchAll(/^\*\*Status:\*\*\s*shipped/gm)].length +
+        [...landed.matchAll(/^\|\s*\*\*S\d+\*\*\s*\|/gm)].length +
+        [...landed.matchAll(/^- \*\*S\d+ — .+?\*\* — shipped:/gm)].length;
 
-    expect(totalCount).toBe(highest);
-    expect(slices.map((s) => s.id)).toEqual(
-      Array.from({ length: highest }, (_, i) => `S${i + 1}`),
-    );
-    expect(shippedCount).toBe(shippedInLedger);
-    expect(shippedCount).toBe(shippedSlices.length);
-    expect(
-      shippedSlices.length + (currentSlice ? 1 : 0) + queuedSlices.length,
-    ).toBe(totalCount);
-    expect(parseSlices(activeRaw)).toEqual(slices);
-    expect(() => assertConsistent(slices)).not.toThrow();
-  });
+      expect(totalCount).toBe(highest);
+      expect(slices.map((s) => s.id)).toEqual(
+        Array.from({ length: highest }, (_, i) => `S${i + 1}`),
+      );
+      expect(shippedCount).toBe(shippedInLedger);
+      expect(shippedCount).toBe(shippedSlices.length);
+      expect(
+        shippedSlices.length + (currentSlice ? 1 : 0) + queuedSlices.length,
+      ).toBe(totalCount);
+      expect(parseSlices(activeRaw)).toEqual(slices);
+      expect(() => assertConsistent(slices)).not.toThrow();
+    },
+  );
 
-  it("is the only ledger any module under site/src imports — none reaches into design/d3", () => {
+  it("is the only ledger any module under site/src imports — none reaches into an archived design/<effort>/", () => {
     const srcRoot = dirname(fileURLToPath(import.meta.url)).replace(
       /[\\/]roadmap$/,
       "",
@@ -320,7 +371,7 @@ describe("the active design/30-slices.md — the ledger the site renders", () =>
       .map(String)
       .filter((file) => /\.(ts|tsx)$/.test(file))
       .filter((file) =>
-        /^\s*import[^;]*["'][^"']*design\/d3\//m.test(
+        /^\s*import[^;]*["'][^"']*design\/(?!30-slices)[^"'/]+\/30-slices/m.test(
           readFileSync(join(srcRoot, file), "utf8"),
         ),
       );
