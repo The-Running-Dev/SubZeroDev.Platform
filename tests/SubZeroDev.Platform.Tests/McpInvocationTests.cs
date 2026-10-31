@@ -221,22 +221,17 @@ public sealed class McpInvocationTests
 
     /// <summary>S15.11 — a connection dropped mid-invocation cancels the call through the existing
     /// cancellation plumbing and leaves no half-applied write: an invoker still running when the
-    /// caller's token is cancelled never gets to finish, and no audit record is written for that
-    /// call — nothing records a call that never completed.</summary>
-    /// <remarks>Skipped: hangs indefinitely, reproducibly (confirmed with VSTest's
-    /// <c>--blame-hang</c> and SDK trace logging, both locally and on a clean CI runner). Root
-    /// cause traced to the referenced ModelContextProtocol.Core 2.2.0 client, not to Platform:
-    /// cancelling <c>client.CallToolAsync</c>'s <c>CancellationToken</c> over the streamable-HTTP
-    /// transport aborts the client's own wait but never sends the
-    /// <c>notifications/cancelled</c> message, so the server-side invoker's token is never
-    /// triggered and <c>invokerSawCancellation.Task</c> waits forever. This is a confirmed,
-    /// currently-open upstream defect — modelcontextprotocol/csharp-sdk#1365 ("Cancellation
-    /// support via CancellationToken's fails"), whose fix (PR #1377) is unmerged as of this
-    /// writing. Platform's own server-side wiring (<see cref="PlatformMcpTool.InvokeAsync"/>
-    /// passing the SDK-provided token straight through to <see cref="IToolInvoker.InvokeAsync"/>)
-    /// is correct and unaffected — there is nothing in this repository to fix. Re-enable once the
-    /// referenced package version includes that fix.</remarks>
-    [Fact(Skip = "Hangs on a confirmed, open upstream SDK bug — modelcontextprotocol/csharp-sdk#1365. See remarks.")]
+    /// caller cancels never gets to finish, and no audit record is written for that call — nothing
+    /// records a call that never completed.</summary>
+    /// <remarks>Drives the protocol at the JSON-RPC level rather than through <see cref="McpClient"/>:
+    /// ModelContextProtocol.Core's client does not send <c>notifications/cancelled</c> when
+    /// <c>CallToolAsync</c>'s token is cancelled (it only aborts its own wait), so a client-driven
+    /// version of this test hangs on a defect that is not Platform's —
+    /// modelcontextprotocol/csharp-sdk#1365, fix PR #1377. The server-side contract under test is
+    /// the one the protocol specifies: a <c>notifications/cancelled</c> naming an in-flight request
+    /// id triggers the request cancellation token that <see cref="PlatformMcpTool.InvokeAsync"/>
+    /// hands to <see cref="IToolInvoker.InvokeAsync"/>.</remarks>
+    [Fact]
     public async Task A_cancelled_call_writes_no_audit_record_and_never_completes_the_invoker()
     {
         var started = new TaskCompletionSource();
@@ -265,17 +260,70 @@ public sealed class McpInvocationTests
                 invoker,
             ]);
 
-        await using var client = await harness.ConnectAsync("alice");
+        using var http = harness.NewHttpClient("alice");
 
-        using var callCancellation = new CancellationTokenSource();
-        var callTask = client.CallToolAsync(
-            "slow", new Dictionary<string, object?>(), cancellationToken: callCancellation.Token).AsTask();
+        using var initializeResponse = await http.SendAsync(
+            JsonRpc(null, new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "initialize",
+                @params = new
+                {
+                    protocolVersion = "2025-06-18",
+                    capabilities = new { },
+                    clientInfo = new { name = "s15-test", version = "1.0" },
+                },
+            }),
+            CancellationToken.None);
+        Assert.True(
+            initializeResponse.IsSuccessStatusCode,
+            $"initialize failed: {(int)initializeResponse.StatusCode} {await initializeResponse.Content.ReadAsStringAsync(CancellationToken.None)}");
+        var sessionId = Assert.Single(initializeResponse.Headers.GetValues("Mcp-Session-Id"));
+
+        using var initialized = await http.SendAsync(
+            JsonRpc(sessionId, new { jsonrpc = "2.0", method = "notifications/initialized" }),
+            CancellationToken.None);
+        Assert.Equal(HttpStatusCode.Accepted, initialized.StatusCode);
+
+        // The call's own POST stays open until the server answers it, so it runs in the background
+        // and is torn down at the end — the test never waits on its response.
+        using var callAbandoned = new CancellationTokenSource();
+        var callTask = http.SendAsync(
+            JsonRpc(sessionId, new
+            {
+                jsonrpc = "2.0",
+                id = 2,
+                method = "tools/call",
+                @params = new { name = "slow", arguments = new { } },
+            }),
+            HttpCompletionOption.ResponseHeadersRead,
+            callAbandoned.Token);
 
         await started.Task;
-        callCancellation.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => callTask);
-        await invokerSawCancellation.Task;
+        using var cancelled = await http.SendAsync(
+            JsonRpc(sessionId, new
+            {
+                jsonrpc = "2.0",
+                method = "notifications/cancelled",
+                @params = new { requestId = 2, reason = "caller gave up" },
+            }),
+            CancellationToken.None);
+        Assert.Equal(HttpStatusCode.Accepted, cancelled.StatusCode);
+
+        // A hang guard only: the signal is what the test synchronizes on, and it never fires if the
+        // invoker is not handed the request's cancellation token.
+        await invokerSawCancellation.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        callAbandoned.Cancel();
+        try
+        {
+            using var abandoned = await callTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
 
         var records = harness.Audit.Received.Where(e => e.Action == new AuditAction("slow")).ToList();
         Assert.Empty(records);
@@ -628,6 +676,21 @@ public sealed class McpInvocationTests
 
         public ValueTask<IReadOnlyCollection<ToolDefinition>> ProduceAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyCollection<ToolDefinition>>(Table);
+    }
+
+    /// <summary>A streamable-HTTP POST carrying one JSON-RPC message, bound to <paramref name="sessionId"/>
+    /// when there is one.</summary>
+    private static HttpRequestMessage JsonRpc(string? sessionId, object message)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = JsonContent.Create(message) };
+        request.Headers.Accept.Add(new("application/json"));
+        request.Headers.Accept.Add(new("text/event-stream"));
+        if (sessionId is not null)
+        {
+            request.Headers.Add("Mcp-Session-Id", sessionId);
+        }
+
+        return request;
     }
 
     private static string TextOf(CallToolResult result) =>
