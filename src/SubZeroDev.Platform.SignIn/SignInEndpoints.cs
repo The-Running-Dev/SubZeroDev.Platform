@@ -36,7 +36,7 @@ internal static class SignInEndpoints
     {
         const string reason =
             "The sign-in module's endpoints run before there is a signed-in person to authorize; the "
-            + "session is the module's own cookie and never an input to the authentication seam (design/20-contract.md § 13).";
+            + "session is the module's own cookie and never an input to the authentication seam (design/d5/20-contract.md § 13).";
 
         var group = endpoints.MapGroup($"/signin/{method.Name}");
         group.MapGet("begin", Handler(context => BeginAsync(context, method))).ExemptFromPlatformAuthorization(reason);
@@ -253,7 +253,7 @@ internal static class SignInEndpoints
         }
         catch (Exception exception) when (exception is CryptographicException or JsonException)
         {
-            // Keys that differ between instances read as a missing cookie (design/10-design.md, failure modes).
+            // Keys that differ between instances read as a missing cookie (design/d5/10-design.md, failure modes).
             return null;
         }
     }

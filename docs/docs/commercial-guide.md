@@ -9,7 +9,7 @@ sidebar_position: 15
 D5 adds Identity, Authorization, Organizations, Tenancy, Billing, Licensing, Audit, a shared
 web shell and MCP. The framework owns decision seams; optional modules contribute policy and
 storage. A module does not reference another module, and the framework does not reference modules.
-The [D5 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/00-brief.md)
+The [D5 brief](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d5/00-brief.md)
 defines the bounded capability set.
 
 ## Packages and the sample
@@ -348,6 +348,6 @@ The package-consumer run executes the same Platform test project against package
 
 These proofs establish sample correctness, not external adoption. The consumer-evidence objection
 for Authorization, Licensing, Audit and shared web UI remains unresolved in the
-[decision log](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/90-decisions.md).
+[decision log](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d5/90-decisions.md).
 Performance, throughput, database comparison, public registry publishing and named-consumer
 onboarding are outside this effort.

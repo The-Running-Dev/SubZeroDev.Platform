@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The MCP tool catalogue freezes at startup, and a secret-shaped parameter fails startup
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The MCP tool catalogue freezes at startup, and a secret-shaped parameter fails startup"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The MCP tool catalogue freezes at startup, and a secret-shaped parameter fails startup"
 
 ## Claim
 Context — two inherited non-negotiables — authentication belongs to the connection and never to a call, and exposure is opt-in per tool, default closed. The brief additionally requires that no tool schema or call accepts a secret parameter, and that a registered-but-unexposed tool is neither listed nor callable.

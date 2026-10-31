@@ -3,7 +3,7 @@ Date: 2026-09-25
 Anchor: 2026-09-25 — Token validation adopts Microsoft.IdentityModel; the 2026-08-24 "in-box" claim was wrong
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/10-design § 9. Building the tenancy and identity substrates, against adopting existing ones"
+StatedIn: "unit/document/d5-10-design § 9. Building the tenancy and identity substrates, against adopting existing ones"
 
 ## Claim
 Context — the 2026-08-24 placement entry said token validation is the in-box ASP.NET Core handlers; the installed shared framework 10.0.12 does not contain them.

@@ -3,7 +3,7 @@ Date: 2026-10-01
 Anchor: 2026-10-01 — A credential no provider claims ends the chain rejected, not anonymous
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/20-contract § 2. Authentication seam — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`", "unit/document/20-contract § 10. Modules", "unit/document/20-contract § 1. `AuthenticationError` — `SubZeroDev.Platform.Abstractions`", "unit/document/90-decisions § 2026-10-01 — A credential no provider claims ends the chain rejected, not anonymous"
+StatedIn: "unit/document/d5-20-contract § 2. Authentication seam — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`", "unit/document/d5-20-contract § 10. Modules", "unit/document/d5-20-contract § 1. `AuthenticationError` — `SubZeroDev.Platform.Abstractions`", "unit/document/d5-90-decisions § 2026-10-01 — A credential no provider claims ends the chain rejected, not anonymous"
 
 ## Claim
 Context — `/spec` #94 closing review. A provider answers `Principal.Anonymous` for a well-formed bearer token from an issuer it does not trust, so a token every provider declines ends the chain `Anonymous`. `10-design.md` Control flow path 1 step 1 says a bad token is rejected at the transport and only an absent one continues as `Anonymous`. Ruled by the owner: the chain end rejects.

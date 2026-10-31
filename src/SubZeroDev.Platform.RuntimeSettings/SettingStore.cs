@@ -139,7 +139,7 @@ internal readonly record struct SettingRowKey(
     SettingName Name, SettingLayer Layer, TenantId Tenant, PrincipalId? Principal);
 
 /// <summary>Creates <c>runtime_setting</c>, the module's one table, with the same text on SQLite and
-/// PostgreSQL (<c>design/20-contract.md</c>, Schemas §9). No existing migration changes (I-T7).</summary>
+/// PostgreSQL (<c>design/d5/20-contract.md</c>, Schemas §9). No existing migration changes (I-T7).</summary>
 internal sealed class RuntimeSettingsMigrationSource : IModuleMigrationSource
 {
     public ModuleName Module { get; } = new("RuntimeSettings");

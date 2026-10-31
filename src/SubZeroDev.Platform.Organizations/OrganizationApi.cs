@@ -13,7 +13,7 @@ namespace SubZeroDev.Platform.Organizations;
 public sealed record InvitationToken(InvitationId Id, string Token);
 
 /// <summary>The organization API: create, invite, redeem, revoke, switch active organization, list an
-/// organization's memberships — <c>design/20-contract.md</c>, Public surface §10, Modules,
+/// organization's memberships — <c>design/d5/20-contract.md</c>, Public surface §10, Modules,
 /// "Organizations".</summary>
 public interface IOrganizationApi
 {

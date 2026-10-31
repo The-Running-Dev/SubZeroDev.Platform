@@ -10,7 +10,7 @@ namespace SubZeroDev.Platform.Audit;
 /// makes a successful action's audit row commit or roll back atomically with the state change it
 /// audits — and against a transaction of its own, committed immediately, otherwise: a denial, a
 /// read, or a failure dispatches ahead of any transaction the pipeline has opened
-/// (<c>design/20-contract.md</c>, Public surface §6). A read-only ambient transaction is never
+/// (<c>design/d5/20-contract.md</c>, Public surface §6). A read-only ambient transaction is never
 /// written into: inside a shared-read scope it refuses every write (I-T1), and a read's record
 /// does not depend on the read committing.</remarks>
 internal sealed class DurableAuditSink(

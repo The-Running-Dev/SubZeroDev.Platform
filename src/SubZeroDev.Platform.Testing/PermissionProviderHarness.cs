@@ -8,7 +8,7 @@ namespace SubZeroDev.Platform.Testing;
 /// <summary>The grant-source rule as a test a consumer runs against its own
 /// <see cref="IPermissionProvider"/>: every provider takes its grants from a source that can be revoked
 /// while the caller's credential is still valid, and token claims are never that source
-/// (<c>design/10-design.md</c>, <i>Data model</i> § 3; I-A10). Platform cannot stop a consumer's provider
+/// (<c>design/d5/10-design.md</c>, <i>Data model</i> § 3; I-A10). Platform cannot stop a consumer's provider
 /// reading <see cref="Principal.Claims"/>, so this is how the rule is checked rather than assumed. Each
 /// method throws <see cref="InvalidOperationException"/> naming the breach, so any test framework reports
 /// it.</summary>

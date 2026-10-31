@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The tenant escape is a declared type plus an audited read-only scope
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The tenant escape is a declared type plus an audited read-only scope"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The tenant escape is a declared type plus an audited read-only scope"
 
 ## Claim
 Context — `second-consumer-packages.md` §3 names the deliberately shared resource as the thing to design, "because an unmodelled one is how isolation quietly stops holding". The Game Engine's published campaigns are readable across tenants while sessions and saves never are.

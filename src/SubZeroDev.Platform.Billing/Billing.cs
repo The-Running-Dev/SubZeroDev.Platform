@@ -2,7 +2,7 @@ using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Billing;
 
-/// <summary>A plan's stable key. <c>design/20-contract.md</c>, Types §8.</summary>
+/// <summary>A plan's stable key. <c>design/d5/20-contract.md</c>, Types §8.</summary>
 /// <param name="Value">The key.</param>
 public readonly record struct PlanKey(string Value)
 {
@@ -13,7 +13,7 @@ public readonly record struct PlanKey(string Value)
     public override string ToString() => Value;
 }
 
-/// <summary>A subscription's identity. <c>design/20-contract.md</c>, Types §8. Never read outside
+/// <summary>A subscription's identity. <c>design/d5/20-contract.md</c>, Types §8. Never read outside
 /// Billing (I-C8) — product code asks <see cref="IEntitlementEvaluator"/>, not this.</summary>
 /// <param name="Value">The identifier.</param>
 public readonly record struct SubscriptionId(Guid Value)
@@ -26,7 +26,7 @@ public readonly record struct SubscriptionId(Guid Value)
     public override string ToString() => Value.ToString();
 }
 
-/// <summary>A subscription's state. <c>design/20-contract.md</c>, Types §8. Must never be read outside
+/// <summary>A subscription's state. <c>design/d5/20-contract.md</c>, Types §8. Must never be read outside
 /// this module (I-C8) — an architecture test enforces it.</summary>
 public enum SubscriptionState
 {
@@ -50,7 +50,7 @@ public enum SubscriptionState
 }
 
 /// <summary>A plan: a stable key, a display name and the features it grants.
-/// <c>design/20-contract.md</c>, Types §8.</summary>
+/// <c>design/d5/20-contract.md</c>, Types §8.</summary>
 /// <param name="Key">The plan's stable key.</param>
 /// <param name="DisplayName">The plan's display name.</param>
 /// <param name="Features">The features this plan grants.</param>
@@ -59,7 +59,7 @@ public sealed record Plan(
     string DisplayName,
     IReadOnlySet<FeatureName> Features);
 
-/// <summary>A tenant's subscription. <c>design/20-contract.md</c>, Types §8. Entitlement is derived
+/// <summary>A tenant's subscription. <c>design/d5/20-contract.md</c>, Types §8. Entitlement is derived
 /// from <see cref="Plan"/> and <see cref="State"/> against <see cref="IClock"/> — never stored (I-B4).</summary>
 /// <param name="Id">The subscription's identity.</param>
 /// <param name="Tenant">The subscribed tenant. At most one subscription per tenant (S11.8).</param>
@@ -82,7 +82,7 @@ public sealed record Subscription(
     string ProviderReference);
 
 /// <summary>Records that one inbound provider event was processed, so a redelivery is a no-op
-/// (I-B7). <c>design/20-contract.md</c>, Types §8.</summary>
+/// (I-B7). <c>design/d5/20-contract.md</c>, Types §8.</summary>
 /// <param name="Provider">The provider's name.</param>
 /// <param name="ProviderEventId">The provider's own event identifier.</param>
 /// <param name="ReceivedAt">When this event was first received.</param>
@@ -115,7 +115,7 @@ public sealed record ProviderEvent(
     DateTimeOffset? TrialEndsAt,
     string ProviderReference);
 
-/// <summary>Why a billing operation did not complete. <c>design/20-contract.md</c>, Error semantics
+/// <summary>Why a billing operation did not complete. <c>design/d5/20-contract.md</c>, Error semantics
 /// §6 — exactly these four variants.</summary>
 public sealed record BillingError : PlatformError
 {

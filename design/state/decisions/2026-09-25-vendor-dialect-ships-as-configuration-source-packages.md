@@ -3,7 +3,7 @@ Date: 2026-09-25
 Anchor: 2026-09-25 — Vendor dialect ships as configuration-source packages that reference no Platform package
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/10-design § 10. The generic bearer path, and vendor dialect as configuration"
+StatedIn: "unit/document/d5-10-design § 10. The generic bearer path, and vendor dialect as configuration"
 
 ## Claim
 Context — `20-contract.md` § Unresolved item 4 (#94). The owner's 2026-08-09 direction is a named package per vendor, sugar over the generic path, never a parallel implementation; a vendor package implementing a provider would reference the Identity module, which ADR-006 rule 2 forbids.

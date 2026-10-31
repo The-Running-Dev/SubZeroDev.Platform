@@ -3,7 +3,7 @@ Date: 2026-09-25
 Anchor: 2026-09-25 — ADR-009 ratifies Identity's placement, superseding the 2026-08-10 withdrawal
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-25 — ADR-009 ratifies Identity's placement, superseding the 2026-08-10 withdrawal"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-25 — ADR-009 ratifies Identity's placement, superseding the 2026-08-10 withdrawal"
 
 ## Claim
 Context — `design/g1/90-decisions.md`'s 2026-08-10 entry withdrew a proposed identity-substrate ADR before it was written, because `platform-identity.md` gave Identity the tier Undecided deliberately and no G1/D3-era consumer's principal was uniformly an account. Issue #90 later proposed a Platform-owned Identity package with a user store behind `UseIdentity()`. The D5 brief and design settled the question instead — Identity is a framework seam plus an optional module that owns no users — and D5-S2 and D5-S9 built it.

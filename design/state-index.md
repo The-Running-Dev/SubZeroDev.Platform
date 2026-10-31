@@ -7,9 +7,10 @@ table below is a **projected** marked region (`AGENTS.md` § *Marked regions*) �
 `tools/Update-DesignProjection.ps1` from `design/state/`, and overwritten on every
 regeneration. Nothing here is written by hand.
 
-This corpus covers the live D5 document chain (`design/00-brief.md` through `design/90-decisions.md`)
-only — no module-level unit, contract or question records exist yet, so `Held by` in
-`20-contract.md`'s Invariants table and the sections below that depend on them stay empty until
+This corpus covers the D5 document chain, archived at `design/d5/` (`design/d5/00-brief.md` through
+`design/d5/90-decisions.md`; the root `unit/document/*` records are role slots for the active
+effort and are empty between efforts) only — no module-level unit, contract or question records
+exist yet, so `Held by` in `d5/20-contract.md`'s Invariants table and the sections below that depend on them stay empty until
 that follow-on work is done. An empty table here means no record exists yet, not that nothing is
 true.
 
@@ -26,6 +27,11 @@ true.
 | `unit/document/agent` | document | `agent.md` |
 | `unit/document/AGENTS` | document | `AGENTS.md` |
 | `unit/document/codex-PROFILES` | document | `codex/PROFILES.md` |
+| `unit/document/d5-00-brief` | document | `design/d5/00-brief.md` |
+| `unit/document/d5-10-design` | document | `design/d5/10-design.md` |
+| `unit/document/d5-20-contract` | document | `design/d5/20-contract.md` |
+| `unit/document/d5-30-slices` | document | `design/d5/30-slices.md` |
+| `unit/document/d5-90-decisions` | document | `design/d5/90-decisions.md` |
 | `unit/document/issue-template-bug` | document | `.github/ISSUE_TEMPLATE/bug.md` |
 | `unit/document/issue-template-story` | document | `.github/ISSUE_TEMPLATE/story.md` |
 | `unit/document/README` | document | `README.md` |
@@ -198,82 +204,84 @@ true.
 <!-- decision-affects:start -->
 | Decision | In force for |
 |---|---|
-| decision/2026-08-24-ambient-principal-is-total-principal-id-is-issuer-plus-subject | `unit/document/90-decisions` |
-| decision/2026-08-24-audit-joins-actions-transaction-two-classes-when-not | `unit/document/90-decisions` |
-| decision/2026-08-24-audit-record-has-no-payload-redaction-boundary-moves-to-core | `unit/document/90-decisions` |
-| decision/2026-08-24-billing-and-licensing-contribute-to-one-entitlement-seam-union | `unit/document/90-decisions` |
-| decision/2026-08-24-caller-who-may-not-see-a-resource-is-told-it-does-not-exist | `unit/document/90-decisions` |
-| decision/2026-08-24-composition-profile-is-declared-validated-at-startup-and-fingerprinted | `unit/document/90-decisions` |
-| decision/2026-08-24-entitlement-is-decided-at-admission-and-carried-with-work | `unit/document/90-decisions` |
-| decision/2026-08-24-framework-owns-questions-modules-own-answers | `unit/document/90-decisions` |
-| decision/2026-08-24-licensed-installation-is-the-database-expiry-and-grace-stored-verified | `unit/document/90-decisions` |
-| decision/2026-08-24-mcp-tool-catalogue-freezes-at-startup-secret-shaped-parameter-fails | `unit/document/90-decisions` |
-| decision/2026-08-24-organization-holds-a-tenant-it-is-not-one | `unit/document/90-decisions` |
-| decision/2026-08-24-placement-recorded-for-nine-capabilities-under-adr-006-no-dependency | `unit/document/90-decisions` |
-| decision/2026-08-24-tenant-escape-is-declared-type-plus-audited-read-only-scope | `unit/document/90-decisions` |
-| decision/2026-08-29-durable-audit-sink-declares-itself-audit-table-keyed-by-event-id | `unit/document/90-decisions` |
-| decision/2026-08-29-licence-tier-is-opaque-name-with-well-known-community-baseline | `unit/document/90-decisions` |
-| decision/2026-08-29-module-packages-are-subzerodev-platform-capability | `unit/document/90-decisions` |
-| decision/2026-08-29-platform-mcp-adopts-official-mcp-csharp-sdk-projects-at-boundary | `unit/document/90-decisions` |
-| decision/2026-08-29-provenance-is-a-named-type-well-known-names-are-public-surface | `unit/document/90-decisions` |
-| decision/2026-08-29-tools-exposure-is-not-a-field-its-producer-fills-in | `unit/document/90-decisions` |
-| decision/2026-08-31-iauditable-createdby-becomes-non-null-under-total-principal | `unit/document/90-decisions` |
-| decision/2026-09-02-isharedreadscopefactory-gains-isopenfor-tentity | `unit/document/90-decisions` |
-| decision/2026-09-03-consumer-declaring-operated-supplies-profiles-two-registrations | `unit/document/90-decisions` |
-| decision/2026-09-03-entitlement-contributor-registers-under-keyed-di-slot | `unit/document/90-decisions` |
-| decision/2026-09-03-frozen-contributor-set-reaches-fingerprint-as-parameter | `unit/document/90-decisions` |
-| decision/2026-09-05-endpoint-declares-its-permission-and-feature-undeclared-fails-startup | `unit/document/90-decisions` |
-| decision/2026-09-05-pipelines-authorization-check-never-resource-scoped | `unit/document/90-decisions` |
-| decision/2026-09-19-d5-package-delivery-uses-approved-lockstep-version | `unit/document/90-decisions` |
-| decision/2026-09-19-d5-retains-the-consumer-evidence-objection | `unit/document/90-decisions` |
-| decision/2026-09-21-10-design-open-questions-2-resolved-separate-frontend-build | `unit/document/90-decisions` |
-| decision/2026-09-21-auditing-is-not-a-pipeline-step-evaluator-denials-writer-actions | `unit/document/90-decisions` |
-| decision/2026-09-21-byactorasync-filters-on-issuer-and-subject | `unit/document/90-decisions` |
-| decision/2026-09-21-connectionunauthenticated-dropped-from-mcperror | `unit/document/90-decisions` |
-| decision/2026-09-21-endpoints-undeclared-permission-fails-startup-as-unregisteredpermission | `unit/document/90-decisions` |
-| decision/2026-09-21-notamember-names-principal-administrative-action-targets-never-caller | `unit/document/90-decisions` |
-| decision/2026-09-21-organizations-and-billing-gain-retryable-storeunavailable | `unit/document/90-decisions` |
-| decision/2026-09-21-platform-takes-two-endpoint-exemptions-probes-and-mcp-transport | `unit/document/90-decisions` |
-| decision/2026-09-21-required-audit-failures-are-surfaced-never-discarded | `unit/document/90-decisions` |
-| decision/2026-09-25-adr-009-supersedes-the-2026-08-10-identity-withdrawal | `unit/document/90-decisions` |
-| decision/2026-09-25-every-permission-provider-takes-grants-from-a-revocable-source | `unit/document/10-design` |
-| decision/2026-09-25-hosted-and-self-hosted-are-two-methods-when-surfaces-differ | `unit/document/10-design` |
-| decision/2026-09-25-identity-gains-generic-bearer-path-asymmetric-only-background-key-refresh | `unit/document/10-design` |
-| decision/2026-09-25-platform-validates-credentials-never-conducts-sign-in | `unit/document/10-design` |
-| decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | `unit/document/10-design` |
-| decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | `unit/document/10-design` |
-| decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/90-decisions` |
-| decision/2026-09-28-provider-failure-carried-normalised-first-registered | `unit/document/20-contract`, `unit/document/90-decisions` |
-| decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/20-contract`, `unit/document/90-decisions` |
-| decision/2026-09-29-untested-invariants-held-by-instruction | `unit/document/20-contract`, `unit/document/90-decisions` |
-| decision/2026-09-30-generic-bearer-path-configuration-schema | `unit/document/20-contract`, `unit/document/90-decisions` |
-| decision/2026-09-30-generic-path-settings-defect-is-configuration-error | `unit/document/20-contract`, `unit/document/90-decisions` |
-| decision/2026-10-01-unclaimed-credential-ends-chain-rejected | `unit/document/20-contract`, `unit/document/90-decisions` |
-| decision/2026-10-08-a-channel-credential-never-leaves-the-server | `unit/document/90-decisions` |
-| decision/2026-10-08-a-mirror-past-its-maximum-age-cannot-answer-so-a-mirrored-role-s-revocation-is-bounded | `unit/document/90-decisions` |
-| decision/2026-10-08-a-principal-is-an-authenticated-party-and-an-account-is-optional | `unit/document/90-decisions` |
-| decision/2026-10-08-a-second-identity-joins-an-account-only-through-linkasync-with-a-credential-validated-now | `unit/document/90-decisions` |
-| decision/2026-10-08-adventures-becomes-a-hosted-consumer-its-identity-stays-evidence | `unit/document/90-decisions` |
-| decision/2026-10-08-audit-retention-is-one-setting-off-by-default-pruned-by-the-audit-store | `unit/document/90-decisions` |
-| decision/2026-10-08-barstrad-is-a-service-operated-for-venues-an-unreachable-channel-degrades-readiness | `unit/document/90-decisions` |
-| decision/2026-10-08-development-environment-migration-is-built-in-persistence-through-the-runner-s-lock | `unit/document/90-decisions` |
-| decision/2026-10-08-global-and-tenant-writes-need-module-declared-permissions-and-every-change-is-a-required-a | `unit/document/90-decisions` |
-| decision/2026-10-08-identity-owns-an-optional-per-host-account-store-keyed-on-as-a-second-module-type | `unit/document/90-decisions` |
-| decision/2026-10-08-iplatformmodule-gains-initializeasync-and-shutdownasync | `unit/document/90-decisions` |
-| decision/2026-10-08-optimistic-concurrency-is-an-opt-in-iversioned-column-checked-by-iversionguard | `unit/document/90-decisions` |
-| decision/2026-10-08-runtime-settings-are-a-new-module-subzerodev-platform-runtimesettings-the-fourteenth-packa | `unit/document/90-decisions` |
-| decision/2026-10-08-runtime-settings-are-read-through-every-time-with-no-cache-and-no-fingerprint-input | `unit/document/90-decisions` |
-| decision/2026-10-08-seeding-is-iseeder-run-by-migrate-mode-after-migrations-each-seeder-stating-its-tenant | `unit/document/90-decisions` |
-| decision/2026-10-08-the-adventures-poc-is-recorded-against-g2-as-adopted-adapted-rejected-or-deferred | `unit/document/90-decisions` |
-| decision/2026-10-08-the-automator-s-audience-is-both-and-stays-unsettled | `unit/document/90-decisions` |
-| decision/2026-10-08-the-dispatcher-records-an-inbox-row-before-each-handler-so-database-effects-are-exactly-on | `unit/document/90-decisions` |
-| decision/2026-10-08-the-edge-streams-per-route-with-its-own-first-byte-budget-and-aborts-a-broken-stream | `unit/document/90-decisions` |
-| decision/2026-10-08-the-engine-owns-the-in-memory-rollback-on-a-failed-persistence-write | `unit/document/90-decisions` |
-| decision/2026-10-08-the-public-roadmap-renders-the-active-effort-s-slices | `unit/document/90-decisions` |
-| decision/2026-10-08-the-user-layer-exists-only-for-an-account-per-tenant-the-implicit-tenant-has-no-tenant-lay | `unit/document/90-decisions` |
-| decision/2026-10-17-adventures-is-a-workload-behind-platform-s-edge-not-a-package-consumer | `unit/document/90-decisions` |
-| decision/2026-10-17-the-edge-forwards-every-path-mcp-included-rather-than-one-version-and-operation-template | `unit/document/90-decisions` |
-| decision/2026-10-17-the-edge-s-readiness-probes-the-workload-s-readiness-endpoint-not-its-liveness | `unit/document/90-decisions` |
+| decision/2026-08-24-ambient-principal-is-total-principal-id-is-issuer-plus-subject | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-audit-joins-actions-transaction-two-classes-when-not | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-audit-record-has-no-payload-redaction-boundary-moves-to-core | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-billing-and-licensing-contribute-to-one-entitlement-seam-union | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-caller-who-may-not-see-a-resource-is-told-it-does-not-exist | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-composition-profile-is-declared-validated-at-startup-and-fingerprinted | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-entitlement-is-decided-at-admission-and-carried-with-work | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-framework-owns-questions-modules-own-answers | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-licensed-installation-is-the-database-expiry-and-grace-stored-verified | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-mcp-tool-catalogue-freezes-at-startup-secret-shaped-parameter-fails | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-organization-holds-a-tenant-it-is-not-one | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-placement-recorded-for-nine-capabilities-under-adr-006-no-dependency | `unit/document/d5-90-decisions` |
+| decision/2026-08-24-tenant-escape-is-declared-type-plus-audited-read-only-scope | `unit/document/d5-90-decisions` |
+| decision/2026-08-29-durable-audit-sink-declares-itself-audit-table-keyed-by-event-id | `unit/document/d5-90-decisions` |
+| decision/2026-08-29-licence-tier-is-opaque-name-with-well-known-community-baseline | `unit/document/d5-90-decisions` |
+| decision/2026-08-29-module-packages-are-subzerodev-platform-capability | `unit/document/d5-90-decisions` |
+| decision/2026-08-29-platform-mcp-adopts-official-mcp-csharp-sdk-projects-at-boundary | `unit/document/d5-90-decisions` |
+| decision/2026-08-29-provenance-is-a-named-type-well-known-names-are-public-surface | `unit/document/d5-90-decisions` |
+| decision/2026-08-29-tools-exposure-is-not-a-field-its-producer-fills-in | `unit/document/d5-90-decisions` |
+| decision/2026-08-31-iauditable-createdby-becomes-non-null-under-total-principal | `unit/document/d5-90-decisions` |
+| decision/2026-09-02-isharedreadscopefactory-gains-isopenfor-tentity | `unit/document/d5-90-decisions` |
+| decision/2026-09-03-consumer-declaring-operated-supplies-profiles-two-registrations | `unit/document/d5-90-decisions` |
+| decision/2026-09-03-entitlement-contributor-registers-under-keyed-di-slot | `unit/document/d5-90-decisions` |
+| decision/2026-09-03-frozen-contributor-set-reaches-fingerprint-as-parameter | `unit/document/d5-90-decisions` |
+| decision/2026-09-05-endpoint-declares-its-permission-and-feature-undeclared-fails-startup | `unit/document/d5-90-decisions` |
+| decision/2026-09-05-pipelines-authorization-check-never-resource-scoped | `unit/document/d5-90-decisions` |
+| decision/2026-09-19-d5-package-delivery-uses-approved-lockstep-version | `unit/document/d5-90-decisions` |
+| decision/2026-09-19-d5-retains-the-consumer-evidence-objection | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-10-design-open-questions-2-resolved-separate-frontend-build | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-auditing-is-not-a-pipeline-step-evaluator-denials-writer-actions | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-byactorasync-filters-on-issuer-and-subject | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-connectionunauthenticated-dropped-from-mcperror | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-endpoints-undeclared-permission-fails-startup-as-unregisteredpermission | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-notamember-names-principal-administrative-action-targets-never-caller | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-organizations-and-billing-gain-retryable-storeunavailable | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-platform-takes-two-endpoint-exemptions-probes-and-mcp-transport | `unit/document/d5-90-decisions` |
+| decision/2026-09-21-required-audit-failures-are-surfaced-never-discarded | `unit/document/d5-90-decisions` |
+| decision/2026-09-25-adr-009-supersedes-the-2026-08-10-identity-withdrawal | `unit/document/d5-90-decisions` |
+| decision/2026-09-25-every-permission-provider-takes-grants-from-a-revocable-source | `unit/document/d5-10-design` |
+| decision/2026-09-25-hosted-and-self-hosted-are-two-methods-when-surfaces-differ | `unit/document/d5-10-design` |
+| decision/2026-09-25-identity-gains-generic-bearer-path-asymmetric-only-background-key-refresh | `unit/document/d5-10-design` |
+| decision/2026-09-25-platform-validates-credentials-never-conducts-sign-in | `unit/document/d5-10-design` |
+| decision/2026-09-25-token-validation-adopts-microsoft-identitymodel-corrects-in-box-claim | `unit/document/d5-10-design` |
+| decision/2026-09-25-vendor-dialect-ships-as-configuration-source-packages | `unit/document/d5-10-design` |
+| decision/2026-09-26-redteam-f1-accepted-risk-sign-out-not-platforms | `unit/document/d5-90-decisions` |
+| decision/2026-09-28-provider-failure-carried-normalised-first-registered | `unit/document/d5-20-contract`, `unit/document/d5-90-decisions` |
+| decision/2026-09-28-provider-failure-reaches-caller-as-retryable-failure | `unit/document/d5-20-contract`, `unit/document/d5-90-decisions` |
+| decision/2026-09-29-untested-invariants-held-by-instruction | `unit/document/d5-20-contract`, `unit/document/d5-90-decisions` |
+| decision/2026-09-30-generic-bearer-path-configuration-schema | `unit/document/d5-20-contract`, `unit/document/d5-90-decisions` |
+| decision/2026-09-30-generic-path-settings-defect-is-configuration-error | `unit/document/d5-20-contract`, `unit/document/d5-90-decisions` |
+| decision/2026-10-01-unclaimed-credential-ends-chain-rejected | `unit/document/d5-20-contract`, `unit/document/d5-90-decisions` |
+| decision/2026-10-08-a-channel-credential-never-leaves-the-server | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-a-mirror-past-its-maximum-age-cannot-answer-so-a-mirrored-role-s-revocation-is-bounded | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-a-principal-is-an-authenticated-party-and-an-account-is-optional | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-a-second-identity-joins-an-account-only-through-linkasync-with-a-credential-validated-now | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-adventures-becomes-a-hosted-consumer-its-identity-stays-evidence | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-audit-retention-is-one-setting-off-by-default-pruned-by-the-audit-store | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-barstrad-is-a-service-operated-for-venues-an-unreachable-channel-degrades-readiness | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-development-environment-migration-is-built-in-persistence-through-the-runner-s-lock | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-global-and-tenant-writes-need-module-declared-permissions-and-every-change-is-a-required-a | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-identity-owns-an-optional-per-host-account-store-keyed-on-as-a-second-module-type | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-iplatformmodule-gains-initializeasync-and-shutdownasync | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-optimistic-concurrency-is-an-opt-in-iversioned-column-checked-by-iversionguard | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-runtime-settings-are-a-new-module-subzerodev-platform-runtimesettings-the-fourteenth-packa | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-runtime-settings-are-read-through-every-time-with-no-cache-and-no-fingerprint-input | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-seeding-is-iseeder-run-by-migrate-mode-after-migrations-each-seeder-stating-its-tenant | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-adventures-poc-is-recorded-against-g2-as-adopted-adapted-rejected-or-deferred | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-automator-s-audience-is-both-and-stays-unsettled | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-dispatcher-records-an-inbox-row-before-each-handler-so-database-effects-are-exactly-on | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-edge-streams-per-route-with-its-own-first-byte-budget-and-aborts-a-broken-stream | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-engine-owns-the-in-memory-rollback-on-a-failed-persistence-write | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-public-roadmap-renders-the-active-effort-s-slices | `unit/document/d5-90-decisions` |
+| decision/2026-10-08-the-user-layer-exists-only-for-an-account-per-tenant-the-implicit-tenant-has-no-tenant-lay | `unit/document/d5-90-decisions` |
+| decision/2026-10-17-adventures-is-a-workload-behind-platform-s-edge-not-a-package-consumer | `unit/document/d5-90-decisions` |
+| decision/2026-10-17-the-edge-forwards-every-path-mcp-included-rather-than-one-version-and-operation-template | `unit/document/d5-90-decisions` |
+| decision/2026-10-17-the-edge-s-readiness-probes-the-workload-s-readiness-endpoint-not-its-liveness | `unit/document/d5-90-decisions` |
+| decision/2026-11-01-d5-s-set-archives-to-design-d5-the-root-s-five-document-units-stay-as-role-slots | `unit/document/d5-90-decisions` |
+| decision/2026-11-01-the-public-roadmap-renders-a-between-efforts-state-when-no-ledger-is-active | `unit/document/d5-90-decisions` |
 <!-- decision-affects:end -->
 
 ## Questions — blocks and answered

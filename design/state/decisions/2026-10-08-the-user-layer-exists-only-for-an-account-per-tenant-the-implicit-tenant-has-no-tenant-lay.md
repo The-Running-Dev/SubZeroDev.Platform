@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #58: the user layer exists only for an account, per tenant; the implicit tenant has no tenant layer
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #58: the user layer exists only for an account, per tenant; the implicit tenant has no tenant layer"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #58: the user layer exists only for an account, per tenant; the implicit tenant has no tenant layer"
 
 ## Claim
 Context — [#58](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/58). Resolution is user, then tenant, then global, then the declared default, over the layers a declaration admits. BarStrad's and SkyNet HR's principals are never accounts (#98).

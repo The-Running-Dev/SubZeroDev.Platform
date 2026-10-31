@@ -28,7 +28,7 @@ Issue [#90](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/90) pr
 package before D5 was designed. That proposal included a Platform-owned user store behind
 `UseIdentity()`. The approved D5 brief then made a shared user directory, shared identity storage, and
 choosing or operating an identity substrate non-goals. The D5 design placed Identity under
-[ADR-006](ADR-006-application-modules.md) in `design/10-design.md` § *Module boundaries*, and
+[ADR-006](ADR-006-application-modules.md) in `design/d5/10-design.md` § *Module boundaries*, and
 D5-S2 and D5-S9 built it. **This ADR records that placement and its costs as the architectural
 decision.** It ratifies the design as built; it does not introduce new behaviour.
 
@@ -52,7 +52,7 @@ module owns the answers that come from authenticating a credential. Neither owns
    from an authentication result to a principal. It owns no directory and no user table (invariant I-I4). **Amended 2026-10-08:** a second
    module type in the same package, `IdentityAccountsModule`, owns an optional, per-host account store keyed on
    (issuer, subject), with explicit, authenticated linking. It holds no profile, email or credential, and a host
-   that does not register it owns no Identity table and no migration (`design/10-design.md` *Data model* § 14). Registering it adds no provider on the consumer's
+   that does not register it owns no Identity table and no migration (`design/d5/10-design.md` *Data model* § 14). Registering it adds no provider on the consumer's
    behalf.
 5. **Platform chooses no identity provider.** Each provider trusts an issuer the consumer names and
    operates. A deployment trusting several issuers registers one provider per issuer.
@@ -128,5 +128,5 @@ by the decision above.
 - Whether roles or permissions may be carried in a login token
   ([#92](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/92)).
 - Whether ADR-006's vocabulary is corrected now that Identity and other infrastructure packages sit in
-  its application-module tier. This is `design/10-design.md` Open question 3 and is the repository
+  its application-module tier. This is `design/d5/10-design.md` Open question 3 and is the repository
   owner's call.

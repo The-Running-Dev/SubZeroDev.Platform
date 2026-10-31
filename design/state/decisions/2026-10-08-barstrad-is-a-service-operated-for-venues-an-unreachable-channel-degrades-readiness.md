@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #24: BarStrad is a service operated for venues; an unreachable channel degrades readiness
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #24: BarStrad is a service operated for venues; an unreachable channel degrades readiness"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #24: BarStrad is a service operated for venues; an unreachable channel degrades readiness"
 
 ## Claim
 Context — [#24](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/24). BarStrad's commercial model was undecided. A hosted answer contradicted the D3 brief's self-host-only non-goal. Separately, a chat channel is online in steady state, which conflicts with deployments that have no outbound network.

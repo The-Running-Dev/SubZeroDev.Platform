@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #85: the engine owns the in-memory rollback on a failed persistence write
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #85: the engine owns the in-memory rollback on a failed persistence write"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #85: the engine owns the in-memory rollback on a failed persistence write"
 
 ## Claim
 Context — [#85](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/85). The engine orders its in-memory update differently on each write path. `submitAction` mutates the held record and `saveGame` sets the save before persistence is awaited, and `attemptCounter` is never rolled back. So a failed `put` leaves memory ahead of the store. The Adventures compare-and-swap on `attempt_counter` rejects a lost write but leaves the rollback "out of this repo's control".

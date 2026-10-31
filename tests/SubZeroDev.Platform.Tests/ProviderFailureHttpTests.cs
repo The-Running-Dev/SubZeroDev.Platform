@@ -13,7 +13,7 @@ namespace SubZeroDev.Platform.Tests;
 /// the error's code — and never forbidden, and the handler never runs.</summary>
 /// <remarks>The pipeline check is never resource-scoped (I-R7), so the Organizations provider, which
 /// answers only for an <c>Organization</c> resource, never reaches its store from it. The outage is a
-/// provider that could not answer at the pipeline instead (<c>design/90-decisions.md</c>,
+/// provider that could not answer at the pipeline instead (<c>design/d5/90-decisions.md</c>,
 /// 2026-10-08, S24).</remarks>
 public sealed class ProviderFailureHttpTests
 {

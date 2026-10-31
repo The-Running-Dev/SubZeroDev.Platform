@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #58: runtime settings are a new module, `SubZeroDev.Platform.RuntimeSettings`, the fourteenth package
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #58: runtime settings are a new module, `SubZeroDev.Platform.RuntimeSettings`, the fourteenth package"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #58: runtime settings are a new module, `SubZeroDev.Platform.RuntimeSettings`, the fourteenth package"
 
 ## Claim
 Context — [#58](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/58). Ben ruled 2026-10-08: a layered setting provider (global, then tenant, then user, persisted), distinct from startup configuration, with no administration UI (brief decision 6; the shell's Settings exclusion stands).

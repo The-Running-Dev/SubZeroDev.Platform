@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — Audit joins the action's transaction when there is one, and has two classes when there is not
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — Audit joins the action's transaction when there is one, and has two classes when there is not"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — Audit joins the action's transaction when there is one, and has two classes when there is not"
 
 ## Claim
 Context — the brief requires allowed, denied and failed actions to persist across restart. A denial has no transaction to join; a rolled-back action must not leave an audit row claiming it happened; a committed action must not lack one.

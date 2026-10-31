@@ -3,7 +3,7 @@ using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Identity;
 
-/// <summary>An account's identity. <c>design/20-contract.md</c>, Types §16. Opaque: Identity mints it
+/// <summary>An account's identity. <c>design/d5/20-contract.md</c>, Types §16. Opaque: Identity mints it
 /// from 128 random bits as 32 lowercase hexadecimal characters, and nothing parses it or derives it
 /// from a claim.</summary>
 /// <param name="Value">The identifier.</param>
@@ -39,7 +39,7 @@ public sealed record LinkedIdentity(PrincipalId Identity, DateTimeOffset LinkedA
 /// then by issuer and subject ordinally. Never empty.</param>
 public sealed record Account(AccountId Id, DateTimeOffset CreatedAt, IReadOnlyList<LinkedIdentity> Identities);
 
-/// <summary>The account API — <c>design/20-contract.md</c>, Public surface §19. Present only when the
+/// <summary>The account API — <c>design/d5/20-contract.md</c>, Public surface §19. Present only when the
 /// host registers <see cref="IdentityAccountsModule"/>. The ambient principal is the caller.</summary>
 public interface IAccountApi
 {
@@ -92,7 +92,7 @@ public static class IdentityAuditActions
     public static AuditAction IdentityUnlinked { get; } = new("platform.identity.identity-unlinked");
 }
 
-/// <summary>Why an account operation did not complete. <c>design/20-contract.md</c>, Error semantics
+/// <summary>Why an account operation did not complete. <c>design/d5/20-contract.md</c>, Error semantics
 /// §16. At authentication a store failure is not an <see cref="AccountError"/>: it is
 /// <see cref="AuthenticationError.ProviderFailed"/>, and never the unlinked pair.</summary>
 public sealed record AccountError : PlatformError

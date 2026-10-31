@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — The composition profile is declared, validated at startup, and fingerprinted
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — The composition profile is declared, validated at startup, and fingerprinted"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — The composition profile is declared, validated at startup, and fingerprinted"
 
 ## Claim
 Context — the brief requires the local host to have no package or project reference to Identity, Organizations, Billing or Licensing, and requires their absence to be real rather than "registered checks that always pass". The package graph decides what is present; nothing made the host say so.

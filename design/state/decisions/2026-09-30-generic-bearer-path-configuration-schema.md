@@ -3,7 +3,7 @@ Date: 2026-09-30
 Anchor: 2026-09-30 — The generic bearer path's configuration schema: one section per provider, fixed keys, bounded defaults
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/20-contract § 12. The generic bearer path — `SubZeroDev.Platform.Identity`", "unit/document/20-contract § 10. Modules", "unit/document/90-decisions § 2026-09-30 — The generic bearer path's configuration schema: one section per provider, fixed keys, bounded defaults"
+StatedIn: "unit/document/d5-20-contract § 12. The generic bearer path — `SubZeroDev.Platform.Identity`", "unit/document/d5-20-contract § 10. Modules", "unit/document/d5-90-decisions § 2026-09-30 — The generic bearer path's configuration schema: one section per provider, fixed keys, bounded defaults"
 
 ## Claim
 Context — `/spec` #94: `10-design.md` Data model § 10 names the generic path's settings and makes their configuration schema public contract, leaving key names, pattern syntax, key formats, defaults, bounds and refresh mechanics to the contract.

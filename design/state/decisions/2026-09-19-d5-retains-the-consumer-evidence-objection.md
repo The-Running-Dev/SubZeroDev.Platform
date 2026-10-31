@@ -3,7 +3,7 @@ Date: 2026-09-19
 Anchor: 2026-09-19 — D5 retains the consumer-evidence objection
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-19 — D5 retains the consumer-evidence objection"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-19 — D5 retains the consumer-evidence objection"
 
 ## Claim
 Context — the brief's decision 2 admits Authorization, Licensing, Audit and shared web UI without consumer evidence under ADR-006 rule 4. S18.6 requires this objection to remain visible.

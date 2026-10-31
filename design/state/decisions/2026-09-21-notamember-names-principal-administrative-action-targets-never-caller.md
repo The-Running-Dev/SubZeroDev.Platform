@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — `NotAMember` names the principal an administrative action targets, never the caller
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — `NotAMember` names the principal an administrative action targets, never the caller"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — `NotAMember` names the principal an administrative action targets, never the caller"
 
 ## Claim
 Context — the contract defined `NotAMember` as a member-only action by a revoked principal; the code answers a non-member caller `OrganizationNotFound` and raises `NotAMember` only about the principal an administrative action names. `/align` asked which was right.

@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — An organization holds a tenant; it is not one
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — An organization holds a tenant; it is not one"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — An organization holds a tenant; it is not one"
 
 ## Claim
 Context — all three evidence consumers read one-to-one — a team, a studio, a venue — and the brief requires switching between organizations to isolate. Tenancy is framework and Organizations is a module, so whichever way this goes decides whether a framework type carries a module's concept.

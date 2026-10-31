@@ -4,8 +4,8 @@ Append-only. Newest at the top. The rejected alternatives are the point — with
 session relitigates the same choice.
 
 Completed efforts keep their logs with their design sets:
-[`g2/90-decisions.md`](g2/90-decisions.md), [`g1/90-decisions.md`](g1/90-decisions.md),
-[`d3/90-decisions.md`](d3/90-decisions.md).
+[`../g2/90-decisions.md`](../g2/90-decisions.md), [`../g1/90-decisions.md`](../g1/90-decisions.md),
+[`../d3/90-decisions.md`](../d3/90-decisions.md).
 
 **This log is effort-local.** `AGENTS.md`, *Decision logging*, decides what belongs here and what
 belongs in `docs/docs/adr/`.
@@ -25,7 +25,7 @@ Reversibility: cheap. The pre-upgrade fixture and its suite go when old writers 
 ### 2026-10-17 — The edge forwards every path, MCP included, rather than one version-and-operation template (supersedes g1 2026-08-08, in part)
 Context: two G1 entries describe a narrower edge than the one built. "The edge forwards by prefix and does not consult the contract" chose "one route template covering the version and operation segments". "The MCP projection is served by the workload process, over HTTP" priced that choice as "the edge routes the JSON wire only, so an MCP caller bypasses the edge". S7 (#105, 2026-08-10) built a catch-all instead: `MapGameWorkloadForwarding` maps `/{**catchAll}`, and Platform's probe middleware answers `/health/live` and `/health/ready` before it. So the edge forwards `/mcp` the same way as `/v1/<operation>`. The workload's own listener can still be reached directly. Both G1 entries were left as written. The G1 hosting guide and the game edge README already describe the catch-all.
 Chosen: the catch-all is the design. The edge forwards every path except its own two probes, unaltered and without consulting the contract. The other half of the prefix entry still holds. The edge still reads no contract, still sets the outbound `traceparent` from the ambient operation scope, and still cannot reject an unknown operation locally. An MCP caller can reach the workload through the edge or directly. The G1 cost changes accordingly: at G3, the risk is that the direct listener is still reachable, not that the edge never sees MCP.
-Rejected: narrowing the route to the version-and-operation template, so that MCP bypasses the edge as G1 described. That would match the G1 text, but it breaks the workloads decided since. Adventures is a workload behind this edge (2026-10-17, #97), and its routes are `/api/*`, `/livez` and `/readyz`, not `/v<n>/<operation>`. SkyNet HR is the second hosted workload ([ADR-007](../docs/docs/adr/ADR-007-second-hosted-workload.md)), and it would need a template of its own. A per-workload route list in configuration was also rejected: it would be a second statement of each workload's surface, and G1 already rejected the contract-aware edge as G3's job.
+Rejected: narrowing the route to the version-and-operation template, so that MCP bypasses the edge as G1 described. That would match the G1 text, but it breaks the workloads decided since. Adventures is a workload behind this edge (2026-10-17, #97), and its routes are `/api/*`, `/livez` and `/readyz`, not `/v<n>/<operation>`. SkyNet HR is the second hosted workload ([ADR-007](../../docs/docs/adr/ADR-007-second-hosted-workload.md)), and it would need a template of its own. A per-workload route list in configuration was also rejected: it would be a second statement of each workload's surface, and G1 already rejected the contract-aware edge as G3's job.
 Reversibility: cheap while the edge has no authorization of its own. At G3, narrowing would change which paths authorization can see.
 Supersedes: g1 2026-08-08 — "The edge forwards by prefix and does not consult the contract", for its route-template clause; g1 2026-08-08 — "The MCP projection is served by the workload process, over HTTP", for its statement that MCP bypasses the edge.
 
@@ -528,7 +528,7 @@ Reversibility: cheap until a consumer reads the new member; moderate after, sinc
 
 ### 2026-09-26 — Red-team F1 is an accepted risk: #94's sign-out promise is not Platform's to deliver
 
-Context: [`redteam/2026-09-25-10-design.md`](redteam/2026-09-25-10-design.md) F1 (BLOCKING), against
+Context: [`../redteam/2026-09-25-10-design.md`](../redteam/2026-09-25-10-design.md) F1 (BLOCKING), against
 `10-design.md` @ 52794de. Under the resource-server decision below, a vendor configuration package
 supplies bearer-validation settings only, so the non-standard sign-out #94 was raised over (Auth0's
 hand-built `/v2/logout`) stays with each client — the hand-wiring #94 exists to remove — and #94's
@@ -655,7 +655,7 @@ and no G1/D3-era consumer's principal was uniformly an account. Issue #90 later 
 Platform-owned Identity package with a user store behind `UseIdentity()`. The D5 brief and design
 settled the question instead — Identity is a framework seam plus an optional module that owns no
 users — and D5-S2 and D5-S9 built it.
-Chosen: [ADR-009](../docs/docs/adr/ADR-009-identity-package.md) records that placement as the
+Chosen: [ADR-009](../../docs/docs/adr/ADR-009-identity-package.md) records that placement as the
 architectural decision, its costs, and the alternatives rejected, including #90's own original
 proposal. This entry supersedes the g1 withdrawal rather than editing it — the withdrawal was correct
 reasoning for the question as it stood in G1/D3, and `g1/90-decisions.md` is that effort's closed log.
@@ -773,7 +773,7 @@ Rejected: amending the doc to `Registration`, because one condition would then s
 depending on whether a tool or an endpoint declared it.
 Reversibility: cheap before external consumers match on the code.
 
-- 2026-09-20 — [ADR-008: Standalone Observability fails fast on invalid OTLP configuration](../docs/docs/adr/ADR-008-observability-startup-failure.md).
+- 2026-09-20 — [ADR-008: Standalone Observability fails fast on invalid OTLP configuration](../../docs/docs/adr/ADR-008-observability-startup-failure.md).
 
 ### 2026-09-19 — D5 package delivery uses the approved lockstep version
 
@@ -829,7 +829,7 @@ argument applies to a declaration that was never written. Also rejected: **leavi
 optional, absence meaning ungated**, which changes no invariant and is what I-R5's `instruction` row
 describes today; rejected because a forgotten `RequiresPlatformAuthorization` then serves an
 unauthorized endpoint silently, which is exactly the automatic-on-install default-open that
-[`second-consumer-packages.md`](../docs/docs/second-consumer-packages.md) §4 refuses on the Mcp side,
+[`second-consumer-packages.md`](../../docs/docs/second-consumer-packages.md) §4 refuses on the Mcp side,
 and a rule cannot be default-closed for tools and default-open for endpoints without one of the two
 being wrong. The cost of the chosen option is stated in § 11 and is real: an endpoint Platform did not
 map needs annotating, and one whose mapping returns no convention builder must be exempted where it
@@ -1421,3 +1421,17 @@ Context: PostgreSQL regressions using the adapter from `5b587d6990552b85dbf31cb9
 Chosen: retain the old adapter as immutable type-erased JavaScript with source/output hashes, and install its exact vendored engine under a test-only npm alias. Its hashing dependency is pinned to the base lockfile's version. The candidate continues importing its existing engine and adapter. A new append-only migration repairs existing revision drift and adds a trigger only for updates that advance `version` while leaving `revision` unchanged. The new adapter's revision predicate and the profile format-2 write policy remain unchanged. Fixture provenance and regeneration live in `workloads/game-service/tests/fixtures/pre-upgrade/README.md`.
 Rejected: two current adapters with different engine-version labels, which never exercise old behavior; fetching or installing an old checkout during every test, which makes tests depend on Git history and network availability; a new compatibility framework, which is unnecessary beside the existing PostgreSQL test support; editing the preceding migration, which violates append-only migration rules; changing old code, which would no longer represent a rollback; removing the new revision guard, which would conceal the stale-revision defect.
 Reversibility: cheap for the test alias and fixture; the database trigger can be removed only by a later migration once old writers and code rollback are no longer supported.
+
+### 2026-11-01 — D5's set archives to `design/d5/`; the root's five document units stay as role slots
+
+Context: D5 is complete, and the 2026-08-21 convention (`../g2/90-decisions.md`) archives a completed set on completion rather than on the next effort's arrival, so the root does not advertise a finished effort as the live one before G3's brief exists. The five documents move to `design/d5/` and the root returns to stage 0. The design-state model anchors each `unit/document/*` record at one path, and 76 decision records cite `unit/document/90-decisions` (and its siblings) as their `StatedIn`. The archive therefore had to say what the five root units now are.
+Chosen: the five root units `unit/document/{00-brief,10-design,20-contract,30-slices,90-decisions}` stay, as role slots: the place the active effort's document of that kind lives, empty between efforts. Five new units `unit/document/d5-{00-brief,10-design,20-contract,30-slices,90-decisions}` are anchored at the moved files, and every `StatedIn` that named a D5 document is repointed to its `d5-` unit in the same commit. The model has no notion of an empty role, so the root slots stay `active`; their Owns text says that no file exists at the anchor between efforts and names the last occupant. The archival record `retired/90-decisions`, which belongs to D5's log, is renamed `retired/d5-90-decisions` so its name does not collide with a later effort's. Inbound explicit paths in code, tests and documentation are repointed to `design/d5/`; a bare-filename citation such as `20-contract.md § X` is left as it is, since it names a document, not a location. Ben ruled 2026-11-01.
+Rejected: **re-anchoring the five existing units to `design/d5/`**, one fewer set of records and no repointing; rejected because the next effort's `/brief` would then have no slot to occupy, and the units' names would stop meaning "the active effort's document of this kind", which every pipeline command reads them as. **Holding the archive until G3's brief is written**, which leaves every unit and link untouched; rejected for the reason the 2026-08-21 convention gives, that the root advertises a finished effort as live for an arbitrarily long window.
+Reversibility: cheap. Moving the files back and reversing the repointing restores the previous layout; the `d5-` units are additive.
+
+### 2026-11-01 — The public roadmap renders a between-efforts state when no ledger is active
+
+Context: the 2026-10-08 entry (#80) chose that the roadmap renders `design/30-slices.md`, whichever effort is active, and `site/src/roadmap/roadmapData.ts` imported that file statically. The archive of D5 removes it, and a static import of an absent file fails the site build. Between efforts there is also no active brief, so the hand-authored non-goals, which are D5's, no longer describe anything in force. This entry amends the 2026-10-08 decision for the interval in which no ledger exists; it does not replace it, and the design-state schema has no field for an amendment.
+Chosen: the data module reads the active ledger through a single-file glob, so an absent file yields an empty ledger and the build still passes. With no ledger the page says "Nothing In Progress.", keeps its four sections each stating there is nothing to show, shows no non-goals ("No brief is active"), and links the last archived ledger, `design/d5/30-slices.md`, kept as a hand-maintained constant that a test requires to exist on disk. A present ledger is parsed and checked exactly as before, and a present but empty or malformed ledger still fails the build. Tests cover the absent-ledger case in both `roadmapData.test.ts` and `RoadmapApp.test.tsx`. Ben ruled 2026-11-01.
+Rejected: **pointing the import at `design/d5/30-slices.md` until G3 has slices**, which keeps the page populated and the code unchanged; rejected because the page would present a closed effort as current, the failure #80 was filed against, and because the move back would be a third edit to the import at exactly the moment G3's ledger arrives. **Deriving the last archived ledger by glob**, rejected because effort directories carry no order a glob could read, and a glob over `design/*/30-slices.md` would bundle every archived ledger into the site.
+Reversibility: cheap. The glob matches the static import's behaviour whenever a ledger exists, and the between-efforts branch is dead code while one does.

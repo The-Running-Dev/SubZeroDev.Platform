@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — `ByActorAsync` filters on the issuer and the subject
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — `ByActorAsync` filters on the issuer and the subject"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — `ByActorAsync` filters on the issuer and the subject"
 
 ## Claim
 Context — `PrincipalId` is the (issuer, subject) pair, but the audit read API filtered on the subject alone, so two issuers sharing a subject string read each other's records.

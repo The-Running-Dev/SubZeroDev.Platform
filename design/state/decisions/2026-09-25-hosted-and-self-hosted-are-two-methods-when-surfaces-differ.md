@@ -3,7 +3,7 @@ Date: 2026-09-25
 Anchor: 2026-09-25 — Hosted and self-hosted deployments of one vendor are two methods when their protocol surfaces differ
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/10-design § 10. The generic bearer path, and vendor dialect as configuration"
+StatedIn: "unit/document/d5-10-design § 10. The generic bearer path, and vendor dialect as configuration"
 
 ## Claim
 Context — #94 asks whether hosted versus self-hosted for one vendor is one method with a discriminator or two. Self-hosted Supabase is an OIDC provider only with `GOTRUE_OAUTH_SERVER_ENABLED` set.

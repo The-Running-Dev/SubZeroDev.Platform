@@ -13,7 +13,7 @@
     <!-- D5-S46: the optional account store, on the same providers Persistence supports. -->
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.10" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <!-- D5-S20: token validation for the generic bearer path. Per design/90-decisions.md,
+    <!-- D5-S20: token validation for the generic bearer path. Per design/d5/90-decisions.md,
          2026-09-25 ("Token validation adopts Microsoft.IdentityModel") — referenced by this project
          and by no other, and no type from either appears in a Platform public surface (I-I12). -->
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />

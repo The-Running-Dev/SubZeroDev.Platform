@@ -8,8 +8,8 @@ using SubZeroDev.Platform.Core;
 namespace SubZeroDev.Platform.Mcp;
 
 /// <summary>Projects one exposed <see cref="ToolRegistration"/> onto the SDK's <c>McpServerTool</c> —
-/// the boundary design/20-contract.md § *Types* 10 names — and runs the fixed invocation order
-/// (design/20-contract.md § *Public surface* 10) entirely inside <see cref="InvokeAsync"/>: catalogue
+/// the boundary design/d5/20-contract.md § *Types* 10 names — and runs the fixed invocation order
+/// (design/d5/20-contract.md § *Public surface* 10) entirely inside <see cref="InvokeAsync"/>: catalogue
 /// lookup, tenant resolution, argument parse, authorize, entitlement, invoke inside an operation scope
 /// of its own, audit. Built once per exposed tool by <see cref="McpToolRegistrationSync"/>, after the
 /// catalogue is frozen — never re-registered, on the same terms I-M1 already holds S14 to.</summary>
@@ -181,7 +181,7 @@ internal static class McpToolResults
     };
 }
 
-/// <summary>Installed ahead of the SDK's own default handling (design/90-decisions.md, 2026-08-29):
+/// <summary>Installed ahead of the SDK's own default handling (design/d5/90-decisions.md, 2026-08-29):
 /// a call naming a tool the frozen catalogue does not expose never reaches the SDK's built-in
 /// tool-collection dispatch at all, so it can never produce the SDK's own existence-disclosing
 /// answer, and never touches the SDK's authorization-metadata path (I-M11) — Platform's evaluator is

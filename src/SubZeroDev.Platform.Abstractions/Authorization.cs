@@ -50,7 +50,7 @@ public sealed record AuthorizationDecision(
 {
     /// <summary>Set only on a denial whose <see cref="AuditClass.Required"/> audit record could not be
     /// written. The caller answers a retryable failure carrying it rather than forbidden — the class
-    /// rule (<c>design/20-contract.md</c>, Error semantics § 4): a denial that cannot be recorded is
+    /// rule (<c>design/d5/20-contract.md</c>, Error semantics § 4): a denial that cannot be recorded is
     /// not answered as though it were.</summary>
     public AuditError? AuditFailure { get; init; }
 
@@ -59,7 +59,7 @@ public sealed record AuthorizationDecision(
     /// registry order, whatever that provider returned; never set on an allowed decision. The denial
     /// stands for the request, and the caller answers a retryable failure carrying it rather than
     /// forbidden. Where <see cref="AuditFailure"/> is also set, the audit failure decides the answer
-    /// (<c>design/20-contract.md</c>, Error semantics § 2 and § 4).</summary>
+    /// (<c>design/d5/20-contract.md</c>, Error semantics § 2 and § 4).</summary>
     public AuthorizationError? ProviderFailure { get; init; }
 }
 

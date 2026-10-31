@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #97, #100: Adventures becomes a hosted consumer; its identity stays evidence (supersedes g1 2026-08-09)
 Status: superseded
 SupersededBy: decision/2026-10-17-adventures-is-a-workload-behind-platform-s-edge-not-a-package-consumer
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #97, #100: Adventures becomes a hosted consumer; its identity stays evidence (supersedes g1 2026-08-09)"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #97, #100: Adventures becomes a hosted consumer; its identity stays evidence (supersedes g1 2026-08-09)"
 
 ## Claim
 Context — [#97](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/97). D3's done-criterion, a product running on Platform by the standard registration call, has been met only by Platform's own sample. The g1 entry of 2026-08-09 made the Adventures POC a reference that G2 and G3 read, not a consumer. [#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100) asks whether Adventures' identity replacement makes an Identity package.

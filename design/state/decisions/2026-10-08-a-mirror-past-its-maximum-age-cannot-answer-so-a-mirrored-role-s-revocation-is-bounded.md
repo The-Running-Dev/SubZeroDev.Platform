@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #264: a mirror past its maximum age cannot answer, so a mirrored role's revocation is bounded
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #264: a mirror past its maximum age cannot answer, so a mirrored role's revocation is bounded"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #264: a mirror past its maximum age cannot answer, so a mirrored role's revocation is bounded"
 
 ## Claim
 Context — [#264](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/264), red-team F3 (`design/redteam/2026-09-25-10-design.md`). The 2026-09-25 grant-source rule made issuer-managed roles reach the evaluator through a consumer's mirror and left the mirror's freshness to the consumer, unbounded, so a role removed at the issuer kept granting until the sync ran, and the revoke-then-deny harness passed because it revoked the mirror's row. The owner ruled: cap the staleness.

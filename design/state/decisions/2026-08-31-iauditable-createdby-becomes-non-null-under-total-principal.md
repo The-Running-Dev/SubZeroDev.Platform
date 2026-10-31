@@ -3,7 +3,7 @@ Date: 2026-08-31
 Anchor: 2026-08-31 — `IAuditable.CreatedBy` becomes non-null under the total principal
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-31 — `IAuditable.CreatedBy` becomes non-null under the total principal"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-31 — `IAuditable.CreatedBy` becomes non-null under the total principal"
 
 ## Claim
 Context — `20-contract.md` § *Unresolved* 1 (formerly item 1) left two defensible readings open, and `30-slices.md`'s pre-slice decision table named this a blocker on S2: `CreatedBy` becomes non-null, or stays `string?`. Both readings produce different declarations and the contract deliberately chose neither. Asked of the user directly, since S2 cannot implement `IAuditable` against two undetermined shapes at once.

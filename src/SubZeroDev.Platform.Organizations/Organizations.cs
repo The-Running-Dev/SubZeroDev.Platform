@@ -2,7 +2,7 @@ using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.Organizations;
 
-/// <summary>An organization's identity. <c>design/20-contract.md</c>, Types §7.</summary>
+/// <summary>An organization's identity. <c>design/d5/20-contract.md</c>, Types §7.</summary>
 /// <param name="Value">The identifier.</param>
 public readonly record struct OrganizationId(Guid Value)
 {
@@ -14,7 +14,7 @@ public readonly record struct OrganizationId(Guid Value)
     public override string ToString() => Value.ToString();
 }
 
-/// <summary>An invitation's identity. <c>design/20-contract.md</c>, Types §7.</summary>
+/// <summary>An invitation's identity. <c>design/d5/20-contract.md</c>, Types §7.</summary>
 /// <param name="Value">The identifier.</param>
 public readonly record struct InvitationId(Guid Value)
 {
@@ -53,7 +53,7 @@ public enum MembershipState
     Revoked,
 }
 
-/// <summary>An organization. Holds a tenant; it is not one — <c>design/20-contract.md</c>, Types
+/// <summary>An organization. Holds a tenant; it is not one — <c>design/d5/20-contract.md</c>, Types
 /// §7: "an organization holds a tenant, it is not one."</summary>
 /// <param name="Id">The organization's identity.</param>
 /// <param name="Tenant">The tenant minted for this organization at creation. Unique across every
@@ -102,7 +102,7 @@ public sealed record Invitation(
     PrincipalId? RedeemedBy,
     DateTimeOffset? RedeemedAt);
 
-/// <summary>Why an organization operation did not complete. <c>design/20-contract.md</c>, Error
+/// <summary>Why an organization operation did not complete. <c>design/d5/20-contract.md</c>, Error
 /// semantics §5 — exactly these four variants, each parameterless so the caller-facing answer never
 /// carries a distinguishing detail (S10.5): the operator-facing distinction goes to the log, not the
 /// return value.</summary>

@@ -66,7 +66,7 @@ internal sealed class AuditSinkHealthState
 }
 
 /// <summary>Dispatches one built <see cref="AuditEvent"/> to every registered sink and applies the
-/// class rule (<c>design/20-contract.md</c>, Error semantics § 4): a <see cref="AuditClass.Required"/>
+/// class rule (<c>design/d5/20-contract.md</c>, Error semantics § 4): a <see cref="AuditClass.Required"/>
 /// write whose sink failed turns into a failure a caller may retry; a <see cref="AuditClass.Recorded"/>
 /// write leaves the response unaffected. Either class degrades <c>platform.audit.sink</c> on
 /// failure, and a fully successful dispatch clears the degradation. Internal and shared with

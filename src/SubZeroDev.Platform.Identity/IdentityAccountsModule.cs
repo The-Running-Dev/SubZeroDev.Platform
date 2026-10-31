@@ -7,7 +7,7 @@ using SubZeroDev.Platform.Persistence;
 namespace SubZeroDev.Platform.Identity;
 
 /// <summary>The optional account store: <see cref="IAccountApi"/>, the mapping from a linked identity
-/// to its account's principal, and the two tables it owns (<c>design/20-contract.md</c>, Public surface
+/// to its account's principal, and the two tables it owns (<c>design/d5/20-contract.md</c>, Public surface
 /// §19). A host that does not register it has no Identity table and unchanged principals (I-I21).
 /// Depends on <see cref="IdentityModule"/>; registering it alone fails startup through the module
 /// graph.</summary>

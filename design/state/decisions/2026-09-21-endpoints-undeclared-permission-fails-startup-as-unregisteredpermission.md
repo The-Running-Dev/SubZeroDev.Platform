@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — An endpoint's undeclared permission fails startup as `UnregisteredPermission`
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — An endpoint's undeclared permission fails startup as `UnregisteredPermission`"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — An endpoint's undeclared permission fails startup as `UnregisteredPermission`"
 
 ## Claim
 Context — § *Error semantics* 9 names `UnregisteredPermission` for a tool, an endpoint or any registration requiring an undeclared permission. The endpoint check threw `HostStartupError.Registration` instead, while Mcp's tool check used the named code.

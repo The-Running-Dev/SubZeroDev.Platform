@@ -3,7 +3,7 @@ Date: 2026-08-29
 Anchor: 2026-08-29 — Provenance is a named type, and the well-known names are Platform's own public surface
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-29 — Provenance is a named type, and the well-known names are Platform's own public surface"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-29 — Provenance is a named type, and the well-known names are Platform's own public surface"
 
 ## Claim
 Context — `/contract` for D5. `10-design.md` requires an authorization decision to carry "the non-empty set of providers that produced the grant" and an entitlement decision to name its contributors, and it requires the publication of a shared row to be "an explicit, permissioned, audited write" and an audit-write failure to degrade readiness. None of those is expressible without something to name: the design states the requirement and not the handle.

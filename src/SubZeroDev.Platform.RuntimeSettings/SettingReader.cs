@@ -77,7 +77,7 @@ internal sealed class SettingReader(
     }
 }
 
-/// <summary>Which layers exist for an operation (<c>design/10-design.md</c>, Data model §13).</summary>
+/// <summary>Which layers exist for an operation (<c>design/d5/10-design.md</c>, Data model §13).</summary>
 internal static class SettingLayers
 {
     /// <summary>The layers that both exist for the tenant and principal and are admitted.</summary>

@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — Organizations and Billing gain a retryable `StoreUnavailable`
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — Organizations and Billing gain a retryable `StoreUnavailable`"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — Organizations and Billing gain a retryable `StoreUnavailable`"
 
 ## Claim
 Context — both APIs mapped a failed store transaction onto a business variant — Organizations onto `OrganizationNotFound`, Billing onto `PlanNotFound`, `SubscriptionNotFound`, `InvalidTransition` or `ProviderEventMalformed` depending on the call — so an outage was answered as a non-retryable fact about the caller's data. The code carried comments admitting no variant fit.

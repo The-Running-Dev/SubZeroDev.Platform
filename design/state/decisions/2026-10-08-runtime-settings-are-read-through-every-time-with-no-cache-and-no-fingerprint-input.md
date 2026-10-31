@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #58: runtime settings are read through every time, with no cache and no fingerprint input
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #58: runtime settings are read through every time, with no cache and no fingerprint input"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #58: runtime settings are read through every time, with no cache and no fingerprint input"
 
 ## Claim
 Context — [#58](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/58). A web host and a worker share one database, and a change on one must reach the other without a restart.

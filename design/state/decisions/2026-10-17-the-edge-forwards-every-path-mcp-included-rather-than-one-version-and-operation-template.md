@@ -3,7 +3,7 @@ Date: 2026-10-17
 Anchor: 2026-10-17 — The edge forwards every path, MCP included, rather than one version-and-operation template (supersedes g1 2026-08-08, in part)
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-17 — The edge forwards every path, MCP included, rather than one version-and-operation template (supersedes g1 2026-08-08, in part)"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-17 — The edge forwards every path, MCP included, rather than one version-and-operation template (supersedes g1 2026-08-08, in part)"
 
 ## Claim
 Context — two G1 entries describe a narrower edge than the one built. "The edge forwards by prefix and does not consult the contract" chose "one route template covering the version and operation segments". "The MCP projection is served by the workload process, over HTTP" priced that choice as "the edge routes the JSON wire only, so an MCP caller bypasses the edge". S7 (#105, 2026-08-10) built a catch-all instead: `MapGameWorkloadForwarding` maps `/{**catchAll}`, and Platform's probe middleware answers `/health/live` and `/health/ready` before it. So the edge forwards `/mcp` the same way as `/v1/<operation>`. The workload's own listener can still be reached directly. Both G1 entries were left as written. The G1 hosting guide and the game edge README already describe the catch-all.

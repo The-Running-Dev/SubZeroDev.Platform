@@ -3,7 +3,7 @@ Date: 2026-08-24
 Anchor: 2026-08-24 — A caller who may not see a resource is told it does not exist
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-24 — A caller who may not see a resource is told it does not exist"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-24 — A caller who may not see a resource is told it does not exist"
 
 ## Claim
 Context — two boundaries return refusals — the tenant filter and the authorization evaluator — and using one answer for both leaks existence across tenants.

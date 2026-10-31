@@ -3,7 +3,7 @@ Date: 2026-08-29
 Anchor: 2026-08-29 — A tool's exposure is not a field its producer fills in
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-29 — A tool's exposure is not a field its producer fills in"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-29 — A tool's exposure is not a field its producer fills in"
 
 ## Claim
 Context — `10-design.md` § *Data model* 8 describes one `ToolRegistration` carrying the name, the producer, the schema, the required permission and whether it is exposed, and requires exposure to be configuration, resolved at startup, default closed.

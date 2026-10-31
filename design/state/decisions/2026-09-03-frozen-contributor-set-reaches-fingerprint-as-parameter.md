@@ -3,7 +3,7 @@ Date: 2026-09-03
 Anchor: 2026-09-03 — The frozen contributor set reaches the fingerprint as a parameter, not as a projected option
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-03 — The frozen contributor set reaches the fingerprint as a parameter, not as a projected option"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-03 — The frozen contributor set reaches the fingerprint as a parameter, not as a projected option"
 
 ## Claim
 Context — `20-contract.md` § *Unresolved* item 1 (numbered 2 in `30-slices.md`) left two defensible readings open, and named S8 as where the answer is needed because I-C4 lands there. The contributor set must be inside the settings-fingerprint input so two instances that disagree about who may grant surface through `platform.settings-fingerprint` rather than through divergent behaviour — but the set is a *registration*, and `ISettingsFingerprint.Compute` took `PlatformOptions` alone.

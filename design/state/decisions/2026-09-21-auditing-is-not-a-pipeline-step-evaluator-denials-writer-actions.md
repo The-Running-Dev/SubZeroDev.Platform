@@ -3,7 +3,7 @@ Date: 2026-09-21
 Anchor: 2026-09-21 — Auditing is not a pipeline step: the evaluator audits denials, the writer audits actions
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-21 — Auditing is not a pipeline step: the evaluator audits denials, the writer audits actions"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-21 — Auditing is not a pipeline step: the evaluator audits denials, the writer audits actions"
 
 ## Claim
 Context — `10-design.md` and `20-contract.md` § *Public surface* 11 listed "audit" as a final step, and I-A8 said the evaluator audits every decision once. The code audits a denial in the evaluator and an allowed action in the writer performing it, inside that action's transaction.

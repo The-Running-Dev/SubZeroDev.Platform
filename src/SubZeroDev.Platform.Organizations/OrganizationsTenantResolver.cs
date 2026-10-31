@@ -3,7 +3,7 @@ using SubZeroDev.Platform.Abstractions;
 namespace SubZeroDev.Platform.Organizations;
 
 /// <summary>Holds the active organization's tenant for the current asynchronous flow. Not a stored
-/// preference and there is no column for one (<c>design/20-contract.md</c>, Types §7): the active
+/// preference and there is no column for one (<c>design/d5/20-contract.md</c>, Types §7): the active
 /// organization is a per-request selection, carried the same way <c>AmbientTransactionState</c>
 /// carries the ambient transaction — an <see cref="AsyncLocal{T}"/>, set by
 /// <see cref="IOrganizationApi.SwitchActiveOrganizationAsync"/> and read back by

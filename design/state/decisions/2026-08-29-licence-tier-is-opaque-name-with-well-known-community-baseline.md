@@ -3,7 +3,7 @@ Date: 2026-08-29
 Anchor: 2026-08-29 — The licence tier is an opaque name with a well-known Community baseline
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-08-29 — The licence tier is an opaque name with a well-known Community baseline"
+StatedIn: "unit/document/d5-90-decisions § 2026-08-29 — The licence tier is an opaque name with a well-known Community baseline"
 
 ## Claim
 Context — `10-design.md` states that Platform is not a licensor and that accepted keys are supplied by the consuming product, while the brief and `tenancy-billing-licensing.md` both name Community, Pro and Enterprise and require a fresh installation with no verified claims to continue at Community. The design does not say which of those two facts decides the type.

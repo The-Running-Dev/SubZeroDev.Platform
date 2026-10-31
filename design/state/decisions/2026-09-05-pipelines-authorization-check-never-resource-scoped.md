@@ -3,7 +3,7 @@ Date: 2026-09-05
 Anchor: 2026-09-05 — The pipeline's authorization check is never resource-scoped
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-09-05 — The pipeline's authorization check is never resource-scoped"
+StatedIn: "unit/document/d5-90-decisions § 2026-09-05 — The pipeline's authorization check is never resource-scoped"
 
 ## Claim
 Context — `IAuthorizationEvaluator.EvaluateAsync` takes a `ResourceRef?`, and the fixed order's step 4 has to pass something. Mcp scopes its check to the parsed resource because the SDK parsed arguments against a declared schema before any producer code ran; an HTTP endpoint convention has no equivalent — the identifier is in a route value or a body at the moment the declaration is written.

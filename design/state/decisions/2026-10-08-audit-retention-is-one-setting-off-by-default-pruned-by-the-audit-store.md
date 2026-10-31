@@ -3,7 +3,7 @@ Date: 2026-10-08
 Anchor: 2026-10-08 — #187: audit retention is one setting, off by default, pruned by the Audit store
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/90-decisions § 2026-10-08 — #187: audit retention is one setting, off by default, pruned by the Audit store"
+StatedIn: "unit/document/d5-90-decisions § 2026-10-08 — #187: audit retention is one setting, off by default, pruned by the Audit store"
 
 ## Claim
 Context — [#187](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/187). D5 selected no retention, so `audit_event` grew without bound; `Prune` existed but covered only outbox rows and host registrations. Ben ruled 2026-10-08: Platform schedules the prune, off by default, set by `Audit:RetentionDays`; no archival or export.

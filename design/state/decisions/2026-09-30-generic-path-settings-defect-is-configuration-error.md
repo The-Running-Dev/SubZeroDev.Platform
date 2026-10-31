@@ -3,7 +3,7 @@ Date: 2026-09-30
 Anchor: 2026-09-30 — A generic-path settings defect is a `ConfigurationError` naming the full key
 Status: accepted
 SupersededBy:
-StatedIn: "unit/document/20-contract § 9. Startup — `SubZeroDev.Platform.Core`, surfaced as `HostStartupError`", "unit/document/90-decisions § 2026-09-30 — A generic-path settings defect is a `ConfigurationError` naming the full key"
+StatedIn: "unit/document/d5-20-contract § 9. Startup — `SubZeroDev.Platform.Core`, surfaced as `HostStartupError`", "unit/document/d5-90-decisions § 2026-09-30 — A generic-path settings defect is a `ConfigurationError` naming the full key"
 
 ## Claim
 Context — `/spec` #94: path 2 step 8 requires a malformed or unrecognised generic-path setting to fail startup naming the provider and the key, and names no error to carry it.

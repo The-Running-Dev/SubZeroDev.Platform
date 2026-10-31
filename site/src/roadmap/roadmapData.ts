@@ -1,4 +1,27 @@
-import slicesRaw from "../../../design/30-slices.md?raw";
+// The active effort's ledger, if there is one. A glob, not a static import, so
+// that between efforts — when design/ holds no 30-slices.md — the build still
+// succeeds and the page renders its between-efforts state. The glob matches
+// only the root file: an archived ledger (design/<effort>/30-slices.md) is
+// never read, so a closed effort cannot pass for the active one. Present but
+// empty is not absent: the file is then read, and parseSlices rejects it.
+const ledgerFiles = import.meta.glob<string>("../../../design/30-slices.md", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+const activeLedgerRaw: string | undefined = Object.values(ledgerFiles)[0];
+
+/**
+ * The most recently archived effort's ledger, which the between-efforts state
+ * links to. Hand-maintained: effort directories carry no order a glob could
+ * read, and the archive convention already repoints inbound references in the
+ * archiving commit — this is one of them. roadmapData.test.ts fails if the
+ * path stops existing.
+ */
+export const lastArchivedLedger = {
+  effort: "D5",
+  path: "design/d5/30-slices.md",
+} as const;
 
 export type SliceStatus = "shipped" | "in-progress" | "queued";
 
@@ -21,7 +44,7 @@ const LANDED_BULLET_RE = /^- \*\*(S(\d+)) — (.+?)\*\* — shipped:/gm;
 const BULLET_PR_RE = /\bvia\s+\[#(\d+)]\((https:\/\/\S+?)\)/;
 
 /**
- * Parses design/30-slices.md, counting every slice once from whichever of
+ * Parses an effort's 30-slices.md (the active design/30-slices.md), counting every slice once from whichever of
  * the ledger's three forms carries it: an outstanding slice's `## S<n> — `
  * heading with its `**Status:**` and `Depends on:` lines, or a retired
  * slice's row in the `## Landed` table or bullet under `## Landed` — both of
@@ -143,7 +166,7 @@ function parseStatus(id: string, text: string): SliceStatus {
 
 /**
  * Fails the internal-consistency invariants build/Test-SliceStatusMarkers.ps1
- * also checks against the same design/30-slices.md: exactly one
+ * also checks against the same active design/30-slices.md: exactly one
  * 'in progress' slice whenever any slice is unshipped, and every queued slice
  * ordered after every shipped one. Exported so the app, its tests, and the
  * active-ledger test can assert it without duplicating the rule.
@@ -174,8 +197,23 @@ export function assertConsistent(slices: readonly Slice[]): void {
   }
 }
 
-export const slices: readonly Slice[] = parseSlices(slicesRaw);
-assertConsistent(slices);
+/**
+ * The slices of the active ledger. `undefined` is "no active effort" and gives
+ * an empty list; any text at all, an empty file included, is parsed and must
+ * be well-formed. Exported so the between-efforts case is testable without
+ * deleting the real ledger.
+ */
+export function loadSlices(raw: string | undefined): Slice[] {
+  if (raw === undefined) return [];
+  const parsed = parseSlices(raw);
+  assertConsistent(parsed);
+  return parsed;
+}
+
+export const slices: readonly Slice[] = loadSlices(activeLedgerRaw);
+
+/** True while no effort is active: the root holds no 30-slices.md. */
+export const betweenEfforts = slices.length === 0;
 
 export const shippedSlices = slices.filter((s) => s.status === "shipped");
 export const currentSlice = slices.find((s) => s.status === "in-progress");
@@ -190,12 +228,14 @@ export type NonGoal = {
 };
 
 /**
- * design/00-brief.md's Non-goals section, hand-authored: the brief's prose
- * is not machine-parseable the way 30-slices.md's headings are, and the list
- * is closed — closing a non-goal is a brief amendment, not something a slice
- * merge changes.
+ * The active brief's Non-goals section, hand-authored: the brief's prose is
+ * not machine-parseable the way 30-slices.md's headings are, and the list is
+ * closed — closing a non-goal is a brief amendment, not something a slice
+ * merge changes. These are the archived D5 brief's (design/d5/00-brief.md);
+ * whoever writes the next effort's brief replaces them in the same change
+ * that adds its ledger.
  */
-export const nonGoals: readonly NonGoal[] = [
+const briefNonGoals: readonly NonGoal[] = [
   {
     title: "Every capability in the platform specification",
     reason:
@@ -270,3 +310,9 @@ export const nonGoals: readonly NonGoal[] = [
       "Closed. Identity, Organizations, Billing and Licensing are absent there, not registered checks that always pass.",
   },
 ];
+
+/**
+ * Between efforts there is no active brief, so no non-goal is in force;
+ * showing the closed D5 brief's as current would be false.
+ */
+export const nonGoals: readonly NonGoal[] = betweenEfforts ? [] : briefNonGoals;

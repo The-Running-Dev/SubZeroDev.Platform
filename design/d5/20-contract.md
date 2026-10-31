@@ -28,7 +28,7 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 ### 1. Identity — `SubZeroDev.Platform.Abstractions`
 
 `PrincipalId`, `PrincipalKind` and `Principal` are declared in the tree:
-[`Principal.cs`](../src/SubZeroDev.Platform.Abstractions/Principal.cs).
+[`Principal.cs`](../../src/SubZeroDev.Platform.Abstractions/Principal.cs).
 
 **What the declarations cannot say.**
 
@@ -52,7 +52,7 @@ re-specified. Where D5 changes one, the change is stated against the file that d
   for `System`, and for any `Delegated` principal whose asserting boundary produced no claims. **No
   Platform decision may read it** — authorization reads permissions, not claims.
 - **`Delegated` is not a degraded `Account`.** No account will ever exist for BarStrad's customer-side
-  principal ([`application-modules.md`](../docs/docs/application-modules.md) §2). A consumer must not
+  principal ([`application-modules.md`](../../docs/docs/application-modules.md) §2). A consumer must not
   treat a `Delegated` principal as one with missing fields.
 - **Nothing here is a user entity, and none may be added.** Platform owns no directory and no federation.
   The one account concept is Identity's optional, per-host account store (§ 16). It lives in a module, it is
@@ -62,9 +62,9 @@ re-specified. Where D5 changes one, the change is stated against the file that d
 
 `PermissionName`, `PermissionProviderName`, `AuthorizationOutcome`, `AuthorizationDecision` and
 `PlatformPermissions` are declared in the tree (S4; `AuthorizationDecision.ProviderFailure`, S24):
-[`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs). `ResourceRef` is
+[`Authorization.cs`](../../src/SubZeroDev.Platform.Abstractions/Authorization.cs). `ResourceRef` is
 declared in the same project, materialised by S3 because `AuditEvent` needs it ahead of the rest of
-this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
+this section: [`Audit.cs`](../../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 
 **What the declarations cannot say.**
 
@@ -118,7 +118,7 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 ### 3. Entitlement — `SubZeroDev.Platform.Abstractions`
 
 `FeatureName`, `EntitlementContributorName` and `EntitlementDecision` are declared in the tree (S7):
-[`Entitlement.cs`](../src/SubZeroDev.Platform.Abstractions/Entitlement.cs).
+[`Entitlement.cs`](../../src/SubZeroDev.Platform.Abstractions/Entitlement.cs).
 
 **What the declarations cannot say.**
 
@@ -143,14 +143,14 @@ this section: [`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs).
 
 `AuditEventId`, `AuditAction`, `AuditOutcome`, `AuditClass`, `AuditEvent`, `PlatformAuditActions`,
 `IAuditWriter`, `IAuditSink` and `AuditError` are declared in the tree:
-[`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs). `ResourceRef` (*Types*, § 2) is
+[`Audit.cs`](../../src/SubZeroDev.Platform.Abstractions/Audit.cs). `ResourceRef` (*Types*, § 2) is
 declared in the same file, materialised ahead of the rest of Authorization because `AuditEvent`
 needs it.
 
 **What the declarations cannot say.**
 
 - **`AuditEvent` has no payload field, no changed-field list and no free-form detail string, and none
-  may be added.** [`platform-specification.md`](../docs/docs/platform-specification.md) lists "changed
+  may be added.** [`platform-specification.md`](../../docs/docs/platform-specification.md) lists "changed
   fields where appropriate"; D5 refuses it. The brief requires tests that push representative secrets
   through every audited input surface and assert nothing reaches the record or the logs. With a place
   to put a value, that test asserts a property of the redaction rules and of every future caller's
@@ -174,9 +174,9 @@ needs it.
 ### 5. Composition — `SubZeroDev.Platform.Abstractions`
 
 `CompositionProfile` is declared in the tree:
-[`Composition.cs`](../src/SubZeroDev.Platform.Abstractions/Composition.cs). `PlatformOptions.CompositionProfile`,
+[`Composition.cs`](../../src/SubZeroDev.Platform.Abstractions/Composition.cs). `PlatformOptions.CompositionProfile`,
 `[Fingerprinted]`, is declared beside the rest of `PlatformOptions`:
-[`PlatformOptions.cs`](../src/SubZeroDev.Platform.Core/PlatformOptions.cs).
+[`PlatformOptions.cs`](../../src/SubZeroDev.Platform.Core/PlatformOptions.cs).
 
 **What the declaration cannot say.**
 
@@ -190,10 +190,10 @@ needs it.
 ### 6. Tenancy — `SubZeroDev.Platform.Persistence`
 
 `TenantId`, `ITenantOwned` and the implicit constant are settled and untouched:
-[`Identity.cs`](../src/SubZeroDev.Platform.Abstractions/Identity.cs),
-[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs). D5 adds the shareable declaration
+[`Identity.cs`](../../src/SubZeroDev.Platform.Abstractions/Identity.cs),
+[`Columns.cs`](../../src/SubZeroDev.Platform.Persistence/Columns.cs). D5 adds the shareable declaration
 and nothing else to the storage shape — `IShareable` is declared in
-[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs).
+[`Columns.cs`](../../src/SubZeroDev.Platform.Persistence/Columns.cs).
 
 **What the declaration cannot say.**
 
@@ -213,7 +213,7 @@ and nothing else to the storage shape — `IShareable` is declared in
 ### 6a. Versioned rows — `SubZeroDev.Platform.Persistence`
 
 `IVersioned` is an opt-in column marker beside `ISoftDeletable` in
-[`Columns.cs`](../src/SubZeroDev.Platform.Persistence/Columns.cs), on the same terms: a declaration, not
+[`Columns.cs`](../../src/SubZeroDev.Platform.Persistence/Columns.cs), on the same terms: a declaration, not
 a mechanism — the consumer adds the column in its own migration and writes its own SQL. Its one member,
 `long Version`, is 1 on insert and advanced by exactly 1 by each guarded write that lands.
 
@@ -226,7 +226,7 @@ a mechanism — the consumer adds the column in its own migration and writes its
 
 `OrganizationId`, `InvitationId`, `OrganizationRole`, `MembershipState`, `Organization`, `Membership`
 and `Invitation` are declared in the tree:
-[`Organizations.cs`](../src/SubZeroDev.Platform.Organizations/Organizations.cs).
+[`Organizations.cs`](../../src/SubZeroDev.Platform.Organizations/Organizations.cs).
 
 **What the declarations cannot say.**
 
@@ -250,7 +250,7 @@ and `Invitation` are declared in the tree:
 ### 8. Billing — `SubZeroDev.Platform.Billing`
 
 `PlanKey`, `SubscriptionId`, `SubscriptionState`, `Plan`, `Subscription` and `ProviderEventReceipt`
-are declared in the tree: [`Billing.cs`](../src/SubZeroDev.Platform.Billing/Billing.cs).
+are declared in the tree: [`Billing.cs`](../../src/SubZeroDev.Platform.Billing/Billing.cs).
 
 **What the declarations cannot say.**
 
@@ -278,7 +278,7 @@ are declared in the tree: [`Billing.cs`](../src/SubZeroDev.Platform.Billing/Bill
 
 `LicenceTier` (with `Community`), `LicenceVerificationOutcome`, `LicenceClaims` and
 `LicenceSigningKey` are declared in the tree:
-[`Licensing.cs`](../src/SubZeroDev.Platform.Licensing/Licensing.cs), which also declares what a
+[`Licensing.cs`](../../src/SubZeroDev.Platform.Licensing/Licensing.cs), which also declares what a
 deployment supplies (`LicensingOptions`), the revocation extension point (`IRevocationCheck`) and the
 read of the claims in force that *Public surface*, § 10 gives Licensing (`ILicenceState`).
 
@@ -298,13 +298,13 @@ read of the claims in force that *Public surface*, § 10 gives Licensing (`ILice
   that errors on every verification cannot renew its own grace, because **nothing on any error path
   writes those instants.**
 - **Grace comes from the document, defaulting to thirty days when the document does not name one**
-  ([`tenancy-billing-licensing.md`](../docs/docs/tenancy-billing-licensing.md), *Enforcement rules*).
+  ([`tenancy-billing-licensing.md`](../../docs/docs/tenancy-billing-licensing.md), *Enforcement rules*).
   It is deliberately **not** a deployment setting: a grace window an operator can set is a grace
   window with no end.
 - **The accepted public keys are supplied by the consuming product, not compiled into Platform.**
   Platform is not a licensor. A deployment accepts an *ordered set* so key rotation does not need a
   flag day, and the stored record names which key verified the document. This narrows
-  [`tenancy-billing-licensing.md`](../docs/docs/tenancy-billing-licensing.md)'s "public key compiled
+  [`tenancy-billing-licensing.md`](../../docs/docs/tenancy-billing-licensing.md)'s "public key compiled
   into the build", which is the Automator's arrangement and not Platform's.
 - **`Invalid` never grants a tier.** A tampered or invalidly signed document is ignored entirely and
   falls back to previously verified claims, or to `Community` when none exist. It is not "the claims
@@ -321,9 +321,9 @@ the way out. The evaluation and the alternatives rejected are in
 [`90-decisions.md`](90-decisions.md), 2026-08-29.
 
 `ToolName`, `ToolProducerName`, `ToolDefinition`, `ToolRegistration`, `IToolProducer` and
-`IToolCatalogue` are declared in the tree: [`Tool.cs`](../src/SubZeroDev.Platform.Mcp/Tool.cs). The
+`IToolCatalogue` are declared in the tree: [`Tool.cs`](../../src/SubZeroDev.Platform.Mcp/Tool.cs). The
 catalogue's only implementation is internal to the module
-([`ToolCatalogue.cs`](../src/SubZeroDev.Platform.Mcp/ToolCatalogue.cs)), so a consumer reaches the
+([`ToolCatalogue.cs`](../../src/SubZeroDev.Platform.Mcp/ToolCatalogue.cs)), so a consumer reaches the
 frozen catalogue through the interface and has no other way in.
 
 **What the declarations cannot say.**
@@ -342,7 +342,7 @@ frozen catalogue through the interface and has no other way in.
   definitions with configuration and produces the registration. A single type with an exposure field a
   producer fills in makes default-closed a rule every producer has to remember, which is the automatic
   exposure on install that
-  [`second-consumer-packages.md`](../docs/docs/second-consumer-packages.md) §4 refuses outright.
+  [`second-consumer-packages.md`](../../docs/docs/second-consumer-packages.md) §4 refuses outright.
 - **`IToolCatalogue` exposes no way to reach an unexposed registration**, so "neither listed nor
   callable" is a property of the interface rather than of its callers. There is no `All`, no
   `TryGet` that ignores exposure, and none may be added — a diagnostic that can enumerate hidden tools
@@ -476,10 +476,10 @@ example `GameEdge:StreamingRoutes:0:FirstByteTimeout`). An overlap names the lat
 
 `GameEdgeOptions.StreamingRoutes` and `StreamingRoute` (`PathPrefix`, `FirstByteTimeout`, both
 `required`) are declared in
-[`Options.cs`](../workloads/game-edge/SubZeroDev.Platform.GameEdge/Options.cs); G1's and G2's members
+[`Options.cs`](../../workloads/game-edge/SubZeroDev.Platform.GameEdge/Options.cs); G1's and G2's members
 of `GameEdgeOptions` are unchanged. `StreamedResponse(int StatusCode, string? ContentType, Stream Body)`,
 an `IAsyncDisposable` record, is declared in
-[`Forwarding.cs`](../workloads/game-edge/SubZeroDev.Platform.GameEdge/Forwarding.cs).
+[`Forwarding.cs`](../../workloads/game-edge/SubZeroDev.Platform.GameEdge/Forwarding.cs).
 
 `StreamedResponse.Body` owns the upstream response. Disposing it releases the workload connection,
 which is how a caller's disconnect reaches the workload.
@@ -670,7 +670,7 @@ in that consumer's own migration.
 
 ### 6. The existing audit columns — `SubZeroDev.Platform.Persistence`
 
-[`IAuditable`](../src/SubZeroDev.Platform.Persistence/Columns.cs) declared `CreatedBy`, `ModifiedBy`
+[`IAuditable`](../../src/SubZeroDev.Platform.Persistence/Columns.cs) declared `CreatedBy`, `ModifiedBy`
 and `DeletedBy` as `string?` in D3, because D3 had no actor. S2 resolved Unresolved item 1:
 **`CreatedBy` becomes non-null (`string`)**, matching the ambient principal being total and making
 "every row names an actor" a property of the type rather than of the writer — no consumer runs on
@@ -786,7 +786,7 @@ module runs it.
 
 D5 changes three declarations that exist in the tree. Each is breaking against a published 0.x
 surface, and the brief describes those packages as explicitly unstable for exactly this. In
-[`OperationContext.cs`](../src/SubZeroDev.Platform.Abstractions/OperationContext.cs):
+[`OperationContext.cs`](../../src/SubZeroDev.Platform.Abstractions/OperationContext.cs):
 
 - **`IOperationScope.Principal` becomes `Principal`, non-null.** The raw authentication result stays
   reachable as `Principal.Claims`.
@@ -806,9 +806,9 @@ a consumer ships costs the consumer.**
 ### 2. Authentication seam — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
 `IAuthenticationProvider`, `IAuthenticationRequest` and `AuthenticationError` are declared in the tree
-(S8): [`Authentication.cs`](../src/SubZeroDev.Platform.Abstractions/Authentication.cs). The provider
+(S8): [`Authentication.cs`](../../src/SubZeroDev.Platform.Abstractions/Authentication.cs). The provider
 registry and the chain that runs registered providers in registration order are declared in
-[`Authentication.cs`](../src/SubZeroDev.Platform.Core/Authentication.cs).
+[`Authentication.cs`](../../src/SubZeroDev.Platform.Core/Authentication.cs).
 
 **What the declaration cannot say.**
 
@@ -838,17 +838,17 @@ registry and the chain that runs registered providers in registration order are 
 ### 3. Authorization — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
 `IPermissionProvider`, `IPermissionCatalog` and `IAuthorizationEvaluator` are declared in the tree
-(S4): [`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs). The
+(S4): [`Authorization.cs`](../../src/SubZeroDev.Platform.Abstractions/Authorization.cs). The
 permission-provider registry, the permission-catalog registry, the evaluator and the composition
 provider are declared in
-[`Authorization.cs`](../src/SubZeroDev.Platform.Core/Authorization.cs).
+[`Authorization.cs`](../../src/SubZeroDev.Platform.Core/Authorization.cs).
 
 `IMirroredPermissionProvider` is declared beside `IPermissionProvider` in
-[`Authorization.cs`](../src/SubZeroDev.Platform.Abstractions/Authorization.cs) (S39).
+[`Authorization.cs`](../../src/SubZeroDev.Platform.Abstractions/Authorization.cs) (S39).
 `AuthorizationOptions` and `PlatformOptions.Authorization` are declared in
-[`PlatformOptions.cs`](../src/SubZeroDev.Platform.Core/PlatformOptions.cs) and bound from
+[`PlatformOptions.cs`](../../src/SubZeroDev.Platform.Core/PlatformOptions.cs) and bound from
 `Platform:Authorization` by
-[`PlatformOptionsBinder.cs`](../src/SubZeroDev.Platform.Core/PlatformOptionsBinder.cs).
+[`PlatformOptionsBinder.cs`](../../src/SubZeroDev.Platform.Core/PlatformOptionsBinder.cs).
 `MirrorMaximumAge` is `[Fingerprinted]`.
 
 | Key | Required | Constraint |
@@ -904,9 +904,9 @@ provider are declared in
 ### 4. Entitlement — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
 `IEntitlementContributor` and `IEntitlementEvaluator` are declared in the tree (S7):
-[`Entitlement.cs`](../src/SubZeroDev.Platform.Abstractions/Entitlement.cs). The contributor registry,
+[`Entitlement.cs`](../../src/SubZeroDev.Platform.Abstractions/Entitlement.cs). The contributor registry,
 the evaluator and the Community baseline contributor are declared in
-[`Entitlement.cs`](../src/SubZeroDev.Platform.Core/Entitlement.cs).
+[`Entitlement.cs`](../../src/SubZeroDev.Platform.Core/Entitlement.cs).
 
 - **No caller may reach a contributor directly.** Billing and Licensing are not queryable; the
   evaluator is the only surface. This is what keeps the commercial model out of product code.
@@ -918,18 +918,18 @@ the evaluator and the Community baseline contributor are declared in
 - **The contributor set is registered explicitly, enumerated at startup, and joins the settings
   fingerprint.** Those three, plus the decision naming its source, are what bound the union's risk of
   one wrong contributor granting everything. The set reaches the fingerprint input as a second
-  parameter on [`ISettingsFingerprint.Compute`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs),
+  parameter on [`ISettingsFingerprint.Compute`](../../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs),
   settled in S8 — a registration is not a setting, and projecting it onto `PlatformOptions` would have
   made an operator-facing options object carry a value no operator configured.
 
 ### 5. Tenant resolution — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
 `ITenantResolver` is declared in the tree:
-[`TenantResolution.cs`](../src/SubZeroDev.Platform.Abstractions/TenantResolution.cs). The registry and
+[`TenantResolution.cs`](../../src/SubZeroDev.Platform.Abstractions/TenantResolution.cs). The registry and
 the resolution chain are declared in
-[`TenantResolution.cs`](../src/SubZeroDev.Platform.Core/TenantResolution.cs); resolution at the request
+[`TenantResolution.cs`](../../src/SubZeroDev.Platform.Core/TenantResolution.cs); resolution at the request
 boundary, before the scope opens, is in
-[`Pipeline.cs`](../src/SubZeroDev.Platform.Hosting/Pipeline.cs).
+[`Pipeline.cs`](../../src/SubZeroDev.Platform.Hosting/Pipeline.cs).
 
 **What the declaration cannot say.**
 
@@ -943,12 +943,12 @@ boundary, before the scope opens, is in
 ### 6. Audit — `SubZeroDev.Platform.Abstractions`, registered in `SubZeroDev.Platform.Core`
 
 `IAuditWriter` and `IAuditSink` are declared in the tree:
-[`Audit.cs`](../src/SubZeroDev.Platform.Abstractions/Audit.cs). The default writer, the default log
+[`Audit.cs`](../../src/SubZeroDev.Platform.Abstractions/Audit.cs). The default writer, the default log
 sink, the sink registry and the redaction boundary are declared in
-[`Audit.cs`](../src/SubZeroDev.Platform.Core/Audit.cs) and
-[`Redaction.cs`](../src/SubZeroDev.Platform.Core/Redaction.cs); the transaction-aware writer
+[`Audit.cs`](../../src/SubZeroDev.Platform.Core/Audit.cs) and
+[`Redaction.cs`](../../src/SubZeroDev.Platform.Core/Redaction.cs); the transaction-aware writer
 Persistence installs in place of Core's default is
-[`AuditEnlistment.cs`](../src/SubZeroDev.Platform.Persistence/AuditEnlistment.cs).
+[`AuditEnlistment.cs`](../../src/SubZeroDev.Platform.Persistence/AuditEnlistment.cs).
 
 - **`WriteAsync` on the writer takes no actor, no tenant and no correlation.** All three come from the
   ambient scope. A parameter for any of them is a way to write a record about somebody else.
@@ -964,7 +964,7 @@ Persistence installs in place of Core's default is
   nothing writes in its own transaction, after the outcome is known.
 - **Readiness degrades on an audit-write failure of either class.** A new check
   `platform.audit.sink` joins
-  [`PlatformHealthChecks`](../src/SubZeroDev.Platform.Abstractions/WellKnownNames.cs).
+  [`PlatformHealthChecks`](../../src/SubZeroDev.Platform.Abstractions/WellKnownNames.cs).
 
 **Retention — `SubZeroDev.Platform.Audit`, setting bound in `SubZeroDev.Platform.Core`.** Off by default.
 One setting, one piece of background work, and no new public type in the Audit package.
@@ -1035,9 +1035,9 @@ internal sealed class AuditPruneWork(
 ### 7. Shared-read scope — `SubZeroDev.Platform.Persistence`
 
 `ISharedReadScopeFactory` is declared in
-[`SharedRead.cs`](../src/SubZeroDev.Platform.Persistence/SharedRead.cs). It is a seam a consumer's own
+[`SharedRead.cs`](../../src/SubZeroDev.Platform.Persistence/SharedRead.cs). It is a seam a consumer's own
 query code consults rather than a query Platform builds, because Persistence imposes no repository or
-ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
+ORM ([`../d3/90-decisions.md`](../d3/90-decisions.md), 2026-08-03).
 
 - **The scope names one type and widens the filter for that type only.** Every other query on the
   request, shareable type or not, stays `tenant equals current`. `IsOpenFor<TEntity>()` is what a
@@ -1046,7 +1046,7 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
 - **A write attempted inside the scope throws `PlatformContractViolationException`** carrying a new
   `ContractViolation` variant, rather than returning an error: it is a defect in the caller, not a
   runtime condition — the distinction
-  [`Results.cs`](../src/SubZeroDev.Platform.Abstractions/Results.cs) already draws.
+  [`Results.cs`](../../src/SubZeroDev.Platform.Abstractions/Results.cs) already draws.
 - **A write-intent unit of work opened inside the scope throws the same variant, and so does
   `Open<TEntity>` called inside a write transaction already open** — before the audit record is
   written, so an escape that never opens is never recorded. A `ReadOnly` unit of work inside the
@@ -1076,14 +1076,14 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
   format version, `szdfp3` → `szdfp4`, so a rolling deploy reports a mismatch until every host runs the
   new build.
 - **Five registries close at startup**, on the shape
-  [`Registries.cs`](../src/SubZeroDev.Platform.Core/Registries.cs) already establishes — `Register`
+  [`Registries.cs`](../../src/SubZeroDev.Platform.Core/Registries.cs) already establishes — `Register`
   returning a `Result`, `Registered` in registration order, a one-way `Freeze`: permission providers,
   entitlement contributors, tenant resolvers, audit sinks, authentication providers. All five close in
-  [`HostedServices.cs`](../src/SubZeroDev.Platform.Hosting/HostedServices.cs), and the profile is
+  [`HostedServices.cs`](../../src/SubZeroDev.Platform.Hosting/HostedServices.cs), and the profile is
   validated only after they do — a rule about what is registered cannot be checked while registration
   is still open.
 - **The redaction boundary moved from `SubZeroDev.Platform.Observability` to
-  [`SubZeroDev.Platform.Core`](../src/SubZeroDev.Platform.Core/Redaction.cs) and became public**,
+  [`SubZeroDev.Platform.Core`](../../src/SubZeroDev.Platform.Core/Redaction.cs) and became public**,
   because the Audit store module and Mcp both need the same one and neither may reference
   Observability or the other. **It stays non-injectable**: the
   D3 decision that made it fixed rather than configurable is unchanged, and a redaction boundary a
@@ -1096,11 +1096,11 @@ ORM ([`d3/90-decisions.md`](d3/90-decisions.md), 2026-08-03).
 ### 9. Testing — `SubZeroDev.Platform.Testing`
 
 Fakes for the framework seams only, beside the existing ones in
-[`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs): a fake principal of each of the four kinds,
+[`Fakes.cs`](../../src/SubZeroDev.Platform.Testing/Fakes.cs): a fake principal of each of the four kinds,
 a fake tenant resolver, a fake entitlement contributor, a fake permission provider, an audit
 inspector, the composition profile on the test host, and `PermissionProviderHarness`.
 
-**`PermissionProviderHarness`** ([`PermissionProviderHarness.cs`](../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs))
+**`PermissionProviderHarness`** ([`PermissionProviderHarness.cs`](../../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs))
 is the grant-source rule of *Public surface* § 3 as a test a consumer runs against its own
 `IPermissionProvider` (#92). `AssertRevokedGrantDeniesNextRequestAsync` grants, checks the provider
 answers with the permission, revokes, and checks the next answer for the same principal object no
@@ -1110,7 +1110,7 @@ nothing. Each throws `InvalidOperationException` naming the breach, so any test 
 
 `AssertIssuerRevocationDeniesWithinBoundAsync` is the same rule for an `IMirroredPermissionProvider`,
 revoking where the role lives — at the issuer — rather than in the mirror (#264). It is declared in
-[`PermissionProviderHarness.cs`](../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs) and
+[`PermissionProviderHarness.cs`](../../src/SubZeroDev.Platform.Testing/PermissionProviderHarness.cs) and
 takes the started `IPlatformTestHost`, the provider, the principal, tenant, optional resource and
 permission, and three callbacks: grant at the issuer, revoke at the issuer, and sync.
 
@@ -1127,9 +1127,9 @@ maximum, a stamp that advanced without a sync, a revocation the sync did not car
 provider that granted the permission, since a grant from elsewhere would prove nothing. A mirrored
 provider runs both this and `AssertRevokedGrantDeniesNextRequestAsync`.
 
-The helper declarations are implemented in [`Fakes.cs`](../src/SubZeroDev.Platform.Testing/Fakes.cs).
+The helper declarations are implemented in [`Fakes.cs`](../../src/SubZeroDev.Platform.Testing/Fakes.cs).
 The getter-only effective composition profile is declared on `IPlatformTestHost` in
-[`PlatformTestHost.cs`](../src/SubZeroDev.Platform.Testing/PlatformTestHost.cs).
+[`PlatformTestHost.cs`](../../src/SubZeroDev.Platform.Testing/PlatformTestHost.cs).
 
 **Semantics of the helpers.**
 
@@ -1256,7 +1256,7 @@ projects to it at the boundary (*Types*, § 10); its semantics are:
 
 - **Registration and exposure are two facts.** A tool is registered by a producer and exposed by
   configuration, default closed. Automatic exposure on install is refused outright
-  ([`second-consumer-packages.md`](../docs/docs/second-consumer-packages.md) §4).
+  ([`second-consumer-packages.md`](../../docs/docs/second-consumer-packages.md) §4).
 - **Two producers, and neither is privileged**: manifest projection and a product-owned fixed table.
   **A shape that assumes it owns tool definitions cannot serve this**, and that is the criterion the
   ADR-004 evaluation turns on.
@@ -1312,7 +1312,7 @@ whether it admits new paid-feature work, and the pipeline is where the order is 
 declaration is metadata Hosting reads rather than a call the handler makes. `EndpointRequirement`,
 `EndpointRequirementExemption` and the two conventions that attach them
 (`PlatformEndpointConventions`) are declared in the tree:
-[`EndpointRequirement.cs`](../src/SubZeroDev.Platform.Hosting/EndpointRequirement.cs).
+[`EndpointRequirement.cs`](../../src/SubZeroDev.Platform.Hosting/EndpointRequirement.cs).
 
 **What the declarations cannot say.**
 
@@ -1356,11 +1356,11 @@ declaration is metadata Hosting reads rather than a call the handler makes. `End
 ### 12. Standalone observability startup — `SubZeroDev.Platform.Observability`
 
 `PlatformObservabilityExtensions.AddPlatformObservability` is declared in the tree:
-[`PlatformObservabilityExtensions.cs`](../src/SubZeroDev.Platform.Observability/PlatformObservabilityExtensions.cs).
+[`PlatformObservabilityExtensions.cs`](../../src/SubZeroDev.Platform.Observability/PlatformObservabilityExtensions.cs).
 The package cannot use Hosting's startup exception without reversing the dependency edge, so its own
 startup-abort wrapper, authorized by
-[ADR-008](../docs/docs/adr/ADR-008-observability-startup-failure.md), is declared in the tree:
-[`StartupFailure.cs`](../src/SubZeroDev.Platform.Observability/StartupFailure.cs).
+[ADR-008](../../docs/docs/adr/ADR-008-observability-startup-failure.md), is declared in the tree:
+[`StartupFailure.cs`](../../src/SubZeroDev.Platform.Observability/StartupFailure.cs).
 
 - **The standalone path applies the same OTLP endpoint constraint as the Platform-host path.** An
   absent or whitespace `Platform:Telemetry:OtlpEndpoint` means no exporter starts. A present value is
@@ -1413,7 +1413,7 @@ under `/signin/<method>`, and `callback` (GET) at the method's `RedirectPath`; t
 
 #### The version guard
 
-`IVersionGuard` is in [`VersionGuard.cs`](../src/SubZeroDev.Platform.Persistence/VersionGuard.cs):
+`IVersionGuard` is in [`VersionGuard.cs`](../../src/SubZeroDev.Platform.Persistence/VersionGuard.cs):
 `ExecuteAsync(DbCommand guardedWrite, CancellationToken)` runs a consumer's compare-and-swap write on
 the ambient Write transaction and returns `Result<TransactionError>`. Platform builds no SQL: the
 command is the consumer's own, an UPDATE or DELETE whose predicate includes the row's key, the tenant
@@ -1439,7 +1439,7 @@ composition alongside `IUnitOfWork`.
 
 The inbox is the outbox dispatcher's guarantee, not a callable seam: there is no public inbox type.
 Its one public change is a prune target, added to
-[`ProviderCapability.cs`](../src/SubZeroDev.Platform.Persistence/ProviderCapability.cs):
+[`ProviderCapability.cs`](../../src/SubZeroDev.Platform.Persistence/ProviderCapability.cs):
 
 ```csharp
 public enum PruneTarget
@@ -1454,7 +1454,7 @@ public enum PruneTarget
 }
 ```
 
-The internal store is `InboxStore` in [`Inbox.cs`](../src/SubZeroDev.Platform.Persistence/Inbox.cs):
+The internal store is `InboxStore` in [`Inbox.cs`](../../src/SubZeroDev.Platform.Persistence/Inbox.cs):
 `TryRecordAsync` inserts on the ambient transaction and reports whether the record was new.
 
 - **Dispatch order, inside the handler's one write transaction:** record, then — only if the record
@@ -1480,14 +1480,14 @@ The internal store is `InboxStore` in [`Inbox.cs`](../src/SubZeroDev.Platform.Pe
 
 ### 15. Module lifecycle hooks — `SubZeroDev.Platform.Abstractions`
 
-Two members are added to [`IPlatformModule`](../src/SubZeroDev.Platform.Abstractions/Modules.cs). Both
+Two members are added to [`IPlatformModule`](../../src/SubZeroDev.Platform.Abstractions/Modules.cs). Both
 are default interface members, so a module that declares neither compiles and behaves as before. Hosting
 runs them. Nothing else calls them. They are
 `InitializeAsync(IServiceProvider services, CancellationToken cancellationToken)` and
 `ShutdownAsync(IServiceProvider services, CancellationToken cancellationToken)`, each returning `Task` and
 defaulting to `Task.CompletedTask`.
 
-`HostStartupError` ([`StartupFailure.cs`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs)) gains one
+`HostStartupError` ([`StartupFailure.cs`](../../src/SubZeroDev.Platform.Hosting/StartupFailure.cs)) gains one
 variant, `ModuleInitialization(ModuleName module, string detail)`.
 
 **Semantics.**
@@ -1520,9 +1520,9 @@ variant, `ModuleInitialization(ModuleName module, string detail)`.
 ### 16. Migration application and seeding — `SubZeroDev.Platform.Persistence`
 
 `IMigrationRunner`, `IModuleMigration`, `IModuleMigrationSource`, `ISeeder` and migrate mode are
-declared in the tree, in [`Migrations.cs`](../src/SubZeroDev.Platform.Persistence/Migrations.cs) and
-[`MigrateMode.cs`](../src/SubZeroDev.Platform.Persistence/MigrateMode.cs). `MigrationError.SeedFailed` is
-in [`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs). This section states the seeder rules
+declared in the tree, in [`Migrations.cs`](../../src/SubZeroDev.Platform.Persistence/Migrations.cs) and
+[`MigrateMode.cs`](../../src/SubZeroDev.Platform.Persistence/MigrateMode.cs). `MigrationError.SeedFailed` is
+in [`Errors.cs`](../../src/SubZeroDev.Platform.Persistence/Errors.cs). This section states the seeder rules
 the code does not show, and the development-environment application the D3 design promised (D3 contract,
 *Unresolved* 8).
 
@@ -1593,7 +1593,7 @@ for anything else.
 **Amends** G1's `IGameWorkloadForwarder` (*The edge — .NET*) with one method,
 `ForwardStreamingAsync(ForwardedRequest request, TimeSpan firstByteTimeout, CancellationToken
 cancellationToken)`, returning `Task<Result<StreamedResponse, EdgeError>>`. It is declared in
-[`Forwarding.cs`](../workloads/game-edge/SubZeroDev.Platform.GameEdge/Forwarding.cs). `ForwardAsync`,
+[`Forwarding.cs`](../../workloads/game-edge/SubZeroDev.Platform.GameEdge/Forwarding.cs). `ForwardAsync`,
 `ForwardedRequest` and `ForwardedResponse` are unchanged. `firstByteTimeout` bounds the wait for the
 workload's headers only; the body is read under the caller's token alone.
 
@@ -1836,7 +1836,7 @@ a retryable tool result rather than its outcome.
 
 **A single class was rejected in both directions.** All-`Required` makes an audit outage a total
 outage, which is the self-inflicted outage
-[`tenancy-billing-licensing.md`](../docs/docs/tenancy-billing-licensing.md) refuses elsewhere.
+[`tenancy-billing-licensing.md`](../../docs/docs/tenancy-billing-licensing.md) refuses elsewhere.
 All-`Recorded` makes the brief's "allowed, denied and failed actions persist" true only when nothing is
 wrong, which is not what a security control is for.
 
@@ -1956,7 +1956,7 @@ an argument that failed validation is as likely to be a secret as one that passe
 
 ### 9. Startup — `SubZeroDev.Platform.Core`, surfaced as `HostStartupError`
 
-Each condition surfaces as a [`HostStartupError`](../src/SubZeroDev.Platform.Hosting/StartupFailure.cs),
+Each condition surfaces as a [`HostStartupError`](../../src/SubZeroDev.Platform.Hosting/StartupFailure.cs),
 on the shape `ModuleGraphError` already establishes. Most are `HostStartupError` codes of their own;
 the duplicate-name conditions are the registries' own errors, carried as the inner error of
 `HostStartupError.Registration`. **Every variant fails the host; none degrades it. None is
@@ -2009,7 +2009,7 @@ deployment that would otherwise run and be wrong quietly.
 ### 10. `ContractViolation` — `SubZeroDev.Platform.Abstractions`
 
 Three variants are added to the existing set in
-[`Results.cs`](../src/SubZeroDev.Platform.Abstractions/Results.cs):
+[`Results.cs`](../../src/SubZeroDev.Platform.Abstractions/Results.cs):
 
 | Variant | Raised when |
 |---|---|
@@ -2037,7 +2037,7 @@ the setting, constraint and non-retryable meaning are identical.
 ### 12. `TransactionError.StaleVersion` — `SubZeroDev.Platform.Persistence`
 
 One variant, `StaleVersion`, is added to `TransactionError` in
-[`Errors.cs`](../src/SubZeroDev.Platform.Persistence/Errors.cs). Its detail is "The guarded write
+[`Errors.cs`](../../src/SubZeroDev.Platform.Persistence/Errors.cs). Its detail is "The guarded write
 matched no row: the row changed or is gone since it was read." and names no version.
 
 | Variant | Raised when | Retryable | The caller is expected to |
@@ -2314,7 +2314,7 @@ Item 1 (the nullability of `IAuditable.CreatedBy` under a total principal) was r
 Item 2 (how the registered entitlement-contributor set reaches the settings-fingerprint input) was
 resolved for S8 — **`Compute` gains a second parameter** carrying the frozen contributor names,
 rather than projecting them onto a `[Fingerprinted]` property of `PlatformOptions` — and is recorded
-at [`SettingsFingerprint.cs`](../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) and
+at [`SettingsFingerprint.cs`](../../src/SubZeroDev.Platform.Core/SettingsFingerprint.cs) and
 [`90-decisions.md`](90-decisions.md), 2026-09-03. The format version inside `SettingsFingerprint`
 changed in the same commit, per what the item determined either way.
 
@@ -2361,7 +2361,7 @@ abstraction. When one does, the `platform_inbox` table's `(message_id, consumer)
 would extend, and the decision must also name stable handler identities if one-handler-per-type is
 relaxed.
 
-Item 8 of the D3 contract ([`d3/20-contract.md`](d3/20-contract.md), *Unresolved*: development-environment
+Item 8 of the D3 contract ([`../d3/20-contract.md`](../d3/20-contract.md), *Unresolved*: development-environment
 automatic migration) was resolved by the owner's ruling of 2026-10-08
 ([#68](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/68)). It is built, and its four questions
 are answered in *Public surface* § 16 and *Error semantics* § 13:
