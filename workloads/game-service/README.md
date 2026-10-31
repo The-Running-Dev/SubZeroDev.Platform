@@ -191,7 +191,7 @@ From `workloads/game-service`, with PostgreSQL provisioned:
 
 ```bash
 npm ci
-npx vitest run tests/mixed-version.test.ts
+npx vitest run tests/mixed-version.test.ts tests/previous-release.test.ts
 ```
 
 Each test uses one disposable schema and the real pre-upgrade and candidate adapters, with
@@ -205,6 +205,12 @@ The old profile decoder must read a normal new-adapter write without warnings; c
 candidate to store profile format 3 prematurely makes that assertion fail. New-only formats and
 kind state are outside the shared-payload guarantee. These are adapter and runtime checks against
 PostgreSQL, not evidence that a production rolling deployment has been exercised.
+
+`tests/previous-release.test.ts` is the same check one release back, and the one that moves: it
+runs the previously vendored release's adapter and engine against the candidate's, from
+[`tests/fixtures/previous-release/`](tests/fixtures/previous-release/README.md), and refuses to run
+until that fixture is re-pinned for a new engine upgrade. The pre-upgrade fixture stays pinned for
+#353's revision-drift and migration coverage.
 
 ## Regenerate and publish the contract package
 

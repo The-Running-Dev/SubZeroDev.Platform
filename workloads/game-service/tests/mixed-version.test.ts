@@ -223,7 +223,7 @@ describe("#353 mixed-version PostgreSQL sessions and saves", () => {
         expect(state.revision).toBe(index + 1);
         expect(JSON.parse(state.blob).actionLog).toHaveLength(index + 1);
         expect((await raw.query("select engine_version from session where session_id = $1", [sessionId])).rows)
-          .toEqual([{ engine_version: candidateTurn ? "0.12.0" : "0.10.0" }]);
+          .toEqual([{ engine_version: (candidateTurn ? candidateRuntime : old).engine.ENGINE_VERSION }]);
       }
       const newSave = await sessionLayer(candidateRuntime, next.persistenceForRequest()).saveGame(sessionId);
       const loadedByOld = await sessionLayer(old, previous.persistenceForRequest()).loadGame(newSave.saveId);
