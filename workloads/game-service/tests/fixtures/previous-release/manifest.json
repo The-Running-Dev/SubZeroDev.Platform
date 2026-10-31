@@ -1,0 +1,55 @@
+{
+  "commit": "7c82c565a6c23743a5914fa2bdfe7fca5feb87e8",
+  "engineVersion": "0.12.0",
+  "typescriptVersion": "5.9.3",
+  "files": [
+    {
+      "source": "workloads/game-service/src/store.ts",
+      "sourceSha256": "6fe28d6198197b57ceb3d20a9451a43b1eea48809f056e4c842334b2aec584da",
+      "path": "src/store.js",
+      "sha256": "b06f8aea8534b137c2f6456cd13d338eb6a78fd48a57ef7a45c1d1a80fdd3e81"
+    },
+    {
+      "source": "workloads/game-service/src/types.ts",
+      "sourceSha256": "a564a807fde5a936a1408e663a53a0da14871ca3d5f08ff677deb84e913400e0",
+      "path": "src/types.js",
+      "sha256": "c55c6ce8b6add6867828a84f3966fa0993b4ea4647c17dda9eb5088ed619f029"
+    },
+    {
+      "source": "workloads/game-service/src/migrations.ts",
+      "sourceSha256": "0503da543fc35a8e6d2d8180fb98e3771182eb056e648cb54b8917ab589f9328",
+      "path": "src/migrations.js",
+      "sha256": "41556e0041b076eceaf9989fdcd264e71ed64e66d46da1c932c313b50c1e21ba"
+    },
+    {
+      "source": "workloads/game-service/migrations/1787054400000_initial-schema.ts",
+      "sourceSha256": "64f499706341f8f84262792bb9170ca858cfc6662095c7bf95b03e7a9dc2e123",
+      "path": "migrations/1787054400000_initial-schema.js",
+      "sha256": "d20876780663686c82397daca584c1cd30d57e19a468c937a0cb6700af14e5c2"
+    },
+    {
+      "source": "workloads/game-service/migrations/1787140800000_save-lifecycle-and-profile-terminals.ts",
+      "sourceSha256": "ffd0e89b1337ba782fc79497752288b04a5f9ab3312e6b890fcf1ba165284373",
+      "path": "migrations/1787140800000_save-lifecycle-and-profile-terminals.js",
+      "sha256": "39fca528db0a6689ef5445d585ecc27dc3692b3a810839fb6da282b2f2496eab"
+    },
+    {
+      "source": "workloads/game-service/migrations/1787227200000_session-revision-and-profile-kind-data.ts",
+      "sourceSha256": "1b78196461b3a4cfd7455f4d73ff9a259619398f19dc86beb0348f934e0c003b",
+      "path": "migrations/1787227200000_session-revision-and-profile-kind-data.js",
+      "sha256": "1ff71379015754b5b5cf89abf4dee31732c0b97a80e0839d4433c03799c7b582"
+    },
+    {
+      "source": "workloads/game-service/migrations/1787313600000_legacy-session-revision.ts",
+      "sourceSha256": "6f932abaf0e29e5a9ac4ee266ea86726c3c41f3aacc634a4f8b1632b5c76cead",
+      "path": "migrations/1787313600000_legacy-session-revision.js",
+      "sha256": "adfa9f82952de2c2ddf0285c49f1c76d19523d256de715656b74d545ae8ec8c1"
+    },
+    {
+      "source": "workloads/game-service/vendor/the-running-dev-game-engine-0.12.0.tgz",
+      "sourceSha256": "e76fbf5d5c0ea97ea0168be0c23100f840ae366f1bb17a32936ab7e7e22d7f63",
+      "path": "vendor/the-running-dev-game-engine-0.12.0.tgz",
+      "sha256": "e76fbf5d5c0ea97ea0168be0c23100f840ae366f1bb17a32936ab7e7e22d7f63"
+    }
+  ]
+}

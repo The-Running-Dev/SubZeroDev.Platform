@@ -13,7 +13,7 @@ Do not patch this directory to make a test pass. From `workloads/game-service`, 
 commit available in Git and the lockfile's TypeScript installed, regenerate with:
 
 ```bash
-node --import tsx scripts/regenerate-mixed-version-fixture.ts
+node --import tsx scripts/regenerate-mixed-version-fixture.ts pre-upgrade
 ```
 
 Normal test runs need neither Git history nor a sibling checkout. The candidate adapter is
@@ -33,3 +33,7 @@ without warnings, so enabling format-3 writes prematurely fails the test.
 
 These tests do not promise that new-only kind state, changed content, or arbitrary future save
 formats work in an older runtime. They do not launch a production rolling deployment.
+
+This fixture does not move on engine upgrades: it stays the #353 regression's old side, and the
+suite reads the candidate's version rather than naming one. The release-to-release check that
+does move is [`../previous-release/README.md`](../previous-release/README.md).
