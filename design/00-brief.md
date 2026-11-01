@@ -12,6 +12,7 @@
 >
 > **Amendment 2026-11-01:** factual corrections and acceptance criteria added at my request after
 > review. Unresolved scope and design choices remain under *Assumptions and open questions*.
+> The narrowest useful version and lifespan below were explicitly confirmed by me on 2026-11-01.
 
 ## Problem
 
@@ -124,6 +125,11 @@ first, live at `adventures.subzerodev.com` (#340). Ben is the operator.
 
 ## Narrowest useful version
 
+A signed-in player can create a game-service session through the edge and perform an existing
+id-bearing operation on it. Another signed-in principal is refused access to that session, and
+the decorated store preserves byte-identical serialization. This is the first useful vertical
+slice; the remaining G3 acceptance criteria still apply to the completed effort.
+
 ## Environment
 
 - **The edge** is .NET, `workloads/game-edge/`, with buffered forwarding and opt-in
@@ -153,10 +159,11 @@ first, live at `adventures.subzerodev.com` (#340). Ben is the operator.
 
 ## Lifespan
 
+Built to last and maintained for years. The principal and ownership contracts, authorization
+decorator, and account surface are durable foundations for subsequent hosting work.
+
 ## Assumptions and open questions
 
-- Assumed: maintained for years. The principal model is public contract, Adventures has live
-  players, and G2's brief was built to last on the same reasoning.
 - Assumed: the edge stays an application under `workloads/game-edge/`. G3 does not do ADR-007's
   extraction into a Platform package, which that ADR schedules as a new effort with its own brief.
 - Open: **pass-through or termination** for the caller's credential at the edge. This is `/design`'s
