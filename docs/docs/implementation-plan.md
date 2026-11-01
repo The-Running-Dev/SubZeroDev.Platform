@@ -33,7 +33,7 @@ Measured, not assumed.
 | | State |
 |---|---|
 | Game Engine | **Past MVP, and now consumable.** `@the-running-dev/game-engine` **0.4.0 is published** to GitHub Packages with a 26-entry public surface. Two further kinds and four campaign arcs beyond the MVP |
-| Platform | **D3 shipped.** Six packages — Abstractions, Core, Hosting, Observability, Persistence, Testing — build, pack and publish to a private GitHub Packages feed at an explicitly unstable 0.x, and the sample restores and runs on them ([S1–S9](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/30-slices.md), merged 2026-08-03 to 2026-08-07). The public identifiers are deliberately unspent. **Built, but not yet proven by an outside product** — see §4 |
+| Platform | **D3 shipped.** Six packages — Abstractions, Core, Hosting, Observability, Persistence, Testing — build, pack and publish to a private GitHub Packages feed at an explicitly unstable 0.x, and the sample restores and runs on them ([S1–S9](https://github.com/The-Running-Dev/SubZeroDev.Platform/blob/main/design/d3/30-slices.md), merged 2026-08-03 to 2026-08-07). The public identifiers are deliberately unspent. **Proven by outside products except for migrations** ([#356](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/356)) — see §4 |
 | Automator | Specified, unstarted |
 | Plugin contract | **Its own repository**, [SubZeroDev.PluginContract](https://github.com/The-Running-Dev/SubZeroDev.PluginContract), public, tagged `v0.1.0`. Schemas written and validated; not yet published at version-pathed URLs |
 | Architecture specs | **Version-controlled**, [SubZeroDev.Architecture](https://github.com/The-Running-Dev/SubZeroDev.Architecture), private |
@@ -154,15 +154,20 @@ consumer needs bespoke wiring has not proven anything.
 >   Stage 3 shipped in
 >   [Adventures#84](https://github.com/The-Running-Dev/SubZeroDev.Adventures/pull/84).
 >   - **Proven:** its anonymous routes are served through the edge byte for byte, and the edge
->     answers an honest `503` when the API or its database is down.
+>     answers an honest `503` when the API or its database is down. Its deployment stack migrates
+>     on start, with no one-shot migrate container, since
+>     [Adventures#97](https://github.com/The-Running-Dev/SubZeroDev.Adventures/pull/97).
 >   - **Waiting on G3:** anything needing a signed-in player, because which of a caller's headers
 >     cross the edge is G3's question
 >     ([#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340)).
 >
 > Adventures' identity replacement stays evidence only
 > ([#100](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/100)), and no Identity
-> package is created from it. Until Adventures is served through the edge, and an outside consumer
-> exercises migrations, **D3 is built but not proven.**
+> package is created from it. Adventures is served through the edge, so one gap remains: Adventures
+> migrates with its own Node runner and the GameEngine host has no database, so **no outside consumer
+> exercises Platform's migrations yet**
+> ([#356](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/356)). Until one does,
+> **D3 is proven except for migrations.**
 
 ### D4 — Extraction, on evidence *(ecosystem Phase 5)*
 
