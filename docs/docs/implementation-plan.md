@@ -169,6 +169,16 @@ consumer needs bespoke wiring has not proven anything.
 > ([#356](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/356)). Until one does,
 > **D3 is proven except for migrations.**
 
+> **2026-11-01 adopter assessment:** the inspected outside .NET candidates did not establish a
+> product-owned relational requirement: the GameEngine host is static delivery, WindowManager
+> deliberately uses hand-editable files, and WinGet does not own its source runtime. The inspected
+> database-backed products use Node. The bounded inventory, unavailable-source limits, package
+> compatibility and acceptance requirements are recorded in
+> [#356's assessment](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/356#issuecomment-6563435737).
+> The prerequisite remains an outside .NET product with a real relational schema. Automator's
+> first useful durable-execution slice is a proposed opportunity when that product starts, not
+> current adoption evidence or a scheduled dependency. **#356 stays open.**
+
 ### D4 — Extraction, on evidence *(ecosystem Phase 5)*
 
 Configuration, Events, Notifications, Storage, BackgroundJobs, Scheduling, Api — extracted
