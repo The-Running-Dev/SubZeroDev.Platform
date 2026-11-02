@@ -297,7 +297,7 @@ Acceptance:
 Out of scope: Adventures' own account data. Platform account records. The issuer.
 
 ## S9 — Pre-G3 rows are deleted at migration
-**Status:** queued
+**Status:** shipped
 
 Delivers: rows saved before players had owners are gone once G3 migrates, and an operator knows
 that before upgrading.
