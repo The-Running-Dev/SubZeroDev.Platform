@@ -8,7 +8,8 @@ does not carry, it stops and asks for a contract amendment rather than inventing
 Each slice is vertical: it runs, and its acceptance criteria are observable from outside the code
 that satisfies them. Everything is in this repository except [S7](#s7--adventures-through-the-edge),
 which runs a pinned Adventures revision without changing it, and
-[S12](#s12--adventures-api-live-through-the-edge), which changes the deployment.
+[S12](#s12--adventures-api-live-through-the-edge) and
+[S14](#s14--game-service-live-behind-its-own-edge), which change the deployment.
 
 **The ordering is the design's risk ordering.** The design's biggest bet is that ownership can be
 enforced entirely behind the storage seam: one decorator, one owner predicate per statement, the
@@ -22,21 +23,14 @@ Adventures, the account surface and the deployment.
 
 ## Decisions that must be taken before the slice that needs them starts
 
-Neither the design nor the contract settles these, and no slice may settle one silently. OQ numbers
-are [`10-design.md`](10-design.md#open-questions)'s.
+The contract amendment, the brief's ownership wording and Owner questions 1–9 were settled on
+2026-11-02 ([`90-decisions.md`](90-decisions.md)), and the slices below carry the answers. Two
+remain, and no slice may settle one silently.
 
 | Question | Needed before |
 |---|---|
-| **A contract amendment.** The contract declares `forRequest(owner)`, `ownershipDecorator` and `verifyHandoff`, but not the signatures below them. That covers the maximum lifetime `lifetime_exceeded` is checked against, which `HandoffSettings` does not carry. It also covers the test-scope assertion minter the harnesses use (invariant 124), the Store's owner-scope parameter and the `DurableStore` members that run under it, the store reads and deletes behind the account surface, and `ConformanceTarget`'s second owner | **S1** for the maximum lifetime and the minter. **S2** for the owner scope, **S4** for the conformance target, **S8** for the account reads and deletes |
-| **The brief's "ownership is checked at the edge".** The design authenticates at the edge and enforces ownership in game-service's store, behind a handoff only the edge can sign. The owner must confirm that this reading meets the brief, or amend the brief | **S2** |
-| OQ3: whether pre-G3 rows are kept under the reserved owner or deleted | **S9**. S2's migration stamps the reserved owner as the contract declares, and S9 holds the agreed treatment |
-| OQ2: account deletion beyond invariant 120's floor | **S8**'s criteria S8.6 and S8.7 |
-| OQ4: which Adventures routes move behind the edge | **S7** and **S12** |
-| OQ5: cutover and topology | **S11**'s rollback documentation, and **S12** |
-| OQ7: whether game-service needs a live deployment | **S12**. If yes, a slice is appended |
-| OQ8: the abuse-limit defaults and the instance count | **S10**'s default values. Its criteria use configured values and do not wait |
-| OQ1: MCP's path | **Not blocking any slice.** S1 gates MCP either way (invariant 109). If MCP is in scope, a proof slice is appended. If not, S11 documents MCP as unavailable for owned state |
-| OQ6 and OQ9 | **Not blocking any slice.** S11 records what each answer means for operators |
+| The live game-service hostname | **S14**'s criteria S14.1 and S14.2 |
+| **Owner question:** which client registration at Adventures' OIDC issuer obtains tokens for game-service, and so the audience the edge accepts | **S14**'s criteria S14.1 and S14.2 |
 
 ---
 
@@ -83,8 +77,8 @@ Delivers: a signed-in player's sessions, saves and profiles belong to them. Anot
 sends the same ids sees only what a stranger would: nothing there.
 
 Touches:
-- **Migrations**: the one G3 migration (owner columns, profile keys, indexes, reserved owner for
-  existing rows)
+- **Migrations**: the one G3 migration (owner columns defaulting to the reserved owner, profile
+  keys, indexes, and deletion of every existing row)
 - **Store**: an owner predicate on every statement, and the owner stamped on every insert
 - **Ownership decorator**: `ownershipDecorator`
 - **Composition**: `forRequest(owner)`, with the process-lived lifecycle probe wrapped per request
@@ -94,9 +88,6 @@ Touches:
 Depends on: S1, and the contract amendment's store members.
 
 Acceptance:
-- **S2.1** Migrating a G2 schema holding one session, one save and one profile leaves all three
-  rows present, with `owner_issuer = ''` and `owner_subject = ''`, and `profile`'s primary key is
-  `(tenant_id, owner_issuer, owner_subject, profile_id)`.
 - **S2.2** Principal A creates a session. Principal B then calls `get-session` and `act` with that
   session id, and both responses are byte-identical to the same calls with a never-minted id
   (`404 unknown_session`).
@@ -112,11 +103,12 @@ Acceptance:
   the undecorated store's.
 - **S2.8** The lifecycle probe object is the same instance across 100 requests (invariant 69), and
   Dispatch's probe on each request is the decorated one (invariant 116).
-- **S2.9** An assertion whose `pis` and `psub` are both empty is refused before composition runs,
-  and the reserved-owner rows from S2.1 stay unreachable to every request.
+- **S2.10** After migrating a G2 schema, `owner_issuer` and `owner_subject` are not null on all
+  four tables, and `profile`'s primary key is `(tenant_id, owner_issuer, owner_subject, profile_id)`.
+- **S2.11** An assertion whose `pis` and `psub` are both empty is refused before composition runs.
 
-Out of scope: every remaining id-bearing operation and both surfaces (S4). The edge (S3). What
-happens to the reserved-owner rows afterwards (S9). The account surface (S8).
+Out of scope: every remaining id-bearing operation and both surfaces (S4). The edge (S3). The proof
+that pre-G3 rows are deleted (S9). The account surface (S8).
 
 ## S3 — A signed-in player plays through the edge
 **Status:** queued
@@ -125,13 +117,14 @@ Delivers: a player holding a token from the game's issuer can create and play a 
 the edge, and the edge alone vouches for who they are.
 
 Touches:
-- **Edge, Authentication**: Platform Identity's bearer chain composed in `Terminate` mode
+- **Edge, Authentication**: Platform Identity's bearer chain composed in `Terminate` mode, with the
+  issuer's keys pinned in `BearerSettings.SigningKeys`
 - **Edge configuration**: `CredentialMode`, `HandoffOptions`
 - **Handoff signer**
 - **Forwarder**: refusing `Anonymous` in terminate mode, consuming `Authorization`, stripping a
   caller's handoff header
-- **Proof harness**: a test issuer serving a real discovery document and key set and signing real
-  tokens, composed with the real edge, game-service and Postgres
+- **Proof harness**: a test issuer signing real tokens, whose public keys the edge pins, composed
+  with the real edge, game-service and Postgres
 
 Depends on: S2.
 
@@ -189,29 +182,30 @@ Out of scope: the account surface's listing (S8). Credential outcomes (S5).
 ## S5 — Every credential outcome is told apart
 **Status:** queued
 
-Delivers: a player whose sign-in has failed, expired or is missing gets a clear refusal, and an
-operator can tell a player's bad credential from the edge's own trouble reaching the issuer.
+Delivers: a player whose sign-in has failed, expired or is missing gets a clear refusal, an
+operator can tell a player's bad credential from a fault in the edge's own validation, and the edge
+keeps working when the issuer is down.
 
 Touches:
 - **Edge, Authentication**: Platform's existing mapping, exercised
-- **Edge readiness**: Identity's key-set readiness check
-- **Proof harness**: test-issuer failure modes
+- **Edge configuration**: pinned `SigningKeys`, no `Discovery`
+- **Proof harness**: the test issuer stopped, and a key the edge does not pin
 
 Depends on: S3.
 
 Acceptance:
-- **S5.1** A token signed by a key outside the issuer's key set returns `401 CredentialRejected`.
+- **S5.1** A token signed by a key the edge does not pin returns `401 CredentialRejected`.
 - **S5.2** An expired token returns `401 CredentialRejected`. A token for another audience returns
   the same.
 - **S5.3** A malformed `Authorization` value returns `401 CredentialRejected`, never `Anonymous`.
-- **S5.4** With the test issuer unreachable before any key set is fetched, a token returns
-  `401 KeyMaterialUnavailable` and the edge's readiness reports unhealthy.
-- **S5.5** With the test issuer unreachable after one successful fetch, valid tokens keep
-  succeeding and readiness reports degraded.
 - **S5.6** A provider failure injected mid-validation returns `401 ProviderFailed`.
 - **S5.7** Sign-out: a token kept after the client discards it still succeeds until its `exp`, and
   returns `401 CredentialRejected` after it. This asserts the contract's stated outcome.
 - **S5.8** In S5.1–S5.7, game-service receives no request whenever the edge answers `401`.
+- **S5.9** With the test issuer stopped, valid tokens keep succeeding through the edge, and the
+  edge opens no outbound connection except to game-service.
+- **S5.10** The edge refuses to start in `Terminate` mode with a `Discovery` address, or with no
+  `SigningKeys`, and each refusal names the setting.
 
 Out of scope: token introspection or revocation. Changing any status Platform's pipeline maps.
 
@@ -257,9 +251,9 @@ traffic passes through Platform's edge.
 
 Touches:
 - **Proof harness**: a pinned Adventures revision behind a pass-through edge, with the test issuer
-  as its OIDC issuer
+  as its OIDC issuer, and every route of Adventures' API routed through the edge
 
-Depends on: S6. OQ4 for the route list.
+Depends on: S6.
 
 Acceptance:
 - **S7.1** A guest session started through the edge persists across three requests carrying the
@@ -284,7 +278,7 @@ Touches:
 - **Account surface**: `GET /account/saves`, `DELETE /account`, `AccountSaveEntry`
 - **Store**: the owner-wide reads and the deletion transaction from the contract amendment
 
-Depends on: S4, and the contract amendment's account members. OQ2 for S8.6 and S8.7.
+Depends on: S4.
 
 Acceptance:
 - **S8.1** A, holding saves under two profiles, gets every save from `GET /account/saves`, with
@@ -295,30 +289,30 @@ Acceptance:
 - **S8.4** A failure injected mid-deletion leaves every one of A's rows in place.
 - **S8.5** Neither route appears in the operation table or the MCP tool table, and the game surface
   lists the same operations as before S8.
-- **S8.6** *(Waits on OQ2.)* The agreed treatment of a write in flight when deletion begins.
-- **S8.7** *(Waits on OQ2.)* The agreed outcome of a creation by A's still-valid credential after
-  deletion, and the agreed effect on anything beyond game-service's rows.
+- **S8.6** A write by A that commits before `DELETE /account` begins is deleted with the rest, and
+  A's `act` on that session afterwards returns `404 unknown_session`.
+- **S8.7** After deletion, A's still-valid token still authenticates, A's `create-session`
+  succeeds, and A's `GET /account/saves` lists nothing from before the deletion.
 
 Out of scope: Adventures' own account data. Platform account records. The issuer.
 
-## S9 — Pre-G3 rows: the agreed treatment
+## S9 — Pre-G3 rows are deleted at migration
 **Status:** queued
 
-Delivers: rows saved before players had owners are handled the way the owner agreed, and an
-operator can read what happened to them.
+Delivers: rows saved before players had owners are gone once G3 migrates, and an operator knows
+that before upgrading.
 
 Touches:
-- **Migrations**: only if OQ3 is "delete"
-- **Operator documentation**: the treatment
+- **Proof harness**: a G2 schema seeded in all four tables, migrated
+- **Operator documentation**: the deletion
 
-Depends on: S2. OQ3.
+Depends on: S2.
 
 Acceptance:
-- **S9.1** *(Waits on OQ3.)* After migrating a G2 schema with seeded rows, the outcome is the
-  agreed one. Under "unreachable", no principal's request returns any seeded row, and G2's sweep
-  removes the expired sessions and saves. Under "delete", none remains.
-- **S9.2** The operator documentation states the treatment and what happens to reserved-owner
-  profiles.
+- **S9.1** After migrating a G2 schema seeded with rows in `session`, `save`, `profile` and
+  `profile_achievement`, none of those rows remains, read back with SQL.
+- **S9.3** The operator documentation states that the G3 migration irreversibly deletes every
+  pre-G3 session, save and profile.
 
 Out of scope: migrating Adventures' rows.
 
@@ -332,7 +326,7 @@ Touches:
 - **Abuse limiter**
 - **Edge configuration**: `AbuseLimitOptions`
 
-Depends on: S3. OQ8 for the defaults.
+Depends on: S3.
 
 Acceptance:
 - **S10.1** With `PermitCount` at 3 and `Window` at 10 s, principal A's fourth request within the
@@ -343,7 +337,8 @@ Acceptance:
   same settings, and a second address's first request succeeds.
 - **S10.4** A request admitted by the limiter forwards bytes identical to the same request with
   limiting disabled by configuration (invariant 41, restated).
-- **S10.5** *(Waits on OQ8.)* The shipped defaults are the agreed values.
+- **S10.5** An edge started with no `AbuseLimits` setting limits at `PermitCount` 60 and `Window`
+  60 seconds.
 
 Out of scope: a shared limiter across instances. Limiting before authentication.
 
@@ -364,8 +359,12 @@ Acceptance:
   `build/Test-WorkloadIsolation.ps1`, and fails if any fails.
 - **S11.2** The operator documentation covers each mode's settings, the handoff key and rotation
   order, the issuer, limits, verification, and the fact that CI is not the live smoke check.
-- **S11.3** *(Waits on OQ5.)* The rollback procedure, rehearsed once in the reproducible setup.
-- **S11.4** The documentation states the MCP path's G3 status as OQ1 resolved it.
+- **S11.3** The rollback procedure restores the reverse proxy's direct route to Adventures, and is
+  rehearsed once in the reproducible setup.
+- **S11.4** The documentation states that MCP reaches game-service only through the edge, under the
+  same ownership as HTTP.
+- **S11.5** The documentation states that the edge fetches nothing from the issuer, and how to pin
+  a new issuer key before the issuer signs with it.
 
 Out of scope: the live cutover (S12).
 
@@ -376,15 +375,64 @@ Delivers: Adventures' real players reach it through Platform's edge on the exist
 nothing they can notice except that it still works.
 
 Touches:
-- **Deployment**: owned per OQ5
+- **Deployment**: Platform's, with the edge behind the existing reverse proxy
 
-Depends on: S7, S11. OQ4, OQ5, OQ7.
+Depends on: S7, S11.
 
 Acceptance:
-- **S12.1** *(Waits on OQ5.)* `adventures-api.subzerodev.com` is served through the edge with TLS.
+- **S12.1** `adventures-api.subzerodev.com` is served through the edge, deployed from this
+  repository behind the existing reverse proxy, which keeps TLS.
 - **S12.2** A live smoke check through the public API records the deployed edge and Adventures
-  revisions. It verifies the agreed routes, sign-in, a guest session, a cross-origin write, and the
-  agreed treatment of existing sign-ins.
-- **S12.3** *(Waits on OQ7.)* Whatever live check game-service needs.
+  revisions. It verifies every Adventures API route, sign-in, a guest session and a cross-origin
+  write, and that a sign-in made before cutover is still recognised after it.
+
+Out of scope: moving Adventures' persistence onto game-service. game-service live (S14).
+
+## S13 — An MCP client plays through the edge
+**Status:** queued
+
+Delivers: an MCP client signed in as a player reaches that player's games through the edge, and
+only through it.
+
+Touches:
+- **Proof harness**: an MCP client composed with the real edge in `Terminate` mode, game-service and
+  Postgres
+
+Depends on: S4.
+
+Acceptance:
+- **S13.1** An MCP client with principal A's valid token creates a session and acts on it through
+  the edge, and both succeed.
+- **S13.2** Principal B's MCP tool call through the edge on A's session id returns what a
+  never-minted id returns.
+- **S13.3** An MCP request sent straight to game-service with a valid bearer token and no assertion
+  returns `401 assertion_refused`.
+- **S13.4** S11's CI job runs S13's proofs.
+
+Out of scope: any MCP-specific authentication. MCP clients authenticate at the edge like HTTP
+callers.
+
+## S14 — game-service live behind its own edge
+**Status:** queued
+
+Delivers: real players sign in through Adventures' issuer and play game-service sessions live,
+through Platform's edge, on the existing VPS.
+
+Touches:
+- **Deployment**: a second edge in `Terminate` mode and game-service, on the existing VPS behind the
+  existing reverse proxy, under game-service's own hostname, pinning Adventures' issuer keys
+
+Depends on: S11, S13. The hostname and the client registration (*Decisions* above).
+
+Acceptance:
+- **S14.1** *(Waits on the hostname and the client registration.)* game-service is served through
+  its own edge under its hostname, behind the existing reverse proxy, which keeps TLS.
+- **S14.2** *(Waits on the hostname and the client registration.)* A live smoke check signs in
+  through Adventures' OIDC issuer, creates a session and acts on it through the edge, and records
+  the deployed edge and game-service revisions.
+- **S14.3** In the same check, a second principal's request on the first's session id returns
+  `404 unknown_session`.
+- **S14.4** A request reaching game-service's listener without passing through the edge returns
+  `401 assertion_refused`.
 
 Out of scope: moving Adventures' persistence onto game-service.

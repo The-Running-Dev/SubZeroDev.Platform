@@ -13,6 +13,10 @@
 > **Amendment 2026-11-01:** factual corrections and acceptance criteria added at my request after
 > review. Unresolved scope and design choices remain under *Assumptions and open questions*.
 > The narrowest useful version and lifespan below were explicitly confirmed by me on 2026-11-01.
+>
+> **Amendment 2026-11-02:** the ownership wording under *Definition of done* is mine, replacing
+> "checked at the edge". My answers to the open questions are recorded where each was asked, and
+> in [`90-decisions.md`](90-decisions.md).
 
 ## Problem
 
@@ -62,13 +66,14 @@ first, live at `adventures.subzerodev.com` (#340). Ben is the operator.
 - A session or save id belonging to another principal returns a refusal rather than data.
   Tests exercise cross-principal reads and writes on every applicable operation carrying either id.
 - No hosted endpoint returns engine state.
-- Ownership is checked at the edge on every operation carrying an id, and ids are unguessable.
+- Ownership is enforced on every operation carrying an id, against a principal only the
+  edge can vouch for, and ids are unguessable.
   Unguessable ids are defence in depth, never the authorization (hosting contract §6.2).
 - Identity is Platform's. D5 has landed, so G3 adopts Platform's Identity rather than
   implementing it locally (implementation plan, G3).
 - Caller-supplied principal assertions cannot impersonate another principal. For the surface G3
   protects, direct workload access cannot bypass ownership enforcement; the deployment proof
-  demonstrates that boundary. MCP coverage remains Open below.
+  demonstrates that boundary. MCP tool calls are covered. *(Ruled 2026-11-02.)*
 - The treatment agreed for pre-G3 sessions and saves without owners is documented and tested.
 
 **The caller's credential at the edge** (#340):
@@ -98,7 +103,7 @@ first, live at `adventures.subzerodev.com` (#340). Ben is the operator.
 - Save-listing tests prove that one principal cannot list another's saves.
 - Deletion tests prove the agreed removal and post-deletion guarantees, including the treatment
   of writes already in flight and credentials still valid when deletion begins. The removal
-  scope, credential effects and reversibility remain Open below.
+  scope, credential effects and reversibility are ruled below.
 
 **Public** *(ruled 2026-11-01)*:
 
@@ -106,13 +111,15 @@ first, live at `adventures.subzerodev.com` (#340). Ben is the operator.
   and real players.
 - Abuse limits are in scope.
 - A test reaches a configured abuse limit and verifies the agreed caller-visible response.
-  The limit's key, value and enforcement topology remain Open below.
+  The limit's key, value and enforcement topology are ruled below.
 - A live smoke check through the public API records the deployed revisions and verifies the
   agreed routes, sign-in, guest session and cross-origin write. It verifies the agreed treatment
   of existing sign-ins rather than assuming either continuity or forced sign-in.
 - Operator documentation explains deployment, issuer and limit configuration, verification and
-  rollback. Cutover and rollback can be rehearsed in a reproducible setup; acceptable downtime
-  remains Open below.
+  rollback. Cutover and rollback can be rehearsed in a reproducible setup.
+- game-service is deployed live behind the edge on the same VPS, under its own hostname, and
+  signs players in through Adventures' OIDC issuer. *(Ruled 2026-11-02.)* The hostname is not yet
+  chosen.
 
 **Regression evidence:**
 
@@ -178,18 +185,30 @@ decorator, and account surface are durable foundations for subsequent hosting wo
   this on purpose.
 - Open: **MCP bypasses the edge** (named in G1, repeated in #340). Is ownership on the MCP path in
   G3's scope? This affects whether "every operation carrying an id" includes MCP tool calls.
+  *Ruled 2026-11-02: yes, it is in scope.*
 - Open: **what the abuse limits are.** Per principal, per address or both, and what a limited
   caller sees. Values, deployment instance count and any need for shared enforcement are undecided.
+  *Ruled 2026-11-02: per principal, else per address, never before authentication. One edge
+  instance per workload, limited in process, with no shared enforcement and no capacity
+  commitment. The default is 60 requests per 60 seconds.*
 - Open: **what deleting an account removes.** Platform-owned state only, or also what the workload
   holds for that principal. Adventures has its own database.
   Effects on Platform account mappings, active sign-ins and credentials, and any external issuer
   account are undecided, as are reversibility and the handling of in-flight game writes.
+  *Ruled 2026-11-02: game-service's owned rows only, irreversibly. Platform account mappings,
+  sign-ins, credentials, the issuer's account and Adventures' database are untouched. A write
+  committed before deletion is deleted with the rest. A later write by a still-valid credential
+  starts a new, empty account.*
 - Open: **pre-G3 ownerless state.** The treatment of existing sessions and saves in game-service
-  has not been chosen.
+  has not been chosen. *Ruled 2026-11-02: deleted at migration.*
 - Open: which Adventures routes move behind the edge in G3: all of its API, or only those #340
-  names.
+  names. *Ruled 2026-11-02: all of its API.*
 - Open: **live cutover and deployment topology.** Placement of the edge relative to the existing
   reverse proxy, deployment ownership across repositories, treatment of existing Adventures
-  sign-ins, rollback procedure and acceptable downtime remain undecided.
+  sign-ins, rollback procedure and acceptable downtime remain undecided. *Ruled 2026-11-02: the
+  edge sits behind the existing reverse proxy, and Platform owns its deployment. Existing sign-ins
+  continue, with no downtime. Rollback restores the proxy's direct route to Adventures.*
 - Open: whether G2's **fully-offline steady state** remains a G3 requirement, and what that means
   for the chosen authentication deployment. The repository's self-hostability rule still binds.
+  *Ruled 2026-11-02: it binds. The edge pins the issuer's keys in configuration and fetches
+  nothing.*

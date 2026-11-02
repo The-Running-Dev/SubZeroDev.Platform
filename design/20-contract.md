@@ -15,8 +15,9 @@ names every earlier declaration it amends and never restates one.
 [*Amended invariants*](#amended-invariants), not rewritten.
 
 Owner questions from the design's [*Open questions*](10-design.md#open-questions) are referred to
-as **OQ1–OQ9**. Nothing below settles one. Where a declaration depends on an answer, it says so
-under [*Unresolved*](#unresolved).
+as **OQ1–OQ9**. The owner answered all nine on 2026-11-02 ([`90-decisions.md`](90-decisions.md)),
+and the declarations below carry those answers. What the answers left open is under
+[*Unresolved*](#unresolved).
 
 ## Invariants
 
@@ -48,8 +49,13 @@ under [*Unresolved*](#unresolved).
 | 120 | Account deletion removes every owned row of the four tables in one transaction, or none of them | Store, Account surface |
 | 121 | The abuse limiter keys on the principal when one is established, and on the client address otherwise. A limited request is answered `429` with `Retry-After` and is never forwarded | Abuse limiter |
 | 122 | The port-conformance suite (G2 invariant 89) runs every assertion under two owners on both targets, and asserts that one owner's rows are invisible to the other | Proof harness |
-| 123 | G3's CI evidence uses the real edge, the real game-service, Postgres and a test issuer serving a real discovery document and key set. No mocked authentication replaces the chain | Proof harness |
+| 123 | G3's CI evidence uses the real edge, the real game-service, Postgres and a test issuer signing real tokens. The edge pins the test issuer's public keys, and Adventures' proofs use the same issuer's discovery document. No mocked authentication replaces the chain | Proof harness |
 | 124 | G2's harnesses and replay present assertions minted with a test key. Their assertions about game state are unchanged | Proof harness |
+| 125 | In terminate mode, the edge validates bearer tokens only against issuer keys pinned in its configuration, and startup refuses a discovery address. In steady state the edge opens no outbound connection except to its workload, and game-service none except to its store | Edge, Composition |
+| 126 | Account deletion changes nothing outside game-service's owned rows: no Platform account mapping, sign-in, credential, issuer account or workload data. It keeps no copy of what it deleted | Account surface, Store |
+| 127 | A write that commits after the deletion transaction belongs to a new, empty account under the same owner. Nothing refuses it | Store |
+| 128 | The G3 migration deletes every `session`, `save`, `profile` and `profile_achievement` row present when it runs, in the same run that adds the owner columns | Migrations |
+| 129 | An MCP tool call reaches game-service only through the edge, and every tool carrying a session, save or profile id is refused another principal's id exactly as the matching HTTP operation is | Handoff verifier, Ownership decorator |
 
 ## Amended invariants
 
@@ -78,9 +84,13 @@ public sealed record AbuseLimitOptions(int PermitCount, TimeSpan Window);
 // Added to the existing GameEdgeOptions:
 //   CredentialMode CredentialMode
 //   HandoffOptions? Handoff          — required in Terminate, refused in PassThrough
-//   AbuseLimitOptions AbuseLimits
+//   AbuseLimitOptions AbuseLimits    — default PermitCount 60, Window 60 seconds
 //   IReadOnlyList<IPAddress> TrustedProxies
 ```
+
+In terminate mode, the edge's bearer settings are Identity's existing `BearerSettings` with
+`SigningKeys` set and `Discovery` absent (invariant 125). Identity already refuses both together.
+`HandoffOptions.Lifetime` must not exceed game-service's `maxLifetimeSeconds`.
 
 ### The handoff (wire)
 
@@ -104,6 +114,13 @@ export interface HandoffSettings {
   readonly audience: string;
   readonly keys: ReadonlyMap<string, KeyObject>;   // by key id
   readonly clockToleranceSeconds: number;
+  readonly maxLifetimeSeconds: number;             // exp − iat above this is lifetime_exceeded
+}
+
+export interface IncomingRequestLine {
+  readonly method: string;
+  readonly pathAndQuery: string;                   // exactly as received
+  readonly assertion: string | undefined;          // the SubZeroDev-Principal-Assertion value
 }
 
 export type HandoffRefusal =
@@ -114,15 +131,85 @@ export type HandoffRefusal =
 export function verifyHandoff(
   settings: HandoffSettings, request: IncomingRequestLine, now: Date,
 ): Outcome<OwnerKey, HandoffRefusal>;
+```
 
-export function ownershipDecorator(owner: OwnerKey): StorageDecorator;
+The verifier reads nothing but `IncomingRequestLine`.
+
+**The Store's owner scope.** The Store takes the owner as a parameter and puts it in every statement
+(invariant 112). It never sees a principal. The ownership decorator is the only caller that supplies
+an owner (invariant 111).
+
+```ts
+export interface OwnedLifecycleProbe {             // process-lived (G2 invariant 69)
+  session(owner: OwnerKey, sessionId: string): Promise<Outcome<LifecycleState, StoreError>>;
+  save(owner: OwnerKey, saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
+}
+
+export interface AccountStore {                    // bound to one owner
+  listSaves(): Promise<Outcome<readonly AccountSaveEntry[], StoreError>>;   // across every profile
+  deleteAll(): Promise<Outcome<void, StoreError>>;  // one transaction (invariant 120)
+}
+
+export interface OwnerScopedStorage {              // implemented by the durable and in-memory stores
+  persistence(owner: OwnerKey): SessionPersistence;
+  profiles(owner: OwnerKey): ProfileStore;
+  readonly lifecycle: OwnedLifecycleProbe;
+  account(owner: OwnerKey): AccountStore;
+}
+
+// Replaces the owner-only form above. The returned decorator replaces each port of the seam it
+// is given with that port bound to the owner. The lifecycle port is a view over the process-lived
+// OwnedLifecycleProbe, never a new probe (invariant 116).
+export function ownershipDecorator(storage: OwnerScopedStorage, owner: OwnerKey): StorageDecorator;
+
+export function ownedAccount(storage: OwnerScopedStorage, owner: OwnerKey): AccountStore;
 
 // StoreProvider gains the owner; G2's no-argument form is removed:
 //   forRequest(owner: OwnerKey): StorageSeam
+//   forAccount(owner: OwnerKey): AccountStore
+
+// DurableStore (G2) is amended:
+//   persistenceForRequest(): SessionPersistence   removed
+//   readonly profiles: ProfileStore               removed
+//   readonly lifecycle: LifecycleProbe            becomes  readonly storage: OwnerScopedStorage
 ```
 
-`IncomingRequestLine` carries the method, the path and query, and the header value. The verifier
-reads nothing else.
+**Port conformance under two owners** (invariant 122). G2's `ConformanceTarget` is amended:
+
+```ts
+export interface ConformanceTarget {
+  readonly label: "in-memory" | "durable";
+  readonly storage: OwnerScopedStorage;            // replaces persistence and profiles
+  seedCorruptProfile(owner: OwnerKey, profileId: string): Promise<void>;
+  seedProfileWriteFailure(owner: OwnerKey, profileId: string): Promise<void>;
+}
+
+export const CONFORMANCE_OWNERS: readonly [OwnerKey, OwnerKey];
+```
+
+`runPortConformance(target)` keeps its signature. It runs every assertion under each of
+`CONFORMANCE_OWNERS`, and after each one asserts that the other owner's ports see none of its rows.
+
+### Proof harness (TypeScript, test support only)
+
+Never imported by `src/`. It mints the assertions G2's harnesses and replay present
+(invariant 124), and the malformed ones S1's refusal tests need.
+
+```ts
+export interface TestSigningKey { readonly keyId: string; readonly privateKey: KeyObject; }
+
+export interface AssertionClaims {
+  readonly iss: string; readonly aud: string;
+  readonly pis: string; readonly psub: string; readonly pkind: string;
+  readonly htm: string; readonly htu: string; readonly rid: string;
+  readonly iat: number; readonly exp: number;
+}
+
+export function mintTestAssertion(
+  key: TestSigningKey, owner: OwnerKey, request: IncomingRequestLine, now: Date,
+  overrides?: Partial<AssertionClaims>,
+): string;
+```
 
 ### Account surface (HTTP, on game-service, reached through the edge)
 
@@ -158,8 +245,9 @@ One migration, after G2's last. It follows G2's rule for every migration after t
   `(tenant_id, owner_issuer, owner_subject, profile_id, campaign_id, achievement_id)`.
 - **Indexes.** `(tenant_id, owner_issuer, owner_subject)` on `session` and on `save`, for the account
   surface and for deletion.
-- **Existing rows.** They take the reserved empty owner, `''` and `''`. Whether the migration
-  instead deletes them is OQ3.
+- **Existing rows.** The migration adds the owner columns with default `''`, then deletes every row
+  present (invariant 128). A row a still-running G2 instance writes afterwards takes the reserved
+  empty owner, which no principal can hold (invariant 117).
 - **Platform §7 obligations.** The tenant column stays a primary-key member on every table. The
   owner is host-owned and never reaches the engine (invariant 113).
 
@@ -169,9 +257,9 @@ One migration, after G2's last. It follows G2's rule for every migration after t
 |---|---|---|---|---|---|
 | No credential, terminate mode | Edge | 401 | `CredentialRequired` | No | — |
 | Token rejected, expired or malformed | Edge, Platform pipeline | 401 | `CredentialRejected` | No | — |
-| No usable key material | Edge, Platform pipeline | 401 | `KeyMaterialUnavailable` | No | Unhealthy |
+| Token signed by a key not pinned, including after the issuer rotates | Edge, Platform pipeline | 401 | `CredentialRejected` | No | — |
 | Provider failure | Edge, Platform pipeline | 401 | `ProviderFailed` | No | — |
-| Last key fetch failed, previous set in use | — (requests keep validating) | — | — | — | Degraded |
+| Pinned keys absent, or a discovery address set, terminate mode | Edge startup | — | — | — | The edge does not start, naming the setting |
 | Abuse limit reached | Edge | 429 | `RateLimited`, with `Retry-After` | After the delay | — |
 | Assertion missing or invalid | game-service | 401 | `assertion_refused` | No | — |
 | Foreign or unknown session or save | game-service | 404 | `unknown_session` / `unknown_save` | No | — |
@@ -180,10 +268,9 @@ One migration, after G2's last. It follows G2's rule for every migration after t
 **Refusal and infrastructure failure are distinguished by code, not status.** Platform's
 `AuthenticationError` contract maps every authentication failure to unauthenticated, "never a server
 error", and marks none retryable. G3 keeps that contract instead of overriding it. The brief's
-"distinguish refusal from an infrastructure failure" is met by the code, with Identity's key-set
-readiness check reporting the key set's state:
-`KeyMaterialUnavailable` and `ProviderFailed` are infrastructure, and `CredentialRejected` and
-`CredentialRequired` are refusals.
+"distinguish refusal from an infrastructure failure" is met by the code: `ProviderFailed` is
+infrastructure, and `CredentialRejected` and `CredentialRequired` are refusals.
+`KeyMaterialUnavailable` cannot occur, because the keys are pinned (invariant 125).
 
 **`assertion_refused` carries no reason.** Only a bypass attempt or an edge defect can produce it.
 The reason (`HandoffRefusal`) goes to the log only.
@@ -194,19 +281,11 @@ Adventures' sign-out is its own, and it passes through.
 
 ## Unresolved
 
-- **OQ1, MCP.** Whether the MCP transport's paths are reached only through the edge in G3's
-  deployments. Invariant 109 gates them either way. What is unresolved is whether that is the
-  intended coverage or a documented unavailability.
-- **OQ2, account deletion.** Anything beyond invariant 120's floor: workload data, Platform account
-  mappings, credentials, the issuer, reversibility, in-flight writes and post-deletion creations.
-  The deletion tests' expected outcomes wait on it.
-- **OQ3, pre-G3 rows.** Whether the migration keeps them under the reserved empty owner or deletes
-  them.
-- **OQ5, cutover.** The trusted-proxy list, whether pass-through serves the workload's public host
-  (the precondition of invariant 103's "unrewritten"), and rollback.
-- **OQ6, offline.** Whether background key-set refresh is acceptable.
-- **OQ8, abuse limits.** The values in `AbuseLimitOptions`, the instance count, and whether limiting
-  before authentication is required.
-- **OQ9, Identity.** Whether verifying a Platform-issued key satisfies "adopts Platform's Identity".
-- **OQ4 and OQ7** change no declaration above. They change which routes and deployments the
-  evidence covers.
+- **The live game-service hostname.** Not yet chosen. It is a deployment value and the smoke
+  check's target, not a declaration above.
+- **Owner question: the game-service client at Adventures' issuer.** Which client registration
+  obtains tokens for game-service, and so the audience the edge accepts. Adventures' own client is
+  confidential and keeps its tokens server-side, so it does not serve a game-service caller.
+
+Each deployment's `TrustedProxies` holds the existing reverse proxy's address. Rotating the issuer's keys is an operator step: the new key is pinned before the
+issuer signs with it.
