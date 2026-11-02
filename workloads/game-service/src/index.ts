@@ -8,4 +8,5 @@ export { createDispatcher } from "./dispatch.js";
 export { buildHttpSurface } from "./http-surface.js";
 export { buildMcpSurface } from "./mcp-surface.js";
 export { startWorkload, createProbeSurface, CONTRACT_PATH_VARIABLE } from "./lifecycle.js";
+export { verifyHandoff, handoffSettingsFromEnv, ASSERTION_HEADER } from "./handoff.js";
 export * from "./types.js";

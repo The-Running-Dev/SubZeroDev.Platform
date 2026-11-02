@@ -16,6 +16,7 @@ import type { SchemaName } from "../src/types.js";
 import { RawSchemaClient, TEST_CONNECTION_STRING } from "./support/database.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { freePort } from "./support/free-port.js";
+import { handoffEnvironment, signedFetch } from "./support/handoff.js";
 
 const TSX_CLI = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
 const MAIN_ENTRY = fileURLToPath(new URL("../src/main.ts", import.meta.url));
@@ -39,7 +40,7 @@ function spawnMain(env: Record<string, string | undefined>): SpawnedProcess {
   // `GAME_SERVICE_DB_CONNECTION_STRING: undefined` (S12.2) means "not set" — deleted from the
   // merged environment rather than passed through, so the child never inherits this test runner's
   // own value for it (there is none here, but the base environment is `process.env` verbatim).
-  const merged: Record<string, string> = { ...(process.env as Record<string, string>) };
+  const merged: Record<string, string> = { ...(process.env as Record<string, string>), ...handoffEnvironment() };
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) delete merged[key];
     else merged[key] = value;
@@ -123,7 +124,7 @@ describe("S12.1 — with the documented durable environment set to a reachable d
       const healthy = await waitForHealthy(`http://127.0.0.1:${port}`, "/readyz", 20_000);
       expect(healthy, `stdout: ${spawned.stdout}\nstderr: ${spawned.stderr}`).toBe(true);
 
-      const response = await fetch(`http://127.0.0.1:${port}/mcp/call-tool`, {
+      const response = await signedFetch(`http://127.0.0.1:${port}/mcp/call-tool`, {
         method: "POST",
         body: JSON.stringify({ name: "start_game", arguments: { campaignId: CAMPAIGN_ID } }),
       });

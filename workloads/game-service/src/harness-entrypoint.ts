@@ -23,9 +23,10 @@
  * never defaults a missing schema, because the isolation a per-run schema gives every proof depends
  * on one always being named.
  */
+import { handoffSettingsFromEnv } from "./handoff.js";
 import { startWorkload } from "./lifecycle.js";
 import { determinismProfileFromEnv, durableStorageProfileFromEnv } from "./types.js";
-import type { StorageProfile, WorkloadConfiguration } from "./types.js";
+import type { HandoffSettings, StorageProfile, WorkloadConfiguration } from "./types.js";
 
 function storageProfile(): StorageProfile {
   // A caller that sets `GAME_SERVICE_STORAGE=durable` without both companion variables gets a
@@ -37,6 +38,16 @@ function storageProfile(): StorageProfile {
     throw new Error(`GAME_SERVICE_STORAGE=durable is missing ${profile.error.setting}`);
   }
   return profile.value;
+}
+
+function handoffSettings(): HandoffSettings {
+  // The harness presents test-key assertions on every request (invariant 124), so its processes
+  // verify exactly as an operator's does: there is no harness-only way to run without a key.
+  const settings = handoffSettingsFromEnv(process.env);
+  if (!settings.ok) {
+    throw new Error(`the handoff verifier is missing ${settings.error.setting}`);
+  }
+  return settings.value;
 }
 
 function configuration(): WorkloadConfiguration {
@@ -51,6 +62,7 @@ function configuration(): WorkloadConfiguration {
     determinism: determinismProfileFromEnv(process.env),
     otlpEndpoint: process.env["GAME_SERVICE_OTLP_ENDPOINT"] ?? null,
     storage: storageProfile(),
+    handoff: handoffSettings(),
   };
 }
 

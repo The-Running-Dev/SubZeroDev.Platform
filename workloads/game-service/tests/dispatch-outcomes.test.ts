@@ -16,6 +16,7 @@ import { err, ok } from "../src/types.js";
 import { bodyJson, post, surfaceOver, throwingStore } from "./support/harness.js";
 import { CAMPAIGN_ID, realStore } from "./support/real-workload.js";
 import { conflictError, controlledPersistence, sessionLayerOver } from "./support/persistence-stub.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 /** A probe that answers `state` for every id and records what it was asked about, so "Dispatch
  *  consulted the probe for *this* id" is asserted rather than inferred from the code alone. */
@@ -193,6 +194,7 @@ describe("S5.6 — one Dispatch for both storage profiles", () => {
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: null,
+      handoff: TEST_HANDOFF,
       storage: { kind: "in-memory" },
     };
     const composed = await compose(configuration, loadPublishedContract());

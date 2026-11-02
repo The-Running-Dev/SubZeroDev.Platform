@@ -3,6 +3,7 @@
  * that starts against a contract describing a different engine serves a wire its own schemas do
  * not describe, and every downstream assertion becomes conditional.
  */
+import { handoffSettingsFromEnv } from "./handoff.js";
 import { startWorkload } from "./lifecycle.js";
 import { determinismProfileFromEnv, durableStorageProfileFromEnv, err, ok } from "./types.js";
 import type { Outcome, StartupError, StorageProfile, WorkloadConfiguration } from "./types.js";
@@ -22,6 +23,10 @@ function storageProfile(): Outcome<StorageProfile, StartupError> {
 function configuration(): Outcome<WorkloadConfiguration, StartupError> {
   const storage = storageProfile();
   if (!storage.ok) return storage;
+  // Read before anything listens: no verification key is a startup refusal naming the setting,
+  // never a service that answers without the verifier (invariant 110).
+  const handoff = handoffSettingsFromEnv(process.env);
+  if (!handoff.ok) return err({ code: "ConfigurationInvalid", setting: handoff.error.setting });
 
   const port = Number.parseInt(process.env["GAME_SERVICE_PORT"] ?? "8080", 10);
   const otlpEndpoint = process.env["GAME_SERVICE_OTLP_ENDPOINT"] ?? null;
@@ -32,6 +37,7 @@ function configuration(): Outcome<WorkloadConfiguration, StartupError> {
     determinism: determinismProfileFromEnv(process.env),
     otlpEndpoint,
     storage: storage.value,
+    handoff: handoff.value,
   });
 }
 

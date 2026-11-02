@@ -35,7 +35,7 @@ remain, and no slice may settle one silently.
 ---
 
 ## S1 — game-service refuses requests the edge did not sign
-**Status:** in progress
+**Status:** shipped
 
 Delivers: whoever operates game-service can expose it knowing that a request which bypasses the
 edge, or forges the edge's signature, is refused before it touches any game.
@@ -71,7 +71,7 @@ Out of scope: any owner on any row (S2). The edge signing anything (S3). Key rot
 accepting several configured key ids.
 
 ## S2 — The store answers only to its owner
-**Status:** queued
+**Status:** in progress
 
 Delivers: a signed-in player's sessions, saves and profiles belong to them. Another player who
 sends the same ids sees only what a stranger would: nothing there.

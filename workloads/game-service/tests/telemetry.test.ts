@@ -13,6 +13,7 @@ import type { WorkloadProcess } from "../src/types.js";
 import { startOtlpSink } from "./support/otlp-sink.js";
 import type { OtlpSink } from "./support/otlp-sink.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
+import { signedFetch, TEST_HANDOFF } from "./support/handoff.js";
 
 function wellFormedTraceParent(): { traceparent: string; traceId: string; spanId: string } {
   const traceId = randomBytes(16).toString("hex");
@@ -46,6 +47,7 @@ describe("S8 — the workload's span shares the response's correlation, and adop
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: sink.url,
+      handoff: TEST_HANDOFF,
       storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
@@ -53,7 +55,7 @@ describe("S8 — the workload's span shares the response's correlation, and adop
     workload = started.value;
 
     const { traceparent, traceId, spanId } = wellFormedTraceParent();
-    const response = await fetch(`http://127.0.0.1:${started.value.listening.port}/v1/create-session`, {
+    const response = await signedFetch(`http://127.0.0.1:${started.value.listening.port}/v1/create-session`, {
       method: "POST",
       headers: { "content-type": "application/json", traceparent },
       body: JSON.stringify({ campaignId: CAMPAIGN_ID }),
@@ -74,13 +76,14 @@ describe("S8 — the workload's span shares the response's correlation, and adop
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: sink.url,
+      handoff: TEST_HANDOFF,
       storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     workload = started.value;
 
-    const response = await fetch(`http://127.0.0.1:${started.value.listening.port}/v1/create-session`, {
+    const response = await signedFetch(`http://127.0.0.1:${started.value.listening.port}/v1/create-session`, {
       method: "POST",
       headers: { "content-type": "application/json", traceparent: "not-a-traceparent" },
       body: JSON.stringify({ campaignId: CAMPAIGN_ID }),
@@ -101,13 +104,14 @@ describe("S8 — the workload's span shares the response's correlation, and adop
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: sink.url,
+      handoff: TEST_HANDOFF,
       storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     workload = started.value;
 
-    await fetch(`http://127.0.0.1:${started.value.listening.port}/v1/create-session`, {
+    await signedFetch(`http://127.0.0.1:${started.value.listening.port}/v1/create-session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ campaignId: CAMPAIGN_ID }),

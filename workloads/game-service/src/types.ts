@@ -18,6 +18,7 @@ import type {
   WireVersion,
 } from "@subzerodev/service-contract";
 import type { EngineErrorCode, SemanticVersion } from "@subzerodev/service-contract";
+import type { KeyObject } from "node:crypto";
 import type {
   ProfileStore,
   SessionInitialization,
@@ -86,7 +87,49 @@ export interface WorkloadConfiguration {
   readonly determinism: DeterminismProfile;
   readonly otlpEndpoint: string | null;
   readonly storage: StorageProfile;
+  readonly handoff: HandoffSettings;
 }
+
+// ---------------------------------------------------------------------------- the handoff (G3)
+
+/** `design/20-contract.md`, "game-service (TypeScript)". A principal id is issuer plus subject. */
+export interface OwnerKey {
+  readonly issuer: string;
+  readonly subject: string;
+}
+
+export interface HandoffSettings {
+  readonly issuer: string;
+  readonly audience: string;
+  /** By key id. Several are accepted at once, which is the whole of key rotation in G3. */
+  readonly keys: ReadonlyMap<string, KeyObject>;
+  readonly clockToleranceSeconds: number;
+  /** `exp − iat` above this is `lifetime_exceeded`. */
+  readonly maxLifetimeSeconds: number;
+}
+
+export interface IncomingRequestLine {
+  readonly method: string;
+  /** Exactly as received. */
+  readonly pathAndQuery: string;
+  /** The `SubZeroDev-Principal-Assertion` value. */
+  readonly assertion: string | undefined;
+}
+
+export type HandoffRefusal =
+  | "missing"
+  | "malformed"
+  | "unknown_key"
+  | "bad_signature"
+  | "wrong_algorithm"
+  | "wrong_issuer"
+  | "wrong_audience"
+  | "expired"
+  | "not_yet_valid"
+  | "lifetime_exceeded"
+  | "request_mismatch"
+  | "unsupported_kind"
+  | "empty_owner";
 
 // ---------------------------------------------------------------------------- request context
 
@@ -604,6 +647,9 @@ export interface RunResult {
 
 export interface HostedTarget {
   readonly baseAddress: string;
+  /** The `SubZeroDev-Principal-Assertion` value for one request to this target. `src/` never
+   *  mints one (invariant 124): the harness that built the target supplies it. */
+  assertionFor(method: string, pathAndQuery: string): string;
   shutdown(): Promise<Outcome<void, ShutdownError>>;
   readDump(): Promise<Outcome<StoreSerializationSnapshot, DumpReadError>>;
 }
@@ -628,6 +674,9 @@ export interface TwoInstanceOptions {
   readonly connectionString: string;
   readonly schema: SchemaName;
   readonly readWritePauseMs: readonly [number, number];
+  /** The handoff settings each spawned instance reads from its environment. The caller mints
+   *  the assertions its own requests carry, with the matching test key (invariant 124). */
+  readonly handoffEnvironment: Readonly<Record<string, string>>;
 }
 
 export type HarnessError =

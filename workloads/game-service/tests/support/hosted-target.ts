@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { REPLAY_FIXED_INSTANT } from "../../src/replay.js";
 import { readDeterminismDumpFile } from "../../src/dump.js";
 import { err, ok } from "../../src/types.js";
+import { assertionFor, handoffEnvironment } from "./handoff.js";
 import type { HostedTarget, Outcome, SchemaName, ShutdownError } from "../../src/types.js";
 
 const ENTRYPOINT = fileURLToPath(new URL("../../src/harness-entrypoint.ts", import.meta.url));
@@ -78,6 +79,7 @@ export async function spawnHostedWorkload(
   } else {
     delete env["GAME_SERVICE_OTLP_ENDPOINT"];
   }
+  Object.assign(env, handoffEnvironment());
   if (durable) {
     env["GAME_SERVICE_STORAGE"] = "durable";
     env["GAME_SERVICE_DB_CONNECTION_STRING"] = durable.connectionString;
@@ -153,6 +155,7 @@ export async function spawnHostedWorkload(
 
   const target: HostedTarget = {
     baseAddress,
+    assertionFor,
 
     async shutdown(): Promise<Outcome<void, ShutdownError>> {
       if (!hasExited) {

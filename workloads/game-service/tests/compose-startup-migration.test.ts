@@ -18,12 +18,14 @@ import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { connectionFor, defaultBounds, RawSchemaClient, TEST_CONNECTION_STRING } from "./support/database.js";
 import { DEFAULT_STORE_CONNECT_TIMEOUT_MS } from "../src/types.js";
 import type { DurableStoreConfiguration, SchemaName, StorageProfile, WorkloadConfiguration } from "../src/types.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 function baseConfiguration(storage: StorageProfile): WorkloadConfiguration {
   return {
     listen: { host: "127.0.0.1", port: 0 },
     determinism: { kind: "default" },
     otlpEndpoint: null,
+    handoff: TEST_HANDOFF,
     storage,
   };
 }

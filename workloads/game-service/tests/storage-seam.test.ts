@@ -13,6 +13,7 @@ import type { StorageDecorator, StorageSeam } from "../src/compose.js";
 import type { ContractPackage } from "@subzerodev/service-contract";
 import { ENGINE_VERSION } from "@the-running-dev/game-engine";
 import type { WorkloadConfiguration } from "../src/types.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 function rawSeam(): StorageSeam {
   return {
@@ -93,6 +94,7 @@ describe("S13.9 — the in-memory configuration's no-op probe is composed behind
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: null,
+      handoff: TEST_HANDOFF,
       storage: { kind: "in-memory" },
     };
 

@@ -33,6 +33,7 @@ import {
   openTestPool,
 } from "./support/database.js";
 import type { TestSchema } from "./support/database.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 const ENGINE_VERSION_UNDER_TEST = ENGINE_VERSION as unknown as SemanticVersion;
 
@@ -41,6 +42,7 @@ function baseConfiguration(storage: StorageProfile): WorkloadConfiguration {
     listen: { host: "127.0.0.1", port: 0 },
     determinism: { kind: "default" },
     otlpEndpoint: null,
+    handoff: TEST_HANDOFF,
     storage,
   };
 }

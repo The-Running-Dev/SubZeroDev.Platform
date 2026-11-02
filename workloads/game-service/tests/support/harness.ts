@@ -12,6 +12,7 @@ import { buildHttpSurface } from "../../src/http-surface.js";
 import { buildMcpSurface } from "../../src/mcp-surface.js";
 import { createDispatcher } from "../../src/dispatch.js";
 import { ok } from "../../src/types.js";
+import { signedHeaders } from "./handoff.js";
 import type {
   Dispatcher,
   HttpSurface,
@@ -147,7 +148,8 @@ export async function post(
 }
 
 /** `post`'s counterpart for tests that need a real HTTP round trip — a spawned server on its own
- *  socket, rather than a surface dispatched in-process. */
+ *  socket, rather than a surface dispatched in-process. Carries a test-key assertion bound to the
+ *  request line, as every non-probe request must (G3 invariant 109). */
 export async function postJson(
   base: string,
   path: string,
@@ -155,7 +157,7 @@ export async function postJson(
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const response = await fetch(`${base}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: signedHeaders("POST", path, { "content-type": "application/json" }),
     body: JSON.stringify(body),
   });
   const text = await response.text();

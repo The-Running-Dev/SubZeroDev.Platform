@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { startWorkload } from "../src/lifecycle.js";
 import { compose } from "../src/compose.js";
 import { contract } from "./support/harness.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 const REPOSITORY_ROOT = join(new URL("../../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const WORKLOAD_ROOT = join(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -19,6 +20,7 @@ const NO_HOST_CONFIGURATION = {
   listen: { host: "", port: 0 },
   determinism: { kind: "default" as const },
   otlpEndpoint: null,
+  handoff: TEST_HANDOFF,
   storage: { kind: "in-memory" as const },
 };
 
@@ -82,6 +84,7 @@ describe("S3.13 — with otlpEndpoint null nothing is exported and nothing is di
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: null,
+      handoff: TEST_HANDOFF,
       storage: { kind: "in-memory" },
     });
     expect(started.ok).toBe(true);
@@ -102,7 +105,7 @@ describe("S3.13 — with otlpEndpoint null nothing is exported and nothing is di
 
   it("composes without an exporter when no endpoint is configured", async () => {
     const composed = await compose(
-      { listen: { host: "127.0.0.1", port: 0 }, determinism: { kind: "default" }, otlpEndpoint: null, storage: { kind: "in-memory" } },
+      { listen: { host: "127.0.0.1", port: 0 }, determinism: { kind: "default" }, otlpEndpoint: null, handoff: TEST_HANDOFF, storage: { kind: "in-memory" } },
       contract,
     );
     expect(composed.ok).toBe(true);

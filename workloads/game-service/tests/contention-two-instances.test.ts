@@ -20,9 +20,10 @@ import type {
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { RawSchemaClient, TEST_CONNECTION_STRING, createTestSchema } from "./support/database.js";
 import { postJson } from "./support/harness.js";
+import { handoffEnvironment } from "./support/handoff.js";
 
 function optionsFor(schema: SchemaName, readWritePauseMs: readonly [number, number]): TwoInstanceOptions {
-  return { connectionString: TEST_CONNECTION_STRING, schema, readWritePauseMs };
+  return { connectionString: TEST_CONNECTION_STRING, schema, readWritePauseMs, handoffEnvironment: handoffEnvironment() };
 }
 
 describe("S7.1 — spawnInstances returns two independently addressed, loopback-bound instances", () => {
