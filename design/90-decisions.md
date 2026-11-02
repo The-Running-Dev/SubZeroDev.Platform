@@ -21,6 +21,57 @@ entry below:
 
 ---
 
+### 2026-11-02 — S1: The gate writes `assertion_refused` itself, outside the vendored status mapping
+
+Context: The contract's error table gives `assertion_refused` a `401`, but the vendored
+service-contract 0.8.0 package has no row for it, and its status mapping has no fallback.
+Chosen: the gate writes the `{ code, correlation }` envelope and the `401` directly, in the same
+canonical encoding every wire error uses.
+Rejected: **adding the row to the vendored package** — a service-contract release for a code no
+operation returns. **Routing it through `wireError`** — fails loudly on the unmapped code.
+Reversibility: cheap
+
+### 2026-11-02 — S1: Verification keys are a directory of `<key id>.pem` files
+
+Context: The contract fixes `HandoffSettings` but not how an operator supplies it.
+Chosen: `GAME_SERVICE_HANDOFF_KEYS_DIR` names a directory with one P-256 public key per
+`<key id>.pem` file. `GAME_SERVICE_HANDOFF_ISSUER` and `GAME_SERVICE_HANDOFF_AUDIENCE` are required.
+`GAME_SERVICE_HANDOFF_CLOCK_TOLERANCE_SECONDS` defaults to 30 and
+`GAME_SERVICE_HANDOFF_MAX_LIFETIME_SECONDS` to 60. Any unreadable or non-P-256 file refuses the whole
+set.
+Rejected: **one key in one variable** — no way to configure several key ids for rotation. **Skipping
+a bad file** — a rotation that silently did not happen.
+Reversibility: cheap
+
+### 2026-11-02 — S1: A test signing proxy stands in for the edge's signer until S3
+
+Context: S1.8 requires G2's edge-fronted replay to pass with assertions, but the edge signs nothing
+until S3.
+Chosen: the edge-fronted harness puts a test-only proxy between the edge and the workload. The proxy
+drops any caller assertion and adds a test-key assertion bound to each forwarded request line.
+Rejected: **skipping the edge-fronted proofs until S3** — S1.8 names them. **Letting the edge pass a
+caller-supplied assertion through** — a pass-through S3 would have to remove.
+Reversibility: cheap
+
+### 2026-11-02 — S1: A wrong `typ` and an expiry at or before issue are `malformed`
+
+Context: `HandoffRefusal` has no value for a token of another type or for `exp <= iat`.
+Chosen: both are `malformed`. A token of another type is not a handoff assertion at all, and an
+expiry at or before issue is not a lifetime of any length.
+Rejected: **`unsupported_kind` for `typ`** — that value is about `pkind`. **`lifetime_exceeded` for
+`exp <= iat`** — no limit was exceeded.
+Reversibility: cheap
+
+### 2026-11-02 — S1: The documented start generates a throwaway verification key
+
+Context: Invariant 110 refuses to start without a key, and the README's and CI's documented start
+commands had none. Nothing signs for the workload until S3.
+Chosen: the documented start generates a P-256 key pair with `openssl`, keeps the public key and
+discards the private one. Until S3 the documented workload answers only its probes.
+Rejected: **a key committed to the repository** — a published private key is a bypass. **A
+development off switch** — invariant 110.
+Reversibility: cheap
+
 ### 2026-11-02 — Verifying Platform's bearer chain counts as adopting Platform's Identity
 
 Context: Open question 9. The edge composes Identity's bearer authentication; game-service verifies

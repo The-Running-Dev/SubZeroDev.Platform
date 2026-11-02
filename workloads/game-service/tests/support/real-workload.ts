@@ -10,6 +10,7 @@ import type { SessionStore } from "@the-running-dev/game-engine";
 
 import { compose } from "../../src/compose.js";
 import type { WorkloadConfiguration } from "../../src/types.js";
+import { TEST_HANDOFF } from "./handoff.js";
 
 export const CAMPAIGN_ID = WORLD_GRAPH_MVP_CAMPAIGN_ID;
 
@@ -17,6 +18,7 @@ const CONFIGURATION: WorkloadConfiguration = {
   listen: { host: "127.0.0.1", port: 0 },
   determinism: { kind: "default" },
   otlpEndpoint: null,
+  handoff: TEST_HANDOFF,
   storage: { kind: "in-memory" },
 };
 

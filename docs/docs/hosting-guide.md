@@ -202,7 +202,12 @@ which CI runs verbatim in the `game-service` job. It needs Node.js 24 or later a
 
 1. **Install and start the workload**: `npm install`, then `npm start` in `workloads/game-service`.
    It listens on `127.0.0.1:8080`. `GAME_SERVICE_PORT` and `GAME_SERVICE_HOST` override that, and
-   `Ctrl+C` shuts down gracefully.
+   `Ctrl+C` shuts down gracefully. It refuses to start without a handoff verification key:
+   `GAME_SERVICE_HANDOFF_KEYS_DIR` names a directory of P-256 public keys, one `<key id>.pem` each,
+   with `GAME_SERVICE_HANDOFF_ISSUER` and `GAME_SERVICE_HANDOFF_AUDIENCE` beside it. Every request
+   but the probes must then carry an assertion the edge signed, or it answers
+   `401 assertion_refused`. The edge does not sign yet, so until G3's S3 only the probes work
+   through it.
 2. **Build and start the edge**: `dotnet build` the edge project, then run the built DLL from its
    own directory with `GameEdge__WorkloadBaseAddress` pointing at the workload. Run it from there
    because `appsettings.json` resolves against the working directory, and the timeout defaults

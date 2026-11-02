@@ -20,13 +20,33 @@ npm install
 
 ```bash
 cd workloads/game-service
-GAME_SERVICE_PORT=8080 npm start
+HANDOFF_KEYS="$(mktemp -d)"
+openssl ecparam -name prime256v1 -genkey -noout | openssl ec -pubout -out "$HANDOFF_KEYS/local.pem"
+GAME_SERVICE_PORT=8080 \
+GAME_SERVICE_HANDOFF_KEYS_DIR="$HANDOFF_KEYS" \
+GAME_SERVICE_HANDOFF_ISSUER=game-edge.local \
+GAME_SERVICE_HANDOFF_AUDIENCE=game-service.local \
+  npm start
 ```
 
 Listens on `127.0.0.1:8080` by default (`GAME_SERVICE_HOST` overrides the host; an unset host
 is loopback). `Ctrl+C` (`SIGINT`/`SIGTERM`) triggers a graceful shutdown. Liveness is
 `GET /livez`; readiness, which only turns healthy once the surface is built and the listener is
 bound, is `GET /readyz`.
+
+Every other request must carry a `SubZeroDev-Principal-Assertion` header: an ES256 compact JWS
+the edge signs, verified against the public keys in `GAME_SERVICE_HANDOFF_KEYS_DIR` (one P-256
+`<key id>.pem` per key; several are accepted, for rotation) and the configured issuer and audience.
+A request without one, or with one that does not verify, answers `401` with code
+`assertion_refused`; the refusal's reason is logged, never returned. No setting turns the check
+off: started without a key, the workload exits before listening and names
+`GAME_SERVICE_HANDOFF_KEYS_DIR`. `GAME_SERVICE_HANDOFF_CLOCK_TOLERANCE_SECONDS` (default `30`)
+and `GAME_SERVICE_HANDOFF_MAX_LIFETIME_SECONDS` (default `60`) bound an assertion's timing. The
+command above discards the private key, so only the probes answer; the proof harnesses mint their
+own test-key assertions.
+
+Until G3's S3 the edge signs nothing either, so an operation request sent through the edge below
+is refused the same way; only its health probes work end to end.
 
 ## Build and start the edge
 
@@ -110,10 +130,15 @@ command above makes, retried under a startup backoff if the database is not reac
 cd workloads/game-service
 docker compose up -d
 GAME_SERVICE_PORT=8080 \
+GAME_SERVICE_HANDOFF_KEYS_DIR="$HANDOFF_KEYS" \
+GAME_SERVICE_HANDOFF_ISSUER=game-edge.local \
+GAME_SERVICE_HANDOFF_AUDIENCE=game-service.local \
 GAME_SERVICE_STORAGE=durable \
 GAME_SERVICE_DB_CONNECTION_STRING=postgresql://game_service:game_service@127.0.0.1:5432/game_service \
   npm start
 ```
+
+`HANDOFF_KEYS` is the directory [Start the workload](#start-the-workload) created.
 
 Missing `GAME_SERVICE_DB_CONNECTION_STRING` while `GAME_SERVICE_STORAGE=durable` is set fails
 startup immediately, naming it — the process never degrades silently to the in-memory profile.

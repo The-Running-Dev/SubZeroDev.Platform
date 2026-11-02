@@ -200,7 +200,14 @@ jobs:
         run: |
           set -e
           cd workloads/game-service
-          GAME_SERVICE_PORT=8080 npm start > /tmp/workload.log 2>&1 &
+          HANDOFF_KEYS="$(mktemp -d)"
+          openssl ecparam -name prime256v1 -genkey -noout | openssl ec -pubout -out "$HANDOFF_KEYS/local.pem"
+          echo "HANDOFF_KEYS=$HANDOFF_KEYS" >> "$GITHUB_ENV"
+          GAME_SERVICE_PORT=8080 \
+          GAME_SERVICE_HANDOFF_KEYS_DIR="$HANDOFF_KEYS" \
+          GAME_SERVICE_HANDOFF_ISSUER=game-edge.local \
+          GAME_SERVICE_HANDOFF_AUDIENCE=game-service.local \
+            npm start > /tmp/workload.log 2>&1 &
           WORKLOAD_PID=$!
           cd "$GITHUB_WORKSPACE"
 
@@ -296,9 +303,11 @@ jobs:
           GAME_SERVICE_STORAGE: durable
           GAME_SERVICE_DB_CONNECTION_STRING: postgresql://game_service:game_service@127.0.0.1:5432/game_service
           GAME_SERVICE_DB_SCHEMA: ci_documented_durable_start
+          GAME_SERVICE_HANDOFF_ISSUER: game-edge.local
+          GAME_SERVICE_HANDOFF_AUDIENCE: game-service.local
         run: |
           set -e
-          npm start > /tmp/durable-workload.log 2>&1 &
+          GAME_SERVICE_HANDOFF_KEYS_DIR="$HANDOFF_KEYS" npm start > /tmp/durable-workload.log 2>&1 &
           DURABLE_WORKLOAD_PID=$!
           # Runs on every exit path, including a readiness timeout below aborting the script under
           # `set -e` — a backgrounded workload left running past this step would otherwise hold its

@@ -132,6 +132,7 @@ async function spawnOne(
   env["GAME_SERVICE_DB_CONNECTION_STRING"] = options.connectionString;
   env["GAME_SERVICE_DB_SCHEMA"] = String(options.schema);
   env["GAME_SERVICE_READ_WRITE_PAUSE_MS"] = String(readWritePauseMs);
+  Object.assign(env, options.handoffEnvironment);
 
   let child: ChildProcessWithoutNullStreams;
   try {

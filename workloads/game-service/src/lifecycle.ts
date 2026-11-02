@@ -22,6 +22,7 @@ import { buildMcpSurface } from "./mcp-surface.js";
 import { createDispatcher } from "./dispatch.js";
 import { compose, writeDeterminismDump } from "./compose.js";
 import { loadContract, validateContract } from "./contract.js";
+import { ASSERTION_HEADER, verifyHandoff } from "./handoff.js";
 import { createTracing } from "./telemetry.js";
 import type { Tracing } from "./telemetry.js";
 import { INTERNAL_FAILURE, wireError } from "./wire-error.js";
@@ -29,6 +30,7 @@ import { err, ok } from "./types.js";
 import type {
   CompositionError,
   CorrelationId,
+  HandoffSettings,
   HttpStatus,
   HttpSurface,
   JsonValue,
@@ -209,12 +211,23 @@ function errorResponse(
   return { status: envelope.status, body: envelope.body, correlation: envelope.correlation };
 }
 
+/** The one refusal body the handoff gate produces. `assertion_refused` is not an operation's error,
+ *  so it is not in the contract's status mapping and does not go through `wireError`; the envelope
+ *  is the same `{ code, correlation }` shape every wire error has, and carries no reason
+ *  (`20-contract.md`, "`assertion_refused` carries no reason"). */
+function refuseAssertion(response: ServerResponse, correlation: CorrelationId): void {
+  const body = canonicalEncode({ code: "assertion_refused", correlation: correlation as string });
+  response.writeHead(401, { "content-type": "application/json", "x-correlation-id": correlation as string });
+  response.end(body.ok ? body.value : "");
+}
+
 function serve(
   contract: ContractPackage,
   surface: HttpSurface,
   mcp: McpSurface,
   probes: ProbeSurface,
   tracing: Tracing | null,
+  handoff: HandoffSettings,
 ): Server {
   return createServer((message: IncomingMessage, response: ServerResponse) => {
     void (async () => {
@@ -235,6 +248,31 @@ function serve(
         );
         response.writeHead(result.status === "healthy" ? 200 : 503, { "content-type": "application/json" });
         response.end(body);
+        return;
+      }
+
+      // Every other path, MCP included, is gated before its body is read, so a refused request
+      // reaches neither Dispatch nor the store (invariant 109). The reason goes to the log; the
+      // assertion itself goes nowhere (invariant 108).
+      const presented = message.headers[ASSERTION_HEADER];
+      const verified = verifyHandoff(
+        handoff,
+        {
+          method: message.method ?? "",
+          pathAndQuery: message.url ?? "",
+          assertion: typeof presented === "string" ? presented : undefined,
+        },
+        new Date(),
+      );
+      if (!verified.ok) {
+        const inbound = message.headers["traceparent"];
+        const inboundTraceParent = typeof inbound === "string" ? inbound : null;
+        const requestStartedAt = Date.now();
+        const correlation = correlationFrom(inboundTraceParent);
+        console.error(`[game-service] handoff refused: ${verified.error} (correlation ${correlation as string})`);
+        message.resume();
+        tracing?.startRequestSpan("game-service.request", inboundTraceParent, correlation, requestStartedAt).end();
+        refuseAssertion(response, correlation);
         return;
       }
 
@@ -314,6 +352,11 @@ export async function startWorkload(
   ) {
     return err({ code: "ConfigurationInvalid", setting: "listen.port" });
   }
+  // No verification key, no service: there is no configuration under which the verifier is off
+  // (invariant 110).
+  if (configuration.handoff.keys.size === 0) {
+    return err({ code: "ConfigurationInvalid", setting: "handoff.keys" });
+  }
 
   const contract = readContract();
   if (!contract.ok) return contract;
@@ -357,7 +400,7 @@ export async function startWorkload(
   }
 
   const host = configuration.listen.host.trim().length > 0 ? configuration.listen.host : LOOPBACK;
-  const server = serve(contract.value, built.value, builtMcp.value, probes.surface, tracing);
+  const server = serve(contract.value, built.value, builtMcp.value, probes.surface, tracing, configuration.handoff);
 
   const bound = await new Promise<ListenEndpoint | null>((resolve) => {
     server.once("error", () => resolve(null));

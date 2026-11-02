@@ -14,6 +14,7 @@
 import { createDispatcher } from "./dispatch.js";
 import { compose } from "./compose.js";
 import { canonicalEncode } from "./canonical.js";
+import { ASSERTION_HEADER } from "./handoff.js";
 import { err, ok } from "./types.js";
 import type {
   CanonicalJson,
@@ -73,6 +74,9 @@ export async function runInProcess(
     determinism: { kind: "replay", fixedInstant: REPLAY_FIXED_INSTANT, dumpPath: "(runInProcess: unused)" },
     otlpEndpoint: null,
     storage: { kind: "in-memory" },
+    // Unused for the same reason: no listener is started, so no request is verified. An empty key
+    // set is what `startWorkload` itself refuses, which keeps this from ever serving.
+    handoff: { issuer: "", audience: "", keys: new Map(), clockToleranceSeconds: 0, maxLifetimeSeconds: 0 },
   };
 
   const composed = await compose(configuration, contract);
@@ -120,9 +124,10 @@ export async function runHosted(
   for (const [index, step] of fixture.steps.entries()) {
     let response: Response;
     try {
-      response = await fetch(`${target.baseAddress}/${WIRE_VERSION}/${step.operation as string}`, {
+      const path = `/${WIRE_VERSION}/${step.operation as string}`;
+      response = await fetch(`${target.baseAddress}${path}`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", [ASSERTION_HEADER]: target.assertionFor("POST", path) },
         body: JSON.stringify(step.arguments),
       });
     } catch (thrown) {

@@ -21,11 +21,13 @@ import { contract, dispatcherOver, recordingStore } from "./support/harness.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { freePort } from "./support/free-port.js";
 import { DEFAULT_LIFECYCLE_BOUNDS, DEFAULT_STORE_CONNECT_TIMEOUT_MS, DEFAULT_STORE_POOL_SIZE } from "../src/types.js";
+import { signedFetch, TEST_HANDOFF } from "./support/handoff.js";
 
 const DEFAULT_CONFIGURATION = {
   listen: { host: "127.0.0.1", port: 0 },
   determinism: { kind: "default" as const },
   otlpEndpoint: null,
+  handoff: TEST_HANDOFF,
   storage: { kind: "in-memory" as const },
 };
 
@@ -142,7 +144,7 @@ describe("S6.4 — the table is the only source: one row removed takes it out of
     if (!started.ok) return;
 
     try {
-      const httpResponse = await fetch(`http://127.0.0.1:${port}/v1/get-scene`, {
+      const httpResponse = await signedFetch(`http://127.0.0.1:${port}/v1/get-scene`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
@@ -151,7 +153,7 @@ describe("S6.4 — the table is the only source: one row removed takes it out of
       const httpBody = (await httpResponse.json()) as { code: string };
       expect(httpBody.code).toBe("unknown_operation");
 
-      const mcpResponse = await fetch(`http://127.0.0.1:${port}/mcp/list-tools`, { method: "POST" });
+      const mcpResponse = await signedFetch(`http://127.0.0.1:${port}/mcp/list-tools`, { method: "POST" });
       const mcpBody = (await mcpResponse.json()) as { tools: { name: string }[] };
       // The count is asserted alongside the absence: `not.toContain` alone is satisfied by an
       // empty list, so the criterion would pass against a surface that had stopped reflecting the
@@ -185,7 +187,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
   it("refuses every method but POST, so no verb variant can list or run a tool", async () => {
     await bound(async (base) => {
       for (const method of ["GET", "PUT", "DELETE"]) {
-        const listed = await fetch(`${base}/mcp/list-tools`, { method });
+        const listed = await signedFetch(`${base}/mcp/list-tools`, { method });
         expect([listed.status, ((await listed.json()) as { code: string }).code]).toEqual([
           404,
           "unknown_operation",
@@ -194,7 +196,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
 
       // The body would have created a session had the verb been honoured, so this asserts the
       // refusal happens before the tool runs and not merely that the status changed.
-      const called = await fetch(`${base}/mcp/call-tool`, {
+      const called = await signedFetch(`${base}/mcp/call-tool`, {
         method: "DELETE",
         body: JSON.stringify({ name: "start_game", arguments: { campaignId: CAMPAIGN_ID } }),
       });
@@ -206,7 +208,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
   it("calls a caller's bad envelope malformed_payload, not an internal failure", async () => {
     await bound(async (base) => {
       for (const body of ["{", JSON.stringify({ arguments: {} }), JSON.stringify({ name: 7 })]) {
-        const response = await fetch(`${base}/mcp/call-tool`, { method: "POST", body });
+        const response = await signedFetch(`${base}/mcp/call-tool`, { method: "POST", body });
         expect(response.status).toBe(400);
         expect(((await response.json()) as { code: string }).code).toBe("malformed_payload");
       }
@@ -215,7 +217,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
 
   it("answers an unknown tool and an engine error with the statuses the mapping names", async () => {
     await bound(async (base) => {
-      const unknownTool = await fetch(`${base}/mcp/call-tool`, {
+      const unknownTool = await signedFetch(`${base}/mcp/call-tool`, {
         method: "POST",
         body: JSON.stringify({ name: "no_such_tool", arguments: {} }),
       });
@@ -223,11 +225,11 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
       expect(((await unknownTool.json()) as { code: string }).code).toBe("unknown_operation");
 
       // The same failure over both surfaces: the same code, and now the same status.
-      const viaMcp = await fetch(`${base}/mcp/call-tool`, {
+      const viaMcp = await signedFetch(`${base}/mcp/call-tool`, {
         method: "POST",
         body: JSON.stringify({ name: "get_scene", arguments: { sessionId: "no-such-session" } }),
       });
-      const viaHttp = await fetch(`${base}/v1/get-scene`, {
+      const viaHttp = await signedFetch(`${base}/v1/get-scene`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId: "no-such-session" }),
@@ -243,7 +245,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
 
   it("carries the correlation on every error, in the body and in the header, as one value", async () => {
     await bound(async (base) => {
-      const response = await fetch(`${base}/mcp/call-tool`, { method: "POST", body: "{" });
+      const response = await signedFetch(`${base}/mcp/call-tool`, { method: "POST", body: "{" });
       const body = (await response.json()) as { code: string; correlation?: string };
 
       expect(typeof body.correlation).toBe("string");
@@ -255,7 +257,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
   it("adopts an inbound traceparent for a transport-level refusal", async () => {
     await bound(async (base) => {
       const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
-      const response = await fetch(`${base}/mcp/call-tool`, {
+      const response = await signedFetch(`${base}/mcp/call-tool`, {
         method: "POST",
         headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
         body: "{",
@@ -268,7 +270,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
   it("carries the correlation on a successful tool call too, not only on an error (#102)", async () => {
     await bound(async (base) => {
       const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
-      const response = await fetch(`${base}/mcp/call-tool`, {
+      const response = await signedFetch(`${base}/mcp/call-tool`, {
         method: "POST",
         headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
         body: JSON.stringify({ name: "start_game", arguments: { campaignId: CAMPAIGN_ID } }),
@@ -281,7 +283,7 @@ describe("the MCP HTTP transport speaks the JSON wire's codes and statuses", () 
 
   it("still lists the tools on POST", async () => {
     await bound(async (base) => {
-      const response = await fetch(`${base}/mcp/list-tools`, { method: "POST" });
+      const response = await signedFetch(`${base}/mcp/list-tools`, { method: "POST" });
       const body = (await response.json()) as { tools: { name: string }[] };
 
       expect(response.status).toBe(200);
@@ -351,6 +353,7 @@ describe("the readiness body carries ProbeResult.detail, and omits the member wh
       listen: { host: "127.0.0.1", port: 0 },
       determinism: { kind: "default" },
       otlpEndpoint: null,
+      handoff: TEST_HANDOFF,
       storage: {
         kind: "durable",
         store: {

@@ -14,19 +14,25 @@ export type { CollectedSpan } from "./otlp-json.js";
 export interface OtlpSink {
   readonly url: string;
   readonly spans: CollectedSpan[];
+  /** Every export body as received, undecoded — what a search for a string that must never be
+   *  exported reads, since `spans` keeps only the fields the S8 assertions compare. */
+  readonly bodies: string[];
   close(): Promise<void>;
 }
 
 export async function startOtlpSink(): Promise<OtlpSink> {
   const spans: CollectedSpan[] = [];
+  const bodies: string[] = [];
 
   const server: Server = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       if (request.url === "/v1/traces") {
+        const text = Buffer.concat(chunks).toString("utf8");
+        bodies.push(text);
         try {
-          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          const parsed = JSON.parse(text);
           spans.push(...spansFromExportRequest(parsed));
         } catch {
           // A body this sink cannot parse fails the test's own assertions on `spans`, not this
@@ -48,6 +54,7 @@ export async function startOtlpSink(): Promise<OtlpSink> {
   return {
     url: `http://127.0.0.1:${port}`,
     spans,
+    bodies,
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

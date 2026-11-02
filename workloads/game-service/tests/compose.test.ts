@@ -21,6 +21,7 @@ import {
   RawSchemaClient,
 } from "./support/database.js";
 import type { DurableStoreConfiguration, StorageProfile, WorkloadConfiguration } from "../src/types.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 describe("S4.6 — the assumed forward-timeout bound still exceeds the real edge's configured timeout", () => {
   it("stays a wide margin above tests/support/hosted-edge.ts's GameEdge__ForwardTimeout", () => {
@@ -37,6 +38,7 @@ function baseConfiguration(storage: StorageProfile): WorkloadConfiguration {
     listen: { host: "127.0.0.1", port: 0 },
     determinism: { kind: "default" },
     otlpEndpoint: null,
+    handoff: TEST_HANDOFF,
     storage,
   };
 }

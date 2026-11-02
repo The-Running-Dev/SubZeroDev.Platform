@@ -15,6 +15,7 @@ import { canonicalEncode } from "../src/canonical.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { bodyJson, post, postJson, recordingStore, surfaceOver } from "./support/harness.js";
 import type { JsonValue, WorkloadConfiguration } from "../src/types.js";
+import { TEST_HANDOFF } from "./support/handoff.js";
 
 function freshDumpPath(): string {
   return join(mkdtempSync(join(tmpdir(), "determinism-dump-")), "dump.json");
@@ -25,6 +26,7 @@ function replayConfiguration(dumpPath: string): WorkloadConfiguration {
     listen: { host: "127.0.0.1", port: 0 },
     determinism: { kind: "replay", fixedInstant: "2026-01-01T00:00:00.000Z", dumpPath },
     otlpEndpoint: null,
+    handoff: TEST_HANDOFF,
     storage: { kind: "in-memory" },
   };
 }
@@ -34,6 +36,7 @@ function defaultConfiguration(): WorkloadConfiguration {
     listen: { host: "127.0.0.1", port: 0 },
     determinism: { kind: "default" },
     otlpEndpoint: null,
+    handoff: TEST_HANDOFF,
     storage: { kind: "in-memory" },
   };
 }

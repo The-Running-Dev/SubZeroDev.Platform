@@ -9,6 +9,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { freePort } from "./free-port.js";
+import { startSigningProxy } from "./handoff.js";
 import { spawnHostedWorkload } from "./hosted-target.js";
 import type { HostedTarget, Outcome, ShutdownError } from "../../src/types.js";
 
@@ -73,6 +74,9 @@ async function waitForLive(
  *  omits it and gets today's no-telemetry behaviour on both sides unchanged. */
 export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHostedEdge> {
   const workload = await spawnHostedWorkload(otlpEndpoint);
+  // The edge signs nothing until G3's S3; until then the proxy stands where its signer will, so the
+  // workload's verifier sees an assertion on every forwarded request.
+  const signer = await startSigningProxy(workload.target.baseAddress);
   const port = await freePort();
   const dllPath = process.env["GAME_EDGE_DLL"] ?? DEFAULT_DLL;
 
@@ -80,7 +84,7 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
     ...process.env,
     ASPNETCORE_URLS: `http://127.0.0.1:${port}`,
     ASPNETCORE_ENVIRONMENT: "Production",
-    GameEdge__WorkloadBaseAddress: workload.target.baseAddress,
+    GameEdge__WorkloadBaseAddress: signer.baseAddress,
     GameEdge__ForwardTimeout: `00:00:${String(GAME_EDGE_FORWARD_TIMEOUT_SECONDS).padStart(2, "0")}`,
     GameEdge__ReadinessTimeout: "00:00:05",
     // Read by `AddPlatformObservability` (`PlatformObservabilityExtensions.ResolveIdentity`) when
@@ -136,7 +140,8 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
     await waitForLive(baseAddress, 30_000, deadChild);
   } catch (thrown) {
     if (!hasExited) child.kill("SIGKILL");
-    workload.forceKill();
+    void workload.forceKill();
+    void signer.close();
     throw new Error(
       `${thrown instanceof Error ? thrown.message : String(thrown)}`
         + `; edge stderr:\n${stderr}\nedge stdout (last ${TAIL_LIMIT} chars):\n${stdout}`,
@@ -145,6 +150,9 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
 
   const target: HostedTarget = {
     baseAddress,
+    // Requests addressed at the edge carry no assertion of their own — the edge drops a caller's —
+    // so this exists for the `HostedTarget` shape and is never what reaches the workload.
+    assertionFor: workload.target.assertionFor,
 
     async shutdown(): Promise<Outcome<void, ShutdownError>> {
       // The dump comes from the workload; the edge itself has nothing to flush, so it is
@@ -153,6 +161,7 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
       if (!hasExited) {
         child.kill("SIGTERM");
       }
+      await signer.close();
       return result;
     },
 
@@ -165,7 +174,8 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
     target,
     forceKill(): void {
       if (!hasExited) child.kill("SIGKILL");
-      workload.forceKill();
+      void workload.forceKill();
+      void signer.close();
     },
   };
 }
