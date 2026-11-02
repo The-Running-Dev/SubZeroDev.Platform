@@ -590,6 +590,7 @@ public sealed class StreamingTests
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment(environment);
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", workloadBaseAddress);
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:10");
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");

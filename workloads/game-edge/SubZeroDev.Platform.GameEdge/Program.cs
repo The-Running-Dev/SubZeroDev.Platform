@@ -3,10 +3,21 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using SubZeroDev.Platform.Abstractions;
 using SubZeroDev.Platform.GameEdge;
 using SubZeroDev.Platform.Hosting;
+using SubZeroDev.Platform.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var options = builder.Configuration.GetSection("GameEdge").Get<GameEdgeOptions>();
+var section = builder.Configuration.GetSection("GameEdge");
+
+// Before binding: a Handoff section missing a positional field would otherwise fail inside the
+// binder, naming a constructor parameter rather than the setting.
+if (CredentialSettings.Validate(section) is { Count: > 0 } credentialErrors)
+{
+    throw new InvalidOperationException(
+        "Configuration section 'GameEdge' is invalid: " + string.Join(" ", credentialErrors));
+}
+
+var options = section.Get<GameEdgeOptions>();
 
 // `required` binds nothing: it is a compile-time obligation on the initialiser, and the
 // configuration binder does not enforce it. A section that exists but omits WorkloadBaseAddress
@@ -32,6 +43,15 @@ if (StreamingRoutes.Validate(options) is { Count: > 0 } streamingErrors)
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<EdgeTelemetry>();
+
+// Terminate mode: Identity's bearer chain establishes the caller from the issuer's pinned keys, and
+// the signer vouches for them to the workload. The key is read here, so an unreadable one stops the
+// edge before it binds. Pass-through composes neither.
+if (options.CredentialMode == CredentialMode.Terminate)
+{
+    builder.Services.AddSingleton(HandoffSigner.Load(options.Handoff!, TimeProvider.System));
+    builder.Services.AddSingleton<IPlatformModule>(new IdentityModule());
+}
 
 // No cookie container. The factory's default handler keeps one, and the pooled handler serves every
 // caller, so a workload's Set-Cookie was stored once and replayed on every later caller's request —

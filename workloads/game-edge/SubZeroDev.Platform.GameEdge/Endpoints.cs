@@ -54,17 +54,38 @@ public static class GameEdgeEndpointExtensions
             ?? throw new InvalidOperationException(
                 "No ambient operation scope is open; OperationScopeMiddleware must run before this route.");
 
+        var options = context.RequestServices.GetRequiredService<GameEdgeOptions>();
+        var pathAndQuery = context.Request.Path + context.Request.QueryString;
+
+        // Terminate mode vouches only for an account the bearer chain established; anyone else is
+        // refused here, before the body is read or anything reaches the workload (invariants 105, 106).
+        string? assertion = null;
+        if (options.CredentialMode == CredentialMode.Terminate)
+        {
+            var principal = scopeAccessor.Current.Principal;
+            if (principal.Kind != PrincipalKind.Account)
+            {
+                await WriteEdgeErrorAsync(context, new CredentialRequiredEdgeError(), correlation.Current).ConfigureAwait(false);
+                return;
+            }
+
+            assertion = context.RequestServices.GetRequiredService<HandoffSigner>()
+                .Sign(principal.Id, context.Request.Method, pathAndQuery, correlation.Current);
+        }
+
         using var bodyStream = new MemoryStream();
         await context.Request.Body.CopyToAsync(bodyStream, context.RequestAborted).ConfigureAwait(false);
 
         var request = new ForwardedRequest(
             new HttpMethod(context.Request.Method),
-            context.Request.Path + context.Request.QueryString,
+            pathAndQuery,
             bodyStream.ToArray(),
             context.Request.ContentType,
-            trace);
+            trace)
+        {
+            Assertion = assertion,
+        };
 
-        var options = context.RequestServices.GetRequiredService<GameEdgeOptions>();
         if (StreamingRoutes.Match(options.StreamingRoutes, context.Request.Path.Value ?? string.Empty) is { } route)
         {
             await StreamAsync(context, forwarder, request, route, correlation.Current).ConfigureAwait(false);
@@ -189,6 +210,7 @@ public static class GameEdgeEndpointExtensions
         {
             WorkloadUnreachableEdgeError => StatusCodes.Status503ServiceUnavailable,
             WorkloadTimeoutEdgeError => StatusCodes.Status504GatewayTimeout,
+            CredentialRequiredEdgeError => StatusCodes.Status401Unauthorized,
             _ => StatusCodes.Status500InternalServerError,
         };
         context.Response.ContentType = "application/json; charset=utf-8";

@@ -14,7 +14,12 @@ public sealed record ForwardedRequest(
     string PathAndQuery,
     ReadOnlyMemory<byte> Body,
     string? ContentType,
-    TraceContext Trace);
+    TraceContext Trace)
+{
+    /// <summary>The signed principal assertion, in terminate mode. Internal so that no record printer
+    /// or caller outside the edge ever sees it (invariant 108).</summary>
+    internal string? Assertion { get; init; }
+}
 
 /// <summary>The workload's answer, unaltered. <see cref="Body"/> is bytes and is returned
 /// byte-for-byte — any re-encoding here would fail Stage 2's byte comparison invisibly.</summary>
@@ -191,6 +196,13 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
             {
                 message.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
             }
+        }
+
+        // The caller's own headers are never copied, so its Authorization and any assertion it sent
+        // stop here (invariants 98 and 102); the only assertion the workload sees is the edge's.
+        if (request.Assertion is { } assertion)
+        {
+            message.Headers.TryAddWithoutValidation(HandoffSigner.HeaderName, assertion);
         }
 
         message.Headers.TryAddWithoutValidation("traceparent", request.Trace.TraceParent);

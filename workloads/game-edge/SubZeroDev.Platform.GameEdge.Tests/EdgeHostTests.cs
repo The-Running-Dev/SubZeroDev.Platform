@@ -145,6 +145,7 @@ public sealed class EdgeHostTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", workload.BaseAddress);
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:00.300");
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
@@ -168,6 +169,7 @@ public sealed class EdgeHostTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
         });
@@ -185,6 +187,7 @@ public sealed class EdgeHostTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:00");
         });
@@ -219,6 +222,7 @@ public sealed class EdgeHostTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
             builder.UseSetting("GameEdge:ForwardTimeout", forwardTimeout);
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
@@ -248,6 +252,7 @@ public sealed class EdgeHostTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:10");
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
@@ -295,6 +300,7 @@ public sealed class EdgeHostTests
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:CredentialMode", "PassThrough");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", workloadBaseAddress.ToString());
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
