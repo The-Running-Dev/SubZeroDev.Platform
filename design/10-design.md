@@ -1,8 +1,9 @@
 # Design — principals (G3)
 
 **Document status:** Design. Derived from [`00-brief.md`](00-brief.md) and the approach the owner
-chose on 2026-11-01, a **signed principal handoff**. If the brief changes, this is re-derived, not
-patched.
+chose on 2026-11-01, a **signed principal handoff**. Re-derived on 2026-11-02 against the brief's
+amendment and the owner's answers to Owner questions 1–9. If the brief changes, this is re-derived,
+not patched.
 
 What this document does **not** decide is already owned elsewhere.
 [`engine-hosting-contract.md`](../docs/docs/engine-hosting-contract.md) owns the game surface's width
@@ -17,9 +18,10 @@ database, and G3 does not migrate it onto game-service or replace its store.
 - **Fact** — read from the tree, the brief or a recorded decision, and cited.
 - **Recommendation** — this design's choice. Each is logged in [`90-decisions.md`](90-decisions.md)
   with what it rejected, and the owner can overturn it there.
-- **Owner question** — open, and listed under [*Open questions*](#open-questions). Nothing in this
-  document settles one. Where a mechanism depends on the answer, the design names the dependency
-  and stops.
+- **Owner question** — listed under [*Open questions*](#open-questions). Nothing in this document
+  settles one. Where a mechanism depends on an open one, the design names the dependency and stops.
+- **Owner ruling** — the owner's answer to an Owner question, dated and logged in
+  [`90-decisions.md`](90-decisions.md).
 
 Five facts shape almost everything below.
 
@@ -59,8 +61,8 @@ It is `(issuer, subject)`, both non-empty, with nothing derived and nothing hash
 that module composed, a principal that later creates a Platform account authenticates as
 `(platform.account, <id>)` instead of its raw pair. Every row it owned would then become
 unreachable through a change of key, not of owner. Leaving the module out keeps the owner key
-stable for G3's lifetime. Whether account deletion involves a Platform account record is part of
-Owner question 2.
+stable for G3's lifetime. Account deletion touches no Platform account record *(Owner ruling,
+question 2)*.
 
 ### The handoff assertion
 
@@ -108,13 +110,11 @@ the engine's empty profile. No new refusal path is introduced.
 `serialize()` output under the decorator follows from that, and the proof asserts it rather than
 assuming it.
 
-**Pre-G3 rows** have no owner. Their treatment is Owner question 3. The mechanism is the same
-whichever answer is chosen. The migration gives every existing row a **reserved empty owner**, `''`
-for both columns. No principal can ever hold that owner, because the handoff refuses an empty
-issuer or subject. If the answer is "unreachable until swept", nothing more is needed for sessions
-and saves, because G2's sweep already bounds them. Profiles are never swept, so a reserved-owner
-profile would stay unreachable and unremoved until the answer says otherwise. If the answer is
-deletion, the same migration deletes those rows instead.
+**Pre-G3 rows are deleted at migration** *(Owner ruling, question 3)*. The migration adds the owner
+columns with the **reserved empty owner**, `''` for both, as their default, then deletes every row
+present in the same run. The default stays, so a row a still-running G2 instance writes during the
+rollout takes the reserved owner. No principal can ever hold it, because the handoff refuses an
+empty issuer or subject.
 
 ### The account surface's projection
 
@@ -127,16 +127,16 @@ carries a blob or a scene, so *no hosted endpoint returns engine state* holds.
 | Where | Value | Notes |
 |---|---|---|
 | Edge | **Credential mode**: `Terminate` or `PassThrough` | Per deployment. Startup refuses a mode its required settings do not support |
-| Edge, terminate | Platform Identity's bearer settings | Unchanged from D5: issuer, audiences, algorithms and key discovery |
-| Edge, terminate | Handoff signing key, key id, issuer, audience and lifetime | The private key is mounted as a secret, never set inline |
-| Edge | Abuse-limit policy | Key, window and permit count. **The values are Owner question 8** |
-| Edge | Trusted forwarding proxies | Empty by default. Depends on Owner question 5 |
-| game-service | Handoff issuer, audience, public keys by key id, clock tolerance | No private material. More than one key id is accepted so rotation needs no simultaneous restart |
+| Edge, terminate | Platform Identity's bearer settings | D5's settings with the issuer's keys pinned and no discovery address *(Owner ruling, question 6)* |
+| Edge, terminate | Handoff signing key, key id, issuer, audience and lifetime | The private key is mounted as a secret, never set inline. The lifetime must not exceed game-service's maximum |
+| Edge | Abuse-limit policy | Window and permit count. Default 60 requests per 60 seconds *(Owner ruling, question 8)* |
+| Edge | Trusted forwarding proxies | Empty by default. Deployed, the existing reverse proxy's address *(Owner ruling, question 5)* |
+| game-service | Handoff issuer, audience, public keys by key id, clock tolerance, maximum lifetime | No private material. More than one key id is accepted so rotation needs no simultaneous restart |
 
 ### Not modelled
 
-There is no session in the edge and no cookie jar. There is no token cache beyond Identity's key
-set. There is no ownership-transfer record, no sharing, and no guest ownership; the last is a
+There is no session in the edge and no cookie jar. There is no token cache, and no key set beyond
+the pinned keys. There is no ownership-transfer record, no sharing, and no guest ownership; the last is a
 brief non-goal. There is no tenant in the assertion: game-service stays on the implicit tenant G2
 supplies.
 
@@ -215,9 +215,9 @@ rejected (*Alternatives considered*).
   forwarding: `401`, `CredentialRequired`. Nothing reaches game-service.
 - **A rejected, expired or malformed token:** Platform answers `401` with `CredentialRejected` before
   the route runs.
-- **No usable key material, or a provider failure:** Platform answers `401` with
-  `KeyMaterialUnavailable` or `ProviderFailed`. Identity's key-set check reports the edge degraded
-  or unhealthy on readiness (*Failure modes*).
+- **A token signed by a key not pinned:** `401 CredentialRejected`, like any other bad signature.
+- **A provider failure:** Platform answers `401` with `ProviderFailed`. With pinned keys,
+  `KeyMaterialUnavailable` cannot occur.
 
 ### 4. Direct access to game-service
 
@@ -231,9 +231,9 @@ assertions with a test key pair instead.
 - **List saves:** steps 1–7, then the account surface reads the owner's saves across every profile
   through the decorated store, and returns the projection.
 - **Delete account:** steps 1–7, then one transaction deletes every `session`, `save`, `profile` and
-  `profile_achievement` row the owner holds in the tenant. **That set is the floor every answer to
-  Owner question 2 shares.** Anything beyond it waits on the answer: the workload's own data,
-  Platform account mappings, credentials, the external issuer, reversibility and in-flight writes.
+  `profile_achievement` row the owner holds in the tenant, and nothing else, irreversibly *(Owner
+  ruling, question 2)*. Platform account mappings, sign-ins, credentials, the issuer's account and
+  Adventures' database are untouched, and no copy is kept.
 
 ### 6. The credential policy, header by header
 
@@ -257,8 +257,8 @@ both modes.
 
 **Cookies are not rewritten.** *(Recommendation.)* The precondition is that the edge answers at the
 workload's public host, so a cookie set without `Domain` binds to the right host. The tests assert
-`Set-Cookie` bytes unchanged. If cutover (Owner question 5) puts the edge on a different host, that
-precondition fails visibly instead of silently.
+`Set-Cookie` bytes unchanged. The reverse proxy routes Adventures' API host to the edge *(Owner
+ruling, question 5)*, so the precondition holds, and existing sign-ins continue.
 
 ### 7. Probes
 
@@ -276,10 +276,15 @@ loopback unless `GAME_SERVICE_HOST` is set.
 
 ### The simplest initial topology
 
-**Recommendation:** reverse proxy → one edge per workload → that workload, with one edge instance
-each. The edge's position relative to the proxy (behind it, or taking over TLS) is Owner question 5.
-This design works either way. Behind the proxy, the edge trusts `X-Forwarded-For` only from the
-configured proxy addresses, and per-address limits key on that.
+Reverse proxy → one edge per workload → that workload, with one edge instance each. The edge sits
+behind the existing reverse proxy, which keeps TLS, and Platform owns the edge's deployment *(Owner
+ruling, question 5)*. The edge trusts `X-Forwarded-For` only from the configured proxy address, and
+per-address limits key on that. Cutover changes the proxy's route for Adventures' API host to the
+edge, with no downtime. Rollback restores the direct route.
+
+game-service runs live on the same VPS, behind its own edge under its own hostname, and signs
+players in through Adventures' OIDC issuer *(Owner ruling, question 7)*. The hostname is not yet
+chosen.
 
 ### Who can reach the listener, and who can assert a principal
 
@@ -296,52 +301,60 @@ game-service's guarantee depend on how every future compose file, proxy route an
 wired. CI cannot prove that wiring, and one misplaced route defeats it silently. With signing, the
 trust boundary is the key, so the guarantee holds whatever the topology. **Adventures needs no
 handoff.** It authorizes from its own cookie session, so reaching its listener directly bypasses
-nothing Platform enforces. Whether its direct route stays public after cutover is Owner question 5.
+nothing Platform enforces. All of its API moves behind the edge *(Owner ruling, question 4)*, and
+the proxy keeps no direct route except as rollback.
 
 **"Implementing Identity locally."** game-service verifies one Platform-issued key and holds no
-issuer, token, discovery or account logic. This design reads that as adopting Platform's Identity,
-not implementing it. **The reading is the owner's to confirm** (Owner question 9).
+issuer, token, discovery or account logic. That counts as adopting Platform's Identity, not
+implementing it *(Owner ruling, question 9)*.
+
+**MCP.** MCP tool calls reach game-service only through the edge, and are refused a foreign id
+exactly as HTTP operations are *(Owner ruling, question 1)*. Coverage comes from the same verifier
+and decorator; nothing MCP-specific is added.
 
 ### A second edge instance
 
 Ownership is unaffected. The edge is stateless; both instances sign with keys game-service trusts,
 and no affinity is needed. **Abuse limits multiply by instance count**, because each instance counts
-alone. The instance count and any shared enforcement are Owner question 8. No supported-capacity
-commitment is made here.
+alone. G3 runs one instance per workload, with no shared enforcement and no capacity commitment
+*(Owner ruling, question 8)*.
 
 ### Steady-state dependencies
 
-The edge depends on the issuer's key set. It refreshes the set in the background, and cached keys
-keep validating while the issuer is unreachable. game-service depends on nothing external for
-authentication. **Whether G2's fully-offline steady state still binds G3 is Owner question 6.**
-Under termination, the issuer's key endpoint is the one new outbound dependency, and only at
-refresh.
+G2's fully-offline steady state binds G3 *(Owner ruling, question 6)*. The edge validates against
+the issuer's keys pinned in its configuration and fetches nothing, so it opens no outbound
+connection except to its workload. game-service depends on nothing external for authentication.
+Rotating the issuer's keys is an operator step: pin the new key, then let the issuer sign with it.
 
 ### Evidence
 
 **Recommendation:** CI, from a fresh clone, composes the real edge, the real game-service, Postgres
-and a **test issuer serving a real discovery document and key set, signing real tokens**. No mocked
-authentication stands in for the chain. It proves:
+and a **test issuer signing real tokens**, whose public keys the edge pins. No mocked authentication
+stands in for the chain. It proves:
 
 - two principals, and a cross-principal refusal on every operation carrying a session, save or
   profile id
 - account save listing and account deletion
 - byte-identical `serialize()` output, decorated against undecorated
-- missing, expired and invalid credentials, and issuer failure
+- missing, expired and invalid credentials, and validation continuing with the issuer stopped
+- an MCP tool call refused another principal's id
 - direct workload access with an absent, forged, expired or mis-bound assertion refused
 - every header rule in the table above, through buffered and streamed paths
 
 Adventures' end-to-end proofs of guest session, OIDC sign-in and cross-origin write run against a
-pinned Adventures revision, pointed at the same test issuer. **Fact:** Adventures' OIDC client is
-generic, so a test issuer is a configuration change (`server/src/identity/oidc.ts`). Whether
-game-service also needs a **live** deployment in G3 is Owner question 7.
+pinned Adventures revision, pointed at the same test issuer's discovery document. **Fact:**
+Adventures' OIDC client is generic, so a test issuer is a configuration change
+(`server/src/identity/oidc.ts`). It is also a confidential client that keeps its tokens
+server-side, so it obtains no token a game-service caller could present. Which client registration
+does is an open Owner question.
 
 ## Failure modes
 
 | Failure | Observable outcome | Recovery |
 |---|---|---|
-| Issuer unreachable at refresh, keys cached | Requests keep validating. Readiness reports degraded | Background refresh retries |
-| No key material at all | `401 KeyMaterialUnavailable`. Readiness reports unhealthy | Issuer reachable again |
+| Issuer unreachable | Nothing: the edge never contacts it | — |
+| Issuer rotates to a key not yet pinned | Tokens signed with it are refused `401 CredentialRejected` | Operator pins the new key |
+| Pinned keys missing, or a discovery address set, at edge startup | The edge refuses to start, naming the setting | Operator |
 | Provider failure mid-validation | `401 ProviderFailed` | Per request |
 | Handoff signing key missing or unreadable at edge startup | The edge refuses to start, naming the setting | Operator |
 | game-service handoff keys missing at startup | game-service refuses to start, naming the setting. It never starts open | Operator |
@@ -349,7 +362,7 @@ game-service also needs a **live** deployment in G3 is Owner question 7.
 | Edge and game-service clocks differ beyond tolerance | Every forwarded request is refused `401` | Fix the clock. The tolerance is configured, and one host shares one clock |
 | Key rotation half-done | Requests signed with a key id game-service does not hold are refused | Rotation order: add the public key, then switch the signer, then retire the old key |
 | Abuse limit reached | `429` with `Retry-After` and code `RateLimited` | Wait out the window |
-| Flood of refused credentials | Each costs one validation. The limiter runs after authentication, so refused credentials are **not** counted against a limit | Owner question 8 decides whether pre-authentication limiting belongs at the reverse proxy |
+| Flood of refused credentials | Each costs one validation. The limiter runs after authentication, so refused credentials are **not** counted against a limit | None in G3: nothing limits before authentication *(Owner ruling, question 8)* |
 | Store unreachable | Unchanged from G2: `503 storage_failure` | Unchanged |
 | A foreign id | Identical to an unknown one | — |
 | Account deletion fails partway | Nothing is deleted. It is one transaction | Retry |
@@ -365,9 +378,9 @@ game-service also needs a **live** deployment in G3 is Owner question 7.
   shared state for authentication.
 - **Account deletion and in-flight writes.** A write that commits before the deletion transaction is
   deleted with the rest. An update that arrives after it finds no row and fails as G2 already
-  defines. **A new session created after deletion with a still-valid credential succeeds today.**
-  Whether it must not is Owner question 2. The mechanism that would stop it, an owner tombstone
-  checked on insert, is designed only once the answer exists.
+  defines. **A new session created after deletion with a still-valid credential succeeds**, and
+  starts a new, empty account under the same owner *(Owner ruling, question 2)*. Nothing tombstones
+  the owner.
 - **Abuse-limit counters** are per edge instance and in memory, so a restart resets them.
 
 ## Alternatives considered
@@ -437,32 +450,23 @@ with a configuration value in front of it. The harnesses sign with a test key in
 
 ## Open questions
 
-These are the brief's open items that design cannot settle, plus one interpretation this design
-depends on. Each is the owner's to answer. Where this document recommends an answer, the
-recommendation is labelled and nothing depends on it being accepted.
+Owner questions 1–9 were answered on 2026-11-02; each answer is logged in
+[`90-decisions.md`](90-decisions.md) and applied above where it is marked *Owner ruling*.
 
-1. **MCP's path.** Is ownership on the MCP path in G3's scope? *What depends on it:* the verifier
-   gates every non-probe path, MCP's included. With enforcement in the store, an MCP tool call
-   without an assertion can neither read nor write owned state. If MCP is in scope, MCP clients
-   authenticate at the edge like HTTP callers, and coverage comes from the same gate. If it is not,
-   MCP has no working path to owned state in a deployment with the verifier on, and G3 must say so
-   rather than leave a bypass. Listing MCP among the edge's callers does not resolve this.
-2. **Account deletion.** What it removes beyond game-service's owned rows. Its effect on Platform
-   account mappings, active sign-ins, credentials and the external issuer. Whether it is reversible.
-   How writes already in flight, and creations by a credential still valid afterwards, are treated.
-3. **Pre-G3 ownerless rows.** Deleted at migration, or unreachable until swept (and, for profiles,
-   kept indefinitely). *Recommendation:* unreachable under the reserved empty owner, with sessions
-   and saves left to G2's sweep.
-4. **Which Adventures routes move behind the edge.** All of its API, or only those #340 names.
-5. **Live cutover and topology.** Whether the edge sits behind the existing reverse proxy or takes
-   over TLS. Which repository owns deployment. How existing Adventures sign-ins are treated. The
-   rollback procedure and acceptable downtime.
-6. **G2's fully-offline steady state.** Whether it still binds G3, given the edge's background
-   key-set refresh.
-7. **A live game-service deployment.** Whether G3 requires one. The brief's live proof is
-   Adventures.
-8. **Abuse limits.** Their values, key and enforcement topology, the edge instance count, whether
-   enforcement must be shared, whether refused credentials are limited before authentication, and
-   any capacity commitment.
-9. **"Not implementing Identity locally."** Whether verifying one Platform-issued key counts as
-   adopting Platform's Identity. This design reads it as yes.
+1. **MCP's path** — in scope.
+2. **Account deletion** — game-service's owned rows only, irreversibly.
+3. **Pre-G3 ownerless rows** — deleted at migration.
+4. **Adventures' routes** — all of its API moves behind the edge.
+5. **Cutover and topology** — behind the existing reverse proxy, deployed by Platform, existing
+   sign-ins kept, no downtime, rollback by the proxy's direct route.
+6. **Offline steady state** — binds; the edge pins the issuer's keys.
+7. **A live game-service** — yes, on the same VPS under its own hostname, through Adventures' OIDC
+   issuer.
+8. **Abuse limits** — 60 per 60 seconds, per principal else per address, one instance, in process.
+9. **Adopting Identity** — yes.
+
+Still open:
+
+- **The live game-service hostname.** Not yet chosen.
+- **The game-service client at Adventures' issuer.** Which client registration obtains tokens for
+  game-service, and so the audience the edge accepts.

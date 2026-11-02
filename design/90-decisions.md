@@ -12,21 +12,133 @@ belongs in `docs/docs/adr/`.
 
 ## Open
 
-The owner's questions, numbered as in [`10-design.md`](10-design.md#open-questions). None is settled
-by any entry below.
+The owner answered Open questions 1–9 on 2026-11-02 (entries below). Still open, and settled by no
+entry below:
 
-1. Whether ownership on the MCP path is in G3's scope.
-2. What account deletion removes beyond game-service's owned rows, and what it guarantees after.
-3. Whether pre-G3 ownerless rows are deleted at migration or left unreachable.
-4. Which Adventures routes move behind the edge.
-5. Live cutover and topology: proxy position, deployment ownership, existing sign-ins, rollback,
-   downtime.
-6. Whether G2's fully-offline steady state still binds G3.
-7. Whether G3 requires a live game-service deployment.
-8. Abuse-limit values, key, enforcement topology, edge instance count and any capacity commitment.
-9. Whether verifying one Platform-issued key counts as adopting Platform's Identity.
+- The live game-service hostname.
+- Which client registration at Adventures' OIDC issuer obtains tokens for game-service, and so the
+  audience the edge accepts.
 
 ---
+
+### 2026-11-02 — Verifying Platform's bearer chain counts as adopting Platform's Identity
+
+Context: Open question 9. The edge composes Identity's bearer authentication; game-service verifies
+only the edge's handoff.
+Chosen: yes, as the owner ruled. G3 adopts Identity through the edge's bearer chain and composes no
+other Identity module.
+Rejected: **composing Identity's account module as well** — re-keys owners when an account is created
+(2026-11-01, owner key). **game-service validating bearer tokens itself** — a second authentication
+stack (2026-11-01, handoff).
+Reversibility: cheap
+
+### 2026-11-02 — Abuse limits: 60 requests per 60 seconds per principal, else per address, in process
+
+Context: Open question 8. The limiter's placement was decided on 2026-11-01; its values, key order
+and topology were not.
+Chosen: one edge instance per workload, limited in process, keyed by principal and otherwise by
+client address, never before authentication. Shipped default 60 requests per 60 seconds. No shared
+enforcement and no capacity commitment.
+Rejected: **limiting before authentication as well** — counts refused credentials against an address
+for no ownership benefit. **A shared limiter for several instances** — a stateful dependency for an
+instance count nobody plans. **A stated capacity commitment** — nothing measures it yet.
+Reversibility: cheap
+
+### 2026-11-02 — game-service is deployed live, on the same VPS under its own hostname
+
+Context: Open question 7. G3's CI evidence was decided on 2026-11-01; whether a live game-service is
+also required was not.
+Chosen: yes. game-service runs behind its own edge on the existing VPS, under its own hostname, and
+signs players in through Adventures' OIDC issuer. The hostname is not yet chosen, nor is the client
+registration that obtains its tokens.
+Rejected: **CI evidence only** — leaves the terminate path unproven outside CI, with only
+Adventures' pass-through live. **A separate host** — a second machine for one workload.
+Reversibility: cheap
+
+### 2026-11-02 — G2's offline steady state binds: the edge pins the issuer's keys and fetches nothing
+
+Context: Open question 6. Background key-set refresh from a discovery document is an outbound
+dependency in steady state.
+Chosen: it binds. In terminate mode the edge uses Identity's `BearerSettings.SigningKeys`, and startup
+refuses a discovery address (invariant 125). Rotation is an operator step: pin the new key before the
+issuer signs with it. This supersedes the key-set readiness reporting in 2026-11-01, "Authentication
+failures keep Platform's mapping"; `KeyMaterialUnavailable` cannot occur with pinned keys.
+Rejected: **discovery with background refresh** — an outbound dependency on every edge. **Discovery
+once at startup** — still a startup dependency on the issuer, and a stale set after rotation
+anyway.
+Reversibility: cheap — Identity accepts either key source.
+
+### 2026-11-02 — Cutover: the edge sits behind the existing reverse proxy, and Platform deploys it
+
+Context: Open question 5.
+Chosen: the existing reverse proxy keeps TLS and public routing and routes Adventures' API host to
+the edge, and the edge lists the proxy in `TrustedProxies`. Platform owns the edge's deployment. Existing
+Adventures sign-ins continue, with no downtime. Rollback restores the proxy's direct route to
+Adventures.
+Rejected: **the edge in front of the proxy, terminating TLS** — moves certificates into the edge for
+no G3 requirement. **Adventures owning the edge's deployment** — splits one component's release
+across repositories. **Forcing every player to sign in again** — pass-through keeps the cookie, so
+nothing requires it.
+Reversibility: cheap — rollback is one proxy route.
+
+### 2026-11-02 — All of Adventures' API moves behind the edge
+
+Context: Open question 4. #340 names the signed-in routes that bypass the edge today.
+Chosen: every Adventures API route is served through the edge, so no direct route remains after
+cutover.
+Rejected: **only #340's routes** — leaves a direct route beside the edge, the bypass the brief closes.
+Reversibility: cheap
+
+### 2026-11-02 — Pre-G3 rows are deleted at migration
+
+Context: Open question 3. The design recommended leaving them unreachable under the reserved empty
+owner.
+Chosen: the G3 migration deletes every row of the four tables present when it runs (invariant 128).
+The reserved empty owner remains, for rows a still-running G2 instance writes afterwards.
+Rejected: **leaving them unreachable** — keeps data no player can reach or delete.
+Reversibility: one-way — deleted rows are not recoverable.
+
+### 2026-11-02 — Account deletion removes game-service's owned rows only, irreversibly
+
+Context: Open question 2. Invariant 120 fixed the floor; everything beyond it was open.
+Chosen: deletion removes game-service's owned rows in one transaction and nothing else: no Platform
+account mapping, sign-in, credential, issuer account or Adventures data (invariant 126). It keeps no
+copy. A write committed before deletion is deleted with the rest; a later write by a still-valid
+credential starts a new, empty account (invariant 127).
+Rejected: **also revoking sign-ins or credentials** — G3 holds neither, and bearer tokens are not
+introspected. **A recovery window** — a retained copy of what the player asked to remove.
+**Refusing writes after deletion** — needs a tombstone keyed by owner, which is itself retained
+data.
+Reversibility: cheap to change the rule; each deletion is one-way.
+
+### 2026-11-02 — MCP tool calls are in G3's ownership scope
+
+Context: Open question 1. G1 named MCP as bypassing the edge.
+Chosen: in scope. MCP reaches game-service only through the edge, and each id-bearing tool is
+refused a foreign id exactly as the matching HTTP operation is (invariant 129).
+Rejected: **documenting MCP as unavailable in G3** — leaves "every operation carrying an id" short of
+its own wording.
+Reversibility: cheap
+
+### 2026-11-02 — The contract declares the lifetime maximum, the store's owner scope and a test minter
+
+Context: the slice plan found S1 and S2 needed signatures the contract left implicit.
+Chosen: `HandoffSettings.maxLifetimeSeconds`, `IncomingRequestLine`, the Store's owner-scope
+interfaces with `ownershipDecorator(storage, owner)`, the amended `ConformanceTarget`, and a
+test-support `mintTestAssertion`, all amended in one change.
+Rejected: **deriving the maximum from the edge's lifetime** — couples two deployments' settings
+silently. **Leaving the minter to S1** — every harness would grow its own. **Amending slice by
+slice** — the contract would disagree with itself between slices.
+Reversibility: cheap
+
+### 2026-11-02 — The brief's ownership wording: authority comes from the edge
+
+Context: the brief said ownership is "checked at the edge"; the design checks it in game-service,
+against a principal the edge vouches for.
+Chosen: the owner's wording, "Ownership is enforced on every operation carrying an id, against a
+principal only the edge can vouch for, and ids are unguessable."
+Rejected: **keeping "checked at the edge"** — describes approach A, which the design gate rejected.
+Reversibility: cheap
 
 ### 2026-11-01 — The process-lived lifecycle probe is wrapped per request, and the wrapped one is used
 
