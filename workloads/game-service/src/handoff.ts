@@ -11,7 +11,7 @@
 import { createPublicKey, verify } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 import { err, ok } from "./types.js";
 import type { HandoffRefusal, HandoffSettings, IncomingRequestLine, OwnerKey, Outcome } from "./types.js";
@@ -140,25 +140,33 @@ const DEFAULT_MAX_LIFETIME_SECONDS = 60;
 
 function seconds(raw: string | undefined, fallback: number): number | null {
   if (raw === undefined || raw.trim().length === 0) return fallback;
-  return /^\d+$/.test(raw.trim()) ? Number.parseInt(raw.trim(), 10) : null;
+  if (!/^\d+$/.test(raw.trim())) return null;
+  const value = Number.parseInt(raw.trim(), 10);
+  return Number.isSafeInteger(value) ? value : null;
 }
 
-/** One P-256 public key per `<key id>.pem` file in the named directory. Anything else in it — a key
- *  of another curve, a private key, an unreadable file — refuses the whole set rather than being
- *  skipped, because a skipped key is a rotation that silently did not happen. */
+const PEM_EXTENSION = /\.pem$/i;
+const PUBLIC_KEY_PEM = /^\s*-----BEGIN PUBLIC KEY-----[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----\s*$/;
+
+/** One P-256 public key per `<key id>.pem` file in the named directory, the extension matched in
+ *  any case. Anything else in such a file — a key of another curve, a private key (from which a
+ *  public key could otherwise be derived), a certificate, an unreadable file — refuses the whole set
+ *  rather than being skipped, because a skipped key is a rotation that silently did not happen. */
 function readKeys(directory: string): ReadonlyMap<string, KeyObject> | null {
   let names: string[];
   try {
-    names = readdirSync(directory).filter((name) => name.endsWith(".pem"));
+    names = readdirSync(directory).filter((name) => PEM_EXTENSION.test(name));
   } catch {
     return null;
   }
   const keys = new Map<string, KeyObject>();
   for (const name of names.sort()) {
     try {
-      const key = createPublicKey(readFileSync(join(directory, name)));
+      const pem = readFileSync(join(directory, name), "utf8");
+      if (!PUBLIC_KEY_PEM.test(pem)) return null;
+      const key = createPublicKey(pem);
       if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") return null;
-      keys.set(basename(name, ".pem"), key);
+      keys.set(name.replace(PEM_EXTENSION, ""), key);
     } catch {
       return null;
     }
@@ -175,10 +183,10 @@ export function handoffSettingsFromEnv(
   const keys = directory === undefined || directory.trim().length === 0 ? null : readKeys(directory);
   if (keys === null || keys.size === 0) return err({ setting: HANDOFF_KEYS_DIRECTORY_VARIABLE });
 
-  const issuer = env[HANDOFF_ISSUER_VARIABLE] ?? "";
-  if (issuer.trim().length === 0) return err({ setting: HANDOFF_ISSUER_VARIABLE });
-  const audience = env[HANDOFF_AUDIENCE_VARIABLE] ?? "";
-  if (audience.trim().length === 0) return err({ setting: HANDOFF_AUDIENCE_VARIABLE });
+  const issuer = (env[HANDOFF_ISSUER_VARIABLE] ?? "").trim();
+  if (issuer.length === 0) return err({ setting: HANDOFF_ISSUER_VARIABLE });
+  const audience = (env[HANDOFF_AUDIENCE_VARIABLE] ?? "").trim();
+  if (audience.length === 0) return err({ setting: HANDOFF_AUDIENCE_VARIABLE });
 
   const clockToleranceSeconds = seconds(env[HANDOFF_CLOCK_TOLERANCE_VARIABLE], DEFAULT_CLOCK_TOLERANCE_SECONDS);
   if (clockToleranceSeconds === null) return err({ setting: HANDOFF_CLOCK_TOLERANCE_VARIABLE });

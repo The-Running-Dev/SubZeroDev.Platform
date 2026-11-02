@@ -6,7 +6,8 @@
  * and byte-identity proofs, now carrying test-key assertions.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +16,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compose } from "../src/compose.js";
 import { createDispatcher } from "../src/dispatch.js";
-import { HANDOFF_KEYS_DIRECTORY_VARIABLE } from "../src/handoff.js";
+import {
+  HANDOFF_AUDIENCE_VARIABLE,
+  HANDOFF_CLOCK_TOLERANCE_VARIABLE,
+  HANDOFF_ISSUER_VARIABLE,
+  HANDOFF_KEYS_DIRECTORY_VARIABLE,
+  handoffSettingsFromEnv,
+} from "../src/handoff.js";
 import { buildHttpSurface } from "../src/http-surface.js";
 import { startWorkload } from "../src/lifecycle.js";
 import type { HandoffRefusal, StorageProfile, WorkloadConfiguration, WorkloadProcess } from "../src/types.js";
@@ -32,6 +39,7 @@ import {
   TEST_HANDOFF,
   TEST_KEY,
   TEST_OWNER,
+  TEST_PUBLIC_KEY,
 } from "./support/handoff.js";
 import type { AssertionClaims } from "./support/handoff.js";
 import { bodyText, contract, wireRequest } from "./support/harness.js";
@@ -144,6 +152,44 @@ describe("S1.1 — no verification key, no start", () => {
       return;
     }
     expect(started.error).toStrictEqual({ code: "ConfigurationInvalid", setting: "handoff.keys" });
+  });
+});
+
+describe("S1.1 — the key directory loads public keys only", () => {
+  function keyDirectory(files: Readonly<Record<string, string>>): string {
+    const directory = mkdtempSync(join(tmpdir(), "handoff-keys-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(directory, name), text);
+    return directory;
+  }
+  const publicPem = TEST_PUBLIC_KEY.export({ format: "pem", type: "spki" }).toString();
+  const privatePem = generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+    .privateKey.export({ format: "pem", type: "pkcs8" })
+    .toString();
+  const environment = (directory: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+    [HANDOFF_KEYS_DIRECTORY_VARIABLE]: directory,
+    [HANDOFF_ISSUER_VARIABLE]: "edge",
+    [HANDOFF_AUDIENCE_VARIABLE]: "service",
+    ...extra,
+  });
+
+  it("refuses the whole set when one file holds a private key", () => {
+    const settings = handoffSettingsFromEnv(environment(keyDirectory({ "a.pem": publicPem, "b.pem": privatePem })));
+    expect(settings).toStrictEqual({ ok: false, error: { setting: HANDOFF_KEYS_DIRECTORY_VARIABLE } });
+  });
+
+  it("loads a key whose extension is upper case, under its file name", () => {
+    const settings = handoffSettingsFromEnv(environment(keyDirectory({ "a.pem": publicPem, "rotated.PEM": publicPem })));
+    expect(settings.ok && [...settings.value.keys.keys()]).toStrictEqual(["a", "rotated"]);
+  });
+
+  it("refuses a tolerance beyond the safe-integer range, and trims issuer and audience", () => {
+    const directory = keyDirectory({ "a.pem": publicPem });
+    expect(handoffSettingsFromEnv(environment(directory, { [HANDOFF_CLOCK_TOLERANCE_VARIABLE]: "9".repeat(400) })))
+      .toStrictEqual({ ok: false, error: { setting: HANDOFF_CLOCK_TOLERANCE_VARIABLE } });
+    const trimmed = handoffSettingsFromEnv(
+      environment(directory, { [HANDOFF_ISSUER_VARIABLE]: " edge ", [HANDOFF_AUDIENCE_VARIABLE]: "service	" }),
+    );
+    expect(trimmed.ok && [trimmed.value.issuer, trimmed.value.audience]).toStrictEqual(["edge", "service"]);
   });
 });
 

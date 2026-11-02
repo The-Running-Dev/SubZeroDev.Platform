@@ -45,6 +45,9 @@ and `GAME_SERVICE_HANDOFF_MAX_LIFETIME_SECONDS` (default `60`) bound an assertio
 command above discards the private key, so only the probes answer; the proof harnesses mint their
 own test-key assertions.
 
+Until G3's S3 the edge signs nothing either, so an operation request sent through the edge below
+is refused the same way; only its health probes work end to end.
+
 ## Build and start the edge
 
 From the repository root, with the workload already running:
