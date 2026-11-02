@@ -12,8 +12,6 @@ import { describe, expect, it } from "vitest";
 import { ENGINE_VERSION } from "@the-running-dev/game-engine";
 
 import { compose } from "../src/compose.js";
-import { createDispatcher } from "../src/dispatch.js";
-import { buildHttpSurface } from "../src/http-surface.js";
 import {
   IMPLICIT_TENANT_ID,
   createReadVersionMap,
@@ -23,7 +21,7 @@ import {
 } from "../src/store.js";
 import type { Queryable } from "../src/store.js";
 import type { EngineInstant, HttpSurface, SemanticVersion, SessionRowVersion, StorageProfile, TenantId, WorkloadConfiguration, WireResponse } from "../src/types.js";
-import { contract, bodyJson, post } from "./support/harness.js";
+import { contract, bodyJson, perRequestSurface, post } from "./support/harness.js";
 import { CAMPAIGN_ID } from "./support/real-workload.js";
 import {
   RawSchemaClient,
@@ -33,7 +31,7 @@ import {
   openTestPool,
 } from "./support/database.js";
 import type { TestSchema } from "./support/database.js";
-import { TEST_HANDOFF } from "./support/handoff.js";
+import { TEST_HANDOFF, TEST_OWNER } from "./support/handoff.js";
 
 const ENGINE_VERSION_UNDER_TEST = ENGINE_VERSION as unknown as SemanticVersion;
 
@@ -61,11 +59,7 @@ async function durableSurface(
   if (!composed.ok) {
     throw new Error(`compose() failed: ${JSON.stringify(composed.error)}`);
   }
-  const built = buildHttpSurface(contract, createDispatcher(contract, composed.value.stores, composed.value.lifecycle));
-  if (!built.ok) {
-    throw new Error(`buildHttpSurface failed: ${JSON.stringify(built.error)}`);
-  }
-  return { surface: built.value, close: () => composed.value.close() };
+  return { surface: perRequestSurface(contract, composed.value.stores, TEST_OWNER), close: () => composed.value.close() };
 }
 
 describe("S6.1, S6.6 — two concurrent submissions resolve to one winner, and the loser leaves no trace", () => {
@@ -124,7 +118,7 @@ describe("S6.2 — readWritePauseMs at its default of 0 is inert", () => {
     const opened = await openDurableStore(configurationFor(schema.schema, { readWritePauseMs: 0 }), ENGINE_VERSION_UNDER_TEST);
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     try {
-      const persistence = opened.value.persistenceForRequest();
+      const persistence = opened.value.storage.persistence(TEST_OWNER);
       // Every write here is accepted, so each carries the next revision, as the engine's own
       // `submitAction` stamps it (`revision` is `0` on the first write, `+1` per accepted write).
       let revision = 0;
@@ -158,7 +152,7 @@ describe("S6.2 — readWritePauseMs at its default of 0 is inert", () => {
       );
       if (!pausedOpened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(pausedOpened.error)}`);
       try {
-        const pausedPersistence = pausedOpened.value.persistenceForRequest();
+        const pausedPersistence = pausedOpened.value.storage.persistence(TEST_OWNER);
         const atDefault: number[] = [];
         const withPause: number[] = [];
         for (let i = 0; i < samples; i++) {
@@ -212,6 +206,7 @@ describe("S6.3 — perturbation: with the version predicate removed, both concur
       const tenantId = IMPLICIT_TENANT_ID as unknown as TenantId;
       const insert = sessionInsertStatement(
         tenantId,
+        TEST_OWNER,
         {
           sessionId: "s6-3",
           blob: "{}",
@@ -250,8 +245,8 @@ describe("S6.3 — perturbation: with the version predicate removed, both concur
       });
 
       const [outcomeA, outcomeB] = await Promise.all([
-        writeSessionRow(unguardedPool, tenantId, ENGINE_VERSION_UNDER_TEST, 2_592_000, 150, versionsA, rowFor('{"a":true}')),
-        writeSessionRow(unguardedPool, tenantId, ENGINE_VERSION_UNDER_TEST, 2_592_000, 150, versionsB, rowFor('{"b":true}')),
+        writeSessionRow(unguardedPool, tenantId, TEST_OWNER, ENGINE_VERSION_UNDER_TEST, 2_592_000, 150, versionsA, rowFor('{"a":true}')),
+        writeSessionRow(unguardedPool, tenantId, TEST_OWNER, ENGINE_VERSION_UNDER_TEST, 2_592_000, 150, versionsB, rowFor('{"b":true}')),
       ]);
 
       expect(outcomeA).toEqual({ ok: true, value: "applied" });
@@ -269,7 +264,7 @@ describe("S6.4 — a direct adapter call with a stale read-version is rejected a
     const opened = await openDurableStore(configurationFor(schema.schema), ENGINE_VERSION_UNDER_TEST);
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     try {
-      const persistence = opened.value.persistenceForRequest();
+      const persistence = opened.value.storage.persistence(TEST_OWNER);
       await persistence.sessions.put({
         sessionId: "s6-4",
         blob: "{}",
@@ -332,9 +327,7 @@ describe("S6.5 — perturbation: the same scenario against an unreachable store 
     const composed = await compose(configuration, contract);
     if (!composed.ok) throw new Error(`compose() failed: ${JSON.stringify(composed.error)}`);
     try {
-      const built = buildHttpSurface(contract, createDispatcher(contract, composed.value.stores, composed.value.lifecycle));
-      if (!built.ok) throw new Error(`buildHttpSurface failed: ${JSON.stringify(built.error)}`);
-      const surface = built.value;
+      const surface = perRequestSurface(contract, composed.value.stores, TEST_OWNER);
 
       const [responseA, responseB]: [WireResponse, WireResponse] = await Promise.all([
         post(surface, "/v1/submit-action", { sessionId: "s6-5", actionId: "advance_ticks", params: { ticks: 1 } }),

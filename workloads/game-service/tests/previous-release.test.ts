@@ -5,7 +5,7 @@ import { migrateToHead } from "../src/migrations.js";
 import { RawSchemaClient, configurationFor, createTestSchema } from "./support/database.js";
 import type { TestSchema } from "./support/database.js";
 import {
-  candidateRuntime, loadReleaseRuntime, openCandidate, sessionLayer,
+  candidateRuntime, G2_ROW_OWNER, loadReleaseRuntime, openCandidate, sessionLayer,
 } from "./support/mixed-version.js";
 import type { ReleaseStore } from "./support/mixed-version.js";
 import type { DurableStore } from "../src/types.js";
@@ -38,7 +38,7 @@ async function withMixed(run: (previous: ReleaseStore, next: DurableStore, raw: 
 }
 
 async function requireSession(store: DurableStore, id: string): Promise<StoredSessionRecord> {
-  const record = await store.persistenceForRequest().sessions.get(id);
+  const record = await store.storage.persistence(G2_ROW_OWNER).sessions.get(id);
   if (!record) throw new Error(`Missing session ${id}`);
   return record;
 }
@@ -57,7 +57,7 @@ describe("previous release ↔ candidate on PostgreSQL", () => {
       for (let index = 0; index < 6; index += 1) {
         const candidateTurn = index % 2 === 0;
         const runtime = candidateTurn ? candidateRuntime : release;
-        await sessionLayer(runtime, (candidateTurn ? next : previous).persistenceForRequest())
+        await sessionLayer(runtime, candidateTurn ? next.storage.persistence(G2_ROW_OWNER) : previous.persistenceForRequest())
           .submitAction(sessionId, "stay");
         const state = await requireSession(next, sessionId);
         expect(state.revision).toBe(index + 1);
@@ -65,31 +65,32 @@ describe("previous release ↔ candidate on PostgreSQL", () => {
         expect((await raw.query("select engine_version from session where session_id = $1", [sessionId])).rows)
           .toEqual([{ engine_version: runtime.engine.ENGINE_VERSION }]);
       }
-      const newSave = await sessionLayer(candidateRuntime, next.persistenceForRequest()).saveGame(sessionId);
+      const newSave = await sessionLayer(candidateRuntime, next.storage.persistence(G2_ROW_OWNER)).saveGame(sessionId);
       const loadedByRelease = await sessionLayer(release, previous.persistenceForRequest()).loadGame(newSave.saveId);
       expect(JSON.parse((await requireSession(next, loadedByRelease.sessionId)).blob).actionLog).toHaveLength(6);
       const releaseSave = await sessionLayer(release, previous.persistenceForRequest()).saveGame(sessionId);
-      const loadedByNew = await sessionLayer(candidateRuntime, next.persistenceForRequest()).loadGame(releaseSave.saveId);
+      const loadedByNew = await sessionLayer(candidateRuntime, next.storage.persistence(G2_ROW_OWNER)).loadGame(releaseSave.saveId);
       expect(JSON.parse((await requireSession(next, loadedByNew.sessionId)).blob).actionLog).toHaveLength(6);
     });
   });
 
-  it("reads each side's profile writes without warnings, keeps kindData, and stores format 2", async () => {
+  it("reads the candidate's profile write without warnings; its own write after the G3 migration fails", async () => {
     await withMixed(async (previous, next, raw) => {
       const profileId = "shared-profile";
-      expect(await next.profiles.save({
+      expect(await next.storage.profiles(G2_ROW_OWNER).save({
         formatVersion: 3, profileId, achievements: [achievement("new")], terminals: [], kindData,
       })).toEqual({ ok: true, warnings: [] });
       const readByRelease = await previous.profiles.load(profileId);
       expect(readByRelease.warnings).toEqual([]);
       expect(readByRelease.profile.kindData).toEqual(kindData);
-      expect((await previous.profiles.save({
+      // The release's upsert names `on conflict (tenant_id, profile_id)`, which the G3 key no longer is.
+      expect(await previous.profiles.save({
         ...readByRelease.profile, achievements: [...readByRelease.profile.achievements, achievement("release")],
-      })).ok).toBe(true);
-      const readByNew = await next.profiles.load(profileId);
+      })).toEqual({ ok: false, warnings: [{ code: "profile_write_failed", profileId }] });
+      const readByNew = await next.storage.profiles(G2_ROW_OWNER).load(profileId);
       expect(readByNew.warnings).toEqual([]);
       expect(readByNew.profile.kindData).toEqual(kindData);
-      expect(readByNew.profile.achievements).toEqual(expect.arrayContaining([achievement("new"), achievement("release")]));
+      expect(readByNew.profile.achievements).toEqual([achievement("new")]);
       expect((await raw.query("select format_version from profile where profile_id = $1", [profileId])).rows)
         .toEqual([{ format_version: 2 }]);
     });
@@ -102,11 +103,11 @@ describe("previous release ↔ candidate on PostgreSQL", () => {
     try {
       expect((await migrateToHead(schema.connection)).ok).toBe(true);
       next = await openCandidate(configurationFor(schema.schema));
-      const layer = sessionLayer(candidateRuntime, next.persistenceForRequest());
+      const layer = sessionLayer(candidateRuntime, next.storage.persistence(G2_ROW_OWNER));
       const { sessionId } = await layer.createSession({ campaignId: "mixed-version", seed: "shared" });
       await layer.submitAction(sessionId, "stay");
       const saved = await layer.saveGame(sessionId);
-      await next.profiles.save({ formatVersion: 3, profileId: "rollback", achievements: [achievement("new")], terminals: [], kindData });
+      await next.storage.profiles(G2_ROW_OWNER).save({ formatVersion: 3, profileId: "rollback", achievements: [achievement("new")], terminals: [], kindData });
       await next.close();
       next = undefined;
 
@@ -125,7 +126,7 @@ describe("previous release ↔ candidate on PostgreSQL", () => {
 
       next = await openCandidate(configurationFor(schema.schema));
       expect((await requireSession(next, sessionId)).revision).toBe(2);
-      await sessionLayer(candidateRuntime, next.persistenceForRequest()).resumeSession(sessionId);
+      await sessionLayer(candidateRuntime, next.storage.persistence(G2_ROW_OWNER)).resumeSession(sessionId);
     } finally {
       await previous?.close();
       await next?.close();

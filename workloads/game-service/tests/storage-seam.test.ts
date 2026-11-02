@@ -13,7 +13,7 @@ import type { StorageDecorator, StorageSeam } from "../src/compose.js";
 import type { ContractPackage } from "@subzerodev/service-contract";
 import { ENGINE_VERSION } from "@the-running-dev/game-engine";
 import type { WorkloadConfiguration } from "../src/types.js";
-import { TEST_HANDOFF } from "./support/handoff.js";
+import { TEST_HANDOFF, TEST_OWNER } from "./support/handoff.js";
 
 function rawSeam(): StorageSeam {
   return {
@@ -102,8 +102,8 @@ describe("S13.9 — the in-memory configuration's no-op probe is composed behind
     expect(composed.ok).toBe(true);
     if (!composed.ok) return;
     try {
-      const sessionClassification = await composed.value.lifecycle.session("never-existed");
-      const saveClassification = await composed.value.lifecycle.save("never-existed");
+      const sessionClassification = await composed.value.lifecycle.session(TEST_OWNER, "never-existed");
+      const saveClassification = await composed.value.lifecycle.save(TEST_OWNER, "never-existed");
       expect(sessionClassification).toEqual({ ok: true, value: "absent" });
       expect(saveClassification).toEqual({ ok: true, value: "absent" });
     } finally {

@@ -10,7 +10,7 @@ import type { SessionStore } from "@the-running-dev/game-engine";
 
 import { compose } from "../../src/compose.js";
 import type { WorkloadConfiguration } from "../../src/types.js";
-import { TEST_HANDOFF } from "./handoff.js";
+import { TEST_HANDOFF, TEST_OWNER } from "./handoff.js";
 
 export const CAMPAIGN_ID = WORLD_GRAPH_MVP_CAMPAIGN_ID;
 
@@ -27,5 +27,5 @@ export async function realStore(): Promise<SessionStore> {
   if (!composed.ok) {
     throw new Error(`compose() failed: ${JSON.stringify(composed.error)}`);
   }
-  return composed.value.stores.forRequest();
+  return composed.value.stores.forRequest(TEST_OWNER).store;
 }

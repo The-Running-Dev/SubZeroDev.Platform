@@ -230,7 +230,7 @@ describe('S8.8 — the serialization handle orders by collate "C", not locale or
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     try {
-      const persistence = opened.value.persistenceForRequest();
+      const persistence = opened.value.storage.persistence({ issuer: "replay", subject: "replay" });
       // Under `collate "C"`, uppercase sorts before lowercase ("Bravo" before "alpha"); under a
       // locale-aware collation (e.g. `en-US-x-icu`) the two invert. Seeded in the order that would
       // expose either bug — an omitted `collate "C"` or a locale-default connection.

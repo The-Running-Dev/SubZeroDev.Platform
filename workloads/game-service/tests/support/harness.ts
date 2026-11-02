@@ -18,6 +18,7 @@ import type {
   HttpSurface,
   LifecycleProbe,
   McpSurface,
+  OwnerKey,
   StoreProvider,
   WireRequest,
   WireResponse,
@@ -75,12 +76,6 @@ export const absentProbe: LifecycleProbe = {
   save: async () => ok("absent"),
 };
 
-/** One `SessionStore` behind the provider seam: these tests control the store directly, and a
- *  provider that returns it every call is what `compose()`'s in-memory branch builds too. */
-function providerOf(store: SessionStore): StoreProvider {
-  return { forRequest: () => store };
-}
-
 /** The `Dispatcher` `surfaceOver` builds, for the tests that construct a surface over a deliberately
  *  broken operation table and never dispatch through it. */
 export function dispatcherOver(
@@ -88,7 +83,21 @@ export function dispatcherOver(
   source: ContractPackage = contract,
   lifecycle: LifecycleProbe = absentProbe,
 ): Dispatcher {
-  return createDispatcher(source, providerOf(store), lifecycle);
+  return createDispatcher(source, store, lifecycle);
+}
+
+/** An `HttpSurface` that builds a fresh dispatcher and surface over `forRequest(owner)` for every
+ *  request, as `serve` does after the handoff gate — the shape the concurrency tests need, since
+ *  one store shared by two in-flight requests would share their read versions. */
+export function perRequestSurface(source: ContractPackage, stores: StoreProvider, owner: OwnerKey): HttpSurface {
+  return {
+    handle(request: WireRequest): Promise<WireResponse> {
+      const ports = stores.forRequest(owner);
+      const built = buildHttpSurface(source, createDispatcher(source, ports.store, ports.lifecycle));
+      if (!built.ok) throw new Error(`buildHttpSurface failed: ${JSON.stringify(built.error)}`);
+      return built.value.handle(request);
+    },
+  };
 }
 
 export function surfaceOver(

@@ -14,7 +14,7 @@ import type { ProfileStore as OldProfiles, SessionPersistence as OldPersistence 
 import type { ProfileStore as ReleaseProfiles, SessionPersistence as ReleasePersistence } from "@the-running-dev/game-engine-previous-release";
 import { migrateToHead } from "../../src/migrations.js";
 import { openDurableStore } from "../../src/store.js";
-import type { DurableStore, DurableStoreConfiguration, Outcome, StoreError } from "../../src/types.js";
+import type { DurableStore, DurableStoreConfiguration, OwnerKey, Outcome, StoreError } from "../../src/types.js";
 import preUpgradeManifest from "../fixtures/pre-upgrade/manifest.json" with { type: "json" };
 import releaseManifest from "../fixtures/previous-release/manifest.json" with { type: "json" };
 
@@ -23,6 +23,11 @@ export const INSPECTED_UPGRADE_COMMIT = "d47a14ca4d366e0d5ca98adeef932ce8ab6173a
 /** The last vendored release, re-pinned on every engine upgrade (`previous-release.test.ts`). */
 export const PREVIOUS_RELEASE_COMMIT = "7c82c565a6c23743a5914fa2bdfe7fca5feb87e8";
 export const PREVIOUS_RELEASE_CANDIDATE = "0.13.0";
+/** The owner a row written by an ownerless G2-shape adapter takes: the column default, the reserved
+ *  empty owner no principal can hold (`20-contract.md`, "Existing rows"; invariant 117). The
+ *  candidate reads and writes as it here only so these tests can still compare the two runtimes'
+ *  rows; no request can reach it. */
+export const G2_ROW_OWNER: OwnerKey = { issuer: "", subject: "" };
 export interface OldStore {
   persistenceForRequest(): OldPersistence;
   profiles: OldProfiles;

@@ -10,7 +10,9 @@ import type { StoredSaveRecord, StoredSessionRecord } from "@the-running-dev/gam
 
 import { configurationFor, createTestSchema, defaultBounds, RawSchemaClient } from "./support/database.js";
 import { openDurableStore } from "../src/store.js";
-import type { SemanticVersion } from "../src/types.js";
+import type { OwnerKey, SemanticVersion } from "../src/types.js";
+
+const OWNER: OwnerKey = { issuer: "https://issuer.test", subject: "row-guards" };
 
 const ENGINE_VERSION = "1.0.0" as SemanticVersion;
 
@@ -47,7 +49,7 @@ describe("S13.1 — a session row whose column cannot satisfy its declared type 
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     const store = opened.value;
     try {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s13-1"));
 
       const raw = await RawSchemaClient.connect(schema.schema);
@@ -60,7 +62,7 @@ describe("S13.1 — a session row whose column cannot satisfy its declared type 
 
       let caught: unknown;
       try {
-        await store.persistenceForRequest().sessions.get("s13-1");
+        await store.storage.persistence(OWNER).sessions.get("s13-1");
       } catch (error) {
         caught = error;
       }
@@ -85,7 +87,7 @@ describe("S13.2 — the same seeding against a save row is classified the same w
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     const store = opened.value;
     try {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.saves.put(saveRecord("s13-2"));
 
       const raw = await RawSchemaClient.connect(schema.schema);
@@ -98,7 +100,7 @@ describe("S13.2 — the same seeding against a save row is classified the same w
 
       let caught: unknown;
       try {
-        await store.persistenceForRequest().saves.get("s13-2");
+        await store.storage.persistence(OWNER).saves.get("s13-2");
       } catch (error) {
         caught = error;
       }
@@ -114,7 +116,7 @@ describe("S13.2 — the same seeding against a save row is classified the same w
       // session row still classifies zero-rows-affected as `conflict`/`expired` from
       // `version`/`expires_at` alone, never as `RowUndeserializable` (S13.2's own claim).
       await persistence.sessions.put(sessionRecord("s13-2-session"));
-      const staleWrite = await store.persistenceForRequest().sessions.get("s13-2-session");
+      const staleWrite = await store.storage.persistence(OWNER).sessions.get("s13-2-session");
       expect(staleWrite).toBeDefined();
     } finally {
       await store.close();
@@ -134,7 +136,7 @@ describe("S13.2 — the same seeding against a save row is classified the same w
     if (!opened.ok) throw new Error(`openDurableStore failed: ${JSON.stringify(opened.error)}`);
     const store = opened.value;
     try {
-      await store.persistenceForRequest().saves.put(saveRecord("s13-2-host"));
+      await store.storage.persistence(OWNER).saves.put(saveRecord("s13-2-host"));
 
       const raw = await RawSchemaClient.connect(schema.schema);
       try {
@@ -145,7 +147,7 @@ describe("S13.2 — the same seeding against a save row is classified the same w
 
       let caught: unknown;
       try {
-        await store.persistenceForRequest().saves.get("s13-2-host");
+        await store.storage.persistence(OWNER).saves.get("s13-2-host");
       } catch (error) {
         caught = error;
       }
@@ -168,7 +170,7 @@ describe("S13.3 — the same seeding against profile/profile_achievement rows yi
     const store = opened.value;
     try {
       const profileId = "s13-3-profile";
-      await store.profiles.save({ formatVersion: 3, profileId, achievements: [{ campaignId: "c", achievementId: "a" }], terminals: [], kindData: [] });
+      await store.storage.profiles(OWNER).save({ formatVersion: 3, profileId, achievements: [{ campaignId: "c", achievementId: "a" }], terminals: [], kindData: [] });
 
       const raw = await RawSchemaClient.connect(schema.schema);
       try {
@@ -177,7 +179,7 @@ describe("S13.3 — the same seeding against profile/profile_achievement rows yi
         await raw.close();
       }
 
-      const loaded = await store.profiles.load(profileId);
+      const loaded = await store.storage.profiles(OWNER).load(profileId);
       expect(loaded.warnings.some((warning) => warning.code === "profile_corrupt")).toBe(true);
       expect(loaded.profile.achievements).toHaveLength(0);
     } finally {

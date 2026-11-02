@@ -29,6 +29,7 @@ import type { DurableWriteConflict, Queryable, SessionRowInput } from "../src/st
 import type {
   DurableStore,
   EngineInstant,
+  OwnerKey,
   SchemaName,
   SemanticVersion,
   SessionRowVersion,
@@ -43,6 +44,8 @@ import {
   openTestPool,
 } from "./support/database.js";
 import type { TestSchema } from "./support/database.js";
+
+const OWNER: OwnerKey = { issuer: "https://issuer.test", subject: "store-test" };
 
 const ENGINE_VERSION_A = "1.0.0" as SemanticVersion;
 const ENGINE_VERSION_B = "2.0.0" as SemanticVersion;
@@ -93,7 +96,7 @@ async function withSchema(run: (schema: TestSchema, store: DurableStore) => Prom
 describe("S3.1 — insert then guarded update", () => {
   it("inserts version 1, then a second put supplying the read version updates to version 2", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-1"));
 
       const raw = await RawSchemaClient.connect(schema.schema);
@@ -120,7 +123,7 @@ describe("S3.1 — insert then guarded update", () => {
 describe("S3.2 — stale read-version is classified conflict", () => {
   it("re-reads and throws SessionPersistenceConflict when the row's version has moved on", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-2"));
       await persistence.sessions.get("s3-2"); // map now holds version 1
 
@@ -149,7 +152,7 @@ describe("S3.2 — stale read-version is classified conflict", () => {
 describe("S3.3 — same version but expired is classified expired, not conflict", () => {
   it("classifies a same-version, already-expired row as expired", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-3"));
       await persistence.sessions.get("s3-3"); // map now holds version 1
 
@@ -178,7 +181,7 @@ describe("S3.3 — same version but expired is classified expired, not conflict"
 describe("S3.4 — a row absent from the store is classified conflict", () => {
   it("classifies a guarded update against a since-deleted row as conflict", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-4"));
       await persistence.sessions.get("s3-4"); // map now holds version 1
 
@@ -204,7 +207,7 @@ describe("S3.4 — a row absent from the store is classified conflict", () => {
 describe("S3.5 — an expired row is not found, independent of the sweep", () => {
   it("reports an expired session and save as not found without ever running a sweep", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-5-session"));
       await persistence.saves.put(saveRecord("s3-5-save"));
 
@@ -218,7 +221,7 @@ describe("S3.5 — an expired row is not found, independent of the sweep", () =>
         ]);
 
         // A fresh persistence instance: nothing about the earlier read survives to bias this one.
-        const freshPersistence = store.persistenceForRequest();
+        const freshPersistence = store.storage.persistence(OWNER);
         expect(await freshPersistence.sessions.get("s3-5-session")).toBeUndefined();
         expect(await freshPersistence.saves.get("s3-5-save")).toBeUndefined();
 
@@ -252,7 +255,7 @@ describe("S3.6 — a re-read that itself fails is classified conflict, never a S
         initialization: null,
       };
 
-      const inserted = await writeSessionRow(pool, tenantId, ENGINE_VERSION_A, 2_592_000, 0, versions, input);
+      const inserted = await writeSessionRow(pool, tenantId, OWNER, ENGINE_VERSION_A, 2_592_000, 0, versions, input);
       expect(inserted.ok && inserted.value).toBe("applied");
 
       // A concurrent writer moves the row's version on, exactly as in S3.2 — but this time the
@@ -273,6 +276,7 @@ describe("S3.6 — a re-read that itself fails is classified conflict, never a S
       const outcome = await writeSessionRow(
         reReadFails,
         tenantId,
+        OWNER,
         ENGINE_VERSION_A,
         2_592_000,
         0,
@@ -292,10 +296,10 @@ describe("S3.7 — blob round-trips byte for byte", () => {
   it("preserves duplicate object keys and a number requiring exact round-trip", async () => {
     await withSchema(async (_schema, store) => {
       const blob = '{"a":1,"a":2,"n":1.10,"nested":{"x":1.10,"x":2}}';
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-7", { blob }));
 
-      const fresh = store.persistenceForRequest();
+      const fresh = store.storage.persistence(OWNER);
       const record = await fresh.sessions.get("s3-7");
       expect(record?.blob).toBe(blob);
     });
@@ -307,10 +311,10 @@ describe("S3.8 — engine instants stored verbatim; host timestamps are timestam
     await withSchema(async (schema, store) => {
       const createdAt = "2026-01-01T00:00:00.123456789Z";
       const updatedAt = "2026-06-15T09:30:00.000000001Z";
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-8", { createdAt, updatedAt }));
 
-      const fresh = store.persistenceForRequest();
+      const fresh = store.storage.persistence(OWNER);
       const record = await fresh.sessions.get("s3-8");
       expect(record?.createdAt).toBe(createdAt);
       expect(record?.updatedAt).toBe(updatedAt);
@@ -370,20 +374,27 @@ describe("S3.9 — tenant_id in every statement", () => {
       initialization: null,
     };
     const sweeps = sweepStatements(tenantId, 10);
-    const statements = [
-      sessionSelectStatement(tenantId, "s1"),
-      sessionInsertStatement(tenantId, sessionInput, ENGINE_VERSION_A, 10),
-      sessionGuardedUpdateStatement(tenantId, sessionInput, ENGINE_VERSION_A, 10, 1n as SessionRowVersion),
-      sessionReclassifyStatement(tenantId, "s1"),
-      saveSelectStatement(tenantId, "sv1"),
-      saveListByProfileStatement(tenantId, "p1"),
-      saveUpsertStatement(tenantId, saveInput, ENGINE_VERSION_A, 10),
-      saveDeleteStatement(tenantId, "sv1", "2026-01-01T00:00:00.000Z" as EngineInstant),
-      sessionLifecycleStatement(tenantId, "s1"),
-      saveLifecycleStatement(tenantId, "sv1"),
-      sweeps.sessions,
-      sweeps.saves,
+    const owned = [
+      sessionSelectStatement(tenantId, OWNER, "s1"),
+      sessionInsertStatement(tenantId, OWNER, sessionInput, ENGINE_VERSION_A, 10),
+      sessionGuardedUpdateStatement(tenantId, OWNER, sessionInput, ENGINE_VERSION_A, 10, 1n as SessionRowVersion),
+      sessionReclassifyStatement(tenantId, OWNER, "s1"),
+      saveSelectStatement(tenantId, OWNER, "sv1"),
+      saveListByProfileStatement(tenantId, OWNER, "p1"),
+      saveUpsertStatement(tenantId, OWNER, saveInput, ENGINE_VERSION_A, 10),
+      saveDeleteStatement(tenantId, OWNER, "sv1", "2026-01-01T00:00:00.000Z" as EngineInstant),
+      sessionLifecycleStatement(tenantId, OWNER, "s1"),
+      saveLifecycleStatement(tenantId, OWNER, "sv1"),
     ];
+    const statements = [...owned, sweeps.sessions, sweeps.saves];
+    // Every request-path statement also carries the owner predicate (or stamps it, on an insert);
+    // the sweep is maintenance, deliberately ownerless.
+    for (const statement of owned) {
+      expect(statement.text).toMatch(/owner_issuer/);
+      expect(statement.text).toMatch(/owner_subject/);
+      expect(statement.values).toContain(OWNER.issuer);
+      expect(statement.values).toContain(OWNER.subject);
+    }
     for (const statement of statements) {
       expect(statement.text).toMatch(/tenant_id/);
       expect(statement.values).toContain(tenantId);
@@ -392,7 +403,7 @@ describe("S3.9 — tenant_id in every statement", () => {
 
   it("stamps the implicit tenant on every row a live write produces", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-9"));
       await persistence.saves.put(saveRecord("s3-9-save"));
 
@@ -418,7 +429,7 @@ describe("S3.10 — saves.put is a recomputing upsert", () => {
       if (!openedA.ok || !openedB.ok) throw new Error("openDurableStore failed");
 
       try {
-        await openedA.value.persistenceForRequest().saves.put(saveRecord("s3-10"));
+        await openedA.value.storage.persistence(OWNER).saves.put(saveRecord("s3-10"));
 
         const raw = await RawSchemaClient.connect(schema.schema);
         try {
@@ -429,7 +440,7 @@ describe("S3.10 — saves.put is a recomputing upsert", () => {
           expect(first.rows[0]?.engine_version).toBe(ENGINE_VERSION_A);
 
           await new Promise((resolve) => setTimeout(resolve, 20));
-          await openedB.value.persistenceForRequest().saves.put(
+          await openedB.value.storage.persistence(OWNER).saves.put(
             saveRecord("s3-10", { campaignId: "campaign-b", savedAtSeq: 7 }),
           );
 
@@ -476,12 +487,12 @@ describe("S3.11 — the save table has no version column", () => {
 describe("S3.12 — a primary-key collision on insert is IdCollision, never the conflict brand", () => {
   it("throws an ordinary error carrying StoreError.IdCollision as its cause", async () => {
     await withSchema(async (_schema, store) => {
-      const first = store.persistenceForRequest();
+      const first = store.storage.persistence(OWNER);
       await first.sessions.put(sessionRecord("s3-12"));
 
       // A second, independent persistence instance — its read-version map has never seen this id,
       // so `put` takes the insert path exactly as `createSession`/`loadGame` would for a duplicate.
-      const second = store.persistenceForRequest();
+      const second = store.storage.persistence(OWNER);
       let caught: unknown;
       try {
         await second.sessions.put(sessionRecord("s3-12", { blob: '{"duplicate":true}' }));
@@ -545,7 +556,7 @@ describe("S3.16 — migrateToHead is idempotent and safe under concurrent caller
         expect(names).toEqual(["pgmigrations", "profile", "profile_achievement", "profile_kind_data", "profile_terminal", "save", "session"].sort());
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(4);
+        expect(migrationRows.rows).toHaveLength(5);
       } finally {
         await raw.close();
       }
@@ -566,7 +577,7 @@ describe("S3.17 — the version column round-trips as bigint", () => {
 
   it("the driver returns session.version as bigint, not a numeric-looking string", async () => {
     await withSchema(async (schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("s3-17"));
 
       const raw = await RawSchemaClient.connect(schema.schema);
@@ -585,7 +596,7 @@ describe("S3.17 — the version column round-trips as bigint", () => {
 describe("Engine 0.12.0 — the guarded update asserts the engine's revision as well as the store's version", () => {
   it("classifies a put whose revision does not follow the stored one as conflict, at a current version", async () => {
     await withSchema(async (_schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("rev-1"));
       await persistence.sessions.get("rev-1"); // map now holds version 1, which is still current
 
@@ -604,13 +615,13 @@ describe("Engine 0.12.0 — the guarded update asserts the engine's revision as 
 
   it("round-trips revision, and keeps an absent initialization absent rather than `{}`", async () => {
     await withSchema(async (_schema, store) => {
-      const persistence = store.persistenceForRequest();
+      const persistence = store.storage.persistence(OWNER);
       await persistence.sessions.put(sessionRecord("rev-2"));
       await persistence.sessions.put(sessionRecord("rev-3", { initialization: { kindProfileData: { level: 2 } } }));
       await persistence.saves.put(saveRecord("save-rev-2"));
       await persistence.saves.put(saveRecord("save-rev-3", { initialization: {} }));
 
-      const fresh = store.persistenceForRequest();
+      const fresh = store.storage.persistence(OWNER);
       const absent = await fresh.sessions.get("rev-2");
       expect(absent?.revision).toBe(0);
       expect(absent).toBeDefined();
@@ -628,7 +639,7 @@ describe("Engine 0.12.0 — profile kindData, and the format_version two-step", 
   it("replaces a kind's record per save, keeps kinds a later save omits, and loads them sorted by kindId", async () => {
     await withSchema(async (_schema, store) => {
       const profileId = "kind-data-1";
-      await store.profiles.save({
+      await store.storage.profiles(OWNER).save({
         formatVersion: 3,
         profileId,
         achievements: [],
@@ -638,7 +649,7 @@ describe("Engine 0.12.0 — profile kindData, and the format_version two-step", 
           { kindId: "simulation", dataVersion: 1, data: { weeks: 4 } },
         ],
       });
-      await store.profiles.save({
+      await store.storage.profiles(OWNER).save({
         formatVersion: 3,
         profileId,
         achievements: [],
@@ -646,7 +657,7 @@ describe("Engine 0.12.0 — profile kindData, and the format_version two-step", 
         kindData: [{ kindId: "world-graph", dataVersion: 2, data: { visits: 2 } }],
       });
 
-      const loaded = await store.profiles.load(profileId);
+      const loaded = await store.storage.profiles(OWNER).load(profileId);
       expect(loaded.warnings).toEqual([]);
       expect(loaded.profile.formatVersion).toBe(3);
       expect(loaded.profile.kindData).toEqual([
@@ -659,7 +670,7 @@ describe("Engine 0.12.0 — profile kindData, and the format_version two-step", 
   it("stores format_version 2 — read support for 3 ships before write support — and still loads a stored 3", async () => {
     await withSchema(async (schema, store) => {
       const profileId = "kind-data-2";
-      await store.profiles.save({ formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] });
+      await store.storage.profiles(OWNER).save({ formatVersion: 3, profileId, achievements: [], terminals: [], kindData: [] });
 
       const raw = await RawSchemaClient.connect(schema.schema);
       try {
@@ -674,7 +685,7 @@ describe("Engine 0.12.0 — profile kindData, and the format_version two-step", 
       } finally {
         await raw.close();
       }
-      const loaded = await store.profiles.load(profileId);
+      const loaded = await store.storage.profiles(OWNER).load(profileId);
       expect(loaded.warnings).toEqual([]);
       expect(loaded.profile.formatVersion).toBe(3);
     });

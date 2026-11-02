@@ -286,9 +286,35 @@ export type GuardedWriteOutcome = "applied" | "conflict" | "expired";
 
 export type LifecycleState = "live" | "expired" | "absent";
 
+/** The probe one request sees: already bound to that request's owner by `ownershipDecorator`, so
+ *  Dispatch classifies without ever holding a principal (invariant 111). */
 export interface LifecycleProbe {
   session(sessionId: string): Promise<Outcome<LifecycleState, StoreError>>;
   save(saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
+}
+
+/** `design/20-contract.md`, "game-service (TypeScript)". Process-lived (G2 invariant 69); a row of
+ *  another owner answers `absent`, exactly as an unknown id does (invariant 115). */
+export interface OwnedLifecycleProbe {
+  session(owner: OwnerKey, sessionId: string): Promise<Outcome<LifecycleState, StoreError>>;
+  save(owner: OwnerKey, saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
+}
+
+/** `design/20-contract.md`, "game-service (TypeScript)". Every member takes the owner, and nothing
+ *  that reaches a record or a blob carries it (invariant 113). The account member arrives with the
+ *  account surface. */
+export interface OwnerScopedStorage {
+  persistence(owner: OwnerKey): SessionPersistence;
+  profiles(owner: OwnerKey): ProfileStore;
+  readonly lifecycle: OwnedLifecycleProbe;
+}
+
+/** What one request is composed from: the decorated seam plus the session layer over it. */
+export interface RequestPorts {
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  readonly lifecycle: LifecycleProbe;
+  readonly store: SessionStore;
 }
 
 // ---------------------------------------------------------------------------- store: the per-request read-version seam
@@ -308,9 +334,12 @@ export interface ReadVersionMap {
  * call; the in-memory configuration returns G1's single long-lived layer every time. A cache that
  * cannot outlive one request is what makes the compare-and-swap the only concurrency mechanism in
  * the system — a caller is never handed a store that lasts.
+ *
+ * G3: the owner is the verified assertion's, and the only one there is (invariant 111). Every port
+ * the result carries is already scoped to it.
  */
 export interface StoreProvider {
-  forRequest(): SessionStore;
+  forRequest(owner: OwnerKey): RequestPorts;
 }
 
 // ---------------------------------------------------------------------------- store: configuration
@@ -474,14 +503,12 @@ export type MigrationError =
 // ---------------------------------------------------------------------------- store: the public surface
 
 /**
- * `20-contract.md`, "Store — workload". `persistenceForRequest` is the only per-request member —
- * the pool, the schema, the profile store, the probe and the serialization handle are all
- * process-lived. Store imports the engine's *type* declarations and never its runtime (invariant 58).
+ * `20-contract.md`, "Store — workload". `storage.persistence(owner)` is the only per-request member —
+ * the pool, the schema, the probe and the serialization handle are all process-lived. Store imports
+ * the engine's *type* declarations and never its runtime (invariant 58).
  */
 export interface DurableStore {
-  persistenceForRequest(): SessionPersistence;
-  readonly profiles: ProfileStore;
-  readonly lifecycle: LifecycleProbe;
+  readonly storage: OwnerScopedStorage;
   readonly serialization: StoreSerializationHandle;
   check(): Promise<Outcome<void, StoreError>>;
   sweepOnce(): Promise<Outcome<SweepResult, StoreError>>;
@@ -559,7 +586,8 @@ export interface McpSurface {
 
 export interface ComposedWorkload {
   readonly stores: StoreProvider;
-  readonly lifecycle: LifecycleProbe;
+  /** The process-lived probe every request's bound probe delegates to (invariant 116). */
+  readonly lifecycle: OwnedLifecycleProbe;
   readonly serialization: StoreSerializationHandle;
   readiness(): Promise<ProbeResult>;
   close(): Promise<void>;

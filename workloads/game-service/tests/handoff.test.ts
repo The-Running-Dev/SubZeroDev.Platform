@@ -315,7 +315,11 @@ describe("S1.4 — a valid assertion passes, and the answer is G2's", () => {
     try {
       const surface = buildHttpSurface(
         contract,
-        createDispatcher(contract, composed.value.stores, composed.value.lifecycle),
+        createDispatcher(
+          contract,
+          composed.value.stores.forRequest(TEST_OWNER).store,
+          composed.value.stores.forRequest(TEST_OWNER).lifecycle,
+        ),
       );
       if (!surface.ok) throw new Error(`buildHttpSurface failed: ${JSON.stringify(surface.error)}`);
       const ungated = await surface.value.handle(wireRequest(CREATE_SESSION, { campaignId: CAMPAIGN_ID }));

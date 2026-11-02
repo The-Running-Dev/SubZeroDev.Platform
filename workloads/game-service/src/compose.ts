@@ -51,8 +51,12 @@ import type {
   LifecycleProbe,
   MigrationError,
   Outcome,
+  OwnedLifecycleProbe,
+  OwnerKey,
+  OwnerScopedStorage,
   ProbeResult,
   ReplayDeterminismProfile,
+  RequestPorts,
   SemanticVersion,
   StorageProfile,
   StoreError,
@@ -87,41 +91,95 @@ function kinds(): KindRegistry {
   } as KindRegistry;
 }
 
+/** An entry held beside its owner, never inside the record: the record and its blob are what a
+ *  caller and the serialization handle see, and neither carries the owner (invariant 113). */
+interface Owned<T> {
+  readonly owner: OwnerKey;
+  readonly record: T;
+}
+
+function sameOwner(a: OwnerKey, b: OwnerKey): boolean {
+  return a.issuer === b.issuer && a.subject === b.subject;
+}
+
+/** A per-owner cache key. JSON, not a joined string, so no issuer/subject pair can spell another. */
+function ownerCacheKey(owner: OwnerKey): string {
+  return JSON.stringify([owner.issuer, owner.subject]);
+}
+
+/** The durable store's own refusal shape for an id another owner holds (`store.ts`): a plain
+ *  `Error` whose cause is `IdCollision`, so both targets fail such a write identically. */
+function idCollisionError(): Error {
+  return new Error("in-memory write refused: id held by another owner", { cause: { code: "IdCollision" } });
+}
+
 /** Map-backed and total — the in-memory configuration has no database, and `storage_failure` is
  *  consequently declared and unreachable. The maps are also what the serialization handle reads,
- *  which is why persistence is supplied explicitly rather than left to the engine's own default. */
-function inMemoryPersistence(): {
-  persistence: SessionPersistence;
-  sessions: Map<string, StoredSessionRecord>;
-  saves: Map<string, StoredSaveRecord>;
+ *  which is why persistence is supplied explicitly rather than left to the engine's own default.
+ *
+ *  Owner-scoped on the durable store's terms: another owner's entry reads as absent, is never
+ *  listed, is never deleted, and is never overwritten (invariant 115). No lifecycle probe here
+ *  keeps a row past expiry, so every id classifies `absent`. */
+function inMemoryStorage(): {
+  storage: OwnerScopedStorage;
+  sessions: Map<string, Owned<StoredSessionRecord>>;
+  saves: Map<string, Owned<StoredSaveRecord>>;
 } {
-  const sessions = new Map<string, StoredSessionRecord>();
-  const saves = new Map<string, StoredSaveRecord>();
-  return {
-    sessions,
-    saves,
-    persistence: {
+  const sessions = new Map<string, Owned<StoredSessionRecord>>();
+  const saves = new Map<string, Owned<StoredSaveRecord>>();
+  const profileStores = new Map<string, ProfileStore>();
+
+  function persistence(owner: OwnerKey): SessionPersistence {
+    const mine = <T>(entry: Owned<T> | undefined): T | undefined =>
+      entry !== undefined && sameOwner(entry.owner, owner) ? entry.record : undefined;
+    return {
       sessions: {
-        get: async (sessionId) => sessions.get(sessionId),
+        get: async (sessionId) => mine(sessions.get(sessionId)),
         put: async (record) => {
-          sessions.set(record.sessionId, record);
+          const held = sessions.get(record.sessionId);
+          if (held !== undefined && !sameOwner(held.owner, owner)) throw idCollisionError();
+          sessions.set(record.sessionId, { owner, record });
         },
       },
       saves: {
-        get: async (saveId) => saves.get(saveId),
+        get: async (saveId) => mine(saves.get(saveId)),
         put: async (record) => {
-          saves.set(record.saveId, record);
+          const held = saves.get(record.saveId);
+          if (held !== undefined && !sameOwner(held.owner, owner)) throw idCollisionError();
+          saves.set(record.saveId, { owner, record });
         },
-        listByProfile: async (profileId) => [...saves.values()].filter((record) => record.profileId === profileId),
+        listByProfile: async (profileId) =>
+          [...saves.values()]
+            .filter((entry) => sameOwner(entry.owner, owner) && entry.record.profileId === profileId)
+            .map((entry) => entry.record),
         delete: async (saveId, expectedSavedAt) => {
-          const record = saves.get(saveId);
+          const record = mine(saves.get(saveId));
           if (record === undefined) return;
           if (record.savedAt !== expectedSavedAt) throw saveDeleteConflictError();
           saves.delete(saveId);
         },
       },
-    },
+    };
+  }
+
+  function profiles(owner: OwnerKey): ProfileStore {
+    const key = ownerCacheKey(owner);
+    const existing = profileStores.get(key);
+    if (existing !== undefined) return existing;
+    const created = createInMemoryProfileStore();
+    profileStores.set(key, created);
+    return created;
+  }
+
+  // The no-op probe: every id classifies `absent`, so `unknown_session`/`unknown_save` pass
+  // through Dispatch verbatim and Dispatch carries no branch on which store was composed
+  // (`20-contract.md`, "Composition — workload").
+  const lifecycle: OwnedLifecycleProbe = {
+    session: async () => ok("absent"),
+    save: async () => ok("absent"),
   };
+
+  return { storage: { persistence, profiles, lifecycle }, sessions, saves };
 }
 
 /** Every method throws a plain `Error` — the same shape S1's engine catch converts to
@@ -257,11 +315,10 @@ function validateStorageConfiguration(storage: StorageProfile): Outcome<void, Co
 /**
  * S13.8/S13.9 — the seam `SessionPersistence`, `ProfileStore` and `LifecycleProbe` are composed
  * behind (`20-contract.md`: "the lifecycle probe is composed behind the same seam `SessionPersistence`
- * and `ProfileStore` are"; invariant 74). G2 applies no decorator — `IDENTITY_STORAGE_DECORATOR` is
- * the only one ever passed — but every one of the three ports this workload builds, for both storage
- * profiles, passes through this one function on its way to a caller, so a future authorization
- * decorator (G3) wraps all three by construction rather than by remembering to extend a two-port
- * wrapper to a third. Exported so S13.8/S13.9 can assert the structural claim directly, with a
+ * and `ProfileStore` are"; invariant 74). Every one of the three ports this workload builds, for both
+ * storage profiles, passes through this one function on its way to a caller, so G3's
+ * `ownershipDecorator` — the one decorator composition passes — wraps all three by construction
+ * rather than by remembering to extend a two-port wrapper to a third. Exported so S13.8/S13.9 can assert the structural claim directly, with a
  * counting decorator standing in for G3's real one, without needing `compose()`'s own fixed
  * signature to grow a parameter the contract does not carry.
  */
@@ -277,6 +334,32 @@ export const IDENTITY_STORAGE_DECORATOR: StorageDecorator = (seam) => seam;
 
 export function composeStorageSeam(seam: StorageSeam, decorate: StorageDecorator = IDENTITY_STORAGE_DECORATOR): StorageSeam {
   return decorate(seam);
+}
+
+/** What `ownershipDecorator` is applied to: every port refuses, so a seam composed without an owner
+ *  reaches no storage at all. */
+export const UNBOUND_SEAM: StorageSeam = {
+  persistence: unavailablePersistence(),
+  profiles: unavailableProfiles(),
+  lifecycle: {
+    session: async () => err({ code: "Unreachable" }),
+    save: async () => err({ code: "Unreachable" }),
+  },
+};
+
+/** `design/20-contract.md`, "game-service (TypeScript)". The only place an owner enters the store
+ *  (invariant 111): every port on the seam it returns is `storage`'s, bound to `owner`. The lifecycle
+ *  member delegates to the process-lived probe on every call rather than rebuilding it (invariant
+ *  116). */
+export function ownershipDecorator(storage: OwnerScopedStorage, owner: OwnerKey): StorageDecorator {
+  return () => ({
+    persistence: storage.persistence(owner),
+    profiles: storage.profiles(owner),
+    lifecycle: {
+      session: (sessionId: string) => storage.lifecycle.session(owner, sessionId),
+      save: (saveId: string) => storage.lifecycle.save(owner, saveId),
+    },
+  });
 }
 
 export async function compose(
@@ -310,37 +393,50 @@ export async function compose(
     ...(replay ? { ids: createCountingIds() } : {}),
   });
 
-  if (configuration.storage.kind === "in-memory") {
-    const { persistence: rawPersistence, sessions, saves } = inMemoryPersistence();
+  // Built once, not per `forRequest()`. The counters are the whole point of a counting
+  // `RecordIdSource`: minting one per request (or per owner) would restart them at zero, so a second
+  // created session under the replay profile would be handed `counting-session-id-0` again.
+  const replaySources = replay
+    ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() }
+    : null;
 
-    // The no-op probe: every id classifies `absent`, so `unknown_session`/`unknown_save` pass
-    // through Dispatch verbatim and Dispatch carries no branch on which store was composed
-    // (`20-contract.md`, "Composition — workload").
-    const rawLifecycle: LifecycleProbe = {
-      session: async () => ok("absent"),
-      save: async () => ok("absent"),
-    };
-
-    // S13.9: the in-memory configuration's no-op probe is composed behind the same seam as its
-    // persistence and profiles, so invariant 74 is not a durable-only property.
-    const seam = composeStorageSeam({ persistence: rawPersistence, profiles: createInMemoryProfileStore(), lifecycle: rawLifecycle });
-
+  /** One request's ports: the unbound seam decorated with its owner, and the session layer over it. */
+  const requestPorts = (storage: OwnerScopedStorage, owner: OwnerKey): RequestPorts => {
+    const seam = composeStorageSeam(UNBOUND_SEAM, ownershipDecorator(storage, owner));
     const store: SessionStore = createSessionLayer({
       engine,
       registry: registry.value,
       persistence: seam.persistence,
       profiles: seam.profiles,
-      ...(replay ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() } : {}),
+      ...(replaySources ?? {}),
     });
+    return { ...seam, store };
+  };
 
-    const stores: StoreProvider = { forRequest: () => store };
-    const lifecycle = seam.lifecycle;
+  if (configuration.storage.kind === "in-memory") {
+    const memory = inMemoryStorage();
+
+    // S13.9: the in-memory configuration's no-op probe is composed behind the same seam as its
+    // persistence and profiles, so invariant 74 is not a durable-only property. One long-lived layer
+    // per owner, as G1 had one for everybody (S4.2).
+    const layers = new Map<string, RequestPorts>();
+    const stores: StoreProvider = {
+      forRequest(owner: OwnerKey): RequestPorts {
+        const key = ownerCacheKey(owner);
+        const existing = layers.get(key);
+        if (existing !== undefined) return existing;
+        const created = requestPorts(memory.storage, owner);
+        layers.set(key, created);
+        return created;
+      },
+    };
+    const lifecycle = memory.storage.lifecycle;
 
     const serialization: StoreSerializationHandle = {
       async snapshot(): Promise<StoreSerializationSnapshot> {
         return {
-          sessions: [...sessions.values()].map((record) => ({ id: record.sessionId, blob: record.blob })).sort(byId),
-          saves: [...saves.values()].map((record) => ({ id: record.saveId, blob: record.blob })).sort(byId),
+          sessions: [...memory.sessions.values()].map(({ record }) => ({ id: record.sessionId, blob: record.blob })).sort(byId),
+          saves: [...memory.saves.values()].map(({ record }) => ({ id: record.saveId, blob: record.blob })).sort(byId),
         };
       },
     };
@@ -467,52 +563,29 @@ export async function compose(
   await attemptConnect();
   scheduleSweep();
 
-  // Built once, not per `forRequest()`. The counters are the whole point of a counting
-  // `RecordIdSource`: minting one per request would restart them at zero every time, so every
-  // created session under the replay profile would be handed `counting-session-id-0` and the second
-  // one would overwrite the first. The in-memory branch above gets this for free — it composes one
-  // long-lived layer — and the durable branch has to say it.
-  const replaySources = replay
-    ? { clock: createFixedClock(replay.fixedInstant), recordIds: createCountingRecordIds() }
-    : null;
-
-  // S13.8: the lifecycle probe is composed behind the same seam `SessionPersistence` and
-  // `ProfileStore` are — the identical `composeStorageSeam` function, on the identical (identity,
-  // in G2) decorator, at both call sites below.
-  const rawLifecycle: LifecycleProbe = {
-    session: (sessionId: string) =>
+  // Routes to whichever store is connected when a request is composed, so a store unreachable at
+  // startup stops being permanent once the background reconnect succeeds. The probe is the one
+  // process-lived object every request's bound probe delegates to (S13.8, invariant 116).
+  const lifecycle: OwnedLifecycleProbe = {
+    session: (owner: OwnerKey, sessionId: string) =>
       withDurableStore(
         () => err({ code: "Unreachable" }),
-        (store) => store.lifecycle.session(sessionId),
+        (store) => store.storage.lifecycle.session(owner, sessionId),
       ),
-    save: (saveId: string) =>
+    save: (owner: OwnerKey, saveId: string) =>
       withDurableStore(
         () => err({ code: "Unreachable" }),
-        (store) => store.lifecycle.save(saveId),
+        (store) => store.storage.lifecycle.save(owner, saveId),
       ),
   };
-  const lifecycle: LifecycleProbe = composeStorageSeam({
-    persistence: unavailablePersistence(),
-    profiles: unavailableProfiles(),
-    lifecycle: rawLifecycle,
-  }).lifecycle;
+  const routedStorage: OwnerScopedStorage = {
+    persistence: (owner) => (durableStore ? durableStore.storage.persistence(owner) : unavailablePersistence()),
+    profiles: (owner) => (durableStore ? durableStore.storage.profiles(owner) : unavailableProfiles()),
+    lifecycle,
+  };
 
   const stores: StoreProvider = {
-    forRequest(): SessionStore {
-      const active = durableStore;
-      const seam = composeStorageSeam({
-        persistence: active ? active.persistenceForRequest() : unavailablePersistence(),
-        profiles: active ? active.profiles : unavailableProfiles(),
-        lifecycle: rawLifecycle,
-      });
-      return createSessionLayer({
-        engine,
-        registry: registry.value,
-        persistence: seam.persistence,
-        profiles: seam.profiles,
-        ...(replaySources ?? {}),
-      });
-    },
+    forRequest: (owner: OwnerKey): RequestPorts => requestPorts(routedStorage, owner),
   };
 
   const serialization: StoreSerializationHandle = {

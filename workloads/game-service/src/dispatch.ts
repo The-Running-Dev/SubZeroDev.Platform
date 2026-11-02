@@ -1,11 +1,13 @@
 /**
- * Dispatch — one `Dispatcher` over one `StoreProvider`, shared by every surface.
+ * Dispatch — one `Dispatcher` per request, over that request's store and bound lifecycle probe,
+ * shared by both surfaces.
  *
  * It holds no game logic: it does not retry, does not reinterpret a code, does not decide which
- * actions are available, and caches nothing. It takes the provider and the lifecycle probe rather
- * than the composition, so it has no path to the serialization handle (invariant 17), and it
- * resolves `forRequest()` once per request — a store handed out at wiring time would outlive the
- * request whose read versions it holds, which is the whole point of the per-request seam.
+ * actions are available, and caches nothing. It takes the request's store and probe rather than
+ * the composition, so it has no path to the serialization handle (invariant 17), and no principal
+ * ever reaches it: both are already bound to the verified owner by `ownershipDecorator`
+ * (invariant 111). Built per request — a store handed out at wiring time would outlive the request
+ * whose read versions it holds, which is the whole point of the per-request seam.
  *
  * Three things happen here and nowhere else. **Binding** turns a validated request object into the
  * store method's own call, inverting the generator's projection rule exactly: a single
@@ -30,7 +32,6 @@ import type {
   JsonValue,
   LifecycleProbe,
   OperationId,
-  StoreProvider,
   ValidatedArguments,
 } from "./types.js";
 
@@ -102,7 +103,7 @@ async function classify(
 
 export function createDispatcher(
   contract: ContractPackage,
-  stores: StoreProvider,
+  store: SessionStore,
   lifecycle: LifecycleProbe,
 ): Dispatcher {
   return {
@@ -113,11 +114,6 @@ export function createDispatcher(
         // throw rather than a silent result keeps it that way.
         throw new Error(`dispatch reached with no row for ${operation as string}`);
       }
-
-      // Once per request, and never held past it: the adapter behind this store carries the read
-      // versions the guarded write compares against, and a cache that outlived one request would
-      // make the compare-and-swap answer stale reads.
-      const store: SessionStore = stores.forRequest();
 
       const names = parameterNames(contract, row);
       const invocation = (store as unknown as Record<string, (...a: unknown[]) => unknown>)[row.storeMethod as string];

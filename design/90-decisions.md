@@ -21,6 +21,102 @@ entry below:
 
 ---
 
+### 2026-11-03 — S2: Dispatch and both surfaces are built per request; the startup check and replay use fixed owners
+
+Context: `forRequest(owner)` returns ports bound to one owner, but G2 built Dispatch and both
+surfaces once at startup over a provider. The startup route and schema check and the in-process
+replay run with no verified request.
+Chosen: `serve` builds Dispatch and both surfaces for each verified request, from that request's
+ports. The startup check builds them once for a reserved check owner and discards them. Replay runs
+every step as one fixed replay owner.
+Rejected: **one Dispatch over a provider argument** — the owner would have to travel beside the
+arguments, which invariant 111 rules out. **Skipping the startup check** — it is what refuses a
+route clash before binding.
+Reversibility: cheap
+
+### 2026-11-03 — S2: The sweep, the snapshot and the readiness check stay ownerless
+
+Context: Invariant 112 puts an owner predicate on every statement a request runs. The retention
+sweep, the replay snapshot and the readiness check run for the process, not for a request.
+Chosen: those three keep their G2 statements, with no owner predicate. Each reads or deletes by
+expiry or by schema and never answers a request.
+Rejected: **sweeping per owner** — no list of owners exists to sweep by, and the sweep's
+correctness does not depend on one.
+Reversibility: cheap
+
+### 2026-11-03 — S2: A write to an id another owner holds fails as an id collision
+
+Context: Ids are minted by the engine and unique per table. An owner's write to an id another owner
+holds cannot update that row, and the contract does not say what it answers.
+Chosen: the write matches no row and fails with `IdCollision`. The other owner's row is unchanged.
+Rejected: **silently inserting a second row** — the id is the primary key. **Answering as a
+conflict** — that would tell the writer the id exists.
+Reversibility: cheap
+
+### 2026-11-03 — S2: The in-memory target keeps one map per table and one session layer per owner
+
+Context: The in-memory configuration must be owner-scoped the same way as the durable one, and G1
+kept one long-lived session layer for every caller.
+Chosen: each entry is held beside its owner, never inside its record. Reads filter by owner. Each
+owner gets one long-lived session layer and profile store, cached for the process with no bound.
+Rejected: **a separate map per owner** — the snapshot would have to merge them back into one
+ordering. **A fresh layer per request** — loses G1's in-memory session cache.
+Reversibility: cheap
+
+### 2026-11-03 — S2: The probe is one process-lived owner-taking object, bound per request by the decorator
+
+Context: Invariant 69 keeps one lifecycle probe for the process, and invariant 116 has Dispatch
+use a probe decorated for the request.
+Chosen: composition holds one probe whose methods take the owner first. `ownershipDecorator` binds
+it to the request's owner on each call, without copying or rebuilding it.
+Rejected: **a probe built per request** — breaks invariant 69.
+Reversibility: cheap
+
+### 2026-11-03 — S2: Six tables are owner-scoped, not four
+
+Context: The contract names `session`, `save`, `profile` and `profile_achievement`. G2 also keeps
+`profile_terminal` and `profile_kind_data`, each keyed by profile.
+Chosen: the migration adds owner columns to all six and re-keys all four profile tables by owner.
+Rejected: **scoping only the four named** — a terminal or kind-data row would collide across owners
+sharing a profile id.
+Reversibility: costly
+
+### 2026-11-03 — S2: A G2 instance's profile writes fail after the G3 migration
+
+Context: The contract says rows a still-running G2 instance writes after the migration take the
+reserved empty owner. G2 writes profiles with `on conflict (tenant_id, profile_id)`, and that is
+no longer a unique key once profiles are keyed by owner.
+Chosen: keep the owner-first profile key. A G2 profile write fails, and the G2 adapter reports
+`profile_write_failed`, changing nothing. G2 session and save writes still take the reserved owner.
+The mixed-version tests pin this.
+Rejected: **keeping a `(tenant_id, profile_id)` unique index for G2** — two owners could then never
+hold the same profile id.
+Reversibility: costly
+
+### 2026-11-03 — S2: The conformance target is bound to one fixed owner
+
+Context: The conformance seam exposes one `SessionPersistence`, and the durable store now hands out
+persistence per owner.
+Chosen: the conformance target is the store's persistence for a fixed conformance owner.
+Rejected: **an ownerless persistence for conformance** — that would be the one unscoped store path.
+Reversibility: cheap
+
+### 2026-11-03 — S2: `DurableStore` exposes its ports as one `storage` member
+
+Context: G2's `DurableStore` exposed `persistenceForRequest()` and its profile store separately.
+The contract's `OwnerScopedStorage` groups persistence, profiles and the probe.
+Chosen: `DurableStore.storage` is that `OwnerScopedStorage`, replacing the separate members.
+Rejected: **keeping the G2 members beside it** — two ways to reach the same rows, one ownerless.
+Reversibility: cheap
+
+### 2026-11-03 — S2: The account surface is left to S8
+
+Context: The contract amendment's store members include account deletion and export, and S2 touches
+the store.
+Chosen: S2 adds no account member. S8 owns it.
+Rejected: **adding the members now, unused** — S8's acceptance would then test code it did not ship.
+Reversibility: cheap
+
 ### 2026-11-02 — S1: The gate writes `assertion_refused` itself, outside the vendored status mapping
 
 Context: The contract's error table gives `assertion_refused` a `401`, but the vendored

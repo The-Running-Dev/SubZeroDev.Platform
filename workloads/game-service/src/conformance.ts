@@ -35,7 +35,18 @@ import { Pool } from "pg";
 import { quoteIdentifier } from "./migrations.js";
 import { IMPLICIT_TENANT_ID, openDurableStore } from "./store.js";
 import { err, ok } from "./types.js";
-import type { ConformanceError, ConformanceTarget, DurableStoreConfiguration, Outcome, SemanticVersion } from "./types.js";
+import type {
+  ConformanceError,
+  ConformanceTarget,
+  DurableStoreConfiguration,
+  Outcome,
+  OwnerKey,
+  SemanticVersion,
+} from "./types.js";
+
+/** The one owner the single-owner conformance run binds the durable target to; the two-owner
+ *  isolation run is its own suite (S4). */
+const CONFORMANCE_OWNER: OwnerKey = { issuer: "conformance", subject: "conformance" };
 
 let counter = 0;
 
@@ -799,19 +810,20 @@ export async function openDurableConformanceTarget(
   }
 
   const tenantId = IMPLICIT_TENANT_ID;
-  const persistence = store.persistenceForRequest();
+  const persistence = store.storage.persistence(CONFORMANCE_OWNER);
 
   return ok({
     label: "durable",
     persistence,
-    profiles: store.profiles,
+    profiles: store.storage.profiles(CONFORMANCE_OWNER),
     async seedCorruptProfile(profileId: string): Promise<void> {
       // `format_version = 99` — same reasoning as the in-memory target's own sentinel above:
       // none of `1`, `2` or `3` is a malformation any longer.
       await seedPool.query(
-        "insert into profile (tenant_id, profile_id, format_version, row_updated_at) values ($1, $2, 99, now()) " +
-          "on conflict (tenant_id, profile_id) do update set format_version = 99, row_updated_at = now()",
-        [tenantId, profileId],
+        "insert into profile (tenant_id, owner_issuer, owner_subject, profile_id, format_version, row_updated_at) " +
+          "values ($1, $2, $3, $4, 99, now()) " +
+          "on conflict (tenant_id, owner_issuer, owner_subject, profile_id) do update set format_version = 99, row_updated_at = now()",
+        [tenantId, CONFORMANCE_OWNER.issuer, CONFORMANCE_OWNER.subject, profileId],
       );
     },
     async seedProfileWriteFailure(profileId: string): Promise<void> {

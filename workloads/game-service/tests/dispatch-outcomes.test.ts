@@ -16,7 +16,7 @@ import { err, ok } from "../src/types.js";
 import { bodyJson, post, surfaceOver, throwingStore } from "./support/harness.js";
 import { CAMPAIGN_ID, realStore } from "./support/real-workload.js";
 import { conflictError, controlledPersistence, sessionLayerOver } from "./support/persistence-stub.js";
-import { TEST_HANDOFF } from "./support/handoff.js";
+import { TEST_HANDOFF, TEST_OWNER } from "./support/handoff.js";
 
 /** A probe that answers `state` for every id and records what it was asked about, so "Dispatch
  *  consulted the probe for *this* id" is asserted rather than inferred from the code alone. */
@@ -202,11 +202,12 @@ describe("S5.6 — one Dispatch for both storage profiles", () => {
     if (!composed.ok) return;
 
     // The probe `compose()` actually built, not a stand-in for it.
-    expect(await composed.value.lifecycle.session("s-1")).toEqual(ok("absent"));
-    expect(await composed.value.lifecycle.save("v-1")).toEqual(ok("absent"));
+    const lifecycle = composed.value.stores.forRequest(TEST_OWNER).lifecycle;
+    expect(await composed.value.lifecycle.session(TEST_OWNER, "s-1")).toEqual(ok("absent"));
+    expect(await composed.value.lifecycle.save(TEST_OWNER, "v-1")).toEqual(ok("absent"));
 
     const { store } = throwingStore("submitAction", "unknown_session");
-    const response = await post(surfaceOver(store, undefined, composed.value.lifecycle), "/v1/submit-action", {
+    const response = await post(surfaceOver(store, undefined, lifecycle), "/v1/submit-action", {
       sessionId: "s-1",
       actionId: "advance_ticks",
     });
