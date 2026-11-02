@@ -71,7 +71,7 @@ Out of scope: any owner on any row (S2). The edge signing anything (S3). Key rot
 accepting several configured key ids.
 
 ## S2 — The store answers only to its owner
-**Status:** in progress
+**Status:** shipped
 
 Delivers: a signed-in player's sessions, saves and profiles belong to them. Another player who
 sends the same ids sees only what a stranger would: nothing there.
@@ -111,7 +111,7 @@ Out of scope: every remaining id-bearing operation and both surfaces (S4). The e
 that pre-G3 rows are deleted (S9). The account surface (S8).
 
 ## S3 — A signed-in player plays through the edge
-**Status:** queued
+**Status:** in progress
 
 Delivers: a player holding a token from the game's issuer can create and play a session through
 the edge, and the edge alone vouches for who they are.

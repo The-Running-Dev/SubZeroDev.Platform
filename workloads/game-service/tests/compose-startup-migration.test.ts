@@ -18,7 +18,7 @@ import { CAMPAIGN_ID } from "./support/real-workload.js";
 import { connectionFor, defaultBounds, RawSchemaClient, TEST_CONNECTION_STRING } from "./support/database.js";
 import { DEFAULT_STORE_CONNECT_TIMEOUT_MS } from "../src/types.js";
 import type { DurableStoreConfiguration, SchemaName, StorageProfile, WorkloadConfiguration } from "../src/types.js";
-import { TEST_HANDOFF } from "./support/handoff.js";
+import { TEST_HANDOFF, TEST_OWNER } from "./support/handoff.js";
 
 function baseConfiguration(storage: StorageProfile): WorkloadConfiguration {
   return {
@@ -174,7 +174,7 @@ describe("S12.4 — two composed instances starting concurrently against one nev
         );
 
         const migrationRows = await raw.query("select * from pgmigrations");
-        expect(migrationRows.rows).toHaveLength(4);
+        expect(migrationRows.rows).toHaveLength(5);
       } finally {
         await raw.close();
       }
@@ -254,7 +254,7 @@ describe("S12.6 — a migration whose SQL fails leaves the process up and not re
       expect((readiness as { detail?: string }).detail ?? "").toContain("migration failed");
       expect((readiness as { detail?: string }).detail ?? "").toContain("initial-schema");
 
-      await expect(composed.value.stores.forRequest().createSession({ campaignId: CAMPAIGN_ID })).rejects.toThrow();
+      await expect(composed.value.stores.forRequest(TEST_OWNER).store.createSession({ campaignId: CAMPAIGN_ID })).rejects.toThrow();
     } finally {
       await composed.value.close();
       await drop(schema);

@@ -23,6 +23,7 @@ import type {
   HostedTarget,
   JsonValue,
   Outcome,
+  OwnerKey,
   ReplayError,
   ReplayFixture,
   RunResult,
@@ -42,6 +43,11 @@ export const REPLAY_FIXED_INSTANT = "2026-01-01T00:00:00.000Z";
  *  negotiation (`20-contract.md`, *Workload — request context*). `runHosted` addresses the path
  *  this way rather than taking the contract, on the same terms its own signature does. */
 const WIRE_VERSION = "v1";
+
+/** The one owner every in-process step runs as. No owner reaches a record or blob (invariant 113),
+ *  so its value cannot change the serialization the two runs compare; it only has to be non-empty,
+ *  as every verified owner is (invariant 117). */
+const REPLAY_OWNER: OwnerKey = { issuer: "replay", subject: "replay" };
 
 function checkCoverage(fixture: ReplayFixture, contract: ContractPackage): Outcome<void, ReplayError> {
   const tableOperations = new Set(contract.operations.map((row) => row.operation as string));
@@ -84,10 +90,12 @@ export async function runInProcess(
     return err({ code: "Composition", cause: composed.error });
   }
 
-  const dispatcher = createDispatcher(contract, composed.value.stores, composed.value.lifecycle);
   const transcript: CanonicalJson[] = [];
 
   for (const [index, step] of fixture.steps.entries()) {
+    // One dispatcher per step, as `serve` builds one per request, all for the one replay owner.
+    const ports = composed.value.stores.forRequest(REPLAY_OWNER);
+    const dispatcher = createDispatcher(contract, ports.store, ports.lifecycle);
     const outcome = await dispatcher.invoke(step.operation, step.arguments as ValidatedArguments);
     if (outcome.kind === "error") {
       return err({ code: "StepFailed", step: index, operation: step.operation as string, wireErrorCode: outcome.code as string });

@@ -38,10 +38,13 @@ import type {
   McpSurface,
   McpToolName,
   Outcome,
+  OwnerKey,
   ProbeResult,
   ProbeSurface,
   ShutdownError,
   StartupError,
+  StoreProvider,
+  SurfaceBuildError,
   WireErrorCode,
   WireRequest,
   WorkloadConfiguration,
@@ -221,10 +224,36 @@ function refuseAssertion(response: ServerResponse, correlation: CorrelationId): 
   response.end(body.ok ? body.value : "");
 }
 
+interface RequestSurfaces {
+  readonly http: HttpSurface;
+  readonly mcp: McpSurface;
+}
+
+/** The reserved empty owner (invariant 117): no verified assertion can carry it, so the surfaces
+ *  built for it at startup to refuse a bad contract before bind are never reachable by a request. */
+const SURFACE_CHECK_OWNER: OwnerKey = { issuer: "", subject: "" };
+
+/** One dispatcher and both surfaces over one owner's ports. Built per request after the handoff
+ *  gate, so the owner reaches the store only through `ownershipDecorator` and never through
+ *  Dispatch (invariant 111); the validators the builders compile are cached per contract, so a
+ *  per-request build costs two route maps. */
+function surfacesFor(
+  contract: ContractPackage,
+  stores: StoreProvider,
+  owner: OwnerKey,
+): Outcome<RequestSurfaces, SurfaceBuildError> {
+  const ports = stores.forRequest(owner);
+  const dispatcher = createDispatcher(contract, ports.store, ports.lifecycle);
+  const http = buildHttpSurface(contract, dispatcher);
+  if (!http.ok) return http;
+  const mcp = buildMcpSurface(contract, dispatcher);
+  if (!mcp.ok) return mcp;
+  return ok({ http: http.value, mcp: mcp.value });
+}
+
 function serve(
   contract: ContractPackage,
-  surface: HttpSurface,
-  mcp: McpSurface,
+  stores: StoreProvider,
   probes: ProbeSurface,
   tracing: Tracing | null,
   handoff: HandoffSettings,
@@ -275,6 +304,12 @@ function serve(
         refuseAssertion(response, correlation);
         return;
       }
+
+      // The startup build over the same contract succeeded, so this cannot refuse; if it ever did,
+      // the request is dropped rather than answered by a surface bound to no owner.
+      const surfaces = surfacesFor(contract, stores, verified.value);
+      if (!surfaces.ok) throw new Error("per-request surface build failed", { cause: surfaces.error });
+      const { http: surface, mcp } = surfaces.value;
 
       if (path === MCP_LIST_TOOLS || path === MCP_CALL_TOOL) {
         const inbound = message.headers["traceparent"];
@@ -367,21 +402,17 @@ export async function startWorkload(
   }
 
   const probes = createProbeSurface(() => composed.value.readiness());
-  // The provider itself, never a store resolved here: `Dispatcher.invoke` calls `forRequest()` once
-  // per request, so the store a request writes through is the one composed for it. For the
-  // in-memory configuration `forRequest()` always returns the same long-lived layer (S4.2). For the
-  // durable configuration it means a store composed while unreachable at startup stops being
-  // permanent: once the background reconnect in `compose.ts` succeeds, the very next dispatch
-  // reaches the connected store rather than the `unavailablePersistence()`/`unavailableProfiles()`
-  // stubs baked in at boot.
-  const dispatcher = createDispatcher(contract.value, composed.value.stores, composed.value.lifecycle);
-  const built = buildHttpSurface(contract.value, dispatcher);
+  // Built once here only so a contract the surfaces cannot route is refused before bind; requests
+  // never reach these. `serve` takes the provider itself and resolves `forRequest(owner)` per
+  // request after the handoff gate, so the store a request writes through is the one composed for
+  // its verified owner. For the in-memory configuration that is the same long-lived layer per owner
+  // (S4.2). For the durable configuration it means a store composed while unreachable at startup
+  // stops being permanent: once the background reconnect in `compose.ts` succeeds, the very next
+  // request reaches the connected store rather than the `unavailablePersistence()`/
+  // `unavailableProfiles()` stubs baked in at boot.
+  const built = surfacesFor(contract.value, composed.value.stores, SURFACE_CHECK_OWNER);
   if (!built.ok) {
     return err({ code: "SurfaceBuild", cause: built.error });
-  }
-  const builtMcp = buildMcpSurface(contract.value, dispatcher);
-  if (!builtMcp.ok) {
-    return err({ code: "SurfaceBuild", cause: builtMcp.error });
   }
   probes.markSurfacesBuilt();
 
@@ -400,7 +431,7 @@ export async function startWorkload(
   }
 
   const host = configuration.listen.host.trim().length > 0 ? configuration.listen.host : LOOPBACK;
-  const server = serve(contract.value, built.value, builtMcp.value, probes.surface, tracing, configuration.handoff);
+  const server = serve(contract.value, composed.value.stores, probes.surface, tracing, configuration.handoff);
 
   const bound = await new Promise<ListenEndpoint | null>((resolve) => {
     server.once("error", () => resolve(null));

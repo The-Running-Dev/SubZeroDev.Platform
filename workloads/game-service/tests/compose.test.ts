@@ -21,7 +21,7 @@ import {
   RawSchemaClient,
 } from "./support/database.js";
 import type { DurableStoreConfiguration, StorageProfile, WorkloadConfiguration } from "../src/types.js";
-import { TEST_HANDOFF } from "./support/handoff.js";
+import { TEST_HANDOFF, TEST_OWNER } from "./support/handoff.js";
 
 describe("S4.6 — the assumed forward-timeout bound still exceeds the real edge's configured timeout", () => {
   it("stays a wide margin above tests/support/hosted-edge.ts's GameEdge__ForwardTimeout", () => {
@@ -126,8 +126,8 @@ describe("S4.1 — durable forRequest() shares no cache across calls", () => {
     if (!composed.ok) return;
 
     try {
-      const storeA = composed.value.stores.forRequest();
-      const storeB = composed.value.stores.forRequest();
+      const storeA = composed.value.stores.forRequest(TEST_OWNER).store;
+      const storeB = composed.value.stores.forRequest(TEST_OWNER).store;
       expect(storeA).not.toBe(storeB);
 
       const handle = await storeA.createSession({ campaignId: CAMPAIGN_ID });
@@ -147,8 +147,8 @@ describe("S4.2 — in-memory forRequest() returns G1's same long-lived layer", (
     if (!composed.ok) return;
 
     try {
-      const storeA = composed.value.stores.forRequest();
-      const storeB = composed.value.stores.forRequest();
+      const storeA = composed.value.stores.forRequest(TEST_OWNER).store;
+      const storeB = composed.value.stores.forRequest(TEST_OWNER).store;
       expect(storeA).toBe(storeB);
 
       const handle = await storeA.createSession({ campaignId: CAMPAIGN_ID });
@@ -275,7 +275,7 @@ describe("S4.7 — the sweep reclaims past-horizon rows and retains merely-expir
     if (!composed.ok) return;
 
     try {
-      const store = composed.value.stores.forRequest();
+      const store = composed.value.stores.forRequest(TEST_OWNER).store;
       const pastHorizon = await store.createSession({ campaignId: CAMPAIGN_ID });
       const merelyExpired = await store.createSession({ campaignId: CAMPAIGN_ID });
 
@@ -386,7 +386,7 @@ describe("S4.9 — a failing sweep tick is caught and logged; the next tick stil
     process.on("unhandledRejection", onUnhandled);
 
     try {
-      const store = composed.value.stores.forRequest();
+      const store = composed.value.stores.forRequest(TEST_OWNER).store;
       const pastHorizon = await store.createSession({ campaignId: CAMPAIGN_ID });
       const raw = await RawSchemaClient.connect(schema.schema);
       try {
@@ -495,7 +495,7 @@ describe("S4.11 — close() stops the sweep timer and closes the pool", () => {
     expect(composed.ok).toBe(true);
     if (!composed.ok) return;
 
-    const store = composed.value.stores.forRequest();
+    const store = composed.value.stores.forRequest(TEST_OWNER).store;
     const handle = await store.createSession({ campaignId: CAMPAIGN_ID });
 
     await composed.value.close();
