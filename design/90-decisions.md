@@ -38,7 +38,11 @@ replaced. After each request, A's rows in all four owned tables are compared as 
 serialises them. A's profile row is written through A's own port on the durable half, as S2.5 does;
 the in-memory half compares with A having no profile row, and S4.4's per-owner in-memory profile
 store covers the profile port there. A mutation that drops the owner predicate from the save read
-fails `load-game` and `delete-save` on both surfaces.
+fails `load-game` and `delete-save` on both surfaces; one that drops the owner from the save lifecycle
+probe fails the expired-row test (invariant 115). The matrix cannot see a leak in the profile read or
+in the delete statement's own predicate: the profile operations answer the same for an empty and a
+foreign profile, and the save read refuses before a delete runs. Those two are proved at the port by
+S4.4, which fails when either is removed.
 Rejected: **a hand-written list of operations**, which is the omission S4.1 exists to catch;
 **mocking a profile row into the in-memory store through composition internals**, which would test
 the mock; **comparing only status and code**, which would pass a body that echoes A's data.

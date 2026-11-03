@@ -223,9 +223,12 @@ async function openWorld(kind: "in-memory" | "durable"): Promise<World> {
   expect((await http(base, OWNER_A, "submit-action", { sessionId, ...ADVANCE })).status).toBe(200);
   const saved = await http(base, OWNER_A, "save-game", { sessionId });
   expect(saved.status).toBe(200);
-  const savedBody = json(saved);
-  const saveId = savedBody["saveId"] as string;
-  const savedAt = (savedBody["savedAt"] ?? NEVER_MINTED.savedAt) as string;
+  const saveId = json(saved)["saveId"] as string;
+  // `save-game` answers the id alone; the instant a `delete-save` must name is what the owner lists.
+  const listed = json(await http(base, OWNER_A, "list-saves", { profileId: "default" }));
+  const entries = (Array.isArray(listed) ? listed : listed["saves"]) as ReadonlyArray<{ saveId: string; savedAt: string }>;
+  const savedAt = entries.find((entry) => entry.saveId === saveId)?.savedAt;
+  if (!savedAt) throw new Error(`A's save ${saveId} is not in A's list: ${JSON.stringify(listed)}`);
 
   let raw: RawSchemaClient | undefined;
   if (schema) {
@@ -337,5 +340,23 @@ describe.each(["in-memory", "durable"] as const)("S4.1–S4.3, S4.5 — B on A's
     const own = await http(world.base, OWNER_A, "branch-session", { sessionId: world.a.sessionId, atActionCount: 0 });
     expect(own.status).toBe(200);
     if (world.raw && before !== undefined) expect(await countRows(world.raw, "session")).toBe(before + 1);
+  });
+
+  // Last: it expires A's rows, which the earlier tests still need live.
+  it("a foreign request answers the same once the row is expired (invariant 115)", async () => {
+    if (!world.raw) return;
+    await world.raw.query("update session set expires_at = now() - interval '1 hour' where owner_subject = $1", [OWNER_A.subject]);
+    await world.raw.query("update save set expires_at = now() - interval '1 hour' where owner_subject = $1", [OWNER_A.subject]);
+    for (const [operation, fields] of idCarryingOperations()) {
+      if (!fields.includes("sessionId") && !fields.includes("saveId")) continue;
+      const build = MATRIX[operation]!;
+      const foreign = normalized(await http(world.base, OWNER_B, operation, build(world.a)));
+      const unknown = normalized(await http(world.base, OWNER_B, operation, build(NEVER_MINTED)));
+      expect(foreign, operation).toStrictEqual(unknown);
+      expect(json(foreign)["code"], operation).not.toMatch(/expired/);
+    }
+    // The owner, by contrast, is told the row expired.
+    const own = await http(world.base, OWNER_A, "get-view", { sessionId: world.a.sessionId });
+    expect(json(own)["code"]).toBe("session_expired");
   });
 });
