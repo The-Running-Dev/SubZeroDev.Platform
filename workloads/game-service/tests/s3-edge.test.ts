@@ -11,8 +11,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { connect } from "node:net";
 
 import { verifyHandoff } from "../src/handoff.js";
+import { startConnectionCounter } from "./support/connection-counter.js";
 import { TEST_CONNECTION_STRING, createTestSchema } from "./support/database.js";
 import type { TestSchema } from "./support/database.js";
 import { ASSERTION_HEADER, TEST_HANDOFF } from "./support/handoff.js";
@@ -232,6 +234,8 @@ describe("S3.6 — a mode with the wrong settings fails startup, naming the sett
     base: "terminate" | "passThrough";
     overrides: Record<string, string | undefined>;
     named: string;
+    /** The Platform error code a profile refusal carries, as the startup error prints it (`Code: ...`). */
+    code?: string;
   }> = [
     { name: "no CredentialMode", base: "terminate", overrides: { GameEdge__CredentialMode: undefined }, named: "GameEdge:CredentialMode" },
     { name: "Terminate with no handoff section", base: "terminate", overrides: {
@@ -244,16 +248,90 @@ describe("S3.6 — a mode with the wrong settings fails startup, naming the sett
     { name: "no pinned bearer provider", base: "terminate", overrides: {
       Platform__Identity__Bearer__game__Issuer: undefined, Platform__Identity__Bearer__game__SigningKeys: undefined,
       Platform__Identity__Bearer__game__Audiences__0: undefined, Platform__Identity__Bearer__game__Algorithms__0: undefined,
-    }, named: "" },
-    { name: "the Local profile (it forbids an authentication provider)", base: "terminate", overrides: { Platform__CompositionProfile: "Local" }, named: "" },
-    { name: "the Operated profile (it requires a durable audit sink)", base: "terminate", overrides: { Platform__CompositionProfile: "Operated" }, named: "" },
+    }, named: "", code: "AuthenticationProviderRequired" },
+    { name: "the Local profile (it forbids an authentication provider)", base: "terminate", overrides: { Platform__CompositionProfile: "Local" }, named: "", code: "RegistrationForbiddenByProfile" },
+    { name: "the Operated profile (it requires a durable audit sink)", base: "terminate", overrides: { Platform__CompositionProfile: "Operated" }, named: "", code: "DurableAuditSinkRequired" },
+    { name: "PassThrough under the AuthenticatedTransport profile (it requires an authentication provider)", base: "passThrough", overrides: { Platform__CompositionProfile: "AuthenticatedTransport" }, named: "", code: "AuthenticationProviderRequired" },
   ];
 
-  it.each(cases)("$name", async ({ base, overrides, named }) => {
+  it.each(cases)("$name", async ({ base, overrides, named, code }) => {
     const refusal = await startEdgeExpectingExit(overrides, base);
     expect(refusal.exitCode, refusal.output).not.toBeUndefined();
     expect(refusal.exitCode, refusal.output).not.toBe(0);
     if (named.length > 0) expect(refusal.output).toContain(`'${named}'`);
+    if (code !== undefined) expect(refusal.output).toContain(`${code}:`);
+  }, 60_000);
+});
+
+describe("Invariant 125 — Terminate mode refuses issuer discovery before it contacts anything", () => {
+  const PROVIDER = "Platform__Identity__Bearer__game";
+  const PINNED_ONLY = {
+    [`${PROVIDER}__SigningKeys`]: undefined,
+    [`${PROVIDER}__Algorithms__0`]: undefined,
+  } as const;
+
+  it("the counter sees a connection made to it, so a zero below is a real absence", async () => {
+    const counter = await startConnectionCounter();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = connect(counter.port, "127.0.0.1", () => {
+          socket.destroy();
+          resolve();
+        });
+        socket.once("error", reject);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(counter.connections()).toBe(1);
+    } finally {
+      await counter.close();
+    }
+  });
+
+  const cases: ReadonlyArray<{
+    name: string;
+    overrides: (discovery: string) => Record<string, string | undefined>;
+    named: string;
+  }> = [
+    {
+      name: "a provider with a discovery address and no pinned keys",
+      overrides: (discovery) => ({ ...PINNED_ONLY, [`${PROVIDER}__Discovery`]: discovery }),
+      named: "Platform:Identity:Bearer:game:Discovery",
+    },
+    {
+      name: "a discovery provider beside an otherwise valid pinned provider",
+      overrides: (discovery) => ({
+        Platform__Identity__Bearer__remote__Issuer: "https://remote-issuer.test",
+        Platform__Identity__Bearer__remote__Discovery: discovery,
+        Platform__Identity__Bearer__remote__Audiences__0: "game.test",
+        Platform__Identity__Bearer__remote__Algorithms__0: "ES256",
+      }),
+      named: "Platform:Identity:Bearer:remote:Discovery",
+    },
+    {
+      name: "a provider with both pinned keys and a discovery address",
+      overrides: (discovery) => ({ [`${PROVIDER}__Discovery`]: discovery }),
+      named: "Platform:Identity:Bearer:game:Discovery",
+    },
+    {
+      name: "a provider with no pinned keys and no discovery address",
+      overrides: () => PINNED_ONLY,
+      named: "Platform:Identity:Bearer:game:SigningKeys",
+    },
+  ];
+
+  it.each(cases)("$name fails startup, naming the setting, and the issuer address is never connected to", async ({ overrides, named }) => {
+    const counter = await startConnectionCounter();
+    try {
+      const refusal = await startEdgeExpectingExit(overrides(`https://127.0.0.1:${counter.port}/jwks`));
+      // Read first: a refused edge has exited, so any connection its startup would have made has been
+      // made; one that was not refused is killed at the deadline, after it connected.
+      expect(counter.connections(), refusal.output).toBe(0);
+      expect(refusal.exitCode, refusal.output).not.toBeUndefined();
+      expect(refusal.exitCode, refusal.output).not.toBe(0);
+      expect(refusal.output).toContain(`'${named}'`);
+    } finally {
+      await counter.close();
+    }
   }, 60_000);
 });
 
@@ -318,8 +396,10 @@ describe.skipIf(!process.env["OTEL_COLLECTOR_BIN"])("S3.7 — no exported span c
 
 describe("S3.8 — the composition needs nothing beyond its own processes", () => {
   it("accepts tokens of an issuer whose host does not resolve, because the keys are pinned and never fetched", async () => {
-    // https://issuer.test cannot be resolved anywhere; the token verified in S3.1, so nothing was
-    // fetched. CI additionally blocks outbound connections around this suite (build.yml).
+    // https://issuer.test cannot be resolved anywhere, so a token that verifies here was verified
+    // against the pinned keys. This test cannot see a connection attempt that something swallowed;
+    // the CI job `game-service-isolation` (build.yml) runs this whole file as a user whose every
+    // non-loopback packet, and every DNS query, is rejected and counted, and fails if any was.
     const answer = await call("get-view", { sessionId }, bearer(token(PLAYER_A)));
     expect(answer.status).toBe(200);
   });

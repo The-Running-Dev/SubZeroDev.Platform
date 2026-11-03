@@ -145,20 +145,27 @@ Acceptance:
   set. Each refusal names the setting.
 - **S3.7** No log line, span attribute or metric label produced in S3.1–S3.5 contains the bearer
   token or the assertion.
-- **S3.8** The composition in S3.1 runs in CI from a fresh clone, with no network access beyond the
-  composed processes.
+- **S3.8** The composition in S3.1 runs in CI from a fresh clone, with dependencies installed first,
+  as a user whose every non-loopback packet over IPv4 and IPv6, and every DNS query, is rejected and
+  counted. The run fails on any counted rejection, on a guard that saw no loopback traffic from the
+  suite, and on a skipped test; a negative control shows the guard rejects each path.
 
 Added to the slice, by the 2026-11-03 decision ([`90-decisions.md`](90-decisions.md),
 [ADR-010](../docs/docs/adr/ADR-010-authenticated-transport-profile.md)): the edge's terminate mode needs
 a composition profile that neither `Local` nor `Operated` can state, so the slice also delivers
 `AuthenticatedTransport` (invariants 130 to 132), proved in
 `tests/SubZeroDev.Platform.Tests/AuthenticatedTransportProfileTests.cs` and
-`workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/TerminateModeTests.cs`.
+`workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/TerminateModeTests.cs`. A mode the profile cannot
+hold is not started in that in-process suite, where the host's own disposal can be reported in place of
+the refusal; S3.6 starts the real edge for each pairing and asserts the refusal's code.
 
 Proved by `workloads/game-service/tests/s3-edge.test.ts` (the real edge in `Terminate` mode, the real
 game-service and a real PostgreSQL schema, with a test issuer whose keys the edge pins), one `describe`
 per criterion: S3.1 to S3.8. S3.7's span half needs `OTEL_COLLECTOR_BIN` and runs in CI only; its
-process-output half runs everywhere.
+process-output half runs everywhere. S3.8 is the `game-service-isolation` job in
+`.github/workflows/build.yml`, which runs that file under the outbound guard
+(`build/outbound-guard.sh`). The file's test of it only shows a token of an unresolvable issuer is
+accepted; a connection attempt is seen by the job's counters, not the test.
 
 Out of scope: token failure outcomes beyond "no credential" (S5). Every other header (S6).
 Pass-through mode (S6). Abuse limits (S10).
@@ -218,6 +225,12 @@ Acceptance:
   edge opens no outbound connection except to game-service.
 - **S5.10** The edge refuses to start in `Terminate` mode with a `Discovery` address, or with no
   `SigningKeys`, and each refusal names the setting.
+
+Delivered ahead of this slice, by the PR #370 review fix: the startup guard (`PinnedKeys` in the edge)
+refuses a provider with a `Discovery` address, even beside `SigningKeys`, and one with no `SigningKeys`,
+naming the full key and before any connection to the issuer. It is proved by `PinnedKeysTests.cs`,
+`TerminateModeTests.cs` and the "Invariant 125" `describe` in `s3-edge.test.ts`, which counts connections
+to a listener standing in for the issuer. S5.1 to S5.9 are not delivered, and this slice stays queued.
 
 Out of scope: token introspection or revocation. Changing any status Platform's pipeline maps.
 

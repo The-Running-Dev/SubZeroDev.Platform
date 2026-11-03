@@ -253,6 +253,33 @@ public sealed class TerminateModeTests : IDisposable
         Assert.Contains($"'GameEdge:Handoff:{field}'", Flatten(thrown), StringComparison.Ordinal);
     }
 
+    /// <summary>Invariant 125 — terminate mode refuses an issuer discovery address at startup, naming
+    /// the setting, whether it stands alone or beside pinned keys. The refusal comes from the edge's
+    /// own check, not from Identity's general validation, which admits discovery. That a refused
+    /// configuration opens no connection is proven against the real process in <c>s3-edge.test.ts</c>:
+    /// this factory flattens its settings, which Identity rejects before it would connect.</summary>
+    [Theory]
+    [InlineData("remote")]
+    [InlineData("game")]
+    public async Task Terminate_mode_refuses_a_discovery_address_at_startup(string provider)
+    {
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
+            builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:CredentialMode", "Terminate");
+            builder.UseSetting("Platform:CompositionProfile", "AuthenticatedTransport");
+            Handoff(builder, signingKeyPath);
+            builder.UseSetting($"Platform:Identity:Bearer:{provider}:Discovery", "https://127.0.0.1:1/jwks");
+        });
+
+        var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
+        var text = Flatten(thrown);
+        Assert.Contains($"'Platform:Identity:Bearer:{provider}:Discovery' must not be set", text, StringComparison.Ordinal);
+    }
+
     /// <summary>S3.3's refusal reaches past an absent credential: one the bearer chain cannot verify
     /// is <c>401 CredentialRejected</c> from Platform's pipeline, before the route runs, and the
     /// workload receives nothing. A bad credential never degrades into an anonymous caller, so it
@@ -292,35 +319,12 @@ public sealed class TerminateModeTests : IDisposable
         Assert.Empty(workload.Requests);
     }
 
-    /// <summary>The composition profile is the edge's to declare, and Platform refuses one that
-    /// cannot hold the mode at startup: terminate mode composes an authentication provider, which
-    /// Local refuses and Operated admits only beside a durable audit trail, and pass-through composes
-    /// none, which AuthenticatedTransport refuses (I-C3, I-C1, I-C14). The matching pairs start: the
-    /// rest of this class runs terminate mode under AuthenticatedTransport, and
-    /// <c>EdgeHostTests</c> runs pass-through under Local.</summary>
-    [Theory]
-    [InlineData("Terminate", "Local", "RegistrationForbiddenByProfile")]
-    [InlineData("Terminate", "Operated", "DurableAuditSinkRequired")]
-    [InlineData("PassThrough", "AuthenticatedTransport", "AuthenticationProviderRequired")]
-    public async Task A_mode_under_a_profile_that_cannot_hold_it_fails_startup(string mode, string profile, string code)
-    {
-        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Development");
-            builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
-            builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
-            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
-            builder.UseSetting("GameEdge:CredentialMode", mode);
-            builder.UseSetting("Platform:CompositionProfile", profile);
-            if (mode == "Terminate")
-            {
-                Handoff(builder, signingKeyPath);
-            }
-        });
-
-        var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
-        Assert.Contains(code + ":", Flatten(thrown), StringComparison.Ordinal);
-    }
+    // A mode the composition profile cannot hold (terminate under Local or Operated, pass-through under
+    // AuthenticatedTransport) is not started here. Platform refuses it in a hosted service's start, and
+    // when that fails `WebApplicationFactory` can report the host's own disposal instead of the refusal
+    // (`ObjectDisposedException: 'IServiceProvider'` out of the deferred host's start) -- 126 of 300 starts
+    // under CPU saturation, none when idle. The real edge process has no such race, so S3.6 in
+    // `workloads/game-service/tests/s3-edge.test.ts` asserts each pairing's refusal code.
 
     private WebApplicationFactory<Program> Terminate(string workloadBaseAddress, ILoggerProvider? logs = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>

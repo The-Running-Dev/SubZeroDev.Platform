@@ -84,7 +84,10 @@ which owns authorization and any durable trail, audits what it decides.
 ### How the game edge uses it
 
 In `Terminate` mode the edge declares `AuthenticatedTransport`, composes Platform Identity's bearer
-provider with `SigningKeys` pinned and no discovery address, and signs the handoff assertion. In
+provider with `SigningKeys` pinned and no discovery address, and signs the handoff assertion. The
+edge enforces the pinning itself, before it registers Identity: Identity accepts a discovery address
+and fetches from it while the host starts, so a refusal after registration would come after the
+connection it prevents. In
 `PassThrough` mode it has no provider and keeps `Local`. `GameEdge:CredentialMode` has no default, so
 a deployment names its mode. A `Terminate` edge configured `Local` or `Operated` fails startup under
 the existing rules (I-C3, I-C2), which the S3 proof exercises.

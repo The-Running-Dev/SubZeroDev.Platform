@@ -49,6 +49,14 @@ builder.Services.AddSingleton<EdgeTelemetry>();
 // edge before it binds. Pass-through composes neither.
 if (options.CredentialMode == CredentialMode.Terminate)
 {
+    // Before Identity is registered, because Identity's discovery fetches from the issuer at startup.
+    if (PinnedKeys.Validate(builder.Configuration) is { Count: > 0 } pinningErrors)
+    {
+        throw new InvalidOperationException(
+            "Configuration section 'Platform:Identity:Bearer' is invalid for 'Terminate' mode: "
+            + string.Join(" ", pinningErrors));
+    }
+
     builder.Services.AddSingleton(HandoffSigner.Load(options.Handoff!, TimeProvider.System));
     builder.Services.AddSingleton<IPlatformModule>(new IdentityModule());
 }

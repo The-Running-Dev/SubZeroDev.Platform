@@ -177,6 +177,9 @@ jobs:
       # runs is what makes that enforced rather than merely unobserved, exactly as the .NET job
       # does for the sample. Loopback stays open — the suite, and the collector installed above,
       # bind and dial 127.0.0.1 throughout, on ports chosen at run time as well as 4317/4318.
+      # That is the whole of the restriction in this job: two TCP ports, for every process it
+      # starts. The signed-in-player composition's isolation (G3 S3.8) is enforced and measured in
+      # the `game-service-isolation` job below, not here.
       - name: Block outbound OTLP ports for the workload suite
         run: |
           sudo iptables -A OUTPUT -o lo -j ACCEPT
@@ -351,17 +354,8 @@ jobs:
         working-directory: workloads/game-service
         run: npx vitest run tests/conformance.test.ts
 
-      # G3 S3: a signed-in player through the real edge (Terminate mode, AuthenticatedTransport
-      # profile), the real workload and this job's PostgreSQL, with a test issuer whose keys are
-      # pinned and nothing fetched. The OTLP ports are already rejected for this job.
-      # verification: true
-      - name: Run the signed-in player through the edge
-        working-directory: workloads/game-service
-        env:
-          GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
-          OTEL_COLLECTOR_BIN: ${{ github.workspace }}/otelcol-contrib
-        run: npx vitest run tests/s3-edge.test.ts
-
+      # `tests/s3-edge.test.ts` (G3 S3) runs here with the rest of the suite; its isolated run is the
+      # `game-service-isolation` job.
       # verification: true
       - name: Test
         working-directory: workloads/game-service
@@ -369,3 +363,251 @@ jobs:
           GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
           OTEL_COLLECTOR_BIN: ${{ github.workspace }}/otelcol-contrib
         run: npm test
+
+  # G3 S3.8: the signed-in-player composition (the .NET edge in Terminate mode, the real workload,
+  # this job's PostgreSQL, the OpenTelemetry Collector and the test harness) needs nothing beyond
+  # its own processes. It is its own job so that the isolation is the only thing it varies, and so
+  # the evidence it produces is about this composition and not about the Local sample's.
+  #
+  # Mechanism, as in the build job's local-host guard: an owner-match rule sends every packet of one
+  # dedicated operating-system user into a chain that rejects and counts everything except loopback,
+  # so the runner's and Actions' own traffic (a different user) cannot contaminate the counters. This
+  # job differs in three ways. It installs the chain for IPv6 as well as IPv4, so the unused family
+  # is not an open path. It rejects DNS (port 53) ahead of the loopback rule, so a lookup through the
+  # runner's loopback resolver is counted instead of invisible. And it asserts that the guard saw the
+  # run: a loopback packet count of zero would mean the owner match never matched the processes.
+  #
+  # What it permits: loopback, which is every endpoint the composition has (edge, workload, the
+  # recording tap, the collector, PostgreSQL through its published port, the harness). What it
+  # forbids: every non-loopback packet of the dedicated user, over either family, and any DNS query.
+  # Dependencies are installed and PostgreSQL is pulled and started before the guard exists.
+  game-service-isolation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the edge
+        run: dotnet build workloads/game-edge/SubZeroDev.Platform.GameEdge/SubZeroDev.Platform.GameEdge.csproj --configuration Release
+
+      - name: Install the OpenTelemetry Collector
+        run: |
+          curl -sL -o otelcol-contrib.tar.gz \
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.158.0/otelcol-contrib_0.158.0_linux_amd64.tar.gz
+          echo "7623348c295ec7b00d86c30040a30730f7e3537e813b34c880c1d5abb9bbe8d5  otelcol-contrib.tar.gz" | sha256sum -c -
+          tar xzf otelcol-contrib.tar.gz otelcol-contrib
+          chmod +x otelcol-contrib
+
+      - name: Install the workload's dependencies
+        working-directory: workloads/game-service
+        run: npm install
+
+      - name: Start the durable store
+        working-directory: workloads/game-service
+        run: |
+          docker compose up -d
+          # Two consecutive successes: see the same step in the game-service job.
+          consecutive=0
+          for i in $(seq 1 60); do
+            if docker compose exec -T postgres pg_isready -U game_service -d game_service; then
+              consecutive=$((consecutive + 1))
+              [ "$consecutive" -ge 2 ] && break
+            else
+              consecutive=0
+            fi
+            sleep 1
+          done
+          if [ "$consecutive" -lt 2 ]; then
+            echo "postgres did not report ready twice in a row" >&2
+            exit 1
+          fi
+
+      - name: Install the outbound guard
+        run: |
+          set -euo pipefail
+          . build/outbound-guard.sh
+
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin "$GUARD_USER"
+          workspace_parent=$(dirname "$GITHUB_WORKSPACE")
+          work_parent=$(dirname "$workspace_parent")
+          runner_home=$(dirname "$work_parent")
+          sudo chmod o+x "$runner_home" "$work_parent" "$workspace_parent" "$GITHUB_WORKSPACE"
+          sudo -u "$GUARD_USER" test -r "$GITHUB_WORKSPACE/workloads/game-service/package.json"
+          sudo install -d -o "$GUARD_USER" -g "$GUARD_USER" /tmp/platform-s3-offline
+          # Vite writes its cache and its bundled config under node_modules; the guarded user does not own it.
+          mkdir -p workloads/game-service/node_modules/.vite workloads/game-service/node_modules/.vite-temp
+          chmod -R a+rwX workloads/game-service/node_modules/.vite workloads/game-service/node_modules/.vite-temp
+          # It also writes the bundled `vitest.config.ts.timestamp-*.mjs` next to the config, so the
+          # directory itself (not its contents) is writable by the guarded user.
+          chmod o+w workloads/game-service
+
+          # Documentation-range addresses (RFC 5737, RFC 3849) on a dummy interface give the negative
+          # control a route that is not loopback, so its packets reach the OUTPUT chain.
+          sudo ip link add s3-guard0 type dummy
+          sudo ip link set s3-guard0 up
+          sudo ip addr add 192.0.2.1/24 dev s3-guard0
+          sudo ip -6 addr add 2001:db8::1/64 dev s3-guard0 nodad
+
+          guard_uid=$(id -u "$GUARD_USER")
+          for family in 4 6; do
+            tool=$(guard_tool "$family")
+            sudo "$tool" -N "$GUARD_CHAIN"
+            sudo "$tool" -A "$GUARD_CHAIN" -p udp --dport 53 -j REJECT
+            sudo "$tool" -A "$GUARD_CHAIN" -p tcp --dport 53 -j REJECT
+            sudo "$tool" -A "$GUARD_CHAIN" -o lo -j RETURN
+            sudo "$tool" -A "$GUARD_CHAIN" -j REJECT
+            sudo "$tool" -I OUTPUT 1 -m owner --uid-owner "$guard_uid" -j "$GUARD_CHAIN"
+          done
+
+      # A guard that has never rejected anything is not known to constrain anything. Each probe is
+      # made as the guarded user, must fail, and must increment that family's reject counter. DNS is
+      # probed on its own because it travels over loopback (the runner's resolver) and is refused by
+      # a different rule.
+      # verification: true
+      - name: Prove the guard rejects IPv4, IPv6 and DNS, and still permits loopback
+        run: |
+          set -euo pipefail
+          . build/outbound-guard.sh
+
+          as_guarded() {
+            sudo -u "$GUARD_USER" env HOME=/tmp/platform-s3-offline PATH="$PATH" \
+              HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_proxy= "$@"
+          }
+          expect_refused() {
+            family=$1; label=$2; shift 2
+            before=$(guard_total "$family" REJECT)
+            set +e
+            as_guarded "$@" >/dev/null 2>&1
+            status=$?
+            set -e
+            after=$(guard_total "$family" REJECT)
+            if [ "$status" -eq 0 ] || [ "$after" -le "$before" ]; then
+              echo "the guard did not refuse and count the $label probe (exit $status, rejects $before -> $after)" >&2
+              exit 1
+            fi
+            echo "$label: refused and counted (rejects $before -> $after)"
+          }
+
+          expect_refused 4 "IPv4 connection" curl --connect-timeout 3 --max-time 5 http://192.0.2.2/
+          expect_refused 6 "IPv6 connection" curl --connect-timeout 3 --max-time 5 "http://[2001:db8::2]/"
+          expect_refused 4 "DNS query" timeout 30 node -e \
+            "require('node:dns').resolve4('s3-control.invalid', (error) => process.exit(error ? 1 : 0))"
+
+          # The permitted path works for the guarded user: PostgreSQL answers on loopback.
+          as_guarded node -e \
+            "require('node:net').connect(5432, '127.0.0.1').once('connect', () => process.exit(0)).once('error', () => process.exit(1))"
+          returned=$(guard_total 4 RETURN)
+          if [ "$returned" -eq 0 ]; then
+            echo "a loopback connection by the guarded user was not seen by the guard" >&2
+            exit 1
+          fi
+
+          # The suite starts from zero, so anything counted afterwards came from the suite.
+          sudo iptables -Z "$GUARD_CHAIN"
+          sudo ip6tables -Z "$GUARD_CHAIN"
+
+      # verification: true
+      - name: Run the signed-in player through the edge with outbound networking unavailable
+        working-directory: workloads/game-service
+        run: |
+          . "$GITHUB_WORKSPACE/build/outbound-guard.sh"
+          sudo -u "$GUARD_USER" env \
+            HOME=/tmp/platform-s3-offline \
+            TMPDIR=/tmp/platform-s3-offline \
+            PATH="$PATH" \
+            DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+            DOTNET_NOLOGO=1 \
+            HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_proxy= \
+            GAME_EDGE_DLL="$GITHUB_WORKSPACE/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll" \
+            OTEL_COLLECTOR_BIN="$GITHUB_WORKSPACE/otelcol-contrib" \
+            ./node_modules/.bin/vitest run tests/s3-edge.test.ts \
+              --reporter=default --reporter=json --outputFile.json=/tmp/platform-s3-offline/vitest.json
+
+      # `always()` makes an attempted connection visible even if the code under test swallowed the
+      # socket error, or the suite stopped first.
+      # verification: true
+      - name: Assert the composition attempted no outbound connection and nothing was skipped
+        if: always()
+        run: |
+          set -euo pipefail
+          . build/outbound-guard.sh
+
+          for family in 4 6; do
+            tool=$(guard_tool "$family")
+            if ! sudo "$tool" -L "$GUARD_CHAIN" -n >/dev/null 2>&1; then
+              echo "the IPv$family outbound guard was not installed" >&2
+              exit 1
+            fi
+            echo "IPv$family chain after the suite:"
+            sudo "$tool" -L "$GUARD_CHAIN" -v -x -n
+          done
+
+          failed=0
+          for family in 4 6; do
+            rejected=$(guard_total "$family" REJECT)
+            if [ "$rejected" -ne 0 ]; then
+              echo "the composition attempted $rejected outbound IPv$family packet(s)" >&2
+              failed=1
+            fi
+          done
+          # The guard must have matched the run: the suite's own loopback traffic is counted.
+          returned=$(guard_total 4 RETURN)
+          if [ "$returned" -eq 0 ]; then
+            echo "the guard saw no loopback traffic from the suite, so it proves nothing" >&2
+            failed=1
+          fi
+          # A skipped test is not evidence: the exported-span proof is skipped without a collector.
+          report=/tmp/platform-s3-offline/vitest.json
+          if [ ! -s "$report" ]; then
+            echo "the suite wrote no report" >&2
+            failed=1
+          else
+            notpassed=$(jq '[.testResults[].assertionResults[] | select(.status != "passed")] | length' "$report")
+            total=$(jq '[.testResults[].assertionResults[]] | length' "$report")
+            echo "suite: $total test(s), $notpassed not passed"
+            if [ "$total" -eq 0 ] || [ "$notpassed" -ne 0 ]; then
+              echo "every test in the isolated run must pass; none may be skipped" >&2
+              failed=1
+            fi
+          fi
+          [ "$failed" -eq 0 ]
+          echo "the composition attempted no outbound connections (loopback packets seen: $returned)"
+
+      - name: Remove the outbound guard
+        if: always()
+        run: |
+          . build/outbound-guard.sh
+          guard_uid=$(id -u "$GUARD_USER" 2>/dev/null || true)
+          for family in 4 6; do
+            tool=$(guard_tool "$family")
+            if [ -n "$guard_uid" ]; then
+              sudo "$tool" -D OUTPUT -m owner --uid-owner "$guard_uid" -j "$GUARD_CHAIN" 2>/dev/null || true
+            fi
+            sudo "$tool" -F "$GUARD_CHAIN" 2>/dev/null || true
+            sudo "$tool" -X "$GUARD_CHAIN" 2>/dev/null || true
+          done
+          sudo pkill -KILL -u "$GUARD_USER" 2>/dev/null || true
+          sudo ip link del s3-guard0 2>/dev/null || true
+          sudo userdel "$GUARD_USER" 2>/dev/null || true
+
+          left=0
+          for family in 4 6; do
+            if sudo "$(guard_tool "$family")" -S 2>/dev/null | grep -q "$GUARD_CHAIN"; then
+              echo "the IPv$family guard is still installed" >&2
+              left=1
+            fi
+          done
+          if ip link show s3-guard0 >/dev/null 2>&1; then
+            echo "the guard's dummy interface is still present" >&2
+            left=1
+          fi
+          [ "$left" -eq 0 ]

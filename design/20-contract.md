@@ -51,7 +51,7 @@ and the declarations below carry those answers. What the answers left open is un
 | 122 | The port-conformance suite (G2 invariant 89) runs every assertion under two owners on both targets, and asserts that one owner's rows are invisible to the other | Proof harness |
 | 123 | G3's CI evidence uses the real edge, the real game-service, Postgres and a test issuer signing real tokens. The edge pins the test issuer's public keys, and Adventures' proofs use the same issuer's discovery document. No mocked authentication replaces the chain | Proof harness |
 | 124 | G2's harnesses and replay present assertions minted with a test key. Their assertions about game state are unchanged | Proof harness |
-| 125 | In terminate mode, the edge validates bearer tokens only against issuer keys pinned in its configuration, and startup refuses a discovery address. In steady state the edge opens no outbound connection except to its workload, and game-service none except to its store | Edge, Composition |
+| 125 | In terminate mode, the edge validates bearer tokens only against issuer keys pinned in its configuration, and startup refuses a discovery address, and a provider with no pinned keys, before any issuer is contacted. In steady state the edge opens no outbound connection except to its workload, and game-service none except to its store | Edge, Composition |
 | 126 | Account deletion changes nothing outside game-service's owned rows: no Platform account mapping, sign-in, credential, issuer account or workload data. It keeps no copy of what it deleted | Account surface, Store |
 | 127 | A write that commits after the deletion transaction belongs to a new, empty account under the same owner. Nothing refuses it | Store |
 | 128 | The G3 migration deletes every `session`, `save`, `profile` and `profile_achievement` row present when it runs, in the same run that adds the owner columns | Migrations |
@@ -97,7 +97,10 @@ public sealed record AbuseLimitOptions(int PermitCount, TimeSpan Window);
 ```
 
 In terminate mode, the edge's bearer settings are Identity's existing `BearerSettings` with
-`SigningKeys` set and `Discovery` absent (invariant 125). Identity already refuses both together.
+`SigningKeys` set and `Discovery` absent (invariant 125). Identity itself accepts `Discovery`, and
+fetches the issuer's keys while the host starts, so the edge enforces the rule itself: before it registers
+Identity, it refuses a provider that sets `Discovery`, even beside `SigningKeys`, or sets no `SigningKeys`.
+The refusal names the full key (`Platform:Identity:Bearer:<name>:Discovery` or `:SigningKeys`).
 `CredentialMode` has no default: a deployment names it, and startup names the setting when it is
 missing. In `Terminate` the edge declares `Platform:CompositionProfile` as `AuthenticatedTransport`
 (invariant 130). `PassThrough` composes no provider and keeps `Local`.
@@ -270,7 +273,7 @@ One migration, after G2's last. It follows G2's rule for every migration after t
 | Token rejected, expired or malformed | Edge, Platform pipeline | 401 | `CredentialRejected` | No | — |
 | Token signed by a key not pinned, including after the issuer rotates | Edge, Platform pipeline | 401 | `CredentialRejected` | No | — |
 | Provider failure | Edge, Platform pipeline | 401 | `ProviderFailed` | No | — |
-| Pinned keys absent, or a discovery address set, terminate mode | Edge startup | — | — | — | The edge does not start, naming the setting |
+| Pinned keys absent, or a discovery address set, terminate mode | Edge startup | — | — | — | The edge does not start, naming the setting, before any connection to the issuer |
 | Abuse limit reached | Edge | 429 | `RateLimited`, with `Retry-After` | After the delay | — |
 | Assertion missing or invalid | game-service | 401 | `assertion_refused` | No | — |
 | Foreign or unknown session or save | game-service | 404 | `unknown_session` / `unknown_save` | No | — |
