@@ -677,3 +677,32 @@ jobs:
         env:
           GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
         run: npm test
+
+  # G3 S11.1: the one check that stands for "every G3 proof, from a fresh clone". Each job it waits on
+  # starts from its own `actions/checkout`, and between them they run everything G3 and G2 prove:
+  #   build                  the edge's and Platform's .NET suites (G3 S1-S10 on the .NET side), the
+  #                          mutation checks, and `build/Test-WorkloadIsolation.ps1`;
+  #   game-service           the workload's suite behind the real edge (handoff, credentials,
+  #                          cross-principal, MCP, the account surface) and G2's replays and contention proofs;
+  #   game-service-isolation the signed-in player through the edge with outbound traffic refused;
+  #   adventures-proof       the pinned Adventures revision behind the edge, and the cutover rollback.
+  # Running them again in one more job would prove nothing the four do not; what this job adds is that
+  # a single required status fails when any of them does, and when one is skipped or cancelled. A job
+  # added to this workflow that proves G3 belongs in `needs`.
+  # This is CI evidence. It is not the live deployment's smoke check and does not stand in for it.
+  g3-composition:
+    runs-on: ubuntu-latest
+    needs: [build, game-service, game-service-isolation, adventures-proof]
+    if: ${{ always() }}
+
+    steps:
+      - name: Require every proof to have passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
+          if [ -n "$failed" ]; then
+            echo "not every G3 proof passed: $failed" >&2
+            exit 1
+          fi

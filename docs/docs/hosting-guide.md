@@ -144,8 +144,15 @@ adds a catch-all forwarding route and one readiness check, and nothing else. It 
 the path, inspect the body or know which operation it carries, and it returns the workload's
 response byte for byte. It sets the outbound `traceparent` from the ambient trace context so one
 trace spans both processes. Its configuration is the `GameEdge` section; only
-`WorkloadBaseAddress` is required. Options, streamed-route handling and its counters are in
-`workloads/game-edge/`, and are not restated here.
+`WorkloadBaseAddress` is required, with `CredentialMode` (G3: it has no default). Options,
+streamed-route handling and its counters are in `workloads/game-edge/`, and are not restated here.
+
+To configure, verify and roll back a deployment, follow "Operating a deployment" in
+`workloads/game-edge/README.md`: each mode's settings, the handoff key and its rotation order, the
+issuer, limits, and the rollback of Adventures to its direct route. The edge fetches nothing from the
+issuer, so a new issuer key must be pinned before the issuer signs with it. CI is not the live smoke
+check: the `g3-composition` job proves the code against a test issuer and loopback addresses, and
+says nothing about your host, issuer, keys or proxy.
 
 - **No retry, ever.** A retried `submit-action` is a second action. After a `504` the caller
   re-reads with a query operation and decides; it does not resubmit.
@@ -233,11 +240,10 @@ contention proofs and the port-conformance suite.
 - **A second in-memory instance looks like missing data, not corruption.** Each instance holds
   its own sessions, so a session created on one is `unknown_session` on the other. Nothing
   enforced single-instance in G1.
-- **The design leaves MCP out of the edge, but the code forwards it.** G1's design routes only the
-  JSON wire through the edge and names MCP as a stated gap. The forwarding route maps every path,
-  though, so `/mcp/*` reaches the workload through the edge like anything else, and the edge does
-  nothing MCP-specific. Whether the edge should cover MCP is left open for G3, which enforces
-  authorization at the edge.
+- **MCP reaches game-service only through the edge, under the same ownership as HTTP.** `/mcp/*` is
+  forwarded by the same route, so in `Terminate` mode a tool call needs a credential the edge
+  established, and the workload refuses any request without a valid assertion (`401
+  assertion_refused`). Keep the workload's port reachable by the edge alone.
 - **The edge cannot reject an unknown operation.** It forwards every path and does not read the
   contract, so `unknown_operation` always comes from the workload.
 - **A forward that fails after the headers arrive is still `workload_unreachable`.** A workload
