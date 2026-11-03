@@ -237,7 +237,7 @@ to a listener standing in for the issuer. S5.1 to S5.9 are delivered by this sli
 Out of scope: token introspection or revocation. Changing any status Platform's pipeline maps.
 
 ## S6 — Each header follows its mode, in both directions
-**Status:** in progress
+**Status:** shipped
 
 Delivers: whichever kind of workload sits behind the edge, its callers' cookies, origins and
 forwarding headers reach it exactly as its mode says. No caller's header can impersonate the edge
@@ -268,10 +268,17 @@ Acceptance:
 - **S6.7** The edge's existing failure, timeout, streaming-abort and no-retry tests pass in both
   modes.
 
+Delivered by `HeaderPolicy.cs` in the edge, one allow-list used by the buffered and the streamed relay,
+and proved by `HeaderPolicyContract.cs` (the rows both modes share, run in each mode),
+`PassThroughHeaderTests.cs` and `TerminateHeaderTests.cs`, every row on `/plain/x` and on a configured
+streaming route, against the edge on a real listener. S6.3 and S6.7 are the existing
+`EdgeHostTests`, `ForwardingTests`, `StreamingTests` and `TerminateModeTests`, unchanged and green. The
+decisions of 2026-11-03 record the allow-list and `TrustedProxies`.
+
 Out of scope: Adventures itself (S7). Rewriting a cookie's `Domain` or `Path`.
 
 ## S7 — Adventures through the edge
-**Status:** queued
+**Status:** in progress
 
 Delivers: Adventures' players keep their guest sessions, sign-in and cross-origin play when their
 traffic passes through Platform's edge.

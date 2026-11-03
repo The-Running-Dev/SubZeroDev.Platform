@@ -22,7 +22,7 @@ file does not restate it.
 | Authorize anything, or hold any per-session state, connection affinity or cache | [G1 design](../../design/g1/10-design.md) ("The .NET edge"); invariant 41 in the [G1 contract](../../design/g1/20-contract.md) |
 | Know the workload's REST paths: it forwards every path without consulting the contract, so an unknown operation reaches the workload and is answered there | [G1 decisions](../../design/g1/90-decisions.md), 2026-08-08 "The edge forwards by prefix and does not consult the contract" |
 | Retry, or record an attempt: a retry of an action whose outcome is unknown is a second action | [G1 contract](../../design/g1/20-contract.md), `EdgeError` and invariant 43 |
-| Carry the caller's credentials to the workload, or the workload's cookies back | [#339](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/339), [#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340) |
+| Forward a caller's own `Authorization`, hop-by-hop headers or `X-Forwarded-*`, or answer a CORS preflight itself | [Credential policy](../../design/10-design.md) (*Control flow* §6); [#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340) |
 | Proxy a WebSocket upgrade | [Streaming decision, 2026-10-08](../../design/state/decisions/2026-10-08-the-edge-streams-per-route-with-its-own-first-byte-budget-and-aborts-a-broken-stream.md) |
 
 ## Configuration
@@ -39,6 +39,7 @@ file is Platform's own and is not documented here.
 | `GameEdge:StreamingRoutes` | list | no | empty (nothing streams) | See below. |
 | `GameEdge:StreamingRoutes:<i>:PathPrefix` | string | yes, per entry | none | Begins with `/`; not `/` alone; no trailing `/`; no `?` or `#`. Matched ordinal (case counts) and on segment boundaries: `/console/stream` covers `/console/stream` and `/console/stream/42`, not `/console/streamer`. No prefix may equal, or lie under, another entry's. |
 | `GameEdge:StreamingRoutes:<i>:FirstByteTimeout` | `TimeSpan` | yes, per entry | none | Greater than zero and no greater than `ForwardTimeout`. |
+| `GameEdge:TrustedProxies` | list of IP addresses | no | empty (nobody is trusted) | Addresses of reverse proxies in front of the edge. When the connecting address is listed, that proxy's `X-Forwarded-For`, `-Proto` and `-Host` reach the workload; otherwise the edge's own values from the connection do. Each entry must parse as an IP address (`GameEdge:TrustedProxies:<i>`). |
 
 **Invalid configuration fails startup**, not the first request. The host throws
 `InvalidOperationException` before it listens:
@@ -46,6 +47,7 @@ file is Platform's own and is not documented here.
 | Breach | Message |
 |---|---|
 | `WorkloadBaseAddress` missing or not absolute, or either timeout zero or negative | `Configuration section 'GameEdge' is required: WorkloadBaseAddress must be an absolute URI, and ForwardTimeout and ReadinessTimeout must both be positive.` |
+| A `TrustedProxies` entry that is not an IP address | `Configuration section 'GameEdge:TrustedProxies' is invalid: 'GameEdge:TrustedProxies:<i>' must be an IP address.` |
 | Any streamed-route rule | `Configuration section 'GameEdge:StreamingRoutes' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:StreamingRoutes:0:PathPrefix' must begin with '/'.`) |
 
 The streamed-route check collects every breach, so one start reports them all. The same keys
@@ -59,32 +61,36 @@ The route is a catch-all (`/{**catchAll}`) for every method and path. Platform's
 middleware answers `/health/live` and `/health/ready` before it, so those two paths never
 reach the workload.
 
-| Direction | Crosses | Notes |
-|---|---|---|
-| Caller to workload | Method, path, query string | Verbatim. |
-| | Body | Read whole into memory, forwarded verbatim. |
-| | `Content-Type` | Only when there is a body. |
-| | `traceparent`, `tracestate` | Written by the edge from the ambient operation scope (`tracestate` only when present), not copied from the caller's header. See invariant 47 in the [G1 contract](../../design/g1/20-contract.md). |
-| Workload to caller | Status code | Whatever the workload sent. |
-| | `Content-Type` | When present. |
-| | Body | Byte for byte (buffered), or as it arrives (streamed). |
+The edge copies **none** of a caller's headers wholesale. Only the names below cross, and which of
+them do depends on `GameEdge:CredentialMode`. The same rules apply on the buffered path and on a
+streamed route. The source of truth is [`10-design.md`](../../design/10-design.md), *Control flow* §6.
 
-**Everything else is dropped in both directions**: `Cookie` and `Set-Cookie`, `Authorization`,
-`Origin`, CORS headers, `Cache-Control` and the rest.
+| Direction | Header | `Terminate` (game-service) | `PassThrough` (Adventures) |
+|---|---|---|---|
+| Caller to workload | Method, path, query string, body | Verbatim. | Verbatim. |
+| | `Content-Type` | Only when there is a body. | Only when there is a body. |
+| | `traceparent`, `tracestate` | Written by the edge from the ambient operation scope. | Same. |
+| | `Authorization` | Not forwarded. The edge validated it. | Not forwarded. |
+| | `SubZeroDev-Principal-Assertion` | The caller's is stripped; the edge sets its own, signed for this request. | Stripped; never set. |
+| | `Cookie`, `Origin` | Not forwarded. | Forwarded exactly as sent, together or alone. |
+| | `Access-Control-Request-Method`, `-Headers` | Not forwarded. | Forwarded, so the workload can answer a preflight. |
+| | `X-Forwarded-For`, `-Proto`, `-Host` | The caller's are dropped; the edge sets them from the connection, or takes a listed `TrustedProxies` proxy's. | Same. |
+| | `Forwarded`, hop-by-hop headers, anything unnamed | Not forwarded. | Not forwarded. |
+| Workload to caller | Status, `Content-Type`, body | As the workload sent them (body byte for byte, or as it arrives when streamed). | Same. |
+| | `Location` | Forwarded; a redirect is never followed. | Forwarded; a redirect is never followed. |
+| | `Cache-Control`, `Vary` | Forwarded. | Forwarded. |
+| | `Set-Cookie` | Dropped. | Forwarded, every value, byte for byte. |
+| | `Access-Control-*` | Dropped; the edge produces none. | Forwarded unchanged; the edge adds none and answers no preflight. |
+| | Anything else | Dropped. | Dropped. |
 
-- **Cookies.** The forwarder's HTTP handler keeps no cookie jar (`UseCookies = false`). It used
-  to share one across every caller, replaying one player's session onto the next
+- **Cookies.** The forwarder's HTTP handler keeps no cookie jar (`UseCookies = false`), so a cookie
+  the workload sets for one caller is never replayed onto another's request
   ([#339](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/339), fixed). Test:
   `A_cookie_the_workload_sets_for_one_caller_is_never_sent_on_anothers_request`.
-- **Other headers.** Which caller headers should cross is the question of who owns a caller's
-  credential at the edge, and G3 rules on it
-  ([#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340), parked). The edge
-  does not change before then.
-
-**Signed-in flows therefore do not work through the edge.** A workload that keeps sessions in a
-cookie, signs players in over OIDC, or relies on browser cross-origin headers sees every caller
-as anonymous. Anonymous reads work. Such routes cannot be served through the edge until G3
-rules ([#340](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/340)).
+- **A terminate-mode preflight is anonymous.** It carries no bearer, so the edge answers it `401`
+  like any anonymous request and forwards nothing.
+- **Tests.** `HeaderPolicyContract` (the rows both modes share), `PassThroughHeaderTests` and
+  `TerminateHeaderTests`, each over a buffered route and a streamed one.
 
 **MCP is forwarded like any other path.** G1's design routes only the JSON wire through the edge
 and names MCP as a stated gap ([G1 design](../../design/g1/10-design.md), "The MCP surface is not

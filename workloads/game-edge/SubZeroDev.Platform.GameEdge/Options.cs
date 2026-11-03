@@ -30,6 +30,14 @@ public sealed record GameEdgeOptions
     /// <summary>How the edge signs the principal assertion it hands the workload. Required in
     /// <see cref="CredentialMode.Terminate"/> and refused in <see cref="CredentialMode.PassThrough"/>.</summary>
     public HandoffOptions? Handoff { get; init; }
+
+    /// <summary>The addresses of the reverse proxies in front of the edge, each an IP address. A request
+    /// whose connection comes from one of them has its <c>X-Forwarded-For</c>, <c>-Proto</c> and
+    /// <c>-Host</c> passed on in place of the connection's own; from any other address they are
+    /// discarded. Empty — the default — trusts nobody. Text, not <see cref="System.Net.IPAddress"/>: the
+    /// configuration binder has no converter for the latter, and an entry that is not an address
+    /// fails startup naming its key.</summary>
+    public IReadOnlyList<string> TrustedProxies { get; init; } = [];
 }
 
 /// <summary>Who answers for the caller's credential.</summary>

@@ -21,18 +21,10 @@ namespace SubZeroDev.Platform.GameEdge.Tests;
 /// the caller's credential.</summary>
 public sealed class TerminateModeTests : IDisposable
 {
-    private const string TokenIssuer = "https://issuer.test";
-    private const string TokenAudience = "game.test";
-    private const string IssuerKeyId = "issuer-key-1";
+    private const string TokenIssuer = TestIssuer.Issuer;
     private const string HandoffIssuer = "https://edge.test/handoff";
     private const string HandoffAudience = "game-service.test";
     private const string HandoffKeyId = "edge-key-1";
-
-    // One issuer for the class, pinned through the environment. The factory hands its settings to the
-    // entry point flattened, with every parent key present as an empty value, and Identity refuses a
-    // provider section that carries a value. Environment variables reach the configuration without
-    // that flattening. Only a terminate-mode host composes Identity, so no other class reads them.
-    private static readonly ECDsa IssuerKey;
 
     private readonly ECDsa handoffKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     private readonly string directory = Directory.CreateTempSubdirectory("game-edge-handoff-").FullName;
@@ -40,7 +32,7 @@ public sealed class TerminateModeTests : IDisposable
 
     // A static constructor, so the issuer is pinned before the first host starts rather than at the
     // first token.
-    static TerminateModeTests() => IssuerKey = PinIssuer();
+    static TerminateModeTests() => TestIssuer.Pin();
 
     public TerminateModeTests()
     {
@@ -418,42 +410,8 @@ public sealed class TerminateModeTests : IDisposable
         builder.UseSetting("GameEdge:Handoff:Lifetime", "00:00:30");
     }
 
-    private static ECDsa PinIssuer()
-    {
-        var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var parameters = key.ExportParameters(includePrivateParameters: false);
-        var jwks = JsonSerializer.Serialize(new
-        {
-            keys = new[]
-            {
-                new
-                {
-                    kty = "EC",
-                    crv = "P-256",
-                    x = Base64Url.EncodeToString(parameters.Q.X),
-                    y = Base64Url.EncodeToString(parameters.Q.Y),
-                    kid = IssuerKeyId,
-                    use = "sig",
-                    alg = "ES256",
-                },
-            },
-        });
-
-        Environment.SetEnvironmentVariable("Platform__Identity__Bearer__game__Issuer", TokenIssuer);
-        Environment.SetEnvironmentVariable("Platform__Identity__Bearer__game__SigningKeys", jwks);
-        Environment.SetEnvironmentVariable("Platform__Identity__Bearer__game__Audiences__0", TokenAudience);
-        Environment.SetEnvironmentVariable("Platform__Identity__Bearer__game__Algorithms__0", "ES256");
-        return key;
-    }
-
-    private static string Token(string subject, ECDsa? key = null, string issuer = TokenIssuer, long issuedSecondsAgo = 0)
-    {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - issuedSecondsAgo;
-        var header = Encode(new { alg = "ES256", kid = IssuerKeyId, typ = "JWT" });
-        var payload = Encode(new { iss = issuer, sub = subject, aud = TokenAudience, iat = now, nbf = now, exp = now + 300 });
-        var input = header + "." + payload;
-        return input + "." + Base64Url.EncodeToString((key ?? IssuerKey).SignData(Encoding.ASCII.GetBytes(input), HashAlgorithmName.SHA256));
-    }
+    private static string Token(string subject, ECDsa? key = null, string issuer = TokenIssuer, long issuedSecondsAgo = 0) =>
+        TestIssuer.Token(subject, key, issuer, issuedSecondsAgo);
 
     private (JsonElement Header, JsonElement Payload) Verify(string assertion)
     {
@@ -467,8 +425,6 @@ public sealed class TerminateModeTests : IDisposable
             JsonDocument.Parse(Base64Url.DecodeFromChars(parts[0])).RootElement,
             JsonDocument.Parse(Base64Url.DecodeFromChars(parts[1])).RootElement);
     }
-
-    private static string Encode(object value) => Base64Url.EncodeToString(JsonSerializer.SerializeToUtf8Bytes(value));
 
     private string Write(string name, string content)
     {

@@ -11,7 +11,7 @@ namespace SubZeroDev.Platform.GameEdge.Tests.Support;
 /// <summary>A stand-in for the Node workload: a real Kestrel process on loopback, so the forwarder's
 /// outbound HTTP is exercised for real rather than mocked. Records every non-<c>/livez</c>,
 /// non-<c>/readyz</c> request it receives, which is what S7.7 and S10.5 check against.</summary>
-internal sealed class FakeWorkload : IAsyncDisposable
+public sealed class FakeWorkload : IAsyncDisposable
 {
     private readonly WebApplication _app;
 
@@ -128,7 +128,7 @@ internal sealed class FakeWorkload : IAsyncDisposable
     public async ValueTask DisposeAsync() => await _app.DisposeAsync().ConfigureAwait(false);
 }
 
-internal sealed record RecordedRequest(
+public sealed record RecordedRequest(
     string Method,
     string PathAndQuery,
     byte[] Body,
