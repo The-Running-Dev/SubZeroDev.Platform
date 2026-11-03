@@ -40,6 +40,8 @@ file is Platform's own and is not documented here.
 | `GameEdge:StreamingRoutes:<i>:PathPrefix` | string | yes, per entry | none | Begins with `/`; not `/` alone; no trailing `/`; no `?` or `#`. Matched ordinal (case counts) and on segment boundaries: `/console/stream` covers `/console/stream` and `/console/stream/42`, not `/console/streamer`. No prefix may equal, or lie under, another entry's. |
 | `GameEdge:StreamingRoutes:<i>:FirstByteTimeout` | `TimeSpan` | yes, per entry | none | Greater than zero and no greater than `ForwardTimeout`. |
 | `GameEdge:TrustedProxies` | list of IP addresses | no | empty (nobody is trusted) | Addresses of reverse proxies in front of the edge. When the connecting address is listed, that proxy's `X-Forwarded-For`, `-Proto` and `-Host` reach the workload; otherwise the edge's own values from the connection do. Each entry must parse as an IP address (`GameEdge:TrustedProxies:<i>`). |
+| `GameEdge:AbuseLimits:PermitCount` | integer | no | `60` | At least 1. Requests one caller may make in a window. When the `AbuseLimits` section is present, both fields are required. |
+| `GameEdge:AbuseLimits:Window` | `TimeSpan` | no | `00:01:00` | At least one second. A caller is the account when one is established and its client address otherwise: the connection's, or the last `X-Forwarded-For` entry when the connection is a listed trusted proxy. The request after the budget is a `429` with `Retry-After` and is never forwarded. Counted per edge instance, in memory, reset on restart. |
 
 **Invalid configuration fails startup**, not the first request. The host throws
 `InvalidOperationException` before it listens:
@@ -48,6 +50,7 @@ file is Platform's own and is not documented here.
 |---|---|
 | `WorkloadBaseAddress` missing or not absolute, or either timeout zero or negative | `Configuration section 'GameEdge' is required: WorkloadBaseAddress must be an absolute URI, and ForwardTimeout and ReadinessTimeout must both be positive.` |
 | A `TrustedProxies` entry that is not an IP address | `Configuration section 'GameEdge:TrustedProxies' is invalid: 'GameEdge:TrustedProxies:<i>' must be an IP address.` |
+| An `AbuseLimits` field missing, malformed or out of range | `Configuration section 'GameEdge:AbuseLimits' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:AbuseLimits:PermitCount' is required and must be a whole number of at least one.`) |
 | Any streamed-route rule | `Configuration section 'GameEdge:StreamingRoutes' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:StreamingRoutes:0:PathPrefix' must begin with '/'.`) |
 
 The streamed-route check collects every breach, so one start reports them all. The same keys

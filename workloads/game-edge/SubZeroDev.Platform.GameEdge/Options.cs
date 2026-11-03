@@ -38,7 +38,16 @@ public sealed record GameEdgeOptions
     /// configuration binder has no converter for the latter, and an entry that is not an address
     /// fails startup naming its key.</summary>
     public IReadOnlyList<string> TrustedProxies { get; init; } = [];
+
+    /// <summary>How many requests one caller may make in a window before the edge answers <c>429</c>. The
+    /// default is 60 requests in 60 seconds, so an edge started without the setting is limited.</summary>
+    public AbuseLimitOptions AbuseLimits { get; init; } = new(60, TimeSpan.FromSeconds(60));
 }
+
+/// <summary>The abuse limiter's budget, counted per caller and per edge instance.</summary>
+/// <param name="PermitCount">The requests admitted in one window. At least one.</param>
+/// <param name="Window">How long a window lasts. At least one second.</param>
+public sealed record AbuseLimitOptions(int PermitCount, TimeSpan Window);
 
 /// <summary>Who answers for the caller's credential.</summary>
 public enum CredentialMode
