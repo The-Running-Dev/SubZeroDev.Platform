@@ -371,6 +371,66 @@ public sealed class ConfiguredBearerTests
         Assert.Equal(PrincipalKind.Anonymous, result.Value.Kind);
     }
 
+    /// <summary>G3 S5.3 — the bearer scheme with no token is a credential that was presented and cannot
+    /// be read, so it is rejected, not deferred (which would let it pass as anonymous).</summary>
+    [Theory]
+    [InlineData("Bearer")]
+    [InlineData("Bearer ")]
+    [InlineData("bearer ")]
+    [InlineData("bearer sometoken")]
+    [InlineData("BEARER sometoken")]
+    [InlineData("Bearer	sometoken")]
+    public async Task S5_3_A_bearer_credential_in_a_form_not_read_is_rejected(string header)
+    {
+        var provider = Provider(Valid("corp"));
+
+        var result = await provider.AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", header)), default);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(nameof(AuthenticationError.CredentialRejected), result.Error.Code);
+    }
+
+    /// <summary>G3 S5.3 — <c>Authorization</c> is single-valued: a second value makes it unclear which
+    /// credential is meant, so a bearer among several is rejected, whichever comes first.</summary>
+    [Fact]
+    public async Task S5_3_More_than_one_authorization_value_with_a_bearer_is_rejected()
+    {
+        var provider = Provider(Valid("corp"));
+        var valid = Mint(Rsa, "key-1");
+
+        foreach (var values in new List<string[]> { new[] { $"Bearer {valid}", "Bearer x" }, new[] { "Basic abc", $"Bearer {valid}" } })
+        {
+            var result = await provider.AuthenticateAsync(new RepeatedAuthorization(values), default);
+
+            Assert.False(result.IsSuccess);
+            Assert.Equal(nameof(AuthenticationError.CredentialRejected), result.Error.Code);
+        }
+    }
+
+    /// <summary>G3 S5.3 — another scheme is not this provider's credential, so it defers to the
+    /// providers that may claim it.</summary>
+    [Fact]
+    public async Task S5_3_Another_scheme_defers()
+    {
+        var provider = Provider(Valid("corp"));
+
+        var result = await provider.AuthenticateAsync(
+            new StubAuthenticationRequest(("Authorization", "Basic YTpi")), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PrincipalKind.Anonymous, result.Value.Kind);
+    }
+
+    private sealed class RepeatedAuthorization(string[] values) : IAuthenticationRequest
+    {
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> Headers { get; } =
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Authorization"] = values,
+            };
+    }
+
     // S20.8 -------------------------------------------------------------------------------------
 
     /// <summary>S20.8 — an accepted token gives an Account principal pairing the validated

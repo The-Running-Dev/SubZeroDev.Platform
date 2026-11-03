@@ -199,7 +199,7 @@ Acceptance:
 Out of scope: the account surface's listing (S8). Credential outcomes (S5).
 
 ## S5 — Every credential outcome is told apart
-**Status:** in progress
+**Status:** shipped
 
 Delivers: a player whose sign-in has failed, expired or is missing gets a clear refusal, an
 operator can tell a player's bad credential from a fault in the edge's own validation, and the edge
@@ -230,12 +230,14 @@ Delivered ahead of this slice, by the PR #370 review fix: the startup guard (`Pi
 refuses a provider with a `Discovery` address, even beside `SigningKeys`, and one with no `SigningKeys`,
 naming the full key and before any connection to the issuer. It is proved by `PinnedKeysTests.cs`,
 `TerminateModeTests.cs` and the "Invariant 125" `describe` in `s3-edge.test.ts`, which counts connections
-to a listener standing in for the issuer. S5.1 to S5.9 are not delivered, and this slice stays queued.
+to a listener standing in for the issuer. S5.1 to S5.9 are delivered by this slice: `s5-credentials.test.ts`
+(S5.1–S5.3, S5.7–S5.9, run again under the outbound guard in `game-service-isolation`) and
+`TerminateModeTests.cs` (S5.6), and S5.3 needed a fix in Platform's bearer provider (decision 2026-11-03).
 
 Out of scope: token introspection or revocation. Changing any status Platform's pipeline maps.
 
 ## S6 — Each header follows its mode, in both directions
-**Status:** queued
+**Status:** in progress
 
 Delivers: whichever kind of workload sits behind the edge, its callers' cookies, origins and
 forwarding headers reach it exactly as its mode says. No caller's header can impersonate the edge

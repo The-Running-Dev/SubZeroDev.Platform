@@ -63,9 +63,12 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!TryReadBearerToken(request, out var token))
+        switch (ReadBearerToken(request, out var token))
         {
-            return Result<Principal, AuthenticationError>.Success(Principal.Anonymous);
+            case Presented.Nothing:
+                return Result<Principal, AuthenticationError>.Success(Principal.Anonymous);
+            case Presented.Malformed:
+                return Rejected();
         }
 
         var (validated, _) = await ValidateAsync(token).ConfigureAwait(false);
@@ -198,22 +201,56 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         }
     }
 
-    private static bool TryReadBearerToken(IAuthenticationRequest request, out string token)
+    private enum Presented
+    {
+        /// <summary>No bearer credential: no <c>Authorization</c> header, or one for another scheme.</summary>
+        Nothing,
+
+        /// <summary>A bearer credential was presented and is readable as one.</summary>
+        Token,
+
+        /// <summary>A bearer credential was presented and cannot be read: the scheme with no token, or
+        /// more than one <c>Authorization</c> header (a single-valued field, so which one is meant
+        /// cannot be told). Rejected, never deferred, or a half-sent credential would pass as anonymous.</summary>
+        Malformed,
+    }
+
+    private static Presented ReadBearerToken(IAuthenticationRequest request, out string token)
     {
         token = "";
 
         if (!request.Headers.TryGetValue(AuthorizationHeader, out var values) || values.Count == 0)
         {
-            return false;
+            return Presented.Nothing;
+        }
+
+        if (values.Count > 1)
+        {
+            return values.Any(IsBearerScheme) ? Presented.Malformed : Presented.Nothing;
         }
 
         var value = values[0];
+        if (!IsBearerScheme(value))
+        {
+            return Presented.Nothing;
+        }
+
+        // The scheme name is case-insensitive and may be followed by any whitespace, so a presented
+        // bearer credential is not always in the one form this provider reads. Anything but "Bearer "
+        // and a token is malformed, never anonymous.
         if (!value.StartsWith(BearerPrefix, StringComparison.Ordinal) || value.Length == BearerPrefix.Length)
         {
-            return false;
+            return Presented.Malformed;
         }
 
         token = value[BearerPrefix.Length..];
-        return true;
+        return Presented.Token;
+    }
+
+    private static bool IsBearerScheme(string value)
+    {
+        const string scheme = "Bearer";
+        return value.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)
+            && (value.Length == scheme.Length || char.IsWhiteSpace(value[scheme.Length]));
     }
 }

@@ -319,6 +319,66 @@ public sealed class TerminateModeTests : IDisposable
         Assert.Empty(workload.Requests);
     }
 
+    /// <summary>S5.6 — a provider that fails while it validates a presented credential is
+    /// <c>401 ProviderFailed</c>, a different code from a rejected credential, and nothing is
+    /// forwarded. The failure is per request: the same token succeeds once the provider recovers, and
+    /// a request with no credential is still <c>CredentialRequired</c> while it is failing.</summary>
+    [Fact]
+    public async Task S5_6_a_provider_failure_mid_validation_is_401_ProviderFailed_for_that_request_only()
+    {
+        var failing = new FailingBearerProvider();
+        await using var workload = await FakeWorkload.StartAsync();
+        await using var edge = Terminate(workload.BaseAddress, configure: services =>
+        {
+            // Wrap the real pinned-key provider rather than replace it: the credential is parsed and
+            // claimed by the real one, and the wrapper fails in its place only once one is presented.
+            var real = services.Where(descriptor => descriptor.ServiceType == typeof(Abstractions.IAuthenticationProvider)).ToList();
+            foreach (var descriptor in real)
+            {
+                services.Remove(descriptor);
+                failing.Inner = (Abstractions.IAuthenticationProvider)descriptor.ImplementationInstance!;
+            }
+
+            services.AddSingleton<Abstractions.IAuthenticationProvider>(failing);
+        });
+        using var client = edge.CreateClient();
+
+        async Task<HttpResponseMessage> Send(string? token)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/sessions")
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            return await client.SendAsync(request);
+        }
+
+        var good = Token("player-1");
+
+        failing.Armed = true;
+        using (var refused = await Send(good))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            using var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            Assert.Equal("ProviderFailed", body.RootElement.GetProperty("code").GetString());
+            Assert.False(string.IsNullOrEmpty(body.RootElement.GetProperty("correlation").GetString()));
+        }
+
+        using (var anonymous = await Send(null))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+            using var body = JsonDocument.Parse(await anonymous.Content.ReadAsStringAsync());
+            Assert.Equal("CredentialRequired", body.RootElement.GetProperty("code").GetString());
+        }
+
+        Assert.Empty(workload.Requests);
+
+        failing.Armed = false;
+        using var recovered = await Send(good);
+        Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+        Assert.Single(workload.Requests);
+    }
+
     // A mode the composition profile cannot hold (terminate under Local or Operated, pass-through under
     // AuthenticatedTransport) is not started here. Platform refuses it in a hosted service's start, and
     // when that fails `WebApplicationFactory` can report the host's own disposal instead of the refusal
@@ -326,9 +386,13 @@ public sealed class TerminateModeTests : IDisposable
     // under CPU saturation, none when idle. The real edge process has no such race, so S3.6 in
     // `workloads/game-service/tests/s3-edge.test.ts` asserts each pairing's refusal code.
 
-    private WebApplicationFactory<Program> Terminate(string workloadBaseAddress, ILoggerProvider? logs = null) =>
+    private WebApplicationFactory<Program> Terminate(
+        string workloadBaseAddress,
+        ILoggerProvider? logs = null,
+        Action<IServiceCollection>? configure = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            if (configure is not null) builder.ConfigureTestServices(configure);
             builder.UseEnvironment("Development");
             builder.UseSetting("GameEdge:WorkloadBaseAddress", workloadBaseAddress);
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
@@ -422,6 +486,26 @@ public sealed class TerminateModeTests : IDisposable
         }
 
         return text.ToString();
+    }
+
+    /// <summary>The edge's real bearer provider with a switch: while armed it answers
+    /// <c>ProviderFailed</c> to any request that presents an <c>Authorization</c>, as a fault inside
+    /// the validation library would, and otherwise it is the real provider.</summary>
+    private sealed class FailingBearerProvider : Abstractions.IAuthenticationProvider
+    {
+        public Abstractions.IAuthenticationProvider Inner { get; set; } = null!;
+
+        public volatile bool Armed;
+
+        public string Name => Inner.Name;
+
+        public Task<Abstractions.Result<Abstractions.Principal, Abstractions.AuthenticationError>> AuthenticateAsync(
+            Abstractions.IAuthenticationRequest request,
+            CancellationToken cancellationToken) =>
+            Armed && request.Headers.ContainsKey("Authorization")
+                ? Task.FromResult(Abstractions.Result<Abstractions.Principal, Abstractions.AuthenticationError>.Failure(
+                    Abstractions.AuthenticationError.ProviderFailed(Name)))
+                : Inner.AuthenticateAsync(request, cancellationToken);
     }
 
     private sealed class CapturingLoggerProvider : ILoggerProvider

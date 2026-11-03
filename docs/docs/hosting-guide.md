@@ -215,7 +215,7 @@ which CI runs verbatim in the `game-service` job. It needs Node.js 24 or later a
    live only in that file.
 3. **Run the proof**: `npx vitest run tests/replay.test.ts` for the single hop,
    `tests/replay-edge.test.ts` for the edge and `tests/s3-edge.test.ts` for a signed-in player
-   through the edge. Each spawns and tears down its own processes, so
+   through the edge (`tests/s5-credentials.test.ts` for each way a credential is refused). Each spawns and tears down its own processes, so
    nothing needs to be started first.
 
 Other startup variables are `GAME_SERVICE_OTLP_ENDPOINT` (unset means no exporter and no outbound

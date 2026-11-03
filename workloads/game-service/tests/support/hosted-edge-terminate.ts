@@ -106,6 +106,9 @@ function edgeBaseEnvironment(port: number, workloadBaseAddress: string, otlpEndp
 export async function spawnTerminateEdge(
   durable: DurableHostedTarget,
   otlpEndpoint?: string,
+  /** Edge environment applied last, so a test can move one setting (the issuer's address, the clock
+   *  tolerance) without restating the rest. */
+  overrides: Record<string, string> = {},
 ): Promise<TerminateEdge> {
   const workload: SpawnedHostedTarget = await spawnHostedWorkload(otlpEndpoint, durable);
   const tap = await startRecordingProxy(workload.target.baseAddress);
@@ -115,6 +118,7 @@ export async function spawnTerminateEdge(
   const edge = edgeProcess({
     ...edgeBaseEnvironment(port, tap.baseAddress, otlpEndpoint),
     ...terminateEnvironment(issuer, writeHandoffSigningKey()),
+    ...overrides,
   });
   const baseAddress = `http://127.0.0.1:${port}`;
 
