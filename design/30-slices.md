@@ -171,7 +171,7 @@ Out of scope: token failure outcomes beyond "no credential" (S5). Every other he
 Pass-through mode (S6). Abuse limits (S10).
 
 ## S4 — No operation crosses principals
-**Status:** in progress
+**Status:** shipped
 
 Delivers: every game operation that names a session, save or profile is proven to refuse another
 player's ids, through both the HTTP and MCP surfaces, on both store targets.
@@ -199,7 +199,7 @@ Acceptance:
 Out of scope: the account surface's listing (S8). Credential outcomes (S5).
 
 ## S5 — Every credential outcome is told apart
-**Status:** queued
+**Status:** in progress
 
 Delivers: a player whose sign-in has failed, expired or is missing gets a clear refusal, an
 operator can tell a player's bad credential from a fault in the edge's own validation, and the edge

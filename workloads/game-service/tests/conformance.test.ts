@@ -9,10 +9,16 @@
 import { afterAll, describe, expect, it } from "vitest";
 import type { AchievementRecord } from "@the-running-dev/game-engine";
 
-import { inMemoryConformanceTarget, openDurableConformanceTarget, runPortConformance, verifyCallerProfileWrites } from "../src/conformance.js";
+import {
+  CONFORMANCE_OWNERS,
+  inMemoryConformanceTarget,
+  openDurableConformanceTarget,
+  runPortConformance,
+  verifyCallerProfileWrites,
+} from "../src/conformance.js";
 import type { DurableConformanceTarget } from "../src/conformance.js";
-import type { ConformanceTarget, SchemaName, SemanticVersion } from "../src/types.js";
-import { configurationFor, createTestSchema } from "./support/database.js";
+import type { ConformanceTarget, OwnerKey, OwnerScopedStorage, SchemaName, SemanticVersion } from "../src/types.js";
+import { configurationFor, createTestSchema, openTestPool } from "./support/database.js";
 import type { TestSchema } from "./support/database.js";
 
 const ENGINE_VERSION = "1.0.0" as SemanticVersion;
@@ -47,6 +53,138 @@ describe("S9 — port conformance", () => {
       const result = await runPortConformance(target);
       expect(result).toEqual({ ok: true, value: undefined });
     });
+
+    it("S4.4: the run left rows under both owners, read back with SQL, and under no other", async () => {
+      const pool = openTestPool(schema.schema);
+      try {
+        const expected = CONFORMANCE_OWNERS.map((owner) => `${owner.issuer}/${owner.subject}`).sort();
+        for (const table of ["session", "save", "profile"]) {
+          const rows = await pool.query(`select distinct owner_issuer, owner_subject from ${table}`);
+          const seen = rows.rows.map((row: { owner_issuer: string; owner_subject: string }) => `${row.owner_issuer}/${row.owner_subject}`).sort();
+          expect(seen, table).toEqual(expected);
+        }
+      } finally {
+        await pool.end();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------- S4.4: two owners
+
+  describe("S4.4 — port conformance under two owners", () => {
+    it("names two distinct owners", () => {
+      expect(CONFORMANCE_OWNERS).toHaveLength(2);
+      expect(CONFORMANCE_OWNERS[0]).not.toEqual(CONFORMANCE_OWNERS[1]);
+    });
+
+    it("the in-memory target answers each owner only its own rows, through the ports and the lifecycle probe", async () => {
+      const target = inMemoryConformanceTarget();
+      expect(await runPortConformance(target)).toEqual({ ok: true, value: undefined });
+      const [a, b] = CONFORMANCE_OWNERS;
+      const probe = async (owner: OwnerKey, other: OwnerKey): Promise<void> => {
+        const id = `s4-4-after-${owner.subject}`;
+        await target.storage.persistence(owner).sessions.put({
+          sessionId: id,
+          blob: "{}",
+          audience: "player",
+          attemptCounter: 1,
+          replayCompatible: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          revision: 0,
+        });
+        expect(await target.storage.persistence(other).sessions.get(id)).toBeUndefined();
+        expect(await target.storage.lifecycle.session(owner, id)).toEqual({ ok: true, value: "live" });
+        expect(await target.storage.lifecycle.session(other, id)).toEqual({ ok: true, value: "absent" });
+      };
+      await probe(a, b);
+      await probe(b, a);
+    });
+
+    // One mutant per port method: each answers its own owner correctly, so every single-owner
+    // assertion still passes, and leaks across owners in exactly one place. Each must fail the suite.
+    type Leak =
+      | "sessions.get"
+      | "sessions.put"
+      | "saves.get"
+      | "saves.put"
+      | "saves.listByProfile"
+      | "saves.delete"
+      | "profiles.load"
+      | "profiles.save";
+
+    function leaking(leak: Leak): ConformanceTarget {
+      const real = inMemoryConformanceTarget();
+      const peerOf = (owner: OwnerKey): OwnerKey =>
+        owner.subject === CONFORMANCE_OWNERS[0].subject ? CONFORMANCE_OWNERS[1] : CONFORMANCE_OWNERS[0];
+      const storage: OwnerScopedStorage = {
+        lifecycle: real.storage.lifecycle,
+        persistence(owner) {
+          const own = real.storage.persistence(owner);
+          const peer = real.storage.persistence(peerOf(owner));
+          return {
+            sessions: {
+              get: async (id) => (leak === "sessions.get" ? ((await own.sessions.get(id)) ?? (await peer.sessions.get(id))) : own.sessions.get(id)),
+              put: async (record) => {
+                await own.sessions.put(record);
+                if (leak === "sessions.put") await peer.sessions.put(record);
+              },
+            },
+            saves: {
+              get: async (id) => (leak === "saves.get" ? ((await own.saves.get(id)) ?? (await peer.saves.get(id))) : own.saves.get(id)),
+              put: async (record) => {
+                await own.saves.put(record);
+                if (leak === "saves.put") await peer.saves.put(record);
+              },
+              listByProfile: async (profileId) =>
+                leak === "saves.listByProfile"
+                  ? [...(await own.saves.listByProfile(profileId)), ...(await peer.saves.listByProfile(profileId))]
+                  : own.saves.listByProfile(profileId),
+              delete: async (id, expectedSavedAt) => {
+                await own.saves.delete(id, expectedSavedAt);
+                if (leak === "saves.delete") await peer.saves.delete(id, expectedSavedAt);
+              },
+            },
+          };
+        },
+        profiles(owner) {
+          const own = real.storage.profiles(owner);
+          const peer = real.storage.profiles(peerOf(owner));
+          return {
+            load: async (profileId) => {
+              const loaded = await own.load(profileId);
+              return leak === "profiles.load" && loaded.warnings.some((warning) => warning.code === "profile_missing")
+                ? peer.load(profileId)
+                : loaded;
+            },
+            save: async (profile) => {
+              const result = await own.save(profile);
+              if (leak === "profiles.save") await peer.save(profile);
+              return result;
+            },
+          };
+        },
+      };
+      return { ...real, storage };
+    }
+
+    const LEAKS: readonly Leak[] = [
+      "sessions.get",
+      "sessions.put",
+      "saves.get",
+      "saves.put",
+      "saves.listByProfile",
+      "saves.delete",
+      "profiles.load",
+      "profiles.save",
+    ];
+
+    it.each(LEAKS)("fails the suite when %s lets one owner see the other's rows", async (leak) => {
+      const result = await runPortConformance(leaking(leak));
+      expect(result.ok, `a target leaking through ${leak} passed the suite`).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe("MethodDiverged");
+    });
   });
 
   // -------------------------------------------------------------------------- S9.9: SeamUnavailable
@@ -56,10 +194,10 @@ describe("S9 — port conformance", () => {
       const real = inMemoryConformanceTarget();
       return {
         ...real,
-        async seedCorruptProfile(): Promise<void> {
+        async seedCorruptProfile(_owner: OwnerKey, _profileId: string): Promise<void> {
           throw new Error("this target cannot seed a corrupt profile");
         },
-        async seedProfileWriteFailure(): Promise<void> {
+        async seedProfileWriteFailure(_owner: OwnerKey, _profileId: string): Promise<void> {
           throw new Error("this target cannot seed a profile write failure");
         },
       };

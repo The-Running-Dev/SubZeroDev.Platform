@@ -736,13 +736,16 @@ export interface RunSchema {
  * unrecognised `format_version` against the durable one) — `seedProfileWriteFailure` must break
  * the profile write and only the profile write (S9.4's committed-session-survives assertion
  * depends on that).
+ *
+ * G3 amends it (`design/20-contract.md`, "Port conformance under two owners", invariant 122): the
+ * target is owner-scoped storage, so the suite can run every assertion under each of two owners, and
+ * both seed methods name the owner whose row they seed.
  */
 export interface ConformanceTarget {
   readonly label: "in-memory" | "durable";
-  readonly persistence: SessionPersistence;
-  readonly profiles: ProfileStore;
-  seedCorruptProfile(profileId: string): Promise<void>;
-  seedProfileWriteFailure(profileId: string): Promise<void>;
+  readonly storage: OwnerScopedStorage;
+  seedCorruptProfile(owner: OwnerKey, profileId: string): Promise<void>;
+  seedProfileWriteFailure(owner: OwnerKey, profileId: string): Promise<void>;
 }
 
 /**
