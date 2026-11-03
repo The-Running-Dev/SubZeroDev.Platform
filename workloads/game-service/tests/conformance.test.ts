@@ -119,6 +119,7 @@ describe("S9 — port conformance", () => {
         owner.subject === CONFORMANCE_OWNERS[0].subject ? CONFORMANCE_OWNERS[1] : CONFORMANCE_OWNERS[0];
       const storage: OwnerScopedStorage = {
         lifecycle: real.storage.lifecycle,
+        account: real.storage.account,
         persistence(owner) {
           const own = real.storage.persistence(owner);
           const peer = real.storage.persistence(peerOf(owner));

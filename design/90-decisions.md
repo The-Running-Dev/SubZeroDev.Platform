@@ -659,3 +659,22 @@ tip of Adventures' default branch**, where a change there would fail this reposi
 nothing here changed. **Running the proof in `game-service-isolation`**, whose point is that nothing it
 runs can reach out.
 Reversibility: cheap.
+
+### 2026-11-03 — S8: account deletion removes six tables, the routes sit outside the tables, and the in-memory store drops its cached layer
+
+Context: S8 adds `GET /account/saves` and `DELETE /account`. Four points the slice and the contract leave open.
+Chosen: deletion covers every table the owner migration puts an owner column on, which is six, not the
+four the contract and S8.3 name: `profile_terminal` and `profile_kind_data` hold per-owner profile data
+too, and leaving them would keep a deleted player's data. One transaction deletes children first
+(`profile_achievement`, `profile_terminal`, `profile_kind_data`, `profile`, `save`, `session`) and rolls
+back on any error. The two routes are answered in `lifecycle.ts` after the handoff is verified and before
+the surfaces, so neither enters the operation table or the MCP table; any other verb on those paths is
+`404 unknown_operation`. `204` is not an `HttpStatus`, so the account response has its own file-local
+type rather than widening the type the game surface uses. The in-memory store keeps one engine layer per
+owner with a live-session cache, so a successful `deleteAll` also drops that layer; without it a deleted
+session stays reachable. An in-memory save has no stored expiry, so its listed `expiresAt` is its creation
+time plus the save TTL, a nominal value; the durable store reports the column.
+Rejected: **deleting only the four named tables**, which leaves personal data behind. **Registering the
+routes as operations**, which would put them on the MCP surface and break the parity S8.5 asserts.
+**Adding 204 to `HttpStatus`**, which every game-surface handler would then have to consider.
+Reversibility: cheap, except the six-table list, which a new owned table must extend.

@@ -28,6 +28,7 @@ import type { Tracing } from "./telemetry.js";
 import { INTERNAL_FAILURE, wireError } from "./wire-error.js";
 import { err, ok } from "./types.js";
 import type {
+  AccountStore,
   CompositionError,
   CorrelationId,
   HandoffSettings,
@@ -224,6 +225,49 @@ function refuseAssertion(response: ServerResponse, correlation: CorrelationId): 
   response.end(body.ok ? body.value : "");
 }
 
+const ACCOUNT_SAVES = "/account/saves";
+const ACCOUNT = "/account";
+
+/** The contract's status mapping carries no success status without a body, so the account surface's
+ *  `204` is named here rather than added to `HttpStatus`. */
+interface AccountResponse {
+  readonly status: HttpStatus | 204;
+  readonly body: string;
+  readonly correlation: CorrelationId;
+}
+
+/**
+ * The account surface (`20-contract.md`, "Account surface"): `GET /account/saves` and
+ * `DELETE /account`. Two routes beside the game surface, never rows in its operation table or tools
+ * in its MCP table, and never through Dispatch or the engine (invariants 118–120): the owner reaches
+ * the store through `forAccount` alone, so a path or body can name no other account.
+ *
+ * A path that is one of these with the wrong method is the wire's own `unknown_operation`, as the
+ * MCP transport answers a method that means nothing.
+ */
+async function handleAccount(
+  contract: ContractPackage,
+  account: AccountStore,
+  method: string,
+  path: string,
+  correlation: CorrelationId,
+): Promise<AccountResponse> {
+  const verb = method.toUpperCase();
+  if (path === ACCOUNT_SAVES && verb === "GET") {
+    const listed = await account.listSaves();
+    if (!listed.ok) return errorResponse(contract, INTERNAL_FAILURE, correlation);
+    const encoded = canonicalEncode({ saves: listed.value } as unknown as JsonValue);
+    if (!encoded.ok) return errorResponse(contract, INTERNAL_FAILURE, correlation);
+    return { status: 200, body: encoded.value as string, correlation };
+  }
+  if (path === ACCOUNT && verb === "DELETE") {
+    const deleted = await account.deleteAll();
+    if (!deleted.ok) return errorResponse(contract, INTERNAL_FAILURE, correlation);
+    return { status: 204, body: "", correlation };
+  }
+  return errorResponse(contract, "unknown_operation" as WireErrorCode, correlation);
+}
+
 interface RequestSurfaces {
   readonly http: HttpSurface;
   readonly mcp: McpSurface;
@@ -302,6 +346,33 @@ function serve(
         message.resume();
         tracing?.startRequestSpan("game-service.request", inboundTraceParent, correlation, requestStartedAt).end();
         refuseAssertion(response, correlation);
+        return;
+      }
+
+      if (path === ACCOUNT_SAVES || path === ACCOUNT) {
+        const inbound = message.headers["traceparent"];
+        const inboundTraceParent = typeof inbound === "string" ? inbound : null;
+        const requestStartedAt = Date.now();
+        // Neither route reads a body, so none is waited for; drained so the socket can be reused.
+        message.resume();
+        const result = await handleAccount(
+          contract,
+          stores.forAccount(verified.value),
+          message.method ?? "",
+          path,
+          correlationFrom(inboundTraceParent),
+        );
+        tracing?.startRequestSpan("game-service.request", inboundTraceParent, result.correlation, requestStartedAt).end();
+        if (result.status === 204) {
+          response.writeHead(204, { "x-correlation-id": result.correlation as string });
+          response.end();
+          return;
+        }
+        response.writeHead(result.status, {
+          "content-type": "application/json",
+          "x-correlation-id": result.correlation as string,
+        });
+        response.end(result.body);
         return;
       }
 

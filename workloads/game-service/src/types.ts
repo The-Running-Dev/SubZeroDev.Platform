@@ -300,13 +300,35 @@ export interface OwnedLifecycleProbe {
   save(owner: OwnerKey, saveId: string): Promise<Outcome<LifecycleState, StoreError>>;
 }
 
+/** `design/20-contract.md`, "Account surface". One entry per live save, and nothing else of it: no
+ *  blob, no scene and no engine field (invariant 118, *no hosted endpoint returns engine state*). */
+export interface AccountSaveEntry {
+  readonly saveId: string;
+  readonly campaignId: string;
+  readonly profileId: string | null;
+  readonly savedAtSeq: number;
+  /** `row_created_at`, ISO 8601. */
+  readonly savedAt: string;
+  /** ISO 8601. */
+  readonly expiresAt: string;
+}
+
+/** `design/20-contract.md`, "game-service (TypeScript)". Bound to one owner. Not a port the engine
+ *  sees: it reaches the account surface alone (invariant 118). */
+export interface AccountStore {
+  /** Every live save the owner holds, across every profile. */
+  listSaves(): Promise<Outcome<readonly AccountSaveEntry[], StoreError>>;
+  /** Every row the owner holds, in one transaction (invariant 120): all of it or none of it. */
+  deleteAll(): Promise<Outcome<void, StoreError>>;
+}
+
 /** `design/20-contract.md`, "game-service (TypeScript)". Every member takes the owner, and nothing
- *  that reaches a record or a blob carries it (invariant 113). The account member arrives with the
- *  account surface. */
+ *  that reaches a record or a blob carries it (invariant 113). */
 export interface OwnerScopedStorage {
   persistence(owner: OwnerKey): SessionPersistence;
   profiles(owner: OwnerKey): ProfileStore;
   readonly lifecycle: OwnedLifecycleProbe;
+  account(owner: OwnerKey): AccountStore;
 }
 
 /** What one request is composed from: the decorated seam plus the session layer over it. */
@@ -340,6 +362,8 @@ export interface ReadVersionMap {
  */
 export interface StoreProvider {
   forRequest(owner: OwnerKey): RequestPorts;
+  /** The account surface's store, bound to the same verified owner and to nothing the engine sees. */
+  forAccount(owner: OwnerKey): AccountStore;
 }
 
 // ---------------------------------------------------------------------------- store: configuration

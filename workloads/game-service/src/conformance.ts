@@ -34,8 +34,9 @@ import type { Campaign, StoryGraphCampaignSource } from "@the-running-dev/game-e
 import { Pool } from "pg";
 import { quoteIdentifier } from "./migrations.js";
 import { IMPLICIT_TENANT_ID, openDurableStore } from "./store.js";
-import { err, ok } from "./types.js";
+import { DEFAULT_LIFECYCLE_BOUNDS, err, ok } from "./types.js";
 import type {
+  AccountSaveEntry,
   ConformanceError,
   ConformanceTarget,
   DurableStoreConfiguration,
@@ -820,10 +821,37 @@ export async function runPortConformance(target: ConformanceTarget): Promise<Out
  *  exported and imported, since `compose.ts` is outside this slice's `Touches` and the shape is
  *  three lines (`20-contract.md`: "the engine exports the `SessionPersistence` type and no
  *  implementation of it"). */
-function inMemoryReferencePersistence(): SessionPersistence {
+interface ReferencePersistence extends SessionPersistence {
+  /** This owner's saves as the account listing reports them, newest first. */
+  accountSaves(): AccountSaveEntry[];
+  /** Every session and save this owner holds. */
+  wipe(): void;
+}
+
+function inMemoryReferencePersistence(): ReferencePersistence {
   const sessions = new Map<string, StoredSessionRecord>();
   const saves = new Map<string, StoredSaveRecord>();
+  const createdAt = new Map<string, string>();
   return {
+    accountSaves: () =>
+      [...saves.values()]
+        .map((record) => {
+          const savedAt = createdAt.get(record.saveId) ?? new Date(0).toISOString();
+          return {
+            saveId: record.saveId,
+            campaignId: record.campaignId,
+            profileId: record.profileId ?? null,
+            savedAtSeq: record.savedAtSeq,
+            savedAt,
+            expiresAt: new Date(Date.parse(savedAt) + DEFAULT_LIFECYCLE_BOUNDS.saveTtlSeconds * 1000).toISOString(),
+          };
+        })
+        .sort((a, b) => (a.savedAt !== b.savedAt ? (a.savedAt < b.savedAt ? 1 : -1) : a.saveId < b.saveId ? -1 : 1)),
+    wipe: () => {
+      sessions.clear();
+      saves.clear();
+      createdAt.clear();
+    },
     sessions: {
       get: async (sessionId) => sessions.get(sessionId),
       put: async (record) => {
@@ -833,6 +861,7 @@ function inMemoryReferencePersistence(): SessionPersistence {
     saves: {
       get: async (saveId) => saves.get(saveId),
       put: async (record) => {
+        if (!createdAt.has(record.saveId)) createdAt.set(record.saveId, new Date().toISOString());
         saves.set(record.saveId, record);
       },
       listByProfile: async (profileId) => [...saves.values()].filter((record) => record.profileId === profileId),
@@ -845,6 +874,7 @@ function inMemoryReferencePersistence(): SessionPersistence {
           throw error;
         }
         saves.delete(saveId);
+        createdAt.delete(saveId);
       },
     },
   };
@@ -869,8 +899,10 @@ function inMemoryReferencePersistence(): SessionPersistence {
  *   in the run; the engine's store stays the thing that validates, clones and replaces.
  */
 interface InMemoryOwnerState {
-  readonly persistence: SessionPersistence;
+  readonly persistence: ReferencePersistence;
   readonly profiles: ProfileStore;
+  /** Forgets every profile entry and every seeded failure, as an account deletion does. */
+  wipe(): void;
   seedCorrupt(profileId: string): void;
   seedWriteFailure(profileId: string): void;
 }
@@ -896,6 +928,11 @@ function inMemoryOwnerState(): InMemoryOwnerState {
         if (result.ok) raw.set(profile.profileId, structuredClone(profile));
         return result;
       },
+    },
+    wipe(): void {
+      raw.clear();
+      failIds.clear();
+      store = createInMemoryProfileStore({ raw, onSave });
     },
     seedCorrupt(profileId: string): void {
       // `formatVersion` 99 — a format none of the engine's profile readers (3, 2, 1) accepts, the
@@ -935,6 +972,15 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
       save: async (owner, saveId) =>
         ok((await stateFor(owner).persistence.saves.get(saveId)) === undefined ? "absent" : "live"),
     },
+    account: (owner) => ({
+      listSaves: async () => ok(stateFor(owner).persistence.accountSaves()),
+      deleteAll: async () => {
+        const state = stateFor(owner);
+        state.persistence.wipe();
+        state.wipe();
+        return ok(undefined);
+      },
+    }),
   };
 
   return {
