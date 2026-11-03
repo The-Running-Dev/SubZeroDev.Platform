@@ -29,6 +29,12 @@ export interface TokenOptions {
   readonly key?: KeyObject;
   readonly issuer?: string;
   readonly audience?: string;
+  /** The `kid` header; defaults to the one key the edge pins. */
+  readonly keyId?: string;
+  /** Seconds relative to now at which `iat` and `nbf` are set; negative is the past. Default 0. */
+  readonly issuedOffsetSeconds?: number;
+  /** Seconds after `iat` that the token lives. Default 300. */
+  readonly lifetimeSeconds?: number;
 }
 
 function segment(value: unknown): string {
@@ -38,14 +44,14 @@ function segment(value: unknown): string {
 /** A five-minute bearer token for `subject`, signed by `issuer.privateKey` unless `options.key`
  *  stands in for a key the edge does not pin. */
 export function signToken(issuer: TestIssuer, subject: string, options: TokenOptions = {}): string {
-  const now = Math.floor(Date.now() / 1000);
-  const input = `${segment({ alg: "ES256", kid: ISSUER_KEY_ID, typ: "JWT" })}.${segment({
+  const now = Math.floor(Date.now() / 1000) + (options.issuedOffsetSeconds ?? 0);
+  const input = `${segment({ alg: "ES256", kid: options.keyId ?? ISSUER_KEY_ID, typ: "JWT" })}.${segment({
     iss: options.issuer ?? TOKEN_ISSUER,
     sub: subject,
     aud: options.audience ?? TOKEN_AUDIENCE,
     iat: now,
     nbf: now,
-    exp: now + 300,
+    exp: now + (options.lifetimeSeconds ?? 300),
   })}`;
   const signature = sign("sha256", Buffer.from(input, "ascii"), {
     key: options.key ?? issuer.privateKey,

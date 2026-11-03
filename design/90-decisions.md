@@ -21,6 +21,46 @@ entry below:
 
 ---
 
+### 2026-11-03 — S5: A bearer scheme without a token, or beside a second `Authorization` value, is a rejected credential
+
+Context: S5.3 says a malformed `Authorization` value is `401 CredentialRejected`, never `Anonymous`.
+The first run of the new test against the real edge showed two forms answering otherwise.
+`Authorization: Bearer` (with or without the trailing space) and a request with
+two `Authorization` values, the first a valid bearer token, were not rejected. The first was read as no
+credential and answered `CredentialRequired`. The second authenticated as the first value and ignored
+the other, and game-service saw the request. The code, not the contract, was wrong.
+Chosen: `ConfiguredBearerAuthenticationProvider` reads the header as nothing, a token, or malformed.
+The bearer scheme with no token, and a bearer among several `Authorization` values, are malformed and
+answer `CredentialRejected`. A value for another scheme (`Basic`) is still no bearer credential and
+defers, so a deployment that adds a provider for it is unaffected; with none, the edge answers
+`CredentialRequired` and forwards nothing.
+Rejected: **treating every non-bearer scheme as malformed**, which would stop a second provider from
+ever claiming its own scheme. **Accepting the first of several values**, which makes the answer depend
+on header order. **Fixing it in the edge**, which would give the edge a second reading of a header the
+provider already owns.
+Reversibility: cheap.
+
+### 2026-11-03 — S5: The provider failure is injected at the provider boundary, and the issuer outage is a listener nothing may connect to
+
+Context: S5.6 needs a failure mid-validation, and a real edge process offers no seam to cause one.
+S5.9 says "with the test issuer stopped", but the test issuer is a key pair and has no process. Each
+needs a stand-in whose limits are stated.
+Chosen: S5.6 is a `TerminateModeTests.cs` test that wraps the registered provider and, while armed,
+answers `ProviderFailed` for a request with an `Authorization` header. It proves the edge turns that
+answer into `401 ProviderFailed` with a correlation, forwards nothing, and recovers on the next request.
+It returns the failure and does not throw inside the JWT handler, because the chain has no catch. The
+mapping from a library fault to `ProviderFailed` is proved by `S20_7_A_library_fault_is_a_provider_failure`.
+S5.9 points the edge's token issuer at a loopback listener that counts connections, shows valid tokens
+succeed with a count of zero, then closes the listener and shows they still succeed. The claim that the
+edge opens no connection except to game-service is carried by the `game-service-isolation` job, which
+now runs `s5-credentials.test.ts` beside `s3-edge.test.ts` and fails on any non-loopback packet.
+S5.7 runs an edge with `ClockTolerance` 00:00:00 and a four-second token, so the `exp` boundary is
+crossed in about six seconds without moving a clock.
+Rejected: **a sidecar issuer process**, which would add a server the edge is meant never to ask.
+**Throwing inside the handler**, which no code path catches. **Moving the clock**, which would test the
+harness and not the edge.
+Reversibility: cheap.
+
 ### 2026-11-03 — S4: The cross-principal matrix is derived from the contract, and a profile row is seeded on the durable half only
 
 Context: S4.1 requires the matrix to fail if a contract operation carrying `sessionId`, `saveId` or

@@ -354,8 +354,8 @@ jobs:
         working-directory: workloads/game-service
         run: npx vitest run tests/conformance.test.ts
 
-      # `tests/s3-edge.test.ts` (G3 S3) runs here with the rest of the suite; its isolated run is the
-      # `game-service-isolation` job.
+      # `tests/s3-edge.test.ts` (G3 S3) and `tests/s5-credentials.test.ts` (G3 S5) run here with the
+      # rest of the suite; their isolated run is the `game-service-isolation` job.
       # verification: true
       - name: Test
         working-directory: workloads/game-service
@@ -529,7 +529,7 @@ jobs:
             HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_proxy= \
             GAME_EDGE_DLL="$GITHUB_WORKSPACE/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll" \
             OTEL_COLLECTOR_BIN="$GITHUB_WORKSPACE/otelcol-contrib" \
-            ./node_modules/.bin/vitest run tests/s3-edge.test.ts \
+            ./node_modules/.bin/vitest run tests/s3-edge.test.ts tests/s5-credentials.test.ts \
               --reporter=default --reporter=json --outputFile.json=/tmp/platform-s3-offline/vitest.json
 
       # `always()` makes an attempted connection visible even if the code under test swallowed the
