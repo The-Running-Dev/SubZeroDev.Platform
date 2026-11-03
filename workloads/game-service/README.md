@@ -117,6 +117,12 @@ Run twice in a row, the second run is a no-op (S3.16). `GAME_SERVICE_DB_SCHEMA` 
 other than `public`; `GAME_SERVICE_DB_CONNECTION_STRING` overrides the connection string the
 compose file's own defaults resolve to.
 
+**Upgrading a G2 store deletes its rows.** The G3 migration irreversibly deletes every pre-G3
+session, save and profile: rows written before players had owners cannot be attributed to one
+(`design/20-contract.md`, invariant 128). Back up the schema first if those rows matter; rolling
+the migration back does not restore them. The workload's own startup runs the same migration
+(below), so starting a G3 workload against a G2 schema deletes them too (S9).
+
 ## Start the workload against the durable store
 
 `npm run migrate` above is an operator's own explicit control over when a schema moves to head;
