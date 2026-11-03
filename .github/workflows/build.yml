@@ -445,6 +445,9 @@ jobs:
           # Vite writes its cache and its bundled config under node_modules; the guarded user does not own it.
           mkdir -p workloads/game-service/node_modules/.vite workloads/game-service/node_modules/.vite-temp
           chmod -R a+rwX workloads/game-service/node_modules/.vite workloads/game-service/node_modules/.vite-temp
+          # It also writes the bundled `vitest.config.ts.timestamp-*.mjs` next to the config, so the
+          # directory itself (not its contents) is writable by the guarded user.
+          chmod o+w workloads/game-service
 
           # Documentation-range addresses (RFC 5737, RFC 3849) on a dummy interface give the negative
           # control a route that is not loopback, so its packets reach the OUTPUT chain.
