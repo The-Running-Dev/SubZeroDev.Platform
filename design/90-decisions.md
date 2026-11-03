@@ -638,3 +638,24 @@ by default**, which makes a co-located attacker a proxy. **Parsing `Forwarded`**
 format for one fact. **Having the edge answer the terminate-mode preflight**, which is the CORS
 policy the design assigns to nobody.
 Reversibility: cheap.
+
+### 2026-11-03 — S7: Adventures is proved from a test-only project, at a pinned commit, against an HTTPS test issuer, with a recording proxy between the edge and the workload
+
+Context: S7 runs a revision of another repository behind the real edge. Four points the slice leaves open.
+Chosen: the proof is its own project, `workloads/adventures-proof`, not a test inside `game-service`,
+because it shares nothing with that workload and its CI job must reach the network to clone and install
+Adventures, which `game-service` and `game-service-isolation` must not. Adventures is pinned by commit
+in `adventures-pin.json`; `npm run prepare-adventures` clones that commit and installs it, and the tests
+refuse to start without the matching marker. Adventures runs from its own source with `tsx`, on a database
+created and dropped per run in the PostgreSQL the `game-service` compose file provides. The test issuer
+serves HTTPS with a per-run certificate that Adventures' process trusts through `NODE_EXTRA_CA_CERTS`,
+because `openid-client` refuses an HTTP issuer; no HTTP exemption is introduced. A recording proxy sits
+between edge and Adventures so that S7.3 can show the refusal was Adventures' own answer rather than infer
+it from a status code. The edge's port is chosen before Adventures starts, because Adventures builds its
+OIDC `redirect_uri` from the address a browser reaches it at.
+Rejected: **a shared package for the process helpers**, which has one consumer today. **A plain-HTTP
+issuer with the check disabled**, which proves a configuration Adventures does not run in. **Following the
+tip of Adventures' default branch**, where a change there would fail this repository's build for a reason
+nothing here changed. **Running the proof in `game-service-isolation`**, whose point is that nothing it
+runs can reach out.
+Reversibility: cheap.

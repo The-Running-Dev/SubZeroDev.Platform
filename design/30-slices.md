@@ -278,7 +278,7 @@ decisions of 2026-11-03 record the allow-list and `TrustedProxies`.
 Out of scope: Adventures itself (S7). Rewriting a cookie's `Domain` or `Path`.
 
 ## S7 — Adventures through the edge
-**Status:** in progress
+**Status:** shipped
 
 Delivers: Adventures' players keep their guest sessions, sign-in and cross-origin play when their
 traffic passes through Platform's edge.
@@ -300,10 +300,19 @@ Acceptance:
 - **S7.4** The Adventures revision is pinned by commit in the harness, and the proof runs in CI
   from a fresh clone.
 
+Proved by `workloads/adventures-proof` (a test-only project; see its README): the Adventures commit named
+in `adventures-pin.json`, cloned and installed by `npm run prepare-adventures`, run as a child process on
+a per-run database behind the real edge in `PassThrough` mode, with a recording proxy between them and a
+test issuer the browser and Adventures both reach. S7.1 to S7.3 are the three tests in
+`adventures-through-edge.test.ts`; S7.3's refusal is shown to be Adventures' own by the recorded
+exchange, in which the request reached Adventures with the foreign `Origin` and the 403 body left it.
+S7.4 is the `adventures-proof` job in `build.yml`, which clones, prepares and runs the proof on a fresh
+runner. The decisions of 2026-11-03 record the issuer's transport and the pin.
+
 Out of scope: any change to the Adventures repository. The live deployment (S12).
 
 ## S8 — Players can list their saves and delete their account
-**Status:** queued
+**Status:** in progress
 
 Delivers: a signed-in player can see every save they hold and can delete their account. No other
 player can see or delete either.
