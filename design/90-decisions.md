@@ -21,6 +21,45 @@ entry below:
 
 ---
 
+### 2026-11-03 — S3 review: Terminate mode's pinned-keys rule is the edge's own startup guard
+
+Context: invariant 125 says the edge validates bearer tokens only against pinned keys and startup
+refuses a discovery address. The edge composes Platform Identity, which accepts `Discovery` for hosts
+that want it and fetches the issuer's key set while the host starts. So the rule was documented and not
+enforced: a Terminate edge configured with a discovery provider and no `SigningKeys` connected to the
+issuer, then started. The independent review of PR #370 found it.
+Chosen: the edge checks the raw `Platform:Identity:Bearer` section in Terminate mode before it registers
+Identity, so the refusal precedes any discovery or issuer connection. It refuses a provider that sets
+`Discovery` (even beside `SigningKeys`) or sets no `SigningKeys`, and names the full key. Identity keeps
+discovery for every other host. A host with no provider stays the composition profile's to refuse.
+Proved against the real edge process with a listener standing in for the issuer: the four refused
+configurations make zero connections to it, and a control shows the listener counts a connection that is
+made. The in-process tests cannot show this, because a test host flattens settings before startup.
+Rejected: **removing discovery from Identity**, which other hosts use; **checking after registration**,
+which comes after the connection the check exists to prevent; **trusting Identity's key validation**,
+which runs on keys that are present, not on whether they were meant to be fetched.
+Reversibility: cheap.
+
+### 2026-11-03 — S3 review: S3.8 is measured in a job of its own, and a startup test that raced was moved
+
+Context: S3.8 claimed the composition ran with no network beyond its own processes, and CI rejected two
+outbound TCP ports for a job that also ran other suites; the test accepted a token of an unresolvable
+issuer. Nothing counted a connection attempt, so a swallowed one was invisible.
+Chosen: the `game-service-isolation` job runs `s3-edge.test.ts` as a dedicated user whose every
+non-loopback packet, over IPv4 and IPv6, and every DNS query is rejected and counted, with dependencies
+installed first. A negative control shows each path rejects and counts; the run then fails on any counted
+rejection, on a guard that saw no loopback traffic from the suite, and on any skipped test. The guard is
+removed on every exit path. The Local-host guard's mechanism is reused; its proof stays the Local sample's.
+Also: `A_mode_under_a_profile_that_cannot_hold_it_fails_startup` failed intermittently. Platform refuses a
+profile in a hosted service's start, and when that start fails `WebApplicationFactory` can report the
+host's disposal (`ObjectDisposedException: 'IServiceProvider'`) instead of the refusal: 126 of 300 starts
+under CPU saturation, none idle. The refusals are asserted instead against the real edge process in S3.6,
+by error code. No retry, weaker assertion or serial execution was added.
+Rejected: **retrying the theory**, which hides a defect in what it reports; **asserting only that startup
+throws**, which would pass on the disposal error; **keeping the in-process theory**, which can fail without
+a defect in the edge.
+Reversibility: cheap.
+
 ### 2026-11-03 — S3: A host that only authenticates declares `AuthenticatedTransport` ([ADR-010](../docs/docs/adr/ADR-010-authenticated-transport-profile.md))
 
 ADR-010 records the profile, what it admits and refuses, and why `Local` and `Operated` keep their meanings.
