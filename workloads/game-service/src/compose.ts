@@ -42,8 +42,10 @@ import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { canonicalEncode } from "./canonical.js";
 import { migrateToHead } from "./migrations.js";
 import { corruptProfileResult, openDurableStore, profileWriteFailedResult } from "./store.js";
-import { err, ok } from "./types.js";
+import { DEFAULT_LIFECYCLE_BOUNDS, err, ok } from "./types.js";
 import type {
+  AccountSaveEntry,
+  AccountStore,
   ComposedWorkload,
   CompositionError,
   DeterminismDump,
@@ -69,7 +71,11 @@ import type {
 /** Ascending by code unit — the same rule `canonicalEncode` applies to object members, restated
  *  here so the live snapshot and the dump read back from disk agree on order (S5 compares them). */
 function byId(a: { readonly id: string }, b: { readonly id: string }): number {
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  return byIdString(a.id, b.id);
+}
+
+function byIdString(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /** `SaveRecordStore.delete`'s own brand (engine `04-core.md` §7.4), on the identical footing as
@@ -96,6 +102,22 @@ function kinds(): KindRegistry {
 interface Owned<T> {
   readonly owner: OwnerKey;
   readonly record: T;
+  /** When this id was first written, ISO 8601 — the in-memory counterpart of `row_created_at`, kept
+   *  across a re-put exactly as the durable upsert keeps it (S3.10). */
+  readonly rowCreatedAt: string;
+}
+
+/** The in-memory profile has no expiry of its own; an entry carries the production save lifetime so
+ *  the account listing has the same shape under either storage profile. */
+function inMemoryAccountEntry(entry: Owned<StoredSaveRecord>): AccountSaveEntry {
+  return {
+    saveId: entry.record.saveId,
+    campaignId: entry.record.campaignId,
+    profileId: entry.record.profileId ?? null,
+    savedAtSeq: entry.record.savedAtSeq,
+    savedAt: entry.rowCreatedAt,
+    expiresAt: new Date(Date.parse(entry.rowCreatedAt) + DEFAULT_LIFECYCLE_BOUNDS.saveTtlSeconds * 1000).toISOString(),
+  };
 }
 
 function sameOwner(a: OwnerKey, b: OwnerKey): boolean {
@@ -138,7 +160,7 @@ function inMemoryStorage(): {
         put: async (record) => {
           const held = sessions.get(record.sessionId);
           if (held !== undefined && !sameOwner(held.owner, owner)) throw idCollisionError();
-          sessions.set(record.sessionId, { owner, record });
+          sessions.set(record.sessionId, { owner, record, rowCreatedAt: held?.rowCreatedAt ?? new Date().toISOString() });
         },
       },
       saves: {
@@ -146,7 +168,7 @@ function inMemoryStorage(): {
         put: async (record) => {
           const held = saves.get(record.saveId);
           if (held !== undefined && !sameOwner(held.owner, owner)) throw idCollisionError();
-          saves.set(record.saveId, { owner, record });
+          saves.set(record.saveId, { owner, record, rowCreatedAt: held?.rowCreatedAt ?? new Date().toISOString() });
         },
         listByProfile: async (profileId) =>
           [...saves.values()]
@@ -171,6 +193,27 @@ function inMemoryStorage(): {
     return created;
   }
 
+  /** Synchronous end to end, so it is trivially all-or-nothing: no await separates one removal from
+   *  the next. The owner's profile store is forgotten rather than emptied; the request layer that
+   *  captured it is dropped by `compose`'s provider, so nothing reaches the old one again. */
+  function account(owner: OwnerKey): AccountStore {
+    return {
+      listSaves: async () =>
+        ok(
+          [...saves.values()]
+            .filter((entry) => sameOwner(entry.owner, owner))
+            .map(inMemoryAccountEntry)
+            .sort((a, b) => (a.savedAt !== b.savedAt ? (a.savedAt < b.savedAt ? 1 : -1) : byIdString(a.saveId, b.saveId))),
+        ),
+      deleteAll: async () => {
+        for (const [id, entry] of sessions) if (sameOwner(entry.owner, owner)) sessions.delete(id);
+        for (const [id, entry] of saves) if (sameOwner(entry.owner, owner)) saves.delete(id);
+        profileStores.delete(ownerCacheKey(owner));
+        return ok(undefined);
+      },
+    };
+  }
+
   // The no-op probe: every id classifies `absent`, so `unknown_session`/`unknown_save` pass
   // through Dispatch verbatim and Dispatch carries no branch on which store was composed
   // (`20-contract.md`, "Composition — workload").
@@ -179,7 +222,7 @@ function inMemoryStorage(): {
     save: async () => ok("absent"),
   };
 
-  return { storage: { persistence, profiles, lifecycle }, sessions, saves };
+  return { storage: { persistence, profiles, lifecycle, account }, sessions, saves };
 }
 
 /** Every method throws a plain `Error` — the same shape S1's engine catch converts to
@@ -362,6 +405,20 @@ export function ownershipDecorator(storage: OwnerScopedStorage, owner: OwnerKey)
   });
 }
 
+/** `design/20-contract.md`: the account surface's counterpart of `ownershipDecorator` — the same
+ *  owner, bound once, on the one port the request seam does not carry. */
+export function ownedAccount(storage: OwnerScopedStorage, owner: OwnerKey): AccountStore {
+  return storage.account(owner);
+}
+
+/** What an account operation meets while the durable store is not connected. */
+function unavailableAccount(): AccountStore {
+  return {
+    listSaves: async () => err({ code: "Unreachable" }),
+    deleteAll: async () => err({ code: "Unreachable" }),
+  };
+}
+
 export async function compose(
   configuration: WorkloadConfiguration,
   contract: ContractPackage,
@@ -428,6 +485,19 @@ export async function compose(
         const created = requestPorts(memory.storage, owner);
         layers.set(key, created);
         return created;
+      },
+      // The session layer caches live sessions, so a deleted account's layer goes with its rows;
+      // the next request composes a fresh one over the emptied storage.
+      forAccount(owner: OwnerKey): AccountStore {
+        const account = ownedAccount(memory.storage, owner);
+        return {
+          listSaves: () => account.listSaves(),
+          async deleteAll() {
+            const deleted = await account.deleteAll();
+            if (deleted.ok) layers.delete(ownerCacheKey(owner));
+            return deleted;
+          },
+        };
       },
     };
     const lifecycle = memory.storage.lifecycle;
@@ -582,10 +652,12 @@ export async function compose(
     persistence: (owner) => (durableStore ? durableStore.storage.persistence(owner) : unavailablePersistence()),
     profiles: (owner) => (durableStore ? durableStore.storage.profiles(owner) : unavailableProfiles()),
     lifecycle,
+    account: (owner) => (durableStore ? durableStore.storage.account(owner) : unavailableAccount()),
   };
 
   const stores: StoreProvider = {
     forRequest: (owner: OwnerKey): RequestPorts => requestPorts(routedStorage, owner),
+    forAccount: (owner: OwnerKey): AccountStore => ownedAccount(routedStorage, owner),
   };
 
   const serialization: StoreSerializationHandle = {

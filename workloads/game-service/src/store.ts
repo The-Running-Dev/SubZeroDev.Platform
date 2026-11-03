@@ -24,6 +24,8 @@ import type {
 import { pgErrorCode, quoteIdentifier } from "./migrations.js";
 import { err, ok } from "./types.js";
 import type {
+  AccountSaveEntry,
+  AccountStore,
   DatabaseInstant,
   DurableStore,
   DurableStoreConfiguration,
@@ -436,6 +438,41 @@ export function sweepStatements(
   };
 }
 
+/** The account surface's listing (`design/20-contract.md`, "Account surface"): every live save the
+ *  owner holds, across every profile. It selects the six projected columns and no others, so a blob
+ *  is never read, let alone returned. Newest first, ties broken by id in byte order, so the answer
+ *  does not depend on the database image's locale. */
+export function accountSavesStatement(tenantId: TenantId, owner: OwnerKey): Statement {
+  return {
+    text:
+      "select save_id, campaign_id, profile_id, saved_at_seq, row_created_at, expires_at " +
+      "from save where tenant_id = $1 and owner_issuer = $2 and owner_subject = $3 and expires_at > now() " +
+      'order by row_created_at desc, save_id collate "C"',
+    values: [tenantId, owner.issuer, owner.subject],
+  };
+}
+
+/** Every table that holds a row of an owner, children before parents. `profile_terminal` and
+ *  `profile_kind_data` are owned tables as much as the four the contract's deletion text names: left
+ *  behind they would be a player's progress that survives the deletion of their account. */
+const OWNED_TABLES = [
+  "profile_achievement",
+  "profile_terminal",
+  "profile_kind_data",
+  "profile",
+  "save",
+  "session",
+] as const;
+
+/** One owner's rows in the tenant, all of them — expired and unswept ones included, since an
+ *  account's deletion is not bounded by what the lifecycle still serves — and no other owner's. */
+export function accountDeleteStatements(tenantId: TenantId, owner: OwnerKey): readonly Statement[] {
+  return OWNED_TABLES.map((table) => ({
+    text: `delete from ${table} where tenant_id = $1 and owner_issuer = $2 and owner_subject = $3`,
+    values: [tenantId, owner.issuer, owner.subject],
+  }));
+}
+
 // ---------------------------------------------------------------------------- row mapping
 
 interface RawSessionRow {
@@ -529,6 +566,19 @@ function firstInvalidSaveColumn(raw: Record<string, unknown>): string | null {
   if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
   if (!isValidInitializationColumn(raw["initialization"])) return "initialization";
   if (typeof raw["engine_version"] !== "string") return "engine_version";
+  if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
+  if (!(raw["expires_at"] instanceof Date)) return "expires_at";
+  return null;
+}
+
+/** The six columns `accountSavesStatement` returns, checked before the projection is built — the same
+ *  discipline as the save read above, so a widened column is `RowUndeserializable` rather than a
+ *  malformed entry on the wire. */
+function firstInvalidAccountSaveColumn(raw: Record<string, unknown>): string | null {
+  if (typeof raw["save_id"] !== "string") return "save_id";
+  if (typeof raw["campaign_id"] !== "string") return "campaign_id";
+  if (raw["profile_id"] !== null && typeof raw["profile_id"] !== "string") return "profile_id";
+  if (typeof raw["saved_at_seq"] !== "number") return "saved_at_seq";
   if (!(raw["row_created_at"] instanceof Date)) return "row_created_at";
   if (!(raw["expires_at"] instanceof Date)) return "expires_at";
   return null;
@@ -1220,6 +1270,59 @@ export async function openDurableStore(
     },
   };
 
+  function account(owner: OwnerKey): AccountStore {
+    return {
+      async listSaves(): Promise<Outcome<readonly AccountSaveEntry[], StoreError>> {
+        const statement = accountSavesStatement(tenantId, owner);
+        let result;
+        try {
+          result = await pool.query(statement.text, statement.values as unknown[]);
+        } catch (error) {
+          return err(classifyStoreError(error, "other"));
+        }
+        const entries: AccountSaveEntry[] = [];
+        for (const row of result.rows as Record<string, unknown>[]) {
+          const invalidColumn = firstInvalidAccountSaveColumn(row);
+          if (invalidColumn !== null) return err({ code: "RowUndeserializable", column: invalidColumn });
+          entries.push({
+            saveId: row["save_id"] as string,
+            campaignId: row["campaign_id"] as string,
+            profileId: row["profile_id"] as string | null,
+            savedAtSeq: row["saved_at_seq"] as number,
+            savedAt: (row["row_created_at"] as Date).toISOString(),
+            expiresAt: (row["expires_at"] as Date).toISOString(),
+          });
+        }
+        return ok(entries);
+      },
+      // One transaction on one checked-out client (invariant 120): a failure at any statement rolls
+      // every earlier one back, so the owner's rows are all there or all gone. The `finally` release
+      // is what keeps a failed deletion from holding a connection past its own failure.
+      async deleteAll(): Promise<Outcome<void, StoreError>> {
+        const statements = accountDeleteStatements(tenantId, owner);
+        let client: PoolClient | undefined;
+        let inFlight = "connect";
+        try {
+          client = await pool.connect();
+          inFlight = "begin";
+          await client.query("begin");
+          for (const statement of statements) {
+            inFlight = statement.text;
+            await client.query(statement.text, statement.values as unknown[]);
+          }
+          inFlight = "commit";
+          await client.query("commit");
+          return ok(undefined);
+        } catch (error) {
+          if (client) await client.query("rollback").catch(() => {});
+          return err(classifyStoreError(error, "other", inFlight));
+        } finally {
+          client?.release();
+        }
+      },
+    };
+  }
+
   const serialization: StoreSerializationHandle = {
     async snapshot(): Promise<StoreSerializationSnapshot> {
       // `collate "C"` (invariant 83): ordering by a locale-aware collation would make the ordered
@@ -1242,7 +1345,7 @@ export async function openDurableStore(
     },
   };
 
-  const storage: OwnerScopedStorage = { persistence, profiles, lifecycle };
+  const storage: OwnerScopedStorage = { persistence, profiles, lifecycle, account };
 
   return ok({
     storage,

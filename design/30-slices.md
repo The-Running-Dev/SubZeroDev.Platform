@@ -312,7 +312,7 @@ runner. The decisions of 2026-11-03 record the issuer's transport and the pin.
 Out of scope: any change to the Adventures repository. The live deployment (S12).
 
 ## S8 — Players can list their saves and delete their account
-**Status:** in progress
+**Status:** shipped
 
 Delivers: a signed-in player can see every save they hold and can delete their account. No other
 player can see or delete either.
@@ -337,10 +337,17 @@ Acceptance:
 - **S8.7** After deletion, A's still-valid token still authenticates, A's `create-session`
   succeeds, and A's `GET /account/saves` lists nothing from before the deletion.
 
+Proved by `workloads/game-service/tests/account.test.ts`, which runs S8.1, S8.2, S8.6 and S8.7 against
+both the in-memory and the durable store, and S8.3 and S8.4 against PostgreSQL only (the in-memory store
+has no SQL to read back; S8.4's failure is a trigger on `session` that raises mid-transaction). S8.5 is
+asserted against the contract's operation rows and `/mcp/list-tools`, and by the account paths answering
+`404 unknown_operation` to any other verb. The decisions of 2026-11-03 record the six tables and the
+in-memory behaviour.
+
 Out of scope: Adventures' own account data. Platform account records. The issuer.
 
 ## S9 — Pre-G3 rows are deleted at migration
-**Status:** queued — acceptance met by #369; marked shipped once S3–S8 ahead of it ship
+**Status:** shipped — acceptance met by #369; marked shipped when S3–S8 ahead of it shipped
 
 Delivers: rows saved before players had owners are gone once G3 migrates, and an operator knows
 that before upgrading.
@@ -360,7 +367,7 @@ Acceptance:
 Out of scope: migrating Adventures' rows.
 
 ## S10 — Abuse limits answer before they forward
-**Status:** queued
+**Status:** in progress
 
 Delivers: one caller flooding the edge is slowed down and told when to retry, without affecting
 whose data anyone sees.
