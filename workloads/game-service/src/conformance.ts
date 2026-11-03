@@ -41,12 +41,169 @@ import type {
   DurableStoreConfiguration,
   Outcome,
   OwnerKey,
+  OwnerScopedStorage,
   SemanticVersion,
 } from "./types.js";
 
-/** The one owner the single-owner conformance run binds the durable target to; the two-owner
- *  isolation run is its own suite (S4). */
-const CONFORMANCE_OWNER: OwnerKey = { issuer: "conformance", subject: "conformance" };
+/** The two owners `runPortConformance` runs every assertion under (`20-contract.md`, "Port
+ *  conformance under two owners", invariant 122; G3 S4.4). Same issuer, distinct subjects: the
+ *  owner predicate is the pair, and a single shared issuer is what a leak keyed on the issuer alone
+ *  would not catch. */
+export const CONFORMANCE_OWNERS: readonly [OwnerKey, OwnerKey] = [
+  { issuer: "conformance", subject: "owner-a" },
+  { issuer: "conformance", subject: "owner-b" },
+];
+
+/** What one check sees: a `ConformanceTarget` already bound to one owner, which is exactly the shape
+ *  every G2 assertion was written against. Binding is the only place an owner enters a check, so the
+ *  assertions themselves are unchanged and "every assertion under each owner" is a loop, not a
+ *  rewrite. */
+interface BoundTarget {
+  readonly label: ConformanceTarget["label"];
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  seedCorruptProfile(profileId: string): Promise<void>;
+  seedProfileWriteFailure(profileId: string): Promise<void>;
+}
+
+/** Every id one check wrote or read through its owner's ports — what the other owner is then asked
+ *  about. */
+interface TouchedIds {
+  readonly sessions: Set<string>;
+  readonly saves: Map<string, string>;
+  readonly profiles: Set<string>;
+}
+
+/** Binds `target` to `owner` and records the ids the check touches. The recording wraps the ports
+ *  rather than the checks, so a check added later is covered without being edited. */
+function bind(target: ConformanceTarget, owner: OwnerKey): { readonly view: BoundTarget; readonly touched: TouchedIds } {
+  const touched: TouchedIds = { sessions: new Set(), saves: new Map(), profiles: new Set() };
+  const persistence = target.storage.persistence(owner);
+  const profiles = target.storage.profiles(owner);
+  const view: BoundTarget = {
+    label: target.label,
+    persistence: {
+      sessions: {
+        get: (sessionId) => {
+          touched.sessions.add(sessionId);
+          return persistence.sessions.get(sessionId);
+        },
+        put: (record) => {
+          touched.sessions.add(record.sessionId);
+          return persistence.sessions.put(record);
+        },
+      },
+      saves: {
+        get: (saveId) => {
+          touched.saves.set(saveId, touched.saves.get(saveId) ?? "");
+          return persistence.saves.get(saveId);
+        },
+        put: (record) => {
+          touched.saves.set(record.saveId, record.savedAt);
+          if (record.profileId !== undefined) touched.profiles.add(record.profileId);
+          return persistence.saves.put(record);
+        },
+        listByProfile: (profileId) => {
+          touched.profiles.add(profileId);
+          return persistence.saves.listByProfile(profileId);
+        },
+        delete: (saveId, expectedSavedAt) => persistence.saves.delete(saveId, expectedSavedAt),
+      },
+    },
+    profiles: {
+      load: (profileId) => {
+        touched.profiles.add(profileId);
+        return profiles.load(profileId);
+      },
+      save: (profile) => {
+        touched.profiles.add(profile.profileId);
+        return profiles.save(profile);
+      },
+    },
+    seedCorruptProfile: (profileId) => {
+      touched.profiles.add(profileId);
+      return target.seedCorruptProfile(owner, profileId);
+    },
+    seedProfileWriteFailure: (profileId) => {
+      touched.profiles.add(profileId);
+      return target.seedProfileWriteFailure(owner, profileId);
+    },
+  };
+  return { view, touched };
+}
+
+function leaked(target: ConformanceTarget, method: string, detail: string): Outcome<void, ConformanceError> {
+  return err({ code: "MethodDiverged", method, target: target.label, detail: `owner isolation: ${detail}` });
+}
+
+/** After a check under `owner`, asks `other`'s ports about everything the check touched. Reads come
+ *  first, so a later probe's own writes cannot make an earlier read look like a leak; the two probes
+ *  that write (`saves.delete`, `profiles.save`) are made against rows `owner` still holds and then
+ *  confirmed not to have disturbed them. */
+async function assertOtherOwnerSeesNothing(
+  target: ConformanceTarget,
+  owner: OwnerKey,
+  other: OwnerKey,
+  touched: TouchedIds,
+): Promise<Outcome<void, ConformanceError>> {
+  const own = { persistence: target.storage.persistence(owner), profiles: target.storage.profiles(owner) };
+  const foreign = { persistence: target.storage.persistence(other), profiles: target.storage.profiles(other) };
+
+  for (const sessionId of touched.sessions) {
+    if ((await foreign.persistence.sessions.get(sessionId)) !== undefined) {
+      return leaked(target, "sessions.get", `session ${sessionId} was visible to the other owner`);
+    }
+  }
+  for (const saveId of touched.saves.keys()) {
+    if ((await foreign.persistence.saves.get(saveId)) !== undefined) {
+      return leaked(target, "saves.get", `save ${saveId} was visible to the other owner`);
+    }
+  }
+  for (const profileId of touched.profiles) {
+    const listed = await foreign.persistence.saves.listByProfile(profileId);
+    if (listed.length > 0) {
+      return leaked(target, "saves.listByProfile", `the other owner listed ${listed.length} save(s) under profile ${profileId}`);
+    }
+    const loaded = await foreign.profiles.load(profileId);
+    const missing = loaded.warnings.some((warning) => warning.code === "profile_missing");
+    if (!missing || loaded.profile.achievements.length !== 0) {
+      return leaked(target, "profiles.load", `profile ${profileId} was not missing, and empty, for the other owner`);
+    }
+  }
+
+  // A delete by the other owner is a no-op that reveals nothing: not a conflict (that would say the
+  // row exists), and not a removal. Both savedAt values are tried — the matching one is the delete
+  // that would succeed against the owner's own row.
+  for (const [saveId, savedAt] of touched.saves) {
+    const held = await own.persistence.saves.get(saveId);
+    if (held === undefined) continue;
+    for (const expected of [held.savedAt, "1999-01-01T00:00:00.000Z"]) {
+      try {
+        await foreign.persistence.saves.delete(saveId, expected);
+      } catch {
+        return leaked(target, "saves.delete", `the other owner's delete of save ${saveId} failed instead of being a no-op`);
+      }
+    }
+    if ((await own.persistence.saves.get(saveId)) === undefined) {
+      return leaked(target, "saves.delete", `the other owner's delete removed save ${saveId} (put at ${savedAt})`);
+    }
+  }
+
+  for (const profileId of touched.profiles) {
+    const before = JSON.stringify(await own.profiles.load(profileId));
+    await foreign.profiles.save({
+      formatVersion: 3,
+      profileId,
+      achievements: [{ campaignId: FIXTURE_CAMPAIGN_ID, achievementId: "cross-owner-probe" }],
+      terminals: [],
+      kindData: [],
+    });
+    if (JSON.stringify(await own.profiles.load(profileId)) !== before) {
+      return leaked(target, "profiles.save", `the other owner's save changed profile ${profileId}`);
+    }
+  }
+  return ok(undefined);
+}
 
 let counter = 0;
 
@@ -77,7 +234,7 @@ const STORED_SESSION_RECORD_KEYS = new Set([
   "initialization",
 ]);
 
-async function checkSessionsAndSaves(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkSessionsAndSaves(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const sessionId = freshId("conformance-session");
   // Deliberately not ASCII-only and not JSON-trivial — a byte-identity check that only ever
   // round-trips `"{}"` would pass for reasons that have nothing to do with byte identity.
@@ -137,7 +294,7 @@ function isConflictError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && (error as { name: unknown }).name === SESSION_PERSISTENCE_CONFLICT;
 }
 
-async function checkSavesDelete(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkSavesDelete(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const saveId = freshId("conformance-delete-save");
   const savedAt = "2026-01-01T00:00:00.000Z";
   const saveRecord: StoredSaveRecord = {
@@ -204,7 +361,7 @@ async function checkSavesDelete(target: ConformanceTarget): Promise<Outcome<void
 
 // ---------------------------------------------------------------------------- S13.7: saves.listByProfile
 
-async function checkSavesListByProfile(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkSavesListByProfile(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const profileId = freshId("conformance-list-profile");
   const otherProfileId = freshId("conformance-list-other-profile");
   const ownedIds = [freshId("conformance-list-save-a"), freshId("conformance-list-save-b")];
@@ -257,7 +414,7 @@ async function checkSavesListByProfile(target: ConformanceTarget): Promise<Outco
 // ---------------------------------------------------------------------------- S9.2, S9.3: profiles.load outcomes
 
 async function seed(
-  target: ConformanceTarget,
+  target: BoundTarget,
   method: "seedCorruptProfile" | "seedProfileWriteFailure",
   profileId: string,
 ): Promise<Outcome<void, ConformanceError>> {
@@ -271,7 +428,7 @@ async function seed(
   }
 }
 
-async function checkProfileCorrupt(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkProfileCorrupt(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const profileId = freshId("conformance-corrupt-profile");
   const seeded = await seed(target, "seedCorruptProfile", profileId);
   if (!seeded.ok) return seeded;
@@ -289,7 +446,7 @@ async function checkProfileCorrupt(target: ConformanceTarget): Promise<Outcome<v
   return ok(undefined);
 }
 
-async function checkProfileMissing(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkProfileMissing(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const profileId = freshId("conformance-missing-profile");
   const loaded = await target.profiles.load(profileId);
   const missing = loaded.warnings.some((warning) => warning.code === "profile_missing");
@@ -306,7 +463,7 @@ async function checkProfileMissing(target: ConformanceTarget): Promise<Outcome<v
 
 // ---------------------------------------------------------------------------- S9.4: profiles.save write failure
 
-async function checkProfileWriteFailure(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkProfileWriteFailure(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const profileId = freshId("conformance-write-failure-profile");
   const seeded = await seed(target, "seedProfileWriteFailure", profileId);
   if (!seeded.ok) return seeded;
@@ -374,7 +531,7 @@ async function upsertOneAchievement(store: ProfileStore, profileId: string, achi
   return result.ok;
 }
 
-async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkAchievementUnion(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const profileId = freshId("conformance-union-profile");
   // A baseline row to upsert against — the durable store's `save` is an upsert either way, but
   // this keeps the two targets on the same footing before the racing/sequential calls below.
@@ -420,7 +577,7 @@ async function checkAchievementUnion(target: ConformanceTarget): Promise<Outcome
 
 // ---------------------------------------------------------------------------- S9.6: the declared merge divergence
 
-async function checkMergeDivergence(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkMergeDivergence(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const profileId = freshId("conformance-divergence-profile");
   const retainedId = "durable-keeps-me-in-memory-drops-me";
 
@@ -605,7 +762,7 @@ function fixtureSessionLayer(persistence: SessionPersistence, profiles: ProfileS
   return createSessionLayer({ engine, registry, persistence, profiles });
 }
 
-async function checkEngineCallerProperty(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
+async function checkEngineCallerProperty(target: BoundTarget): Promise<Outcome<void, ConformanceError>> {
   const watched = watchProfileCalls(target.profiles);
   const sessionStore = fixtureSessionLayer(target.persistence, watched.store);
   const profileId = freshId("conformance-caller-property-profile");
@@ -626,21 +783,32 @@ async function checkEngineCallerProperty(target: ConformanceTarget): Promise<Out
 
 // ---------------------------------------------------------------------------- runPortConformance
 
+const STEPS: readonly ((target: BoundTarget) => Promise<Outcome<void, ConformanceError>>)[] = [
+  checkSessionsAndSaves,
+  checkSavesDelete,
+  checkSavesListByProfile,
+  checkProfileMissing,
+  checkProfileCorrupt,
+  checkProfileWriteFailure,
+  checkAchievementUnion,
+  checkMergeDivergence,
+  checkEngineCallerProperty,
+];
+
+/** Runs every assertion under each of `CONFORMANCE_OWNERS`, in order, and after each asks the other
+ *  owner's ports about what it touched (`20-contract.md`, invariant 122). The first owner's rows are
+ *  still present while the second runs, which is what makes "sees nothing of the other owner's rows"
+ *  a statement about a store that holds both. */
 export async function runPortConformance(target: ConformanceTarget): Promise<Outcome<void, ConformanceError>> {
-  const steps: readonly (() => Promise<Outcome<void, ConformanceError>>)[] = [
-    () => checkSessionsAndSaves(target),
-    () => checkSavesDelete(target),
-    () => checkSavesListByProfile(target),
-    () => checkProfileMissing(target),
-    () => checkProfileCorrupt(target),
-    () => checkProfileWriteFailure(target),
-    () => checkAchievementUnion(target),
-    () => checkMergeDivergence(target),
-    () => checkEngineCallerProperty(target),
-  ];
-  for (const step of steps) {
-    const result = await step();
-    if (!result.ok) return result;
+  for (const owner of CONFORMANCE_OWNERS) {
+    const other = owner === CONFORMANCE_OWNERS[0] ? CONFORMANCE_OWNERS[1] : CONFORMANCE_OWNERS[0];
+    for (const step of STEPS) {
+      const { view, touched } = bind(target, owner);
+      const result = await step(view);
+      if (!result.ok) return result;
+      const isolated = await assertOtherOwnerSeesNothing(target, owner, other, touched);
+      if (!isolated.ok) return isolated;
+    }
   }
   return ok(undefined);
 }
@@ -700,7 +868,17 @@ function inMemoryReferencePersistence(): SessionPersistence {
  *   that rebuild, so seeding corruption for one profile does not discard another written earlier
  *   in the run; the engine's store stays the thing that validates, clones and replaces.
  */
-export function inMemoryConformanceTarget(): ConformanceTarget {
+interface InMemoryOwnerState {
+  readonly persistence: SessionPersistence;
+  readonly profiles: ProfileStore;
+  seedCorrupt(profileId: string): void;
+  seedWriteFailure(profileId: string): void;
+}
+
+/** One owner's slice of the in-memory target: its own persistence maps, its own raw profile
+ *  entries and its own write-failure set. Nothing is shared between owners, so the engine's profile
+ *  store (which has no notion of an owner) is simply instantiated once per owner. */
+function inMemoryOwnerState(): InMemoryOwnerState {
   const raw = new Map<string, unknown>();
   const failIds = new Set<string>();
 
@@ -708,21 +886,18 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
 
   let store = createInMemoryProfileStore({ raw, onSave });
 
-  const profiles: ProfileStore = {
-    // Read at call time, not captured — `seedCorruptProfile` replaces the instance.
-    load: (profileId) => store.load(profileId),
-    async save(profile) {
-      const result = await store.save(profile);
-      if (result.ok) raw.set(profile.profileId, structuredClone(profile));
-      return result;
-    },
-  };
-
   return {
-    label: "in-memory",
     persistence: inMemoryReferencePersistence(),
-    profiles,
-    async seedCorruptProfile(profileId: string): Promise<void> {
+    profiles: {
+      // Read at call time, not captured — `seedCorrupt` replaces the instance.
+      load: (profileId) => store.load(profileId),
+      async save(profile) {
+        const result = await store.save(profile);
+        if (result.ok) raw.set(profile.profileId, structuredClone(profile));
+        return result;
+      },
+    },
+    seedCorrupt(profileId: string): void {
       // `formatVersion` 99 — a format none of the engine's profile readers (3, 2, 1) accepts, the
       // same malformation the durable target seeds as `format_version = 99`. `2` stopped being a
       // malformation once `PlayerProfile` gained `terminals`, and `3` is this build's own current
@@ -730,8 +905,46 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
       raw.set(profileId, { formatVersion: 99, profileId, achievements: [] });
       store = createInMemoryProfileStore({ raw, onSave });
     },
-    async seedProfileWriteFailure(profileId: string): Promise<void> {
+    seedWriteFailure(profileId: string): void {
       failIds.add(profileId);
+    },
+  };
+}
+
+export function inMemoryConformanceTarget(): ConformanceTarget {
+  const owners = new Map<string, InMemoryOwnerState>();
+  const stateFor = (owner: OwnerKey): InMemoryOwnerState => {
+    // The pair, not the subject alone: two issuers may mint the same subject.
+    const key = JSON.stringify([owner.issuer, owner.subject]);
+    let state = owners.get(key);
+    if (state === undefined) {
+      state = inMemoryOwnerState();
+      owners.set(key, state);
+    }
+    return state;
+  };
+
+  const storage: OwnerScopedStorage = {
+    persistence: (owner) => stateFor(owner).persistence,
+    profiles: (owner) => stateFor(owner).profiles,
+    // An in-memory row never expires, so the probe answers `live` or `absent`; an owner that holds
+    // no such row gets `absent` whoever else does (invariant 115).
+    lifecycle: {
+      session: async (owner, sessionId) =>
+        ok((await stateFor(owner).persistence.sessions.get(sessionId)) === undefined ? "absent" : "live"),
+      save: async (owner, saveId) =>
+        ok((await stateFor(owner).persistence.saves.get(saveId)) === undefined ? "absent" : "live"),
+    },
+  };
+
+  return {
+    label: "in-memory",
+    storage,
+    async seedCorruptProfile(owner: OwnerKey, profileId: string): Promise<void> {
+      stateFor(owner).seedCorrupt(profileId);
+    },
+    async seedProfileWriteFailure(owner: OwnerKey, profileId: string): Promise<void> {
+      stateFor(owner).seedWriteFailure(profileId);
     },
   };
 }
@@ -749,15 +962,19 @@ export function inMemoryConformanceTarget(): ConformanceTarget {
  * `seedProfileWriteFailure` from touching `session`/`save` (S9.4's "only the profile write").
  */
 async function ensureWriteFailureSeam(pool: Pool): Promise<void> {
+  // Keyed by owner as the `profile` table is: blocking one owner's profile must leave the other
+  // owner's same-named profile writable (G3 S4.4 — the seam is part of what is under test).
   await pool.query(
-    "create table if not exists conformance_write_block (tenant_id text not null, profile_id text not null, primary key (tenant_id, profile_id))",
+    "create table if not exists conformance_write_block (tenant_id text not null, owner_issuer text not null, owner_subject text not null, profile_id text not null, " +
+      "primary key (tenant_id, owner_issuer, owner_subject, profile_id))",
   );
   await pool.query(`
     create or replace function conformance_block_profile_write() returns trigger as $$
     begin
       if exists (
         select 1 from conformance_write_block
-        where tenant_id = new.tenant_id and profile_id = new.profile_id
+        where tenant_id = new.tenant_id and owner_issuer = new.owner_issuer
+          and owner_subject = new.owner_subject and profile_id = new.profile_id
       ) then
         raise exception 'conformance: profile write blocked for %/%', new.tenant_id, new.profile_id;
       end if;
@@ -810,26 +1027,24 @@ export async function openDurableConformanceTarget(
   }
 
   const tenantId = IMPLICIT_TENANT_ID;
-  const persistence = store.storage.persistence(CONFORMANCE_OWNER);
 
   return ok({
     label: "durable",
-    persistence,
-    profiles: store.storage.profiles(CONFORMANCE_OWNER),
-    async seedCorruptProfile(profileId: string): Promise<void> {
+    storage: store.storage,
+    async seedCorruptProfile(owner: OwnerKey, profileId: string): Promise<void> {
       // `format_version = 99` — same reasoning as the in-memory target's own sentinel above:
       // none of `1`, `2` or `3` is a malformation any longer.
       await seedPool.query(
         "insert into profile (tenant_id, owner_issuer, owner_subject, profile_id, format_version, row_updated_at) " +
           "values ($1, $2, $3, $4, 99, now()) " +
           "on conflict (tenant_id, owner_issuer, owner_subject, profile_id) do update set format_version = 99, row_updated_at = now()",
-        [tenantId, CONFORMANCE_OWNER.issuer, CONFORMANCE_OWNER.subject, profileId],
+        [tenantId, owner.issuer, owner.subject, profileId],
       );
     },
-    async seedProfileWriteFailure(profileId: string): Promise<void> {
+    async seedProfileWriteFailure(owner: OwnerKey, profileId: string): Promise<void> {
       await seedPool.query(
-        "insert into conformance_write_block (tenant_id, profile_id) values ($1, $2) on conflict do nothing",
-        [tenantId, profileId],
+        "insert into conformance_write_block (tenant_id, owner_issuer, owner_subject, profile_id) values ($1, $2, $3, $4) on conflict do nothing",
+        [tenantId, owner.issuer, owner.subject, profileId],
       );
     },
     async close(): Promise<void> {

@@ -21,6 +21,54 @@ entry below:
 
 ---
 
+### 2026-11-03 — S4: The cross-principal matrix is derived from the contract, and a profile row is seeded on the durable half only
+
+Context: S4.1 requires the matrix to fail if a contract operation carrying `sessionId`, `saveId` or
+`profileId` is absent from it, and S4.2 requires A's rows read back with SQL. Thirteen operations
+carry an id field; `list-campaigns`, `list-saves`, `create-session` and `delete-save` carry
+`profileId`, and a never-minted profile does not refuse (it answers as an empty one), so for those
+"the response a never-minted id produces" is the comparison and not a 404. The in-memory store has
+no SQL to read, and gameplay this short earns no achievement, so no public operation writes A a
+profile row there.
+Chosen: the test reads the request schemas out of the vendored contract (resolving the one `$ref`
+`create-session` uses) and fails on any id-carrying operation without a matrix row; a second test
+drops each row in turn and shows the check names it. B's request on A's ids and on never-minted ids
+are compared whole, with the generated `sessionId` and `gameId` of a successful `create-session`
+replaced. After each request, A's rows in all four owned tables are compared as the database
+serialises them. A's profile row is written through A's own port on the durable half, as S2.5 does;
+the in-memory half compares with A having no profile row, and S4.4's per-owner in-memory profile
+store covers the profile port there. A mutation that drops the owner predicate from the save read
+fails `load-game` and `delete-save` on both surfaces; one that drops the owner from the save lifecycle
+probe fails the expired-row test (invariant 115). The matrix cannot see a leak in the profile read or
+in the delete statement's own predicate: the profile operations answer the same for an empty and a
+foreign profile, and the save read refuses before a delete runs. Those two are proved at the port by
+S4.4, which fails when either is removed.
+Rejected: **a hand-written list of operations**, which is the omission S4.1 exists to catch;
+**mocking a profile row into the in-memory store through composition internals**, which would test
+the mock; **comparing only status and code**, which would pass a body that echoes A's data.
+Reversibility: cheap.
+
+### 2026-11-03 — S4: The conformance suite runs under two owners, with a per-owner in-memory target and a leak probe after each step
+
+Context: invariant 122 and the `ConformanceTarget` amendment in `20-contract.md` require every G2
+assertion under owner A and owner B on both targets, and that each port method sees nothing of the
+other owner's rows. The shipped target still had the G2 shape (`persistence`, `profiles`, an ownerless
+`seedCorruptProfile`). S4.4 says "seven port methods"; the ports have eight, counting
+`saves.listByProfile`.
+Chosen: `ConformanceTarget` takes the amended shape (`storage: OwnerScopedStorage`, seeds take an
+owner). `runPortConformance` runs each existing step once per owner against a view bound to that
+owner, so the G2 assertions are unchanged, then probes from the other owner: reads of the ids the
+step touched see nothing, a foreign `saves.delete` (matching and mismatched `savedAt`) removes
+nothing, and a foreign `profiles.save` changes nothing the owner loads. The in-memory target keeps
+one state per owner. The durable write-failure seam keys on the owner columns. Eight leaking
+in-memory mutants, one per method including `listByProfile`, each fail the suite with
+`MethodDiverged`. The probe covers all eight methods; the slice's "seven" is read as "every".
+Rejected: **running the suite under one owner and a separate isolation test**, which leaves the G2
+assertions unproven under B; **a mutant for only the methods S4.4 names**, which would leave
+`listByProfile` unproven; **editing the slice text to say eight**, which is the design's to correct
+and changes no behaviour.
+Reversibility: cheap.
+
 ### 2026-11-03 — S3 review: Terminate mode's pinned-keys rule is the edge's own startup guard
 
 Context: invariant 125 says the edge validates bearer tokens only against pinned keys and startup
