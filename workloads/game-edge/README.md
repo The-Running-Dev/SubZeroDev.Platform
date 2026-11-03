@@ -36,6 +36,8 @@ file is Platform's own and is not documented here.
 | `GameEdge:WorkloadBaseAddress` | absolute URI | **yes** | none, deliberately | Must be an absolute URI. Where the workload listens; used by the forwarder and the readiness probe only. |
 | `GameEdge:ForwardTimeout` | `TimeSpan` | yes | `00:00:10` | Greater than zero. Budget for a buffered forward, send through the last body byte. Exceeding it is a `504`. |
 | `GameEdge:ReadinessTimeout` | `TimeSpan` | yes | `00:00:05` | Greater than zero. Bounds the readiness probe of the workload and is the check's own timeout. |
+| `GameEdge:CredentialMode` | `Terminate` or `PassThrough` | **yes** | none, deliberately | Who answers for the caller's credential. See [Operating a deployment](#operating-a-deployment). |
+| `GameEdge:Handoff:Issuer`, `:Audience`, `:KeyId`, `:SigningKeyPath`, `:Lifetime` | strings, and a `TimeSpan` | all, in `Terminate`; refused in `PassThrough` | none | The assertion the edge signs for the workload: its `iss` and `aud`, the `kid` of the key the workload verifies with, the P-256 private key's PEM path, and how long each assertion lives (at least one second, and no more than the workload's `GAME_SERVICE_HANDOFF_MAX_LIFETIME_SECONDS`). |
 | `GameEdge:StreamingRoutes` | list | no | empty (nothing streams) | See below. |
 | `GameEdge:StreamingRoutes:<i>:PathPrefix` | string | yes, per entry | none | Begins with `/`; not `/` alone; no trailing `/`; no `?` or `#`. Matched ordinal (case counts) and on segment boundaries: `/console/stream` covers `/console/stream` and `/console/stream/42`, not `/console/streamer`. No prefix may equal, or lie under, another entry's. |
 | `GameEdge:StreamingRoutes:<i>:FirstByteTimeout` | `TimeSpan` | yes, per entry | none | Greater than zero and no greater than `ForwardTimeout`. |
@@ -49,6 +51,8 @@ file is Platform's own and is not documented here.
 | Breach | Message |
 |---|---|
 | `WorkloadBaseAddress` missing or not absolute, or either timeout zero or negative | `Configuration section 'GameEdge' is required: WorkloadBaseAddress must be an absolute URI, and ForwardTimeout and ReadinessTimeout must both be positive.` |
+| `CredentialMode` missing or not a mode, `Handoff` missing in `Terminate` or present in `PassThrough`, or a `Handoff` field missing | `Configuration section 'GameEdge' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:CredentialMode' is required and must be 'Terminate' or 'PassThrough'.`) |
+| In `Terminate`, a provider under `Platform:Identity:Bearer` with a `Discovery` address or without `SigningKeys` | `Configuration section 'Platform:Identity:Bearer' is invalid for 'Terminate' mode: ` followed by one sentence per breach |
 | A `TrustedProxies` entry that is not an IP address | `Configuration section 'GameEdge:TrustedProxies' is invalid: 'GameEdge:TrustedProxies:<i>' must be an IP address.` |
 | An `AbuseLimits` field missing, malformed or out of range | `Configuration section 'GameEdge:AbuseLimits' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:AbuseLimits:PermitCount' is required and must be a whole number of at least one.`) |
 | Any streamed-route rule | `Configuration section 'GameEdge:StreamingRoutes' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:StreamingRoutes:0:PathPrefix' must begin with '/'.`) |
@@ -95,10 +99,13 @@ streamed route. The source of truth is [`10-design.md`](../../design/10-design.m
 - **Tests.** `HeaderPolicyContract` (the rows both modes share), `PassThroughHeaderTests` and
   `TerminateHeaderTests`, each over a buffered route and a streamed one.
 
-**MCP is forwarded like any other path.** G1's design routes only the JSON wire through the edge
-and names MCP as a stated gap ([G1 design](../../design/g1/10-design.md), "The MCP surface is not
-reachable through the edge"), but the catch-all forwards `/mcp/*` too. The edge does nothing
-MCP-specific; whether it should cover MCP is open for G3.
+**MCP reaches game-service only through the edge, under the same ownership as HTTP.** `/mcp/*` is
+forwarded by the same catch-all, so in `Terminate` mode a tool call needs a credential the edge
+established, is refused with `CredentialRequired` otherwise, is counted against the same per-account
+budget, and reaches the workload carrying the edge's assertion. The workload refuses any request that
+carries no valid assertion, MCP included (`401 assertion_refused`), so a client that addresses game-service
+directly gets nothing: keep the workload's port reachable by the edge alone. The edge does nothing
+MCP-specific.
 
 ## Probes
 
@@ -119,7 +126,9 @@ the workload is unreachable".
 
 ## Errors
 
-The edge produces exactly two errors; every other status a caller sees came from the workload.
+The edge produces exactly two errors on the forwarding path; every other status a caller sees came from the
+workload, from Platform's bearer pipeline (`401 CredentialRejected`, `Terminate` only), or is one of the two
+refusals described after the body below, which are answered before anything is forwarded.
 
 | Status | `code` | When |
 |---|---|---|
@@ -131,6 +140,10 @@ Body, `Content-Type: application/json; charset=utf-8`:
 ```json
 { "code": "workload_unreachable", "correlation": "0af7651916cd43dd8448eb211c80319c" }
 ```
+
+The two refusals have the same body shape. `Terminate` mode answers a caller with no credential `401` with
+code `CredentialRequired`, and a caller over its budget gets `429` with code `RateLimited` and a
+`Retry-After` of whole seconds. Neither reaches the workload.
 
 `correlation` is the request's trace id (32 lowercase hex). No exception text or request
 content is ever in the body. Neither error is retryable and the edge makes exactly one attempt:
@@ -173,6 +186,83 @@ Neither carries the request's path, query or body, nor an exception message. The
 request and outbound-call logs do at `Information`; if a query can carry a token, see the note in
 [`../game-service/README.md`](../game-service/README.md#build-and-start-the-edge).
 
+## Operating a deployment
+
+The topology is a reverse proxy that keeps TLS, one edge per workload, and the workload behind it. The
+proxy's route for the workload's host is the only thing a cutover or a rollback changes.
+
+### The two modes
+
+| | `Terminate` (game-service) | `PassThrough` (Adventures) |
+|---|---|---|
+| Set | `GameEdge__CredentialMode=Terminate` | `GameEdge__CredentialMode=PassThrough` |
+| Who authenticates | The edge, from a bearer token, against the issuer's pinned keys. | The workload, from its own cookie. |
+| Also required | `GameEdge__Handoff__*`, and `Platform__Identity__Bearer__<provider>__*` pinning the issuer; the `AuthenticatedTransport` composition profile (`Platform:CompositionProfile`). | Nothing. `Handoff` must be absent. |
+| Anonymous caller | `401 CredentialRequired`, nothing forwarded. | Forwarded; the workload decides. |
+| Workload needs | `GAME_SERVICE_HANDOFF_KEYS_DIR`, `_ISSUER` and `_AUDIENCE` (and optionally `_CLOCK_TOLERANCE_SECONDS`, default 30, and `_MAX_LIFETIME_SECONDS`, default 60). | No edge setting. Adventures needs no handoff. |
+
+### The handoff key and its rotation
+
+The edge signs each request's assertion (ES256, P-256) with the private key at
+`GameEdge:Handoff:SigningKeyPath`; game-service verifies it with the public key named
+`<KeyId>.pem` in `GAME_SERVICE_HANDOFF_KEYS_DIR`, and several may be present at once. Rotate in this order,
+because the workload must know a key before the edge signs with it:
+
+1. Put the new public key, `<new key id>.pem`, in game-service's key directory and restart it.
+2. Point the edge at the new pair (`KeyId`, `SigningKeyPath`) and restart it.
+3. After one `Lifetime` has passed, remove `<old key id>.pem`.
+
+Switching the edge first makes every request `401 assertion_refused` until the workload catches up.
+`Handoff:Lifetime` must not exceed the workload's `GAME_SERVICE_HANDOFF_MAX_LIFETIME_SECONDS`, or the
+workload refuses every assertion. There is no setting that turns the check off.
+
+### The issuer, and what the edge fetches
+
+The edge fetches nothing from the issuer. It holds the issuer's public keys itself, as a JWKS document in
+`Platform:Identity:Bearer:<provider>:SigningKeys`, alongside `Issuer`, `Audiences` and `Algorithms`, and it
+refuses to start with a `Discovery` address on any provider. To rotate an issuer key, add the new key to
+`SigningKeys` (keep the old one) and redeploy the edge **before the issuer signs with the new key**. A
+token signed by a key the edge has not been given is `401 CredentialRejected`, for every player, until it
+has. Remove the old key once no token signed with it can still be presented. Treat the set as read at
+startup: change it by redeploying the edge.
+
+### Limits
+
+`GameEdge:AbuseLimits` bounds each caller (the account when established, otherwise the client address).
+The counter is per edge instance and in memory: running more than one instance multiplies the budget by the
+instance count, and a restart resets it. Behind a reverse proxy, list the proxy's address in
+`GameEdge:TrustedProxies`. Without it every player arrives from the proxy's address and shares one budget.
+
+### Verifying a deployment
+
+Through the proxy, at the host players use:
+
+1. `GET /health/live` is `200`, and `GET /health/ready` is `200`: the edge is up and the workload answers
+   `/readyz`.
+2. `Terminate`: a request with no `Authorization` is `401 CredentialRequired`; one with a bad token is
+   `401 CredentialRejected`; one with a valid token for the registered client returns the workload's answer.
+   A request sent to game-service directly, without the assertion, is `401 assertion_refused`.
+3. `PassThrough`: an API read returns Adventures' own answer, and a sign-in sets its session cookie
+   unchanged.
+
+**CI is not this check.** The `g3-composition` job proves the code against a test issuer, throwaway keys and
+loopback addresses. It touches none of your host, issuer, registered client, keys or proxy, and a green run
+is not a statement about them. Run the list above against the live deployment.
+
+### Rolling back Adventures
+
+Adventures was reachable directly before the edge, and rollback restores exactly that:
+
+1. In the reverse proxy, point the API host's route back at Adventures' own address, the one it used before
+   the cutover. The host, TLS and Adventures itself do not change, so players keep their cookies and the OIDC
+   `redirect_uri` stays valid.
+2. Reload the proxy, then `GET /api/me` at the public host: `200`, and a signed-in player is still signed in.
+3. Confirm the edge sees no new requests. It holds no state, so it can be stopped or left running.
+
+The procedure is rehearsed in `workloads/adventures-proof/tests/cutover-rollback.test.ts` against a route
+table standing in for the proxy: a session started before the cutover survives it, a sign-in completes on
+the cutover route, the edge is taken down, and the switch back restores the signed-in player and a write.
+
 ## Run it locally
 
 Prerequisite: .NET SDK 10.0.x. From the repository root:
@@ -207,8 +297,9 @@ The edge asks four things of a workload:
    references none of its code, and no project under `src/` may reference `workloads/`.
 2. **`GET /readyz`** answering a 2xx exactly when the workload can serve. Its liveness path is
    never called.
-3. **Its own authorization boundary.** The edge authorizes nothing and passes no credential.
-   Until G3 rules (#340), a workload cannot expect a caller's cookie or `Authorization` header.
+3. **Its own authorization boundary.** The edge never forwards an `Authorization` header. In
+   `PassThrough` the workload receives the caller's `Cookie` and `Origin` and answers for them; in
+   `Terminate` it receives only the signed assertion and verifies it.
 4. **Safe to call exactly once.** The edge never retries, and a `503` or `504` leaves the
    outcome unknown, so the workload's callers must be able to re-read state.
 

@@ -401,7 +401,7 @@ is modelled.
 Out of scope: a shared limiter across instances. Limiting before authentication.
 
 ## S11 — A fresh clone proves all of it, and an operator can run it
-**Status:** in progress
+**Status:** shipped
 
 Delivers: anyone who clones the repository can rerun every G3 proof, and an operator has what they
 need to configure, verify and roll back a deployment.
@@ -424,10 +424,12 @@ Acceptance:
 - **S11.5** The documentation states that the edge fetches nothing from the issuer, and how to pin
   a new issuer key before the issuer signs with it.
 
+Proved by the `g3-composition` job in `.github/workflows/build.yml`, which needs the four jobs that each run from a fresh clone (`build`, `game-service`, `game-service-isolation`, `adventures-proof`), runs even when one fails, and fails unless all succeeded. The one job is a gate over them rather than a fifth job repeating their setups. S11.3 is rehearsed by `workloads/adventures-proof/tests/cutover-rollback.test.ts` against a route table standing in for the proxy. S11.2, S11.4 and S11.5 are "Operating a deployment" in `workloads/game-edge/README.md`, with pointers from the game-service README and the hosting guide.
+
 Out of scope: the live cutover (S12).
 
 ## S12 — adventures-api live through the edge
-**Status:** queued
+**Status:** in progress
 
 Delivers: Adventures' real players reach it through Platform's edge on the existing VPS, with
 nothing they can notice except that it still works.

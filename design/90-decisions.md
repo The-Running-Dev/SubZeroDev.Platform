@@ -700,3 +700,23 @@ asks for. **Counting refused requests**, which makes a polite client retrying on
 earlier flood. **The first `X-Forwarded-For` entry**, which the caller writes. **A boolean to disable
 limiting**, a signature the contract does not carry.
 Reversibility: cheap.
+
+### 2026-11-04 — S11: the composition job is a gate over the four fresh-clone jobs, and the rollback is rehearsed against a route table
+
+Context: S11.1 asks for one CI job that, from a fresh clone, runs every proof and fails if any fails. The
+proofs already run as four jobs (`build`, `game-service`, `game-service-isolation`, `adventures-proof`),
+each from a fresh clone and each needing its own toolchain, network rule or privilege; one job that
+repeated them would need all four setups at once and prove nothing the four do not. S11.3 asks for a
+rollback rehearsed once, and the reverse proxy is not in this repository.
+Chosen: `g3-composition` is a job that needs all four, runs even when one fails, and fails unless every
+one succeeded; its result is the single answer to "do all of G3's proofs hold on a fresh clone". It
+carries a comment saying what each job covers and that it is not the live smoke check. The rollback is
+rehearsed by `workloads/adventures-proof/tests/cutover-rollback.test.ts` through a test-only route table
+(`support/route-table.ts`) that holds one public address and switches between the direct route and the
+edge, with a tap behind the edge only so a request is known to be on the cutover route exactly when the
+tap saw it. The documented procedure is the same one change: point the host's route back at Adventures.
+Rejected: **a fifth job that re-runs everything**, which doubles CI time and maintains two copies of each
+job's setup. **Rehearsing against a real proxy in CI**, which would test the proxy's configuration, not
+this repository's code, and which S12 does on the live host.
+Reversibility: cheap. Nothing checks that the gate's `needs` list stays complete: a new proof job added
+outside it would not be covered by `g3-composition`.

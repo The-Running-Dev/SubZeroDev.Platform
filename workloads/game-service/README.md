@@ -280,17 +280,18 @@ repository's CI to regenerate or compare against.
 
 ## Handover notes
 
-Two facts the next effort (G2, G3) inherits rather than discovers:
+One fact the next effort (G2) inherits rather than discovers:
 
 - **Single-instance is unenforced.** Nothing in G1 stops a second workload instance from being
   started. Each instance holds its own in-memory session store, so a session created against one
   is unknown to the other — it presents as `unknown_session`, not as corruption. What stands in
   for enforcement today is that G1's whole operations story is two processes started by hand; the
   real guard is G2's durable store.
-- **The MCP surface bypasses the edge.** The edge routes the JSON wire only; an MCP caller
-  addresses the workload directly. That is harmless in G1, where reachability is trusted-local
-  and no principal exists — it stops being harmless at G3, where authorization is enforced at the
-  edge and a surface that bypasses the edge bypasses authorization.
+
+MCP reaches the workload only through the edge, under the same ownership as HTTP: the workload
+refuses a request without a valid assertion, MCP included (`401 assertion_refused`). Rotating the
+handoff key, and keeping the workload's port reachable by the edge alone, are in
+[Operating a deployment](../game-edge/README.md#operating-a-deployment).
 
 One more finding, not a gap but worth stating before G2 needs it: the engine writes a mutated
 session or save blob to its own in-memory record **before** writing through to the persistence
