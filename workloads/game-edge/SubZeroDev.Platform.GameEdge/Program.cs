@@ -23,6 +23,12 @@ if (TrustedProxySettings.Validate(section) is { Count: > 0 } proxyErrors)
         "Configuration section 'GameEdge:TrustedProxies' is invalid: " + string.Join(" ", proxyErrors));
 }
 
+if (AbuseLimitSettings.Validate(section) is { Count: > 0 } limitErrors)
+{
+    throw new InvalidOperationException(
+        "Configuration section 'GameEdge:AbuseLimits' is invalid: " + string.Join(" ", limitErrors));
+}
+
 var options = section.Get<GameEdgeOptions>();
 
 // `required` binds nothing: it is a compile-time obligation on the initialiser, and the
@@ -49,6 +55,8 @@ if (StreamingRoutes.Validate(options) is { Count: > 0 } streamingErrors)
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<EdgeTelemetry>();
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<AbuseLimiter>();
 
 // Terminate mode: Identity's bearer chain establishes the caller from the issuer's pinned keys, and
 // the signer vouches for them to the workload. The key is read here, so an unreadable one stops the

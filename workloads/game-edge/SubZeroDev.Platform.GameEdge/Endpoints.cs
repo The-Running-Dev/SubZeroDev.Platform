@@ -60,15 +60,27 @@ public static class GameEdgeEndpointExtensions
         // Terminate mode vouches only for an account the bearer chain established; anyone else is
         // refused here, before the body is read or anything reaches the workload (invariants 105, 106).
         string? assertion = null;
+        var principal = scopeAccessor.Current.Principal;
+        if (options.CredentialMode == CredentialMode.Terminate && principal.Kind != PrincipalKind.Account)
+        {
+            await WriteEdgeErrorAsync(context, new CredentialRequiredEdgeError(), correlation.Current).ConfigureAwait(false);
+            return;
+        }
+
+        // After authentication, so a refused credential is never counted, and before the body is read or
+        // anything is signed or forwarded (invariant 121). An account is counted under its principal and
+        // anyone else under their client address.
+        var caller = AbuseLimiter.Key(
+            principal.Kind == PrincipalKind.Account ? principal.Id : null,
+            HeaderPolicy.ClientAddress(context.Request, context.Connection.RemoteIpAddress, options));
+        if (context.RequestServices.GetRequiredService<AbuseLimiter>().TryAdmit(caller) is { } retryAfter)
+        {
+            await WriteEdgeErrorAsync(context, new RateLimitedEdgeError(retryAfter), correlation.Current).ConfigureAwait(false);
+            return;
+        }
+
         if (options.CredentialMode == CredentialMode.Terminate)
         {
-            var principal = scopeAccessor.Current.Principal;
-            if (principal.Kind != PrincipalKind.Account)
-            {
-                await WriteEdgeErrorAsync(context, new CredentialRequiredEdgeError(), correlation.Current).ConfigureAwait(false);
-                return;
-            }
-
             assertion = context.RequestServices.GetRequiredService<HandoffSigner>()
                 .Sign(principal.Id, context.Request.Method, pathAndQuery, correlation.Current);
         }
@@ -214,8 +226,15 @@ public static class GameEdgeEndpointExtensions
             WorkloadUnreachableEdgeError => StatusCodes.Status503ServiceUnavailable,
             WorkloadTimeoutEdgeError => StatusCodes.Status504GatewayTimeout,
             CredentialRequiredEdgeError => StatusCodes.Status401Unauthorized,
+            RateLimitedEdgeError => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status500InternalServerError,
         };
+        if (error is RateLimitedEdgeError limited)
+        {
+            context.Response.Headers.RetryAfter =
+                ((long)limited.RetryAfter.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         context.Response.ContentType = "application/json; charset=utf-8";
 
         var body = new EdgeErrorBody(error.Code, correlation.TraceId);

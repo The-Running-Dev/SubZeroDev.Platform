@@ -93,6 +93,10 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
     GameEdge__CredentialMode: "PassThrough",
     GameEdge__ForwardTimeout: `00:00:${String(GAME_EDGE_FORWARD_TIMEOUT_SECONDS).padStart(2, "0")}`,
     GameEdge__ReadinessTimeout: "00:00:05",
+    // Many requests from one address are the point of these tests (trace sampling needs well over the
+    // default budget), not abuse; a limit that cannot fire stands for "limiting disabled" (S10.4).
+    GameEdge__AbuseLimits__PermitCount: "2147483647",
+    GameEdge__AbuseLimits__Window: "00:01:00",
     // Read by `AddPlatformObservability` (`PlatformObservabilityExtensions.ResolveIdentity`) when
     // there is no `PlatformOptions` singleton already registered ahead of it — the same section
     // `AddPlatformWebHost` itself reads.

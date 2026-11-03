@@ -109,6 +109,41 @@ internal static class HeaderPolicy
         }
     }
 
+    /// <summary>The address the abuse limiter counts an unauthenticated caller under. The connection's own,
+    /// unless it comes from a configured proxy that sent <c>X-Forwarded-For</c>: then the entry that proxy
+    /// appended, the last. Earlier entries are whatever the caller claimed, and a caller must not choose
+    /// its own key.</summary>
+    /// <param name="request">The inbound request. Read only.</param>
+    /// <param name="remote">The address the connection came from, or <see langword="null"/> when the
+    /// transport has none.</param>
+    /// <param name="options">The edge's configuration.</param>
+    /// <returns>An address, or <c>unknown</c> when the transport has none and no proxy named one.</returns>
+    public static string ClientAddress(HttpRequest request, IPAddress? remote, GameEdgeOptions options)
+    {
+        if (remote is not null
+            && IsTrusted(options, remote)
+            && request.Headers.TryGetValue(XForwardedFor, out var values))
+        {
+            for (var value = values.Count - 1; value >= 0; value--)
+            {
+                var entries = (values[value] ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                if (entries.Length == 0)
+                {
+                    continue;
+                }
+
+                if (IPAddress.TryParse(entries[^1], out var forwarded))
+                {
+                    return Normalize(forwarded).ToString();
+                }
+
+                break;
+            }
+        }
+
+        return remote is null ? "unknown" : Normalize(remote).ToString();
+    }
+
     private static ForwardedHeader Forwarding(HttpRequest request, string name, bool trusted, string? fromConnection)
     {
         if (trusted && request.Headers.TryGetValue(name, out var values) && values.Count > 0)

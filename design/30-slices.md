@@ -367,7 +367,7 @@ Acceptance:
 Out of scope: migrating Adventures' rows.
 
 ## S10 — Abuse limits answer before they forward
-**Status:** in progress
+**Status:** shipped
 
 Delivers: one caller flooding the edge is slowed down and told when to retry, without affecting
 whose data anyone sees.
@@ -390,10 +390,18 @@ Acceptance:
 - **S10.5** An edge started with no `AbuseLimits` setting limits at `PermitCount` 60 and `Window`
   60 seconds.
 
+Proved by `workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/AbuseLimitTests.cs`, which runs each
+edge on a real listener because the anonymous rows count the connection's address and the in-memory test
+server has none. S10.4 sends the same request through an edge limited at 3 and one limited at
+`int.MaxValue` in front of one workload and compares what arrived. The test also shows that a refused
+credential is answered `401` however often it asks and is never counted, and that a caller cannot choose
+its own key through `X-Forwarded-For`. The decision of 2026-11-03 records how "disabled by configuration"
+is modelled.
+
 Out of scope: a shared limiter across instances. Limiting before authentication.
 
 ## S11 — A fresh clone proves all of it, and an operator can run it
-**Status:** queued
+**Status:** in progress
 
 Delivers: anyone who clones the repository can rerun every G3 proof, and an operator has what they
 need to configure, verify and roll back a deployment.

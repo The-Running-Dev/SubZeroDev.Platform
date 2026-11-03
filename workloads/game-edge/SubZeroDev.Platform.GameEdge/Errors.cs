@@ -32,3 +32,9 @@ public sealed record WorkloadTimeoutEdgeError() : EdgeError("workload_timeout");
 /// <summary>Terminate mode, and the caller presented no credential. <c>401</c>, answered before
 /// anything is forwarded (invariant 105). Internal: the edge answers it and nothing else returns it.</summary>
 internal sealed record CredentialRequiredEdgeError() : EdgeError("CredentialRequired");
+
+/// <summary>The caller has used its window's budget. <c>429</c> with <c>Retry-After</c>, answered before
+/// anything is forwarded (invariant 121). Not retryable except after the delay it names. Internal: the
+/// edge answers it and nothing else returns it.</summary>
+/// <param name="RetryAfter">How long until the caller's window closes, in whole seconds.</param>
+internal sealed record RateLimitedEdgeError(TimeSpan RetryAfter) : EdgeError("RateLimited");

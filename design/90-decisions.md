@@ -678,3 +678,25 @@ Rejected: **deleting only the four named tables**, which leaves personal data be
 routes as operations**, which would put them on the MCP surface and break the parity S8.5 asserts.
 **Adding 204 to `HttpStatus`**, which every game-surface handler would then have to consider.
 Reversibility: cheap, except the six-table list, which a new owned table must extend.
+
+### 2026-11-03 — S10: the limiter keys on the principal or the proxy's address, counts only admitted requests, and "disabled" means a limit that cannot fire
+
+Context: S10 adds the abuse limiter of invariant 121. The contract fixes the key, the response and the
+default; six points it leaves open.
+Chosen: a fixed window that opens at the first request after the last one closed, in memory per instance.
+A refused request is not counted, so a caller that keeps asking is admitted again when its window closes
+rather than being held out by its own retries. `Retry-After` is the window's remaining time rounded up to
+whole seconds, at least one. The limiter runs after the Terminate-mode `401`, before the assertion is
+signed and the body read, so a refused credential is never counted. An unauthenticated caller is counted
+under the connection's address, or, when the connection is a configured trusted proxy that sent
+`X-Forwarded-For`, under the last entry, the one that proxy appended; earlier entries are the caller's
+claim and a caller must not choose its own key. The contract has no off switch, so S10.4's "limiting
+disabled by configuration" is a `PermitCount` of `int.MaxValue`. When `AbuseLimits` is present both fields
+are required, `PermitCount` at least 1 and `Window` at least one second, because `Retry-After` is whole
+seconds; a breach stops startup naming the key. Expired counters are swept at most once per window. No
+telemetry counter is added, since none is specified.
+Rejected: **a sliding window**, which costs a list of timestamps per caller for a bound no acceptance row
+asks for. **Counting refused requests**, which makes a polite client retrying on `Retry-After` pay for its
+earlier flood. **The first `X-Forwarded-For` entry**, which the caller writes. **A boolean to disable
+limiting**, a signature the contract does not carry.
+Reversibility: cheap.
