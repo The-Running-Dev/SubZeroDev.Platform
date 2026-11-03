@@ -611,3 +611,69 @@ jobs:
             left=1
           fi
           [ "$left" -eq 0 ]
+
+  # G3 S7.4: the pinned Adventures revision behind the real edge, from a fresh clone. It is its own
+  # job because it is the one job that must reach the network — it clones Adventures at the commit
+  # `workloads/adventures-proof/adventures-pin.json` names and installs that checkout's dependencies —
+  # which is exactly what `game-service` and `game-service-isolation` must not do. Nothing here
+  # restricts outbound traffic, and nothing in either of those jobs depends on this one.
+  adventures-proof:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the edge
+        run: dotnet build workloads/game-edge/SubZeroDev.Platform.GameEdge/SubZeroDev.Platform.GameEdge.csproj --configuration Release
+
+      # The proof makes a database per run, so it needs a server and nothing else: the compose file
+      # the game-service workload documents, brought up by the identical command.
+      - name: Start PostgreSQL
+        working-directory: workloads/game-service
+        run: |
+          docker compose up -d
+          # Two consecutive successes: see the same step in the game-service job.
+          consecutive=0
+          for i in $(seq 1 60); do
+            if docker compose exec -T postgres pg_isready -U game_service -d game_service; then
+              consecutive=$((consecutive + 1))
+              [ "$consecutive" -ge 2 ] && break
+            else
+              consecutive=0
+            fi
+            sleep 1
+          done
+          if [ "$consecutive" -lt 2 ]; then
+            echo "postgres did not report ready twice in a row" >&2
+            exit 1
+          fi
+
+      - name: Install the proof's dependencies
+        working-directory: workloads/adventures-proof
+        run: npm ci
+
+      # verification: true
+      - name: Typecheck
+        working-directory: workloads/adventures-proof
+        run: npm run typecheck
+
+      # The documented command, run here rather than a private equivalent: a fresh clone of the
+      # pinned commit, its submodule and its dependencies.
+      - name: Prepare the pinned Adventures revision
+        working-directory: workloads/adventures-proof
+        run: npm run prepare-adventures
+
+      # verification: true
+      - name: Prove Adventures through the edge
+        working-directory: workloads/adventures-proof
+        env:
+          GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
+        run: npm test

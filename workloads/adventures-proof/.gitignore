@@ -1,0 +1,4 @@
+# The pinned Adventures checkout `npm run prepare-adventures` makes. Regenerable from the pin.
+.adventures/
+node_modules/
+*.timestamp-*.mjs

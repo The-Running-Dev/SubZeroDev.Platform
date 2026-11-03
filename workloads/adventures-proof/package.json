@@ -1,0 +1,25 @@
+{
+  "name": "@subzerodev/adventures-proof",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "G3 S7 — a pinned revision of SubZeroDev.Adventures behind the pass-through edge.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "prepare-adventures": "node scripts/prepare-adventures.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.0",
+    "selfsigned": "^5.5.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
