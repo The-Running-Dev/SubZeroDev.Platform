@@ -164,7 +164,7 @@ Out of scope: token failure outcomes beyond "no credential" (S5). Every other he
 Pass-through mode (S6). Abuse limits (S10).
 
 ## S4 — No operation crosses principals
-**Status:** queued
+**Status:** in progress
 
 Delivers: every game operation that names a session, save or profile is proven to refuse another
 player's ids, through both the HTTP and MCP surfaces, on both store targets.
