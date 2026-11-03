@@ -220,7 +220,9 @@ internal sealed class PlatformPermissionCatalog : IPermissionCatalog
 /// <summary>D5's first of exactly two permission providers, and not a role-assignment table: grants
 /// every catalog-declared permission to the <see cref="PrincipalKind.System"/> principal in the
 /// <see cref="CompositionProfile.Local"/> profile, nothing to <see cref="PrincipalKind.Anonymous"/>
-/// in either profile, and nothing at all in <see cref="CompositionProfile.Operated"/>. Keyed to the
+/// in any profile, and nothing at all in <see cref="CompositionProfile.Operated"/> or
+/// <see cref="CompositionProfile.AuthenticatedTransport"/> — on the latter it is the only provider
+/// the profile admits, so that host grants no Platform permission to anyone (I-C15). Keyed to the
 /// principal kind, never to the absence of a registered authentication provider — an endpoint meant
 /// for an unauthenticated caller authorizes that read through its own registered permission, and
 /// never inherits the local operator's trust.</summary>

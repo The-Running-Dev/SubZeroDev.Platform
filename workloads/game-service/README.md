@@ -45,8 +45,10 @@ and `GAME_SERVICE_HANDOFF_MAX_LIFETIME_SECONDS` (default `60`) bound an assertio
 command above discards the private key, so only the probes answer; the proof harnesses mint their
 own test-key assertions.
 
-Until G3's S3 the edge signs nothing either, so an operation request sent through the edge below
-is refused the same way; only its health probes work end to end.
+The edge has two credential modes, and `GameEdge:CredentialMode` must name one. In `PassThrough` it
+signs nothing, so an operation request sent through it is refused the same way and only its health
+probes work end to end. In `Terminate` it authenticates the caller's bearer token against an
+issuer's pinned keys and signs the assertion for the workload (below).
 
 ## Build and start the edge
 
@@ -57,10 +59,21 @@ dotnet build workloads/game-edge/SubZeroDev.Platform.GameEdge --configuration Re
 
 cd workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0
 GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 \
+GameEdge__CredentialMode=PassThrough \
 ASPNETCORE_URLS=http://127.0.0.1:5080 \
 ASPNETCORE_ENVIRONMENT=Production \
   dotnet SubZeroDev.Platform.GameEdge.dll
 ```
+
+For a signed-in player, start the edge in `Terminate` mode under the `AuthenticatedTransport`
+composition profile (`Platform:CompositionProfile`). `GameEdge:Handoff` carries the `Issuer`,
+`Audience`, `KeyId`, `SigningKeyPath` (a P-256 private key in PEM) and `Lifetime` (at least one
+second) the workload verifies with, and `Platform:Identity:Bearer:game` pins the token issuer's
+`Issuer`, `SigningKeys` (a JWKS document, never fetched), `Audiences` and `Algorithms`. A missing,
+unreadable or contradictory setting stops the edge before it listens and names the setting; the
+profile refuses persistence, durable audit and account management on the edge. The proof is
+`npx vitest run tests/s3-edge.test.ts`, which runs the built edge, the workload and the compose
+PostgreSQL together.
 
 Run from the built DLL's own directory, not the repository root — ASP.NET resolves
 `appsettings.json` against the process's working directory, and `ForwardTimeout` and

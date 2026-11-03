@@ -103,7 +103,7 @@ public static class PlatformHostExtensions
         // Modules are registered explicitly into the service collection and composed here, in
         // topological order. They must be registered before this call: Register contributes
         // services, and nothing can be added to a collection once the container is built.
-        ComposeModules(builder.Services);
+        ComposeModules(builder.Services, options.CompositionProfile);
 
         builder.Services.AddSingleton<HealthProbe>();
         builder.Services.AddSingleton<ProbeMapping>();
@@ -198,13 +198,24 @@ public static class PlatformHostExtensions
         return new InstanceId($"{System.Environment.MachineName}/{Convert.ToHexStringLower(suffix)}");
     }
 
-    private static void ComposeModules(IServiceCollection services)
+    private static void ComposeModules(IServiceCollection services, CompositionProfile profile)
     {
         var modules = new List<IPlatformModule>();
 
         foreach (var descriptor in services.Where(d => d.ServiceType == typeof(IPlatformModule)).ToList())
         {
             modules.Add(Instantiate(descriptor));
+        }
+
+        // Before any module registers: a module or package the profile refuses is named as itself,
+        // rather than by whichever of its services first fails to activate, and does no work (I-C15).
+        var durableState = services
+            .Select(descriptor => descriptor.ImplementationInstance)
+            .OfType<DurableStateRegistration>()
+            .ToList();
+        if (CompositionValidator.ValidateBeforeComposition(profile, modules, durableState) is { } violation)
+        {
+            throw new PlatformStartupException(HostStartupError.RegistrationForbiddenByProfile(violation.Detail));
         }
 
         if (modules.Count == 0)

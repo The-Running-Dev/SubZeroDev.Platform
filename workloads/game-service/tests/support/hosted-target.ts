@@ -34,6 +34,8 @@ export interface SpawnedHostedTarget {
    *  process has actually exited, so a caller can safely act on shared state (a schema drop) right
    *  after awaiting this. */
   forceKill(): Promise<void>;
+  /** The workload's stderr so far — where a leak check looks for what it must never have logged. */
+  stderr(): string;
 }
 
 function freshDumpPath(): string {
@@ -188,6 +190,7 @@ export async function spawnHostedWorkload(
   return {
     target,
     dumpPath,
+    stderr: () => stderr,
     async forceKill(): Promise<void> {
       if (!hasExited) child.kill("SIGKILL");
       // Waits for the killed process's own DB connections to actually close before returning, so a

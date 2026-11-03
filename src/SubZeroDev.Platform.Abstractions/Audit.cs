@@ -160,4 +160,17 @@ public sealed record AuditError : PlatformError
     /// <returns>The error.</returns>
     public static AuditError SinkRejected(string sink, string reason) =>
         new(nameof(SinkRejected), isRetryable: false, $"Audit sink '{sink}' rejected the record: {reason}");
+
+    /// <summary>A <see cref="AuditClass.Required"/> record was written in a profile that keeps no
+    /// durable trail, so no sink could satisfy it. Not retryable: the composition, not a sink, is
+    /// what is missing.</summary>
+    /// <param name="profile">The profile the host declared.</param>
+    /// <returns>The error.</returns>
+    public static AuditError DurableTrailRequired(CompositionProfile profile) =>
+        new(
+            nameof(DurableTrailRequired),
+            isRetryable: false,
+            $"The host declared the '{profile}' profile, which keeps no durable audit trail, so a "
+            + "Required record cannot be written. An action that requires one belongs on an "
+            + $"'{CompositionProfile.Operated}' host.");
 }

@@ -221,6 +221,7 @@ jobs:
           echo
 
           cd workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0
+          GameEdge__CredentialMode=PassThrough \
           GameEdge__WorkloadBaseAddress=http://127.0.0.1:8080 \
           ASPNETCORE_URLS=http://127.0.0.1:5080 \
           ASPNETCORE_ENVIRONMENT=Production \
@@ -349,6 +350,17 @@ jobs:
       - name: Run the port-conformance suite
         working-directory: workloads/game-service
         run: npx vitest run tests/conformance.test.ts
+
+      # G3 S3: a signed-in player through the real edge (Terminate mode, AuthenticatedTransport
+      # profile), the real workload and this job's PostgreSQL, with a test issuer whose keys are
+      # pinned and nothing fetched. The OTLP ports are already rejected for this job.
+      # verification: true
+      - name: Run the signed-in player through the edge
+        working-directory: workloads/game-service
+        env:
+          GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
+          OTEL_COLLECTOR_BIN: ${{ github.workspace }}/otelcol-contrib
+        run: npx vitest run tests/s3-edge.test.ts
 
       # verification: true
       - name: Test

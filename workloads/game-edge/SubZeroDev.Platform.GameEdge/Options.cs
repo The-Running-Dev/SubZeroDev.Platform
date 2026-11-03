@@ -21,7 +21,37 @@ public sealed record GameEdgeOptions
     /// read to the end first. Empty — the default — means no route streams, which is the edge
     /// unchanged. Checked at startup (<c>20-contract.md</c>, <i>Types</i> § 14).</summary>
     public IReadOnlyList<StreamingRoute> StreamingRoutes { get; init; } = [];
+
+    /// <summary>Whether the edge authenticates the caller and vouches for them to the workload
+    /// (<see cref="CredentialMode.Terminate"/>), or leaves the caller's credential to the workload
+    /// (<see cref="CredentialMode.PassThrough"/>). No default: either guess is wrong for someone.</summary>
+    public CredentialMode CredentialMode { get; init; }
+
+    /// <summary>How the edge signs the principal assertion it hands the workload. Required in
+    /// <see cref="CredentialMode.Terminate"/> and refused in <see cref="CredentialMode.PassThrough"/>.</summary>
+    public HandoffOptions? Handoff { get; init; }
 }
+
+/// <summary>Who answers for the caller's credential.</summary>
+public enum CredentialMode
+{
+    /// <summary>The edge authenticates the caller, refuses an anonymous one, consumes the credential
+    /// and forwards a signed principal assertion in its place.</summary>
+    Terminate,
+
+    /// <summary>The edge authenticates nobody and signs nothing.</summary>
+    PassThrough,
+}
+
+/// <summary>The principal assertion's issuer, audience, signing key and lifetime. The lifetime must
+/// not exceed the workload's own maximum, or every assertion is refused.</summary>
+/// <param name="Issuer">The assertion's <c>iss</c>, which the workload pins.</param>
+/// <param name="Audience">The assertion's <c>aud</c>, which the workload pins.</param>
+/// <param name="KeyId">The JWS header's <c>kid</c>, naming the key the workload verifies with.</param>
+/// <param name="SigningKeyPath">A PEM file holding the P-256 private key.</param>
+/// <param name="Lifetime">How long each assertion is valid, from the moment it is signed.</param>
+public sealed record HandoffOptions(
+    string Issuer, string Audience, string KeyId, string SigningKeyPath, TimeSpan Lifetime);
 
 /// <summary>One streamed route: a path prefix, matched ordinal and on segment boundaries, and how long
 /// the workload has to send its response headers.</summary>

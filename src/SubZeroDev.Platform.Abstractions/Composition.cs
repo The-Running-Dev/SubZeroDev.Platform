@@ -8,4 +8,10 @@ public enum CompositionProfile
 
     /// <summary>Authenticated at the transport, with a durable audit sink.</summary>
     Operated,
+
+    /// <summary>Authenticates its callers and holds nothing about them: no Platform persistence, no
+    /// durable audit sink, no tenant resolver, no paid entitlement and no permission grant. A host
+    /// that forwards an authenticated identity to a workload, which authorizes and audits for
+    /// itself.</summary>
+    AuthenticatedTransport,
 }

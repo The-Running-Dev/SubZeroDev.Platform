@@ -74,7 +74,7 @@ For MCP, register `McpModule`, the consumer's `IToolProducer` and `IToolInvoker`
 Installing a producer exposes nothing by itself. Both manifest projections and fixed tables
 use the same producer interface, and the catalogue freezes at startup.
 
-## The two deployment shapes
+## The deployment shapes
 
 **Local** declares `Platform:CompositionProfile=Local`. The local sample references Hosting
 alone and has no Identity, Organizations, Billing or Licensing dependency. No account or
@@ -105,6 +105,18 @@ Run the worker in another terminal with
 `dotnet run --project samples/SubZeroDev.Platform.Sample.Worker`. Keep both processes configured
 for the same database. The Linux CI round-trip script supplies matching settings and checks
 restart delivery. These are local sample commands, not deployment instructions.
+
+**AuthenticatedTransport** declares `Platform:CompositionProfile=AuthenticatedTransport`. It is
+for a host that authenticates its callers and forwards the authenticated identity to a workload,
+which authorizes and audits for itself, such as the game edge in terminate mode. Startup requires
+an authentication provider and refuses everything that would give the host state about its callers:
+any module not marked transport-compatible, Persistence, a durable audit sink, a tenant resolver, a
+non-baseline entitlement contributor, a permission provider other than the composition provider and
+an endpoint that requires a permission. It grants no Platform permission to anyone. A write of
+`AuditClass.Required` is refused, and a failed authentication is answered `401` with no audit
+record, because this profile keeps no trail. If you need a trail, declare Operated.
+[ADR-010](adr/ADR-010-authenticated-transport-profile.md) records why it is separate from the
+other two.
 
 `migrate` applies every registered module's migrations, then runs each module's seeders: the
 installation-wide data a module needs, written so that re-running `migrate` changes nothing. When the

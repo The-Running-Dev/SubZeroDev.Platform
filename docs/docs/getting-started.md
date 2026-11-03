@@ -149,11 +149,13 @@ names the key, which is deliberate. These five are required, even for a host tha
 ```
 
 `Persistence:Provider` is `Sqlite` or `PostgreSql`, and `PoisonedRetention` must be strictly greater
-than `ProcessedRetention`. `CompositionProfile` is `Local` or `Operated`. Local is the
+than `ProcessedRetention`. `CompositionProfile` is `Local`, `Operated` or `AuthenticatedTransport`. Local is the
 identity-free shape for a developer machine or a single-file install: it rejects authentication
 providers, tenant resolvers and non-baseline entitlement contributors. Operated requires an
 `IAuthenticationProvider` and a durable `IAuditSink`, which the optional modules supply; see the
-[Commercial Platform guide](commercial-guide.md) before choosing it.
+[Commercial Platform guide](commercial-guide.md) before choosing it. AuthenticatedTransport is for a
+host that only authenticates callers and forwards who they are to a workload; see
+[ADR-010](adr/ADR-010-authenticated-transport-profile.md).
 
 Everything else has a default. The keys most hosts touch are, beneath `Platform:`:
 

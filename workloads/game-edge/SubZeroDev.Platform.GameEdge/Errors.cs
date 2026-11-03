@@ -2,7 +2,7 @@ using SubZeroDev.Platform.Abstractions;
 
 namespace SubZeroDev.Platform.GameEdge;
 
-/// <summary>The edge's own two errors. Neither is retryable: there is no idempotency key, and a
+/// <summary>The edge's own errors. None is retryable: there is no idempotency key, and a
 /// retry against a <c>submitAction</c> whose outcome is unknown would be a second action
 /// (`20-contract.md`, *The edge — <c>EdgeError</c>*). The codes are this slice's resolution of
 /// Unresolved 2's edge half — see `design/g1/90-decisions.md`.</summary>
@@ -28,3 +28,7 @@ public sealed record WorkloadUnreachableEdgeError() : EdgeError("workload_unreac
 
 /// <summary>The forward exceeded <see cref="GameEdgeOptions.ForwardTimeout"/>.</summary>
 public sealed record WorkloadTimeoutEdgeError() : EdgeError("workload_timeout");
+
+/// <summary>Terminate mode, and the caller presented no credential. <c>401</c>, answered before
+/// anything is forwarded (invariant 105). Internal: the edge answers it and nothing else returns it.</summary>
+internal sealed record CredentialRequiredEdgeError() : EdgeError("CredentialRequired");

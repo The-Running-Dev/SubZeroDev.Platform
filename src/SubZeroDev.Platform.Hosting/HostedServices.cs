@@ -32,6 +32,8 @@ internal sealed class PlatformRegistryStartup(
     IEntitlementContributorRegistry entitlementContributorRegistry,
     IAuthenticationProviderRegistry authenticationProviderRegistry,
     IEnumerable<EndpointDataSource> endpointDataSources,
+    ModuleOrder moduleOrder,
+    IEnumerable<DurableStateRegistration> durableState,
     PlatformOptions options) : IHostedLifecycleService
 {
     public Task StartingAsync(CancellationToken cancellationToken)
@@ -163,22 +165,31 @@ internal sealed class PlatformRegistryStartup(
             authenticationProviderRegistry.Registered,
             auditSinks.Registered,
             tenantResolverRegistry.Registered,
-            entitlementContributorRegistry.Registered);
+            entitlementContributorRegistry.Registered,
+            permissionProviderRegistry.Registered,
+            moduleOrder.Modules,
+            [.. durableState]);
 
         if (violation is not null)
         {
-            throw new PlatformStartupException(violation.Finding switch
-            {
-                CompositionFinding.AuthenticationProviderRequired =>
-                    HostStartupError.AuthenticationProviderRequired(violation.Detail),
-                CompositionFinding.DurableAuditSinkRequired =>
-                    HostStartupError.DurableAuditSinkRequired(violation.Detail),
-                _ => HostStartupError.RegistrationForbiddenByProfile(violation.Detail),
-            });
+            throw Refuse(violation);
         }
 
         return Task.CompletedTask;
     }
+
+    private static PlatformStartupException Refuse(CompositionViolation violation) =>
+        new(violation.Finding switch
+        {
+            CompositionFinding.AuthenticationProviderRequired =>
+                HostStartupError.AuthenticationProviderRequired(violation.Detail),
+            CompositionFinding.DurableAuditSinkRequired =>
+                HostStartupError.DurableAuditSinkRequired(violation.Detail),
+            CompositionFinding.RegistrationForbiddenByProfile =>
+                HostStartupError.RegistrationForbiddenByProfile(violation.Detail),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(violation), violation.Finding, "The composition finding has no startup error."),
+        });
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -196,14 +207,21 @@ internal sealed class PlatformRegistryStartup(
             {
                 var requirement = endpoint.Metadata.GetMetadata<EndpointRequirement>();
                 var hasExemption = endpoint.Metadata.GetMetadata<EndpointRequirementExemption>() is not null;
+                var route = endpoint is RouteEndpoint routeEndpoint
+                    ? routeEndpoint.RoutePattern.RawText ?? endpoint.DisplayName ?? "(unnamed route)"
+                    : endpoint.DisplayName ?? "(unnamed endpoint)";
 
                 if (requirement is null && !hasExemption)
                 {
-                    var route = endpoint is RouteEndpoint routeEndpoint
-                        ? routeEndpoint.RoutePattern.RawText ?? endpoint.DisplayName ?? "(unnamed route)"
-                        : endpoint.DisplayName ?? "(unnamed endpoint)";
-
                     throw new PlatformStartupException(HostStartupError.UndeclaredEndpointRequirement(route));
+                }
+
+                // I-C15's endpoint half: a host that grants no permission cannot serve a route that
+                // requires one, so the route is refused here instead of denying every caller.
+                if (CompositionValidator.ValidateEndpoint(
+                        options.CompositionProfile, route, requirement?.RequiredPermission.Value) is { } violation)
+                {
+                    throw Refuse(violation);
                 }
 
                 // An endpoint's declared permission is a registration like any other module's —

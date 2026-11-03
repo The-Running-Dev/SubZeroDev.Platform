@@ -21,6 +21,30 @@ entry below:
 
 ---
 
+### 2026-11-03 — S3: A host that only authenticates declares `AuthenticatedTransport` ([ADR-010](../docs/docs/adr/ADR-010-authenticated-transport-profile.md))
+
+ADR-010 records the profile, what it admits and refuses, and why `Local` and `Operated` keep their meanings.
+
+### 2026-11-03 — S3: Consumer modules are refused under the transport profile, and an auth failure is not audited
+
+Context: the edge's Terminate mode needs Platform Identity's bearer provider, which `Local` refuses
+(I-C3), and has no durable audit sink, which `Operated` requires (I-C2). Extends the profile of
+[`d5/90-decisions.md`](d5/90-decisions.md), 2026-08-24, and the 2026-09-03 entry that makes a consumer
+declare the registrations its profile requires; it supersedes neither.
+Chosen: the profile admits modules by an internal mark rather than refusing them by a list, so a module
+added later is refused until it is examined. The module and durable-state check runs before any module
+registers, so the refusal names the module, not a service that failed to activate. The edge's
+authentication failure is `401 CredentialRejected` from the operation-scope middleware with a
+correlation id and no audit write, because the profile has no trail to write it to. `Required` audit is
+refused at the writer with a non-retryable error. The shipped `appsettings.json` stays `Local`, and
+`GameEdge:CredentialMode` has no default.
+Rejected: **a dummy provider or a sink claiming to be durable**, which register what does not do the
+job; **disabling validation for the edge**; **letting `Operated` waive its audit requirement**;
+**refusing modules by a list**, which admits every module nobody thought of; **a Required audit write
+that falls through to the log sink**, which satisfies the class in name only.
+Reversibility: cheap for the module mark and the check order. Expensive for the enum value, which is
+fingerprinted and stored.
+
 ### 2026-11-03 — S2: Dispatch and both surfaces are built per request; the startup check and replay use fixed owners
 
 Context: `forRequest(owner)` returns ports bound to one owner, but G2 built Dispatch and both

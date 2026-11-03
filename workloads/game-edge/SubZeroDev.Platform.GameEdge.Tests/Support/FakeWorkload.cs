@@ -72,7 +72,11 @@ internal sealed class FakeWorkload : IAsyncDisposable
                 context.Request.Method,
                 context.Request.Path + context.Request.QueryString,
                 bodyStream.ToArray(),
-                traceParent));
+                traceParent,
+                context.Request.Headers.ToDictionary(
+                    header => header.Key,
+                    header => header.Value.Select(item => item ?? string.Empty).ToArray(),
+                    StringComparer.OrdinalIgnoreCase)));
 
             if (fake.Script is { } script)
             {
@@ -124,4 +128,9 @@ internal sealed class FakeWorkload : IAsyncDisposable
     public async ValueTask DisposeAsync() => await _app.DisposeAsync().ConfigureAwait(false);
 }
 
-internal sealed record RecordedRequest(string Method, string PathAndQuery, byte[] Body, string? TraceParent);
+internal sealed record RecordedRequest(
+    string Method,
+    string PathAndQuery,
+    byte[] Body,
+    string? TraceParent,
+    IReadOnlyDictionary<string, string[]> Headers);

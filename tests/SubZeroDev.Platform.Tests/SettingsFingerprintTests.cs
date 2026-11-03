@@ -255,11 +255,11 @@ public sealed class SettingsFingerprintTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-    private static PlatformOptions Baseline() => new()
+    internal static PlatformOptions Baseline(CompositionProfile profile = CompositionProfile.Operated) => new()
     {
         ServiceName = "settings-fingerprint-tests",
         ServiceVersion = "1.0.0",
-        CompositionProfile = CompositionProfile.Operated,
+        CompositionProfile = profile,
         Persistence = new PersistenceOptions
         {
             Provider = PersistenceProvider.Sqlite,

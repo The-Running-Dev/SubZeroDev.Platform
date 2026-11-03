@@ -56,12 +56,20 @@ and the declarations below carry those answers. What the answers left open is un
 | 127 | A write that commits after the deletion transaction belongs to a new, empty account under the same owner. Nothing refuses it | Store |
 | 128 | The G3 migration deletes every `session`, `save`, `profile` and `profile_achievement` row present when it runs, in the same run that adds the owner columns | Migrations |
 | 129 | An MCP tool call reaches game-service only through the edge, and every tool carrying a session, save or profile id is refused another principal's id exactly as the matching HTTP operation is | Handoff verifier, Ownership decorator |
+| 130 | A host declaring `AuthenticatedTransport` requires an authentication provider, and refuses at startup, naming the registration, any module not marked transport-compatible, durable Platform state, a durable audit sink, a tenant resolver, a non-baseline entitlement contributor, a non-composition permission provider and an endpoint requiring a permission. The module and durable-state refusals run before any module registers | Composition |
+| 131 | Under `AuthenticatedTransport`, a write of `AuditClass.Required` is refused with a non-retryable error before any sink sees it, and an authentication failure is answered `401 CredentialRejected` with no audit write and no route run. The edge makes no audit claim | Composition, Edge |
+| 132 | `Local` still refuses an authentication provider and `Operated` still refuses a missing durable sink. A terminate-mode edge declaring either fails startup, and nothing is registered or disabled to make it start | Composition, Edge |
 
 ## Amended invariants
 
 | # | Was | Now |
 |---|---|---|
 | 41 (G1) | The edge holds no per-session state, no connection affinity and no cache, and never reorders, batches or coalesces | The edge holds no per-session state, no connection affinity and no response cache, and never reorders, batches or coalesces. Its only process state is Identity's key set and the abuse limiter's counters, and neither changes the bytes of any forwarded request or response |
+
+Invariant 41's process state is structural on the edge: the edge declares `AuthenticatedTransport`
+(invariant 130, [ADR-010](../docs/docs/adr/ADR-010-authenticated-transport-profile.md)), so it composes
+no Platform persistence, no account store and no durable trail. Invariant 125 is unchanged: the pinned
+keys are `BearerSettings.SigningKeys`, read from configuration, and the profile adds no connection.
 
 **G2 prose amended, not an invariant:** [`g2/20-contract.md`](g2/20-contract.md) says that in the
 per-request composition, "the lifecycle member's result is discarded". Under invariant 116 it is
@@ -90,6 +98,9 @@ public sealed record AbuseLimitOptions(int PermitCount, TimeSpan Window);
 
 In terminate mode, the edge's bearer settings are Identity's existing `BearerSettings` with
 `SigningKeys` set and `Discovery` absent (invariant 125). Identity already refuses both together.
+`CredentialMode` has no default: a deployment names it, and startup names the setting when it is
+missing. In `Terminate` the edge declares `Platform:CompositionProfile` as `AuthenticatedTransport`
+(invariant 130). `PassThrough` composes no provider and keeps `Local`.
 `HandoffOptions.Lifetime` must not exceed game-service's `maxLifetimeSeconds`.
 
 ### The handoff (wire)

@@ -58,7 +58,8 @@ module owns the answers that come from authenticating a credential. Neither owns
    operates. A deployment trusting several issuers registers one provider per issuer.
 6. **The composition profile decides whether authentication is required.** An `Operated` host with no
    authentication provider fails startup (I-C1). A `Local` host with one fails startup (I-C3). The
-   local host has no reference to Identity (I-C5).
+   local host has no reference to Identity (I-C5). [ADR-010](ADR-010-authenticated-transport-profile.md)
+   adds a third profile, for a host that authenticates and keeps nothing; it changes neither rule.
 
 ## Consequences
 

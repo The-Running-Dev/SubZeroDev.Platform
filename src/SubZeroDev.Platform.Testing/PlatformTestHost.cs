@@ -210,6 +210,14 @@ internal sealed class PlatformTestHostBuilder : IPlatformTestHostBuilder
                 ServiceDescriptor.Singleton<IAuditSink, FakeDurableAuditSink>());
         }
 
+        // AuthenticatedTransport requires a provider (I-C14) and forbids a durable sink (I-C15), so
+        // it gets the provider alone.
+        if (Profile() == CompositionProfile.AuthenticatedTransport)
+        {
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IAuthenticationProvider, FakeAuthenticationProvider>());
+        }
+
         if (_role == HostRole.Web)
         {
             builder.AddPlatformWebHost();

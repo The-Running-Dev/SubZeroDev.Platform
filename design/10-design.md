@@ -146,11 +146,20 @@ supplies.
 
 | Module | Owns | Depends on |
 |---|---|---|
-| **Authentication** | Platform Identity's bearer chain, composed in terminate mode only | Platform Hosting and Identity |
+| **Authentication** | Platform Identity's bearer chain, composed in terminate mode only, under the `AuthenticatedTransport` profile ([ADR-010](../docs/docs/adr/ADR-010-authenticated-transport-profile.md)) | Platform Hosting and Identity |
 | **Credential policy** | The per-mode header rules in both directions (*Control flow* §6) | Mode configuration |
 | **Handoff signer** | Minting the assertion from the ambient principal and the outbound request line | Credential policy's outbound request, the signing key |
 | **Abuse limiter** | Admitting or refusing a forwarded request | The ambient principal, or else the client address |
 | **Forwarder** | Unchanged from G1 and G2, except that it now applies the credential policy's outbound headers | Credential policy, Handoff signer |
+
+**The edge's composition profile.** In terminate mode the edge authenticates and holds nothing about
+the caller, which `Local` (no provider) and `Operated` (a durable audit sink) cannot describe. It
+declares `AuthenticatedTransport`: Identity's bearer provider is registered, and Platform persistence,
+a durable audit sink, a tenant resolver, paid entitlement, permission grants and account management
+are refused at startup. It grants the caller no workload permission, so authorization stays in
+game-service (invariants 41, 125 and 130 to 132). A failed authentication is a `401` with no audit
+record; the edge makes no audit claim and game-service owns the durable trail. In pass-through mode
+the edge has no provider and stays `Local`.
 
 **The edge reads no operation contract** ([`d5/90-decisions.md`](d5/90-decisions.md), 2026-10-17). It authenticates the caller and
 asserts who they are. It never decides whether that caller may touch a given id.

@@ -119,16 +119,25 @@ internal sealed class AuditSinkDispatcher(
 /// <inheritdoc cref="IAuditWriter"/>
 /// <remarks>Its dependencies (<see cref="AuditEventFactory"/>, <see cref="AuditSinkDispatcher"/>) are
 /// internal, so this is registered by factory rather than by type — the same reason
-/// <c>SubZeroDev.Platform.Persistence.OutboxWriter</c> is.</remarks>
+/// <c>SubZeroDev.Platform.Persistence.OutboxWriter</c> is.
+///
+/// <para>Under <see cref="CompositionProfile.AuthenticatedTransport"/> a
+/// <see cref="AuditClass.Required"/> write is refused before any sink sees it (I-C16): that profile
+/// keeps no durable trail, so the record could only land in the log, and a Required record that
+/// landed there would satisfy the class in name only. Startup already refuses every Platform
+/// registration that writes one; this is the same rule for a caller that reaches the writer
+/// directly.</para></remarks>
 public sealed class AuditWriter : IAuditWriter
 {
     private readonly AuditEventFactory _factory;
     private readonly AuditSinkDispatcher _dispatcher;
+    private readonly CompositionProfile _profile;
 
-    internal AuditWriter(AuditEventFactory factory, AuditSinkDispatcher dispatcher)
+    internal AuditWriter(AuditEventFactory factory, AuditSinkDispatcher dispatcher, CompositionProfile profile)
     {
         _factory = factory;
         _dispatcher = dispatcher;
+        _profile = profile;
     }
 
     /// <inheritdoc/>
@@ -139,6 +148,11 @@ public sealed class AuditWriter : IAuditWriter
         AuditClass auditClass,
         CancellationToken cancellationToken)
     {
+        if (auditClass == AuditClass.Required && _profile == CompositionProfile.AuthenticatedTransport)
+        {
+            return Task.FromResult(Result<AuditError>.Failure(AuditError.DurableTrailRequired(_profile)));
+        }
+
         var auditEvent = _factory.Build(action, resource, outcome, auditClass);
         return _dispatcher.DispatchAsync(auditEvent, auditClass, cancellationToken);
     }
