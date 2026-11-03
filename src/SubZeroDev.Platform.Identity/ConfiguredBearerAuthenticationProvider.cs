@@ -235,7 +235,10 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
             return Presented.Nothing;
         }
 
-        if (value.Length == BearerPrefix.Length - 1 || value.Length == BearerPrefix.Length)
+        // The scheme name is case-insensitive and may be followed by any whitespace, so a presented
+        // bearer credential is not always in the one form this provider reads. Anything but "Bearer "
+        // and a token is malformed, never anonymous.
+        if (!value.StartsWith(BearerPrefix, StringComparison.Ordinal) || value.Length == BearerPrefix.Length)
         {
             return Presented.Malformed;
         }
@@ -244,7 +247,10 @@ internal sealed class ConfiguredBearerAuthenticationProvider : IAuthenticationPr
         return Presented.Token;
     }
 
-    private static bool IsBearerScheme(string value) =>
-        value.StartsWith(BearerPrefix, StringComparison.Ordinal)
-        || string.Equals(value, BearerPrefix.TrimEnd(), StringComparison.Ordinal);
+    private static bool IsBearerScheme(string value)
+    {
+        const string scheme = "Bearer";
+        return value.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)
+            && (value.Length == scheme.Length || char.IsWhiteSpace(value[scheme.Length]));
+    }
 }

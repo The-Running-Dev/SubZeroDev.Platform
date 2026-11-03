@@ -376,7 +376,11 @@ public sealed class ConfiguredBearerTests
     [Theory]
     [InlineData("Bearer")]
     [InlineData("Bearer ")]
-    public async Task S5_3_The_bearer_scheme_with_no_token_is_rejected(string header)
+    [InlineData("bearer ")]
+    [InlineData("bearer sometoken")]
+    [InlineData("BEARER sometoken")]
+    [InlineData("Bearer	sometoken")]
+    public async Task S5_3_A_bearer_credential_in_a_form_not_read_is_rejected(string header)
     {
         var provider = Provider(Valid("corp"));
 

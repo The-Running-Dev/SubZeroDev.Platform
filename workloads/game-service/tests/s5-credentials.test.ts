@@ -127,7 +127,7 @@ describe("S5.1–S5.3, S5.8 — a refused credential is told apart and never rea
 
   describe("S5.2 — an expired token, and one for another audience", () => {
     const cases: ReadonlyArray<{ name: string; token: () => string }> = [
-      { name: "expired a minute past the edge's tolerance", token: () => signToken(issuer, PLAYER, { issuedOffsetSeconds: -900, lifetimeSeconds: 300 }) },
+      { name: "expired well past the edge's tolerance", token: () => signToken(issuer, PLAYER, { issuedOffsetSeconds: -900, lifetimeSeconds: 300 }) },
       { name: "expired an hour ago", token: () => signToken(issuer, PLAYER, { issuedOffsetSeconds: -7200, lifetimeSeconds: 3600 }) },
       { name: "valid for another audience", token: () => signToken(issuer, PLAYER, { audience: "elsewhere.test" }) },
       { name: "valid for no audience the edge accepts, though it names a prefix of its own", token: () => signToken(issuer, PLAYER, { audience: `${TOKEN_AUDIENCE}.evil` }) },
@@ -153,6 +153,14 @@ describe("S5.1–S5.3, S5.8 — a refused credential is told apart and never rea
     ];
     it.each(cases)("$name is 401 CredentialRejected", async ({ headers }) => {
       await refusedWithoutForwarding(() => rawCall(edge, headers()), "CredentialRejected");
+    });
+
+    // The bearer scheme in a form the edge does not read is a presented credential, so it is rejected.
+    it.each([
+      { name: "a lowercase scheme", header: () => `bearer ${valid()}` },
+      { name: "a tab after the scheme", header: () => `Bearer	${valid()}` },
+    ])("$name is 401 CredentialRejected", async ({ header }) => {
+      await refusedWithoutForwarding(() => rawCall(edge, [header()]), "CredentialRejected");
     });
 
     // A scheme the edge does not take is a credential it was handed and does not accept, and the
@@ -183,7 +191,7 @@ describe("S5.7 — sign-out: a token the client discarded is good until it expir
 
   it("succeeds repeatedly before exp and is 401 CredentialRejected after it", async () => {
     const { edge } = open;
-    const kept = signToken(edge.issuer, PLAYER, { lifetimeSeconds: 4 });
+    const kept = signToken(edge.issuer, PLAYER, { lifetimeSeconds: 10 });
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const answer = await call(edge, "create-session", { campaignId: CAMPAIGN_ID, profileId: "default" }, kept);
@@ -192,7 +200,7 @@ describe("S5.7 — sign-out: a token the client discarded is good until it expir
 
     // The edge has no sign-out and no introspection: nothing the client does with its copy of the
     // token changes what the edge answers. Only the clock does.
-    await new Promise((resolve) => setTimeout(resolve, 5_500));
+    await new Promise((resolve) => setTimeout(resolve, 11_500));
 
     const before = edge.tap.requests.length;
     const after = await call(edge, "create-session", { campaignId: CAMPAIGN_ID, profileId: "default" }, kept);

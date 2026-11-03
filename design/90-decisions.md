@@ -30,8 +30,9 @@ two `Authorization` values, the first a valid bearer token, were not rejected. T
 credential and answered `CredentialRequired`. The second authenticated as the first value and ignored
 the other, and game-service saw the request. The code, not the contract, was wrong.
 Chosen: `ConfiguredBearerAuthenticationProvider` reads the header as nothing, a token, or malformed.
-The bearer scheme with no token, and a bearer among several `Authorization` values, are malformed and
-answer `CredentialRejected`. A value for another scheme (`Basic`) is still no bearer credential and
+The bearer scheme with no token, the scheme in any case or followed by other whitespace than one space
+(`bearer <token>`), and a bearer among several `Authorization` values, are malformed and answer
+`CredentialRejected`. `JwtBearerAuthenticationProvider`, the sample's test-grade provider, is unchanged. A value for another scheme (`Basic`) is still no bearer credential and
 defers, so a deployment that adds a provider for it is unaffected; with none, the edge answers
 `CredentialRequired` and forwards nothing.
 Rejected: **treating every non-bearer scheme as malformed**, which would stop a second provider from
@@ -54,8 +55,8 @@ S5.9 points the edge's token issuer at a loopback listener that counts connectio
 succeed with a count of zero, then closes the listener and shows they still succeed. The claim that the
 edge opens no connection except to game-service is carried by the `game-service-isolation` job, which
 now runs `s5-credentials.test.ts` beside `s3-edge.test.ts` and fails on any non-loopback packet.
-S5.7 runs an edge with `ClockTolerance` 00:00:00 and a four-second token, so the `exp` boundary is
-crossed in about six seconds without moving a clock.
+S5.7 runs an edge with `ClockTolerance` 00:00:00 and a ten-second token, so the `exp` boundary is
+crossed in about twelve seconds, long enough that a loaded CI runner cannot land the earlier calls after it without moving a clock.
 Rejected: **a sidecar issuer process**, which would add a server the edge is meant never to ask.
 **Throwing inside the handler**, which no code path catches. **Moving the clock**, which would test the
 harness and not the edge.
