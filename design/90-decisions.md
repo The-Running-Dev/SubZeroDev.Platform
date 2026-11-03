@@ -599,3 +599,42 @@ process and a per-request cross-runtime dependency on every game operation. **ga
 validating bearer tokens itself** — a second authentication stack, which the brief rules out.
 **Mutual TLS** — authenticates the edge, not the principal, and still needs a principal header.
 Reversibility: expensive — every workload deployment and harness carries the verifier and its keys.
+
+### 2026-11-03 — S6: The edge copies no caller header wholesale; one allow-list decides both directions, on both paths
+
+Context: S6 asks each header row of the credential table to follow its mode. Before this slice the
+forwarder sent the method, path, body, `Content-Type` and trace headers and nothing else, so the
+table's pass-through rows (`Cookie`, `Origin`, `Set-Cookie`, `Access-Control-*`) did not exist, and a
+list of headers to strip would have let any name not on it through.
+Chosen: `HeaderPolicy` is the single owner. Inbound it is an allow-list: `Cookie`, `Origin`,
+`Access-Control-Request-Method` and `-Headers` in pass-through only; `X-Forwarded-For`, `-Proto` and
+`-Host` always, set by the edge. Outbound it keeps `Location`, `Cache-Control` and `Vary` in both modes
+and `Set-Cookie` and `Access-Control-*` in pass-through only, every value, read unvalidated so a comma
+in `Expires` cannot split or merge one. The buffered and streamed paths call the same two methods, so
+invariant 104 holds by construction. A header the table does not name (`Authorization`, `Forwarded`,
+hop-by-hop headers, `Proxy-Authorization`) is dropped without a rule of its own.
+Rejected: **a deny-list of known-dangerous headers**, which fails open for the next header anyone
+invents. **Copying the caller's headers and removing some**, which is the shape of the bug the table
+exists to prevent. **Two policies, one per relay path**, which is how the paths would drift apart.
+Reversibility: cheap.
+
+### 2026-11-03 — S6: `TrustedProxies` is text validated at startup; a listed proxy's `X-Forwarded-*` replace the connection's per header; a terminate-mode preflight is anonymous
+
+Context: S6.5 needs the edge to take a trusted proxy's `X-Forwarded-For` and to ignore everyone
+else's. Three points the slice does not settle.
+Chosen: `GameEdge:TrustedProxies` is a list of strings, because the configuration binder has no
+`IPAddress` converter and would skip a malformed entry silently. Program parses each at startup and
+names the full key (`'GameEdge:TrustedProxies:0' must be an IP address.`) before the host listens.
+An IPv4-mapped IPv6 connection address matches its IPv4 entry. The default, empty, trusts nobody. When
+the connecting address is listed, each of `X-Forwarded-For`, `-Proto` and `-Host` the proxy sent
+replaces the edge's own value for that header; one it did not send falls back to the connection's.
+`Forwarded` never passes, listed or not. Pass-through also forwards `Access-Control-Request-Method`
+and `-Headers`: they carry no credential and the workload cannot answer a preflight without them.
+Terminate mode drops the workload's `Access-Control-*` and answers no preflight itself, so an
+anonymous preflight is `401 CredentialRequired` like any anonymous request. A browser client of
+game-service is therefore a same-origin or native one until a decision says otherwise.
+Rejected: **binding `TrustedProxies` as `IPAddress`**, which hides a typo. **Trusting the loopback
+by default**, which makes a co-located attacker a proxy. **Parsing `Forwarded`**, a second header
+format for one fact. **Having the edge answer the terminate-mode preflight**, which is the CORS
+policy the design assigns to nobody.
+Reversibility: cheap.

@@ -19,6 +19,11 @@ public sealed record ForwardedRequest(
     /// <summary>The signed principal assertion, in terminate mode. Internal so that no record printer
     /// or caller outside the edge ever sees it (invariant 108).</summary>
     internal string? Assertion { get; init; }
+
+    /// <summary>The caller's headers the credential policy lets cross, and the <c>X-Forwarded-*</c> the
+    /// edge sets (<see cref="HeaderPolicy.Request"/>). Internal for the reason <see cref="Assertion"/> is:
+    /// it can carry the caller's <c>Cookie</c>.</summary>
+    internal IReadOnlyList<ForwardedHeader> Headers { get; init; } = [];
 }
 
 /// <summary>The workload's answer, unaltered. <see cref="Body"/> is bytes and is returned
@@ -29,7 +34,12 @@ public sealed record ForwardedRequest(
 public sealed record ForwardedResponse(
     int StatusCode,
     ReadOnlyMemory<byte> Body,
-    string? ContentType);
+    string? ContentType)
+{
+    /// <summary>The workload's headers that reach the caller, per the credential policy
+    /// (<see cref="HeaderPolicy.Response"/>).</summary>
+    internal IReadOnlyList<ForwardedHeader> Headers { get; init; } = [];
+}
 
 /// <summary>The workload's answer on a streamed route, at its headers. <see cref="Body"/> is still on the
 /// wire and owns the upstream response: disposing it releases the workload connection, which is how a
@@ -39,6 +49,10 @@ public sealed record ForwardedResponse(
 /// <param name="Body">The workload's response body, read as it arrives.</param>
 public sealed record StreamedResponse(int StatusCode, string? ContentType, Stream Body) : IAsyncDisposable
 {
+    /// <summary>The workload's headers that reach the caller, per the credential policy
+    /// (<see cref="HeaderPolicy.Response"/>).</summary>
+    internal IReadOnlyList<ForwardedHeader> Headers { get; init; } = [];
+
     /// <summary>Releases the upstream response and the workload connection under it.</summary>
     /// <returns>A task that completes when the body is released.</returns>
     public ValueTask DisposeAsync() => Body.DisposeAsync();
@@ -129,7 +143,10 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
             return Result<ForwardedResponse, EdgeError>.Success(new ForwardedResponse(
                 (int)response.StatusCode,
                 body,
-                response.Content.Headers.ContentType?.ToString()));
+                response.Content.Headers.ContentType?.ToString())
+            {
+                Headers = HeaderPolicy.Response(response.Headers, options.CredentialMode),
+            });
         }
     }
 
@@ -180,7 +197,10 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
         return Result<StreamedResponse, EdgeError>.Success(new StreamedResponse(
             (int)response.StatusCode,
             response.Content.Headers.ContentType?.ToString(),
-            body));
+            body)
+        {
+            Headers = HeaderPolicy.Response(response.Headers, options.CredentialMode),
+        });
     }
 
     private HttpRequestMessage CreateMessage(ForwardedRequest request)
@@ -198,11 +218,17 @@ internal sealed class GameWorkloadForwarder(HttpClient httpClient, GameEdgeOptio
             }
         }
 
-        // The caller's own headers are never copied, so its Authorization and any assertion it sent
-        // stop here (invariants 98 and 102); the only assertion the workload sees is the edge's.
+        // The caller's own headers are never copied wholesale: only the credential policy's allow-list
+        // crosses (`request.Headers`), so its Authorization, hop-by-hop headers and any assertion it
+        // sent stop here (invariants 98 and 102); the only assertion the workload sees is the edge's.
         if (request.Assertion is { } assertion)
         {
             message.Headers.TryAddWithoutValidation(HandoffSigner.HeaderName, assertion);
+        }
+
+        foreach (var header in request.Headers)
+        {
+            message.Headers.TryAddWithoutValidation(header.Name, header.Values);
         }
 
         message.Headers.TryAddWithoutValidation("traceparent", request.Trace.TraceParent);

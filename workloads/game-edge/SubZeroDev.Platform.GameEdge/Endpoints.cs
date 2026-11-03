@@ -84,6 +84,7 @@ public static class GameEdgeEndpointExtensions
             trace)
         {
             Assertion = assertion,
+            Headers = HeaderPolicy.Request(context.Request, context.Connection.RemoteIpAddress, options),
         };
 
         if (StreamingRoutes.Match(options.StreamingRoutes, context.Request.Path.Value ?? string.Empty) is { } route)
@@ -103,6 +104,7 @@ public static class GameEdgeEndpointExtensions
                 context.Response.ContentType = contentType;
             }
 
+            HeaderPolicy.Apply(context.Response, response.Headers);
             await context.Response.Body
                 .WriteAsync(response.Body, context.RequestAborted)
                 .ConfigureAwait(false);
@@ -157,6 +159,7 @@ public static class GameEdgeEndpointExtensions
                 context.Response.ContentType = contentType;
             }
 
+            HeaderPolicy.Apply(context.Response, streamed.Headers);
             await context.Response.StartAsync(aborted).ConfigureAwait(false);
 
             while (true)

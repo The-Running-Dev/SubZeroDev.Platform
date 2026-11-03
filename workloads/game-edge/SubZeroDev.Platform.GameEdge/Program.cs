@@ -17,6 +17,12 @@ if (CredentialSettings.Validate(section) is { Count: > 0 } credentialErrors)
         "Configuration section 'GameEdge' is invalid: " + string.Join(" ", credentialErrors));
 }
 
+if (TrustedProxySettings.Validate(section) is { Count: > 0 } proxyErrors)
+{
+    throw new InvalidOperationException(
+        "Configuration section 'GameEdge:TrustedProxies' is invalid: " + string.Join(" ", proxyErrors));
+}
+
 var options = section.Get<GameEdgeOptions>();
 
 // `required` binds nothing: it is a compile-time obligation on the initialiser, and the

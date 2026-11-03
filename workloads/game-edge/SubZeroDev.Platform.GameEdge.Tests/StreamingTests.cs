@@ -24,6 +24,7 @@ namespace SubZeroDev.Platform.GameEdge.Tests;
 /// caller who left.
 /// The edge runs on real Kestrel throughout, because chunk framing and a closed connection are what
 /// is being observed, and the in-memory test server has neither.</summary>
+[Collection(HeaderPolicyContract.RealListener)]
 public sealed class StreamingTests
 {
     private const string Route = "/console/stream";
