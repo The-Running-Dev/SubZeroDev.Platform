@@ -347,7 +347,7 @@ in-memory behaviour.
 Out of scope: Adventures' own account data. Platform account records. The issuer.
 
 ## S9 — Pre-G3 rows are deleted at migration
-**Status:** queued — acceptance met by #369; marked shipped once S3–S8 ahead of it ship
+**Status:** shipped — acceptance met by #369; marked shipped when S3–S8 ahead of it shipped
 
 Delivers: rows saved before players had owners are gone once G3 migrates, and an operator knows
 that before upgrading.
@@ -367,7 +367,7 @@ Acceptance:
 Out of scope: migrating Adventures' rows.
 
 ## S10 — Abuse limits answer before they forward
-**Status:** queued
+**Status:** in progress
 
 Delivers: one caller flooding the edge is slowed down and told when to retry, without affecting
 whose data anyone sees.
