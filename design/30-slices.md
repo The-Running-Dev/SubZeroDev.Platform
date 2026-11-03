@@ -449,7 +449,7 @@ Acceptance:
 Out of scope: moving Adventures' persistence onto game-service. game-service live (S14).
 
 ## S13 — An MCP client plays through the edge
-**Status:** queued
+**Status:** shipped
 
 Delivers: an MCP client signed in as a player reaches that player's games through the edge, and
 only through it.
@@ -468,6 +468,8 @@ Acceptance:
 - **S13.3** An MCP request sent straight to game-service with a valid bearer token and no assertion
   returns `401 assertion_refused`.
 - **S13.4** S11's CI job runs S13's proofs.
+
+Proved by `workloads/game-service/tests/mcp-through-edge.test.ts`, on the real `Terminate` edge, game-service and a Postgres schema: S13.1 `start_game` then `choose` as A, with the workload receiving each as `/mcp/call-tool`, one verifying assertion and no bearer; S13.2 B's `get_scene` and `choose` on A's id answer 404 `unknown_session`, equal to a never-minted id apart from the correlation; S13.3 the same call straight to game-service is `401 assertion_refused`, as is `/mcp/list-tools`. S13.4 needs no code: the file is in the `game-service` job's suite, which `g3-composition` gates on.
 
 Out of scope: any MCP-specific authentication. MCP clients authenticate at the edge like HTTP
 callers.
