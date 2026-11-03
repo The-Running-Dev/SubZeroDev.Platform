@@ -57,7 +57,9 @@ public sealed record HostStartupError : PlatformError
         new(nameof(Registration), detail, inner);
 
     /// <summary>The host declared <see cref="CompositionProfile.Operated"/>, which is authenticated
-    /// at the transport, and registered no <see cref="IAuthenticationProvider"/> — I-C1. The host
+    /// at the transport, or <see cref="CompositionProfile.AuthenticatedTransport"/>, which
+    /// authenticates its callers, and registered no <see cref="IAuthenticationProvider"/> — I-C1,
+    /// I-C14. The host
     /// fails rather than serving unauthenticated: every guarantee in the design is stated relative
     /// to a composition, and a host that cannot state its own should not serve.</summary>
     /// <param name="detail">The profile and the missing registration.</param>
@@ -74,9 +76,14 @@ public sealed record HostStartupError : PlatformError
     public static HostStartupError DurableAuditSinkRequired(string detail) =>
         new(nameof(DurableAuditSinkRequired), detail, null);
 
-    /// <summary>The host declared <see cref="CompositionProfile.Local"/> and registered something
-    /// that profile forbids: an <see cref="IAuthenticationProvider"/>, an <see cref="ITenantResolver"/>,
-    /// or an <see cref="IEntitlementContributor"/> other than the Community baseline — I-C3.</summary>
+    /// <summary>The host declared a profile and registered something it forbids. Under
+    /// <see cref="CompositionProfile.Local"/>: an <see cref="IAuthenticationProvider"/>, an
+    /// <see cref="ITenantResolver"/>, or an <see cref="IEntitlementContributor"/> other than the
+    /// Community baseline — I-C3. Under <see cref="CompositionProfile.AuthenticatedTransport"/>: a
+    /// module other than Identity, Platform persistence, a durable <see cref="IAuditSink"/>, an
+    /// <see cref="ITenantResolver"/>, an <see cref="IEntitlementContributor"/> other than the
+    /// Community baseline, an <see cref="IPermissionProvider"/> other than the composition provider,
+    /// or an endpoint requiring a permission — I-C15.</summary>
     /// <param name="detail">The profile, the offending registration, and which of the two it
     /// disagrees with.</param>
     /// <returns>The error.</returns>

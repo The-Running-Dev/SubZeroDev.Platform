@@ -12,7 +12,10 @@ namespace SubZeroDev.Platform.Identity;
 /// (<c>20-contract.md</c> §1), and a consumer never registers this module without also registering
 /// at least one <see cref="IAuthenticationProvider"/> naming an issuer it trusts, which this type
 /// deliberately does not do on the consumer's behalf.</summary>
-public sealed class IdentityModule : IPlatformModule
+/// <remarks>The one module an <see cref="CompositionProfile.AuthenticatedTransport"/> host may compose:
+/// it registers authentication providers and their key-set health, keeps no state, writes no audit
+/// record and grants no permission (I-C15).</remarks>
+public sealed class IdentityModule : IPlatformModule, Core.ITransportCompatibleModule
 {
     /// <inheritdoc/>
     public ModuleName Name { get; } = new("Identity");

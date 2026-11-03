@@ -12,17 +12,29 @@ namespace SubZeroDev.Platform.Persistence;
 /// it.</summary>
 public static class PlatformPersistenceExtensions
 {
+    private const string PersistenceRegistrant = "SubZeroDev.Platform.Persistence";
+
     /// <summary>Registers the unit of work, the ambient transaction accessor, the shared-read scope
     /// factory, the migration runner, the outbox writer and store, the event handler registry, host
     /// registration and its heartbeat, the lease store and manager, the prune background work, and
     /// the <c>Database</c>, <c>PendingMigrations</c>, <c>PeerHost</c>, <c>SettingsFingerprint</c>,
     /// <c>OutboxBacklogAge</c>, <c>OutboxPendingCount</c> and <c>OutboxPoisonCount</c> readiness
-    /// checks.</summary>
+    /// checks — and declares the host's durable Platform state, which an
+    /// <see cref="CompositionProfile.AuthenticatedTransport"/> host refuses at startup (I-C15).</summary>
     /// <param name="services">The host's service collection.</param>
     /// <returns>The same collection, so calls chain.</returns>
     public static IServiceCollection AddPlatformPersistence(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // What an AuthenticatedTransport host refuses (I-C15): Persistence is durable Platform state,
+        // and that profile holds none. Registered once however often this runs; an instance has no
+        // implementation type for TryAddEnumerable to tell apart, so the guard is on the registrant.
+        if (!services.Any(descriptor => descriptor.ImplementationInstance is DurableStateRegistration
+            { Registrant: PersistenceRegistrant }))
+        {
+            services.AddSingleton(new DurableStateRegistration(PersistenceRegistrant));
+        }
 
         services.TryAddSingleton<AmbientTransactionState>();
         services.TryAddSingleton<IAmbientTransactionAccessor, AmbientTransactionAccessor>();

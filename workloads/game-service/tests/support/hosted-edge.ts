@@ -17,6 +17,8 @@ import type { HostedTarget, Outcome, ShutdownError } from "../../src/types.js";
  *  exceeds it — the one place that guessed value is checked against a real edge configuration. */
 export const GAME_EDGE_FORWARD_TIMEOUT_SECONDS = 10;
 
+export const GAME_EDGE_DEFAULT_DLL = (): string => process.env["GAME_EDGE_DLL"] ?? DEFAULT_DLL;
+
 const DEFAULT_CONFIGURATION = process.env["GAME_EDGE_CONFIGURATION"] ?? "Debug";
 const DEFAULT_DLL = fileURLToPath(
   new URL(
@@ -37,7 +39,7 @@ export interface SpawnedHostedEdge {
  *  not to hold the transcript. */
 const TAIL_LIMIT = 16_384;
 
-function appendTail(existing: string, chunk: string): string {
+export function appendTail(existing: string, chunk: string): string {
   const combined = existing + chunk;
   return combined.length > TAIL_LIMIT ? combined.slice(combined.length - TAIL_LIMIT) : combined;
 }
@@ -45,7 +47,7 @@ function appendTail(existing: string, chunk: string): string {
 /** Polls until the edge answers liveness, giving up early when the child is already gone — a child
  *  that exited immediately (a missing dll, a rejected setting) is never going to answer, and waiting
  *  the full budget for it reports a timeout in place of the real cause. */
-async function waitForLive(
+export async function waitForLive(
   baseAddress: string,
   timeoutMs: number,
   deadChild: () => string | null,
@@ -74,7 +76,7 @@ async function waitForLive(
  *  omits it and gets today's no-telemetry behaviour on both sides unchanged. */
 export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHostedEdge> {
   const workload = await spawnHostedWorkload(otlpEndpoint);
-  // The edge signs nothing until G3's S3; until then the proxy stands where its signer will, so the
+  // Pass-through signs nothing; the proxy stands where the Terminate-mode signer sits, so the
   // workload's verifier sees an assertion on every forwarded request.
   const signer = await startSigningProxy(workload.target.baseAddress);
   const port = await freePort();
@@ -85,6 +87,10 @@ export async function spawnHostedEdge(otlpEndpoint?: string): Promise<SpawnedHos
     ASPNETCORE_URLS: `http://127.0.0.1:${port}`,
     ASPNETCORE_ENVIRONMENT: "Production",
     GameEdge__WorkloadBaseAddress: signer.baseAddress,
+    // Pass-through: the edge authenticates nothing and signs nothing, so the signing proxy above is
+    // what puts an assertion on the forwarded request. The Terminate composition is
+    // `hosted-edge-terminate.ts`.
+    GameEdge__CredentialMode: "PassThrough",
     GameEdge__ForwardTimeout: `00:00:${String(GAME_EDGE_FORWARD_TIMEOUT_SECONDS).padStart(2, "0")}`,
     GameEdge__ReadinessTimeout: "00:00:05",
     // Read by `AddPlatformObservability` (`PlatformObservabilityExtensions.ResolveIdentity`) when

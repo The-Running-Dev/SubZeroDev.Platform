@@ -206,14 +206,16 @@ which CI runs verbatim in the `game-service` job. It needs Node.js 24 or later a
    `GAME_SERVICE_HANDOFF_KEYS_DIR` names a directory of P-256 public keys, one `<key id>.pem` each,
    with `GAME_SERVICE_HANDOFF_ISSUER` and `GAME_SERVICE_HANDOFF_AUDIENCE` beside it. Every request
    but the probes must then carry an assertion the edge signed, or it answers
-   `401 assertion_refused`. The edge does not sign yet, so until G3's S3 only the probes work
-   through it.
+   `401 assertion_refused`. An edge in `PassThrough` mode does not sign, so only its probes work
+   through it; an edge in `Terminate` mode authenticates the caller's bearer token and signs one.
 2. **Build and start the edge**: `dotnet build` the edge project, then run the built DLL from its
-   own directory with `GameEdge__WorkloadBaseAddress` pointing at the workload. Run it from there
+   own directory with `GameEdge__WorkloadBaseAddress` pointing at the workload and
+   `GameEdge__CredentialMode` set to `PassThrough` or `Terminate` (it has no default). Run it from there
    because `appsettings.json` resolves against the working directory, and the timeout defaults
    live only in that file.
-3. **Run the proof**: `npx vitest run tests/replay.test.ts` for the single hop and
-   `tests/replay-edge.test.ts` for the edge. Each spawns and tears down its own processes, so
+3. **Run the proof**: `npx vitest run tests/replay.test.ts` for the single hop,
+   `tests/replay-edge.test.ts` for the edge and `tests/s3-edge.test.ts` for a signed-in player
+   through the edge. Each spawns and tears down its own processes, so
    nothing needs to be started first.
 
 Other startup variables are `GAME_SERVICE_OTLP_ENDPOINT` (unset means no exporter and no outbound

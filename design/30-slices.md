@@ -111,7 +111,7 @@ Out of scope: every remaining id-bearing operation and both surfaces (S4). The e
 that pre-G3 rows are deleted (S9). The account surface (S8).
 
 ## S3 — A signed-in player plays through the edge
-**Status:** in progress
+**Status:** shipped
 
 Delivers: a player holding a token from the game's issuer can create and play a session through
 the edge, and the edge alone vouches for who they are.
@@ -147,6 +147,18 @@ Acceptance:
   token or the assertion.
 - **S3.8** The composition in S3.1 runs in CI from a fresh clone, with no network access beyond the
   composed processes.
+
+Added to the slice, by the 2026-11-03 decision ([`90-decisions.md`](90-decisions.md),
+[ADR-010](../docs/docs/adr/ADR-010-authenticated-transport-profile.md)): the edge's terminate mode needs
+a composition profile that neither `Local` nor `Operated` can state, so the slice also delivers
+`AuthenticatedTransport` (invariants 130 to 132), proved in
+`tests/SubZeroDev.Platform.Tests/AuthenticatedTransportProfileTests.cs` and
+`workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/TerminateModeTests.cs`.
+
+Proved by `workloads/game-service/tests/s3-edge.test.ts` (the real edge in `Terminate` mode, the real
+game-service and a real PostgreSQL schema, with a test issuer whose keys the edge pins), one `describe`
+per criterion: S3.1 to S3.8. S3.7's span half needs `OTEL_COLLECTOR_BIN` and runs in CI only; its
+process-output half runs everywhere.
 
 Out of scope: token failure outcomes beyond "no credential" (S5). Every other header (S6).
 Pass-through mode (S6). Abuse limits (S10).

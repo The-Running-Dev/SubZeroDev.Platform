@@ -183,6 +183,10 @@ needs it.
 - **The profile does not decide what is present; the package graph does.** The profile is what lets
   startup say the graph out loud and fail when the two disagree — I-C1 to I-C4. It is not a feature
   switch, and **no runtime behaviour branches on it outside startup validation.**
+- **A third value, `AuthenticatedTransport`, was added after D5 shipped** for a host that
+  authenticates its callers and holds nothing about them — I-C14 to I-C16, and
+  [ADR-010](../../docs/docs/adr/ADR-010-authenticated-transport-profile.md). `Local` and `Operated` keep
+  I-C1 to I-C3 as written, and the numeric values of the enum are unchanged.
 - **The `Local` seam defaults are named providers that exist, not stubs standing in for something
   missing.** The brief's non-goal is explicit that Identity, Organizations, Billing and Licensing are
   *absent* from the local composition, "not registered checks that always pass".
@@ -2193,6 +2197,9 @@ means this document is the only thing holding it, and a reviewer is the enforcem
 | **I-C11** | `ShutdownAsync` runs exactly once for each module whose `InitializeAsync` completed — on stop, or on disposal after a later startup step failed — and never for one whose `InitializeAsync` threw or never ran (Owner: Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
 | **I-C12** | A throwing `InitializeAsync` fails the host with `ModuleInitialization` naming the module, never degrades it, and its `Detail` carries no exception message (Owner: Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
 | **I-C13** | No lifecycle hook assumes it is the only process: every instance of every role runs every hook, and migrate mode runs none (Owner: Hosting; each module for its own hooks.) | — | instruction | tests/SubZeroDev.Platform.Tests/ModuleLifecycleTests.cs |
+| **I-C14** | `AuthenticatedTransport` with no authentication provider fails startup (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/AuthenticatedTransportProfileTests.cs |
+| **I-C15** | `AuthenticatedTransport` with any module not marked transport-compatible, durable Platform state, a durable audit sink, a tenant resolver, a non-baseline entitlement contributor, a non-composition permission provider or an endpoint requiring a permission fails startup, naming the registration; the module and durable-state refusals run before any module registers (Owner: Core, Hosting.) | — | code | tests/SubZeroDev.Platform.Tests/AuthenticatedTransportProfileTests.cs |
+| **I-C16** | Under `AuthenticatedTransport` an `AuditClass.Required` write is refused with a non-retryable `DurableTrailRequired` error before any sink sees it (Owner: Core.) | — | code | tests/SubZeroDev.Platform.Tests/AuthenticatedTransportProfileTests.cs |
 | **I-E1** | A request whose path matches no `GameEdge:StreamingRoutes` prefix is forwarded buffered, under one `ForwardTimeout`, with G1's answers including #106's after-headers `503`; with no route listed the edge is G1's edge unchanged (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs, workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/ForwardingTests.cs |
 | **I-E2** | On a streamed route the edge commits the workload's status and `Content-Type` when the workload's headers arrive and flushes each piece of the body as it is read, never coalescing; `ForwardTimeout` does not apply and no edge deadline follows the headers (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs |
 | **I-E3** | After a streamed route's headers are sent, a workload failure aborts the caller's response — no terminating chunk on HTTP/1.1, a reset stream on HTTP/2 — and the edge writes no byte of its own after headers: no status, envelope, frame or trailer (Owner: GameEdge.) | — | code | workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests/StreamingTests.cs |

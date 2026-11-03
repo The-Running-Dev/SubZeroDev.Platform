@@ -253,6 +253,75 @@ public sealed class TerminateModeTests : IDisposable
         Assert.Contains($"'GameEdge:Handoff:{field}'", Flatten(thrown), StringComparison.Ordinal);
     }
 
+    /// <summary>S3.3's refusal reaches past an absent credential: one the bearer chain cannot verify
+    /// is <c>401 CredentialRejected</c> from Platform's pipeline, before the route runs, and the
+    /// workload receives nothing. A bad credential never degrades into an anonymous caller, so it
+    /// never reaches the signer either.</summary>
+    [Theory]
+    [InlineData("unpinned key")]
+    [InlineData("foreign issuer")]
+    [InlineData("expired")]
+    [InlineData("malformed")]
+    public async Task A_credential_the_edge_cannot_verify_is_refused_before_anything_is_forwarded(string defect)
+    {
+        using var stranger = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var token = defect switch
+        {
+            "unpinned key" => Token("player-1", key: stranger),
+            "foreign issuer" => Token("player-1", issuer: "https://elsewhere.test"),
+            "expired" => Token("player-1", issuedSecondsAgo: 900),
+            _ => "not-a-token",
+        };
+
+        await using var workload = await FakeWorkload.StartAsync();
+        await using var edge = Terminate(workload.BaseAddress);
+        using var client = edge.CreateClient();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/sessions")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.TryAddWithoutValidation("SubZeroDev-Principal-Assertion", "caller.forged.value");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("CredentialRejected", body.RootElement.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrEmpty(body.RootElement.GetProperty("correlation").GetString()));
+        Assert.Empty(workload.Requests);
+    }
+
+    /// <summary>The composition profile is the edge's to declare, and Platform refuses one that
+    /// cannot hold the mode at startup: terminate mode composes an authentication provider, which
+    /// Local refuses and Operated admits only beside a durable audit trail, and pass-through composes
+    /// none, which AuthenticatedTransport refuses (I-C3, I-C1, I-C14). The matching pairs start: the
+    /// rest of this class runs terminate mode under AuthenticatedTransport, and
+    /// <c>EdgeHostTests</c> runs pass-through under Local.</summary>
+    [Theory]
+    [InlineData("Terminate", "Local", "RegistrationForbiddenByProfile")]
+    [InlineData("Terminate", "Operated", "DurableAuditSinkRequired")]
+    [InlineData("PassThrough", "AuthenticatedTransport", "AuthenticationProviderRequired")]
+    public async Task A_mode_under_a_profile_that_cannot_hold_it_fails_startup(string mode, string profile, string code)
+    {
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("GameEdge:WorkloadBaseAddress", "http://127.0.0.1:1");
+            builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
+            builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
+            builder.UseSetting("GameEdge:CredentialMode", mode);
+            builder.UseSetting("Platform:CompositionProfile", profile);
+            if (mode == "Terminate")
+            {
+                Handoff(builder, signingKeyPath);
+            }
+        });
+
+        var thrown = Assert.ThrowsAny<Exception>(factory.CreateClient);
+        Assert.Contains(code + ":", Flatten(thrown), StringComparison.Ordinal);
+    }
+
     private WebApplicationFactory<Program> Terminate(string workloadBaseAddress, ILoggerProvider? logs = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -261,6 +330,7 @@ public sealed class TerminateModeTests : IDisposable
             builder.UseSetting("GameEdge:ForwardTimeout", "00:00:05");
             builder.UseSetting("GameEdge:ReadinessTimeout", "00:00:01");
             builder.UseSetting("GameEdge:CredentialMode", "Terminate");
+            builder.UseSetting("Platform:CompositionProfile", "AuthenticatedTransport");
             Handoff(builder, signingKeyPath);
             if (logs is not null)
             {
@@ -308,13 +378,13 @@ public sealed class TerminateModeTests : IDisposable
         return key;
     }
 
-    private static string Token(string subject)
+    private static string Token(string subject, ECDsa? key = null, string issuer = TokenIssuer, long issuedSecondsAgo = 0)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - issuedSecondsAgo;
         var header = Encode(new { alg = "ES256", kid = IssuerKeyId, typ = "JWT" });
-        var payload = Encode(new { iss = TokenIssuer, sub = subject, aud = TokenAudience, iat = now, nbf = now, exp = now + 300 });
+        var payload = Encode(new { iss = issuer, sub = subject, aud = TokenAudience, iat = now, nbf = now, exp = now + 300 });
         var input = header + "." + payload;
-        return input + "." + Base64Url.EncodeToString(IssuerKey.SignData(Encoding.ASCII.GetBytes(input), HashAlgorithmName.SHA256));
+        return input + "." + Base64Url.EncodeToString((key ?? IssuerKey).SignData(Encoding.ASCII.GetBytes(input), HashAlgorithmName.SHA256));
     }
 
     private (JsonElement Header, JsonElement Payload) Verify(string assertion)

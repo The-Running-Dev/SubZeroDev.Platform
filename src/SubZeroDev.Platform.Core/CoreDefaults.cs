@@ -33,6 +33,7 @@ internal static class CoreDefaults
         services.TryAddSingleton<IAuditSinkRegistry, AuditSinkRegistry>();
         services.TryAddSingleton<IAuditWriter>(provider => new AuditWriter(
             provider.GetRequiredService<AuditEventFactory>(),
-            provider.GetRequiredService<AuditSinkDispatcher>()));
+            provider.GetRequiredService<AuditSinkDispatcher>(),
+            provider.GetRequiredService<PlatformOptions>().CompositionProfile));
     }
 }

@@ -385,6 +385,12 @@ not a substitute an operated host may fall back to silently. `Local` with an aut
 billing contributor or an organizations resolver registered fails startup — because a local host that
 has grown a commercial dependency by accident should stop, not degrade.
 
+*Amended 2026-11-03 (G3 S3):* a third value, `AuthenticatedTransport`, covers a host that authenticates
+callers and keeps nothing about them, which neither `Local` (no provider) nor `Operated` (a durable audit
+sink) can describe. It requires a provider and refuses state, a durable trail, a tenant resolver, paid
+entitlement and permission grants. The two values above are unchanged. See
+[ADR-010](../../docs/docs/adr/ADR-010-authenticated-transport-profile.md).
+
 The brief's non-goal is explicit that Identity, Organizations, Billing and Licensing are *absent* from
 the local composition, "not registered checks that always pass". The seam defaults in `Local` are
 therefore named local providers — the composition permission provider, the anonymous-or-`system:local`
