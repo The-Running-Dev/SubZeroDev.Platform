@@ -22,7 +22,7 @@ export const PRE_UPGRADE_COMMIT = "5b587d6990552b85dbf31cb9d82c22869754ac78";
 export const INSPECTED_UPGRADE_COMMIT = "d47a14ca4d366e0d5ca98adeef932ce8ab6173a6";
 /** The last vendored release, re-pinned on every engine upgrade (`previous-release.test.ts`). */
 export const PREVIOUS_RELEASE_COMMIT = "7c82c565a6c23743a5914fa2bdfe7fca5feb87e8";
-export const PREVIOUS_RELEASE_CANDIDATE = "0.13.0";
+export const PREVIOUS_RELEASE_CANDIDATE = "0.14.0";
 /** The owner a row written by an ownerless G2-shape adapter takes: the column default, the reserved
  *  empty owner no principal can hold (`20-contract.md`, "Existing rows"; invariant 117). The
  *  candidate reads and writes as it here only so these tests can still compare the two runtimes'
