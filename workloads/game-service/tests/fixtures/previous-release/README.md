@@ -26,3 +26,11 @@ alternating session writes with saves loaded across, profile reads in both direc
 kept and format 2 stored, and code rollback over the incoming release's schema and data. These are
 adapter and runtime checks against PostgreSQL, not evidence that a production rolling deployment
 has been exercised.
+
+**Held at 0.12.0 across the 0.14.0 bump, deliberately.** The outgoing release's commit (`d4184d1`)
+is a G3-shape, owner-scoped adapter. This fixture is the last ownerless G2-shape adapter, and
+`previous-release.test.ts`, `owner-scope.test.ts` (S2.10) and `pre-g3-deletion.test.ts` (S9.1) use it
+as the G2 schema and row writer; re-pinning would turn them into G3-versus-G3 tests and drop the
+G2-instance-after-migration coverage. At `0.14.0` neither the session store nor the host ports change,
+so only `PREVIOUS_RELEASE_CANDIDATE` moved. Re-pin when a store or port change makes a G2 writer
+the wrong comparison.
