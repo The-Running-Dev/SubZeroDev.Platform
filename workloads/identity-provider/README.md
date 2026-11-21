@@ -37,9 +37,14 @@ correction from the G1 recovery spike.
 - a client the definition does not name receives the game audience;
 - a published key is anything other than EC P-256 ES256.
 
-`game-cli` is the native game client. It is public, uses PKCE S256, and its redirect is the
-loopback `http://127.0.0.1/callback`, which matches on any port. Its access tokens carry the game
-audience. They carry no email and no name.
+The realm has two clients:
+
+- `game-cli` is the native game client. It is public, uses PKCE S256, and its redirect is the
+  loopback `http://127.0.0.1/callback`, which matches on any port. Its access tokens carry the game
+  audience. They carry no email and no name.
+- `adventures` is the Adventures site. It is confidential and also uses PKCE S256. Its tokens carry
+  the adventures audience and never the game one, so the edge refuses them. Keycloak generates its
+  secret, which is never in the definition; whoever deploys the site reads it through the admin API.
 
 ## Run it
 
@@ -89,6 +94,8 @@ flow has drifted, `configure` refuses.
 
 - a member signs in with a passkey through `game-cli` and receives an ES256 access token whose
   `kid` is in the JWKS, whose `iss` is the realm, and whose `aud` includes the game audience;
+- a sign-in through `adventures` yields the adventures audience and not the game one, and its code
+  is refused without the client secret;
 - a recovery code signs the member in through "try another way", and the same code is refused a
   second time;
 - a passkey the member does not hold is refused;
@@ -96,6 +103,18 @@ flow has drifted, `configure` refuses.
 - a username with no credential is never shown a set-up page;
 - `check` reports the test-only bootstrap client while that client exists, and passes once it is
   removed.
+
+`workloads/game-service/tests/keycloak-through-edge.test.ts` takes it further. A member's real
+game-cli token crosses the edge into game-service, and the same member's adventures token is
+refused at the edge. It gets its tokens from `tests/support/mint.ts`, a test-only command:
+
+```powershell
+node tests/support/mint.ts mint t2-example
+```
+
+```powershell
+node tests/support/mint.ts remove t2-example
+```
 
 The tests use a software WebAuthn authenticator (`tests/support/authenticator.ts`). It proves the
 server side of the ceremony. It says nothing about real browsers or real authenticators.

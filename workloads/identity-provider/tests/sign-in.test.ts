@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { check, publishedKeys } from "../src/realm.ts";
 import { Authenticator } from "./support/authenticator.ts";
-import { BOOTSTRAP_CLIENT, credentials, decode, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./support/members.ts";
+import { ADVENTURES_CALLBACK, BOOTSTRAP_CLIENT, clientSecret, credentials, decode, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./support/members.ts";
 import type { Environment, Member } from "./support/members.ts";
 
 const e = environment();
@@ -53,6 +53,28 @@ describe.skipIf(!e)("member sign-in (slice 1)", () => {
     expect(typeof payload["sub"]).toBe("string");
     expect(payload["email"]).toBeUndefined();
     expect(payload["preferred_username"]).toBeUndefined();
+  });
+
+  it("a sign-in through adventures yields a token for the adventures audience and never the game one", async () => {
+    const w = await walk(env, "adventures", member.username, {
+      passkey: member.passkey,
+      client: { secret: await clientSecret(env, "adventures"), redirect: ADVENTURES_CALLBACK },
+    });
+    expect(w.tokens, describeWalk(w)).toBeDefined();
+    const { payload } = decode(w.tokens!.access_token);
+    const aud = ([] as unknown[]).concat(payload["aud"]);
+    expect(aud).toContain("https://adventures.identity-provider.test/");
+    expect(aud).not.toContain(env.def.gameAudience);
+    expect(payload["azp"]).toBe("adventures");
+  });
+
+  it("adventures' code is refused without its secret", async () => {
+    const w = await walk(env, "adventures", member.username, {
+      passkey: member.passkey,
+      client: { secret: "not-the-secret", redirect: ADVENTURES_CALLBACK },
+    });
+    expect(w.tokens, describeWalk(w)).toBeUndefined();
+    expect(w.status).toMatch(/exchange 401/);
   });
 
   it("a recovery code signs the member in through \"try another way\", once", async () => {

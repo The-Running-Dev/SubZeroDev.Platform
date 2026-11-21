@@ -742,3 +742,22 @@ half-built flow during the rebuild. **An enrolment path in the realm now**, whic
 by default.
 Reversibility: cheap for the workload. The issuer, audience and key pinning reach the edge only as
 configuration.
+
+### 2026-11-22 — Identity slice 2: a real member token crosses the edge, and only the game audience is accepted
+
+Context: slice 1 proved the realm issues a game-audience token. Nothing yet proved that the edge
+accepts it unchanged, or that a token the same realm issues to another client is refused.
+Chosen: `workloads/game-service/tests/keycloak-through-edge.test.ts` runs the real edge in
+Terminate mode in front of the real game-service. It pins the realm's issuer, its published key set
+and the game audience through the same `Platform__Identity__Bearer__game__*` settings the test
+issuer uses. A passkey sign-in through `game-cli` starts and plays a game. The handoff names the
+realm as issuer and the token's `sub` as subject. The same member's token from `adventures`, a new
+confidential client with its own audience, is refused with 401 and the workload sees nothing. The
+tokens come from `identity-provider/tests/support/mint.ts` run as a child process, so the Keycloak
+client code keeps one owner. The `game-service` CI job now brings up and configures the identity
+provider before its suite runs.
+Rejected: **importing the identity-provider helpers into game-service**, which would give two
+workloads one module across incompatible TypeScript settings. **A copy of the helpers**, which
+would drift. **A new CI job with Keycloak, PostgreSQL and the edge**, which repeats the
+game-service job's setup.
+Reversibility: cheap. The edge's configuration is unchanged; only test settings name Keycloak.

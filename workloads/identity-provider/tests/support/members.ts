@@ -20,6 +20,8 @@ import type { Answer } from "./user-agent.ts";
 /** Loopback redirect a native client listens on; any port matches the port-less registration. */
 export const CALLBACK = "http://127.0.0.1:53682/callback";
 export const BOOTSTRAP_CLIENT = "test-only-enrol";
+/** The adventures site's callback on the loopback; matches its port-less registration. */
+export const ADVENTURES_CALLBACK = "http://127.0.0.1:53682/adventures/callback";
 
 export interface Environment {
   kc: KeycloakAdmin;
@@ -54,12 +56,25 @@ export interface Tokens {
   token_type: string;
 }
 
-export function authorizeUrl(e: Environment, clientId: string, extra: Record<string, string> = {}): { url: string; verifier: string } {
+/** How a client proves itself at the token endpoint and where its code arrives. */
+export interface ClientAuth {
+  secret?: string;
+  redirect?: string;
+}
+
+/** A confidential client's current secret, read through the admin API (it is never in the definition). */
+export async function clientSecret(e: Environment, clientId: string): Promise<string> {
+  const c = (await e.kc.get<{ id: string }[]>(`/realms/${e.realm}/clients?clientId=${encodeURIComponent(clientId)}`))[0];
+  if (!c) throw new Error(`client ${clientId} does not exist`);
+  return (await e.kc.get<{ value: string }>(`/realms/${e.realm}/clients/${c.id}/client-secret`)).value;
+}
+
+export function authorizeUrl(e: Environment, clientId: string, extra: Record<string, string> = {}, redirect = CALLBACK): { url: string; verifier: string } {
   const verifier = randomBytes(32).toString("base64url");
   const q = new URLSearchParams({
     client_id: clientId,
     response_type: "code",
-    redirect_uri: CALLBACK,
+    redirect_uri: redirect,
     scope: "openid",
     code_challenge: createHash("sha256").update(verifier).digest("base64url"),
     code_challenge_method: "S256",
@@ -69,17 +84,24 @@ export function authorizeUrl(e: Environment, clientId: string, extra: Record<str
   return { url: `${e.issuer}/protocol/openid-connect/auth?${q}`, verifier };
 }
 
-export async function exchange(e: Environment, clientId: string, code: string, verifier: string): Promise<{ status: number; body: string }> {
+export async function exchange(e: Environment, clientId: string, code: string, verifier: string, auth: ClientAuth = {}): Promise<{ status: number; body: string }> {
   const r = await fetch(`${e.issuer}/protocol/openid-connect/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: CALLBACK, client_id: clientId, code_verifier: verifier }),
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: auth.redirect ?? CALLBACK,
+      client_id: clientId,
+      code_verifier: verifier,
+      ...(auth.secret ? { client_secret: auth.secret } : {}),
+    }),
   });
   return { status: r.status, body: await r.text() };
 }
 
-const codeOf = (a: Answer): string | null =>
-  (a.status === 302 || a.status === 303) && a.location?.startsWith(CALLBACK) ? new URL(a.location).searchParams.get("code") : null;
+const codeOf = (a: Answer, redirect = CALLBACK): string | null =>
+  (a.status === 302 || a.status === 303) && a.location?.startsWith(redirect) ? new URL(a.location).searchParams.get("code") : null;
 
 export const outcome = (e: Environment, a: Answer): string =>
   (a.status === 302 || a.status === 303) && a.location && !a.location.startsWith(e.base)
@@ -108,6 +130,8 @@ export interface Plan {
   extra?: Record<string, string>;
   /** Reuse a user agent (and its SSO session). */
   agent?: UserAgent;
+  /** A confidential client's secret and the redirect its code arrives at. */
+  client?: ClientAuth;
 }
 
 export interface Walk {
@@ -138,7 +162,8 @@ async function requiredAction(a: UserAgent, r: Answer, plan: Plan, w: Walk): Pro
 
 export async function walk(e: Environment, clientId: string, username: string | undefined, plan: Plan = {}): Promise<Walk> {
   const a = plan.agent ?? new UserAgent(e.base);
-  const { url, verifier } = authorizeUrl(e, clientId, plan.extra ?? {});
+  const redirect = plan.client?.redirect ?? CALLBACK;
+  const { url, verifier } = authorizeUrl(e, clientId, plan.extra ?? {}, redirect);
   let r = await a.open(url);
   const w: Walk = { trail: [], status: "", agent: a };
   const done = new Set<string>();
@@ -188,9 +213,9 @@ export async function walk(e: Environment, clientId: string, username: string | 
     break;
   }
   w.status = outcome(e, r);
-  const code = codeOf(r);
+  const code = codeOf(r, redirect);
   if (code) {
-    const t = await exchange(e, clientId, code, verifier);
+    const t = await exchange(e, clientId, code, verifier, plan.client ?? {});
     if (t.status === 200) w.tokens = JSON.parse(t.body) as Tokens;
     else w.status += `; exchange ${t.status} ${t.body.slice(0, 200)}`;
   }
