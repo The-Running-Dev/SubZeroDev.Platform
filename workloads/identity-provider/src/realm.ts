@@ -184,11 +184,15 @@ export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<st
 
   problems.push(...profileProblems(await profileOf(kc, realm), def.userProfile));
 
+  const actions = await kc.get<{ alias: string; enabled: boolean }[]>(`/realms/${enc(realm)}/authentication/required-actions`);
   for (const alias of def.requiredActions) {
-    const ra = await kc.raw("GET", `/realms/${enc(realm)}/authentication/required-actions/${enc(alias)}`);
-    if (ra.status !== 200) problems.push(`required action ${alias} is not registered`);
-    else if (!(JSON.parse(ra.body) as { enabled: boolean }).enabled) problems.push(`required action ${alias} is disabled`);
+    const ra = actions.find((a) => a.alias === alias);
+    if (!ra) problems.push(`required action ${alias} is not registered`);
+    else if (!ra.enabled) problems.push(`required action ${alias} is disabled`);
   }
+  // Any enabled action is reachable by a signed-in member through kc_action (UPDATE_PASSWORD adds a
+  // password credential), so the definition's list is the whole set, not a minimum.
+  for (const a of actions) if (a.enabled && !def.requiredActions.includes(a.alias)) problems.push(`required action ${a.alias} is enabled but not in the definition`);
   return problems;
 }
 
@@ -269,12 +273,11 @@ export async function configure(kc: KeycloakAdmin, def: RealmDefinition): Promis
     await kc.call("PUT", `/realms/${enc(realm)}`, settings);
     done.push(`reconciled realm ${realm} settings`);
   }
-  for (const alias of def.requiredActions) {
-    const path = `/realms/${enc(realm)}/authentication/required-actions/${enc(alias)}`;
-    const ra = await kc.get<Record<string, unknown> & { enabled: boolean }>(path);
-    if (!ra.enabled) {
-      await kc.call("PUT", path, { ...ra, enabled: true });
-      done.push(`enabled required action ${alias}`);
+  for (const ra of await kc.get<(Record<string, unknown> & { alias: string; enabled: boolean })[]>(`/realms/${enc(realm)}/authentication/required-actions`)) {
+    const wanted = def.requiredActions.includes(ra.alias);
+    if (ra.enabled !== wanted) {
+      await kc.call("PUT", `/realms/${enc(realm)}/authentication/required-actions/${enc(ra.alias)}`, { ...ra, enabled: wanted });
+      done.push(`${wanted ? "enabled" : "disabled"} required action ${ra.alias}`);
     }
   }
   const profile = await profileOf(kc, realm);

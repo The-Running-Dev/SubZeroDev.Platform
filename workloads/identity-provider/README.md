@@ -35,7 +35,31 @@ correction from the G1 recovery spike.
 - the flow has a different shape, or is not the realm's browser flow;
 - any client in the realm overrides the browser flow;
 - a client the definition does not name receives the game audience;
-- a published key is anything other than EC P-256 ES256.
+- a published key is anything other than EC P-256 ES256;
+- a required action is enabled that the definition does not list.
+
+## Account actions
+
+A signed-in member manages their own credentials through Keycloak's application-initiated actions:
+the client adds `kc_action=<action>` to an authorization request, and the action runs after the
+member signs in. There is no SSO step in the flow, so every action needs a full sign-in first.
+
+| `kc_action` | What it does |
+|---|---|
+| `webauthn-register-passwordless` | adds a passkey |
+| `CONFIGURE_RECOVERY_AUTHN_CODES` | replaces the recovery-code set; the old codes stop working |
+| `delete_credential:<credential id>` | asks the member to confirm, then deletes that credential |
+
+These three are the only required actions the realm enables. Keycloak enables others by default,
+and a signed-in member can start any enabled one: `UPDATE_PASSWORD` gives a passkey member a
+password credential. `configure` disables every action the definition does not list, and `check`
+fails on any that is enabled.
+
+Sign-out is the OIDC logout endpoint with the refresh token, or token revocation. Either ends the
+session at Keycloak, and its refresh token is then refused. Refresh tokens rotate: a reused one is
+refused and ends the session. An access token already issued stays valid at the edge until it
+expires, because the edge validates tokens locally against the pinned key set and does not ask
+Keycloak. The access-token lifetime is D9, which is open.
 
 The realm has two clients:
 
@@ -104,6 +128,21 @@ flow has drifted, `configure` refuses.
 - `check` reports the test-only bootstrap client while that client exists, and passes once it is
   removed.
 
+`tests/account.test.ts` proves the account actions:
+
+- the realm enables only the three actions above, and `check` fails when `UPDATE_PASSWORD` is
+  enabled;
+- with configure applied, `kc_action=UPDATE_PASSWORD`, `CONFIGURE_TOTP` and `UPDATE_PROFILE` reach
+  no page and add no credential;
+- a second authorization in the same browser asks for the username again;
+- a member adds a second passkey, and it signs in;
+- answering the delete page with Decline keeps the passkey;
+- a removed passkey is refused, and the remaining one still signs in;
+- a member cannot delete another member's credential by naming its id;
+- regenerated recovery codes replace the old set;
+- logout and revocation end the session, and a reused refresh token is refused and ends the
+  session.
+
 `workloads/game-service/tests/keycloak-through-edge.test.ts` takes it further. A member's real
 game-cli token crosses the edge into game-service, and the same member's adventures token is
 refused at the edge. It gets its tokens from `tests/support/mint.ts`, a test-only command:
@@ -138,6 +177,9 @@ Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the suite skips locally. Under CI (`CI` se
 - **D3/D5:** the brute-force numbers and first-credential enrolment.
 - **R1, D6 and OD-16:** production gates under G1. They do not block building and are not waived by
   it.
+- **Deleting the last credential.** Keycloak lets a member delete their only credential. The member
+  then has no way to sign in. `tests/account.test.ts` pins this as Keycloak's behaviour. It is
+  recorded, not accepted; it belongs to the open recovery decisions (D3/D5).
 - An unknown username answers "Invalid username.", while a known username with no credential gets
   a generic error page. The two answers differ, so they reveal whether a username exists. This is
   Keycloak's behaviour and is recorded, not accepted.

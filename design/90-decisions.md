@@ -761,3 +761,23 @@ workloads one module across incompatible TypeScript settings. **A copy of the he
 would drift. **A new CI job with Keycloak, PostgreSQL and the edge**, which repeats the
 game-service job's setup.
 Reversibility: cheap. The edge's configuration is unchanged; only test settings name Keycloak.
+
+### 2026-11-22 — Identity slice 3: members manage their own credentials, and the realm enables only the actions it uses
+
+Context: a signed-in member needs to add and remove passkeys, replace recovery codes and sign out.
+Keycloak offers all of these as application-initiated actions (`kc_action`). Probing showed that
+Keycloak also enables `UPDATE_PASSWORD`, `CONFIGURE_TOTP`, `UPDATE_PROFILE` and others by default,
+and that a signed-in passkey member could use `kc_action=UPDATE_PASSWORD` to add a password
+credential to their account.
+Chosen: `requiredActions` in `realm/members.json` is the complete enabled set:
+`webauthn-register-passwordless`, `CONFIGURE_RECOVERY_AUTHN_CODES` and `delete_credential`.
+`configure` disables every other action and `check` fails on any enabled action that the
+definition does not list. Sign-out is the OIDC logout or revocation endpoint. Refresh tokens rotate
+with no reuse. `tests/account.test.ts` proves each action and the refusals.
+Recorded, not decided: Keycloak lets a member delete their only credential, which leaves them with
+no way in. The test pins that behaviour. Whether to prevent it belongs to the open recovery
+decisions (D3/D5). An access token already issued stays valid at the edge until it expires (D9).
+Rejected: **Keycloak's account console**, which is a second client with its own flows and pages to
+check. **Leaving Keycloak's default actions enabled and checking only that ours are on**, which
+leaves a password path one request away.
+Reversibility: cheap. Enabling another action is one line in the definition.

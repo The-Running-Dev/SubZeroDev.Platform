@@ -132,6 +132,8 @@ export interface Plan {
   agent?: UserAgent;
   /** A confidential client's secret and the redirect its code arrives at. */
   client?: ClientAuth;
+  /** Answers Keycloak's "Delete <credential>?" page (kc_action=delete_credential:<id>). */
+  deletion?: "accept" | "decline";
 }
 
 export interface Walk {
@@ -143,6 +145,8 @@ export interface Walk {
   codes?: string[];
   asked?: number;
   options?: string[];
+  /** The answer the walk stopped on. */
+  last?: Answer;
 }
 
 /** Completes the page the walk is on if it is a required-action page; undefined if it is not one. */
@@ -151,6 +155,11 @@ async function requiredAction(a: UserAgent, r: Answer, plan: Plan, w: Walk): Pro
   if (id === "login-webauthn-register" && plan.register) {
     const action = formById(r, "register")!;
     return a.submit(action, plan.register.create(scriptField(r, "challenge")!, scriptField(r, "rpId")!, scriptField(r, "userid")!));
+  }
+  if (id === "login-delete-credential" && plan.deletion) {
+    const action = r.body.match(/action="([^"]*login-actions\/required-action[^"]*execution=delete_credential[^"]*)"/)?.[1];
+    if (!action) return undefined;
+    return a.submit(action, plan.deletion === "accept" ? { accept: "" } : { "cancel-aia": "" });
   }
   if (id === "login-login-recovery-authn-code-config") {
     const hidden = hiddenFields(r);
@@ -195,7 +204,8 @@ export async function walk(e: Environment, clientId: string, username: string | 
     if (id === "login-select-authenticator") {
       const options = credentialOptions(r);
       w.options = options.map((o) => o.label);
-      const pick = plan.choose ? options.find((o) => plan.choose!.test(o.label)) : undefined;
+      const wanted = plan.choose ?? (plan.passkey ? /passkey/i : undefined);
+      const pick = wanted ? options.find((o) => wanted.test(o.label)) : undefined;
       if (pick && once("choose")) {
         r = await a.submit(formById(r, "kc-select-credential-form") ?? authenticateAction(r)!, { authenticationExecution: pick.id });
         continue;
@@ -208,11 +218,17 @@ export async function walk(e: Environment, clientId: string, username: string | 
         r = await a.submit(authenticateAction(r)!, { recoveryCodeInput: plan.code(w.asked) });
         continue;
       }
+      // Keycloak opens on the member's first-priority credential; a passkey plan steps past codes.
+      if (plan.passkey && !plan.code && another && once("another")) {
+        r = await a.submit(another, { tryAnotherWay: "on" });
+        continue;
+      }
       break;
     }
     break;
   }
   w.status = outcome(e, r);
+  w.last = r;
   const code = codeOf(r, redirect);
   if (code) {
     const t = await exchange(e, clientId, code, verifier, plan.client ?? {});
