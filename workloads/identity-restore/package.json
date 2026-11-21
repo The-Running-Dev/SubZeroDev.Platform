@@ -1,0 +1,25 @@
+{
+  "name": "@subzerodev/identity-restore",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Keycloak restore under R1-a: an off-host record of security events, gap detection, and replay onto a restored realm.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "node src/cli.ts"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.4"
+  }
+}
