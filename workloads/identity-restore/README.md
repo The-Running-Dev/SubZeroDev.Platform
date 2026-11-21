@@ -51,7 +51,10 @@ Environment and exit codes are listed in the header of [`src/cli.ts`](src/cli.ts
    earlier restore that reopened.
 2. Hold: disable the realm.
 3. Check coverage from `backup start − margin` to the old service's end.
-4. Plan, then apply the removals. Each one reads before it writes, so a rerun is all no-ops.
+4. Plan, then apply the removals. Each one reads before it writes, so a rerun is all no-ops. Before
+   it disables a temporarily locked member, it writes that member's release target (the account's
+   state before the restore touched it) to the restore log as a `locking` entry. A rerun after an
+   interruption takes the target from that entry, not from the account it has already disabled.
 5. Session reset: realm `notBefore` = now, and log every session out.
 6. Check that every member client signs in through fixA.
 7. List members left with no passkey and no recovery codes.
@@ -116,6 +119,13 @@ Keycloak's behaviour, it was observed there, not assumed:
 - A sign-in with a recovery code is a `LOGIN` with `credential_type=recovery-authn-codes`.
 - While the realm is held, the recorder's canary sign-in is refused (`Realm not enabled`), so the
   recorder writes nothing during the hold.
+- Admin-event retention is not in `/events/config`; that endpoint rejects an `adminEventsExpiration`
+  field with 400. It is the realm attribute `adminEventsExpiration`, a string of seconds, which a
+  client with `view-realm` reads from `GET /admin/realms/{realm}`. An empty, `0` or absent value means
+  no expiry. This was checked after G1, on 2026-11-21, in a disposable 26.8.1. The recorder checks a
+  window against both the user-event and the admin-event expiry. If the attribute is not a whole
+  number of seconds, the window is a gap. Keycloak's actual deletion of expired admin events was not
+  observed; the fakes model it.
 
 ## Residual exposures
 

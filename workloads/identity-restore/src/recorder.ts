@@ -6,14 +6,17 @@
  *  1. Request a token as the recorder client. That is a `CLIENT_LOGIN` in the realm: the canary. If the
  *     token is refused (Keycloak down, the realm held for a restore) the cycle writes nothing; the next
  *     successful cycle starts where the last window ended, so nothing is skipped.
- *  2. Read the realm's event configuration. Events off, admin events or their details off, a required
- *     event type not enabled, or an expiry shorter than the minimum: the window is a gap.
+ *  2. Read the realm's event configuration, and the admin-event expiry from the realm's attributes
+ *     (Keycloak keeps it there; `/events/config` does not report it). Events off, admin events or their
+ *     details off, a required event type not enabled, or an expiry shorter than the minimum: the window
+ *     is a gap.
  *  3. Read `[from, through]` with `from` = the last window's end + 1 and `through` = now − settle. Also
  *     re-read `[from − lookback, from − 1]`; an event there not already held is a late arrival, which means
  *     the settle delay is too short.
  *  4. Look for the canary in Keycloak's store at a time after `through`. Found: storage was on and had
  *     committed past the window. Not found: the window is a gap.
- *  5. If `from` is older than the store's expiry, Keycloak may already have deleted events in it: gap.
+ *  5. If `from` is older than either expiry, user or admin, Keycloak may already have deleted events in
+ *     it: gap. An admin expiry the recorder cannot read is a gap too.
  *  6. Write the events, then the window.
  *
  * The windows tile time with no overlap (both ends inclusive, like Keycloak's `dateFrom` and `dateTo`), so
@@ -58,6 +61,16 @@ interface EventsConfig {
   adminEventsEnabled?: boolean;
   adminEventsDetailsEnabled?: boolean;
   adminEventsExpiration?: number | null;
+}
+
+/** The admin-event expiry in seconds from the realm's attributes: `null` when absent or 0 (never expires),
+ *  `undefined` when it is present but not a whole number of seconds. */
+export function adminExpirySeconds(realm: { attributes?: Record<string, unknown> }): number | null | undefined {
+  const raw = realm.attributes?.["adminEventsExpiration"];
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : /^\s*\d+\s*$/.test(String(raw)) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(n) || n < 0) return undefined;
+  return n === 0 ? null : n;
 }
 
 export type CycleResult =
@@ -121,7 +134,10 @@ export async function runCycle(kc: Keycloak, store: RecorderStore, o: RecorderOp
   } catch (e) {
     return { wrote: false, why: `canary token refused, nothing recorded this cycle: ${(e as Error).message}` };
   }
-  const config = await kc.json<EventsConfig>(o.realm, "/events/config");
+  const realm = await kc.json<{ attributes?: Record<string, unknown> }>(o.realm, "");
+  const adminExpiry = adminExpirySeconds(realm);
+  const config: EventsConfig = { ...await kc.json<EventsConfig>(o.realm, "/events/config"),
+    ...(adminExpiry === undefined ? {} : { adminEventsExpiration: adminExpiry }) };
   const through = startedAt - o.settleMs;
   const last = await store.lastWindow();
 
@@ -147,8 +163,10 @@ export async function runCycle(kc: Keycloak, store: RecorderStore, o: RecorderOp
   const canary = await findCanary(kc, o, through);
   if (!canary) reasons.push(`the recorder's canary login was not found in Keycloak's store after ${through}: event storage may be off, or Keycloak's clock is more than the settle delay behind`);
 
-  const expiry = config.eventsExpiration ?? null;
-  if (expiry !== null && expiry > 0 && from < startedAt - expiry * 1000) reasons.push(`the window starts before Keycloak's ${expiry}s event expiry: events in it may already have been deleted`);
+  const userExpiry = config.eventsExpiration ?? null;
+  if (userExpiry !== null && userExpiry > 0 && from < startedAt - userExpiry * 1000) reasons.push(`the window starts before Keycloak's ${userExpiry}s user event expiry: user events in it may already have been deleted`);
+  if (adminExpiry === undefined) reasons.push(`the realm's adminEventsExpiration attribute is ${JSON.stringify(realm.attributes?.["adminEventsExpiration"])}, not a number of seconds: admin events in the window may already have been deleted`);
+  else if (adminExpiry !== null && from < startedAt - adminExpiry * 1000) reasons.push(`the window starts before Keycloak's ${adminExpiry}s admin event expiry: admin events in it may already have been deleted`);
 
   // Late arrivals count only where an earlier window claimed coverage; before the record began they are
   // simply events the record never claimed.

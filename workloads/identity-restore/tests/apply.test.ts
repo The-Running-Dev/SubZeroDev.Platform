@@ -37,7 +37,7 @@ interface Scenario extends World {
  * recovery code, carol removes her only credential, dave deletes his account, erin is temporarily locked
  * out, an admin disables frank, and gwen registers.
  */
-async function scenario(opts: { gapDuring?: boolean; beforeDump?: (w: World) => void; skipDrain?: boolean } = {}): Promise<Scenario> {
+async function scenario(opts: { gapDuring?: boolean; beforeDump?: (w: World) => void; afterBackup?: (w: World) => void; skipDrain?: boolean } = {}): Promise<Scenario> {
   const w = world();
   const { kc, clock } = w;
   const alice = kc.addUser("alice", [{ type: PASSKEY }, { type: RECOVERY_CODES }]);
@@ -67,6 +67,7 @@ async function scenario(opts: { gapDuring?: boolean; beforeDump?: (w: World) => 
   kc.adminSetEnabled(frank, false); clock.t += 1000;
   const gwen = kc.addUser("gwen", [{ type: PASSKEY }]);
   kc.userEvent("REGISTER", gwen.id); clock.t += 1000;
+  opts.afterBackup?.(w);
   for (let i = 0; i < 3; i++) await w.cycle();
 
   // Runbook: close ingress, wait out the settle delay, drain, stop the recorder, retire the old store.
@@ -273,6 +274,103 @@ describe("release outcomes (negative cases)", () => {
     expect(w.kc.users.get(byAdmin.id)?.enabled).toBe(false);
     expect(w.kc.users.get(perm.id)?.enabled).toBe(false);
     expect(w.kc.users.get(plain.id)?.enabled).toBe(true);
+  });
+});
+
+describe("a restore interrupted after it disabled a temporarily locked member (regression)", () => {
+  const LOGOUT_ALL = `POST /admin/realms/${REALM}/logout-all`;
+  /** hana was disabled before the backup and is temporarily locked after it: she must stay disabled. */
+  const interrupted = async () => {
+    let hana = "";
+    let hanaUntilMs = 0;
+    const s = await scenario({
+      beforeDump: (w) => { hana = w.kc.addUser("hana", [{ type: PASSKEY }], false).id; },
+      afterBackup: (w) => { hanaUntilMs = w.clock.t + 2 * HOUR; w.kc.tempLock(w.kc.users.get(hana)!, hanaUntilMs); },
+    });
+    expect(s.kc.users.get(s.ids.erin)?.enabled).toBe(true);
+    s.kc.failOnce.add(LOGOUT_ALL);
+    await expect(restore(input(s, { allowReplayLockouts: true }))).rejects.toThrow(/500/);
+    // The first run got as far as the disable and stopped at the session reset.
+    expect(s.kc.users.get(s.ids.erin)?.enabled).toBe(false);
+    expect(s.kc.logoutAll).toBe(0);
+    s.clock.t += 60_000;
+    const retry = await restore(input(s, { allowReplayLockouts: true }));
+    return { s, hana, hanaUntilMs, retry };
+  };
+
+  it("keeps the release target the member had before the interrupted run disabled them", async () => {
+    const { s, hana, retry } = await interrupted();
+    expect(retry.outcome).toBe("reopened");
+    const target = Object.fromEntries(retry.tempLocks!.map((m) => [m.userId, m.releaseTo]));
+    expect(target).toEqual({ [s.ids.erin]: true, [hana]: false });
+  });
+
+  it("releases the member once the lock ends, and leaves the one disabled beforehand disabled", async () => {
+    const { s, hana, hanaUntilMs } = await interrupted();
+    s.clock.t = Math.max(s.erinUntilMs, hanaUntilMs) + 1000;
+    const out = await releaseTempLocks({ kc: s.operator, realm: REALM, store: s.store, restoreClientIds: await s.operator.identities(), now: s.clock.now });
+    expect(Object.fromEntries(out.map((x) => [x.userId, x.result]))).toEqual({ [s.ids.erin]: "released", [hana]: "kept-disabled" });
+    expect(s.kc.users.get(s.ids.erin)?.enabled).toBe(true);
+    expect(s.kc.users.get(hana)?.enabled).toBe(false);
+  });
+});
+
+describe("admin events Keycloak expired before the recorder read them (regression)", () => {
+  const DAY = 86_400_000;
+  /** User events kept 30 days, admin events 7; the recorder is down for 8 days while an admin deletes dave. */
+  const outage = async () => {
+    const w = world();
+    const { kc, clock } = w;
+    kc.eventsConfig["eventsExpiration"] = 30 * 86400;
+    kc.realm.attributes["adminEventsExpiration"] = String(7 * 86400);
+    const alice = kc.addUser("alice", [{ type: PASSKEY }, { type: RECOVERY_CODES }]);
+    const dave = kc.addUser("dave", [{ type: PASSKEY }]);
+    await w.cycle(); // bootstrap
+    for (let i = 0; i < 4; i++) await w.cycle();
+    const startedAtMs = clock.t;
+    const dump = kc.snapshot();
+    clock.t += 2000;
+    const backup: BackupMeta = { startedAtMs, finishedAtMs: clock.t, sha256: "test", bytes: 1 };
+
+    kc.refuseTokens = true; // the recorder is unavailable
+    clock.t += 60_000;
+    kc.adminDeleteUser(dave); clock.t += 1000;
+    kc.removeCredential(alice, PASSKEY); clock.t += 1000;
+    expect(await w.cycle()).toMatchObject({ wrote: false });
+    clock.t += 8 * DAY;
+    kc.refuseTokens = false;
+    const back = await w.cycle();
+
+    const serviceEndedAtMs = clock.t;
+    clock.t = serviceEndedAtMs + w.o.settleMs + 1;
+    await runCycle(w.recorder, w.store, w.o);
+    clock.t += 1000;
+    const storeRetiredAtMs = clock.t;
+    clock.t += 1000;
+    kc.restoreFrom(dump);
+    clock.t += 1000;
+    const s: Scenario = { ...w, backup, serviceEndedAtMs, storeRetiredAtMs, erinUntilMs: 0,
+      ids: { alice: alice.id, bob: "", carol: "", dave: dave.id, erin: "", frank: "", gwen: "" } };
+    return { s, back };
+  };
+
+  it("marks the window the outage left a gap, though user events in it are still held", async () => {
+    const { s, back } = await outage();
+    // Keycloak still had alice's removal (30 days) but had already deleted the admin's DELETE (7 days).
+    expect([...s.store.events.values()].some((e) => e.kind === "user" && (e.body as { type: string }).type === "REMOVE_CREDENTIAL")).toBe(true);
+    expect([...s.store.events.values()].some((e) => e.kind === "admin" && (e.body as { operationType: string }).operationType === "DELETE")).toBe(false);
+    expect(back).toMatchObject({ wrote: true, window: { status: "gap", reason: expect.stringContaining("admin event expiry") } });
+  });
+
+  it("holds the restore: the missing deletion blocks reopening, and the realm stays closed", async () => {
+    const { s } = await outage();
+    expect(s.kc.users.has(s.ids.dave)).toBe(true); // the rollback brought dave back
+    const r = await restore(input(s, { allowReplayLockouts: true }));
+    // Without the admin expiry check this reopens with dave's deleted account back and signed-in-able.
+    expect({ outcome: r.outcome, realmOpen: s.kc.realm.enabled, daveBack: s.kc.users.get(s.ids.dave)?.enabled === true })
+      .toEqual({ outcome: "held", realmOpen: false, daveBack: true });
+    expect(r.coverage?.complete).toBe(false);
+    expect(r.blocking).toContainEqual(expect.stringMatching(/record gap \(interior\).*admin event expiry/));
   });
 });
 

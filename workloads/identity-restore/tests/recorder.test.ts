@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configViolations, DEFAULT_RECORDER, fetchRange, runCycle, type RecorderOptions } from "../src/recorder.ts";
+import { adminExpirySeconds, configViolations, DEFAULT_RECORDER, fetchRange, runCycle, type RecorderOptions } from "../src/recorder.ts";
 import { Clock, FakeKeycloak, MemoryStore, PASSKEY, REALM, RECORDER } from "./fakes.ts";
 
 function world(over: Partial<RecorderOptions> = {}) {
@@ -62,6 +62,36 @@ describe("the recorder", () => {
     await w.cycle();
     const r = await w.cycle(31 * 86_400_000);
     expect(r).toMatchObject({ wrote: true, window: { status: "gap", reason: expect.stringContaining("expiry") } });
+  });
+
+  it("reads the admin event expiry from the realm's attributes and marks a window older than it a gap", async () => {
+    const w = world();
+    w.kc.realm.attributes["adminEventsExpiration"] = String(8 * 86400);
+    await w.cycle();
+    expect(await w.cycle(7 * 86_400_000)).toMatchObject({ wrote: true, window: { status: "covered" } });
+    const r = await w.cycle(9 * 86_400_000);
+    expect(r).toMatchObject({ wrote: true, window: { status: "gap", reason: expect.stringContaining("691200s admin event expiry") } });
+    expect(r).toMatchObject({ window: { reason: expect.not.stringContaining("user event expiry") } });
+  });
+
+  it("refuses an admin event expiry shorter than the minimum when only the realm's attributes report it", async () => {
+    const w = world();
+    w.kc.realm.attributes["adminEventsExpiration"] = "3600";
+    await w.cycle();
+    expect(await w.cycle()).toMatchObject({ wrote: true, window: { status: "gap", reason: expect.stringContaining("adminEventsExpiration is 3600s") } });
+  });
+
+  it("marks a window a gap when the admin event expiry cannot be read", async () => {
+    const w = world();
+    w.kc.realm.attributes["adminEventsExpiration"] = "7d";
+    await w.cycle();
+    expect(await w.cycle()).toMatchObject({ wrote: true, window: { status: "gap", reason: expect.stringContaining("not a number of seconds") } });
+  });
+
+  it.each([
+    [undefined, null], ["", null], ["0", null], ["604800", 604800], [" 60 ", 60], [3600, 3600], ["7d", undefined], ["-5", undefined], ["1.5", undefined],
+  ] as const)("reads adminEventsExpiration %j as %j", (raw, want) => {
+    expect(adminExpirySeconds({ attributes: raw === undefined ? {} : { adminEventsExpiration: raw } })).toBe(want);
   });
 
   it("marks a window a gap when the event configuration is unsafe", async () => {

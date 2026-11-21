@@ -47,7 +47,7 @@ export function schemaStatements(schema: string, roles: RoleNames): string[] {
     `create table if not exists ${s}.kc_restore_log (
        seq bigserial primary key,
        restore_id text not null,
-       phase text not null check (phase in ('held', 'applied', 'reopened', 'refused', 'released')),
+       phase text not null check (phase in ('held', 'locking', 'applied', 'reopened', 'refused', 'released')),
        at_ms bigint not null,
        detail jsonb not null default '{}')`,
     `revoke all on all tables in schema ${s} from public`,

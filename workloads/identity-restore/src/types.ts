@@ -61,7 +61,7 @@ export interface BackupMeta {
 
 export interface RestoreLogEntry {
   readonly restoreId: string;
-  readonly phase: "held" | "applied" | "reopened" | "refused" | "released";
+  readonly phase: "held" | "locking" | "applied" | "reopened" | "refused" | "released";
   readonly atMs: number;
   readonly detail: Readonly<Record<string, unknown>>;
 }

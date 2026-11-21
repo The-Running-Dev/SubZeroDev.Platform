@@ -43,7 +43,10 @@ export const UNSAFE_FLOW: Execution[] = [
 
 export class FakeKeycloak {
   readonly clock: Clock;
-  realm = { id: REALM_ID, realm: REALM, enabled: true, notBefore: 0, maxFailureWaitSeconds: 900, browserFlow: "members-browser" };
+  /** Keycloak keeps the admin-event expiry in the realm's attributes, as a string of seconds; the event
+   *  config has no key for it. Absent: admin events never expire. */
+  realm = { id: REALM_ID, realm: REALM, enabled: true, notBefore: 0, maxFailureWaitSeconds: 900, browserFlow: "members-browser",
+    attributes: {} as Record<string, string> };
   eventsConfig: Record<string, unknown> = {
     eventsEnabled: true, eventsExpiration: 30 * 86400, adminEventsEnabled: true, adminEventsDetailsEnabled: true,
     enabledEventTypes: ["LOGIN", "LOGIN_ERROR", "CLIENT_LOGIN", "REMOVE_CREDENTIAL", "UPDATE_CREDENTIAL", "DELETE_ACCOUNT",
@@ -70,6 +73,12 @@ export class FakeKeycloak {
   #n = 0;
 
   constructor(clock: Clock) { this.clock = clock; }
+
+  /** Keycloak deletes stored events older than their expiry; here they are dropped from every read. */
+  #kept(timeMs: number, expirySeconds: unknown) {
+    const x = Number(expirySeconds ?? 0);
+    return !(x > 0) || timeMs >= this.clock.t - x * 1000;
+  }
 
   id(prefix: string) { return `${prefix}-${String(++this.#n).padStart(4, "0")}`; }
 
@@ -103,6 +112,8 @@ export class FakeKeycloak {
   }
   useRecoveryCode(u: FakeUser) { return this.userEvent("LOGIN", u.id, { credential_type: RECOVERY_CODES }); }
   deleteAccount(u: FakeUser) { this.users.delete(u.id); return this.userEvent("DELETE_ACCOUNT", u.id); }
+  /** An admin deletes the account: Keycloak records an admin `DELETE`, not a `DELETE_ACCOUNT` user event. */
+  adminDeleteUser(u: FakeUser, clientId = "admin-cli") { this.users.delete(u.id); return this.adminEvent("DELETE", `users/${u.id}`, {}, clientId); }
   adminSetEnabled(u: FakeUser, enabled: boolean, clientId = "admin-cli") {
     const prev = u.enabled;
     u.enabled = enabled;
@@ -172,14 +183,14 @@ export class FakeKeycloak {
     if (p === "/events/config" && method === "GET") return ok(this.eventsConfig);
     if (p === "/logout-all" && method === "POST") { this.logoutAll++; audit("ACTION", "logout-all"); return ok({}, 200); }
     if (p === "/events" && method === "GET") {
-      const r = this.events.filter((e) =>
+      const r = this.events.filter((e) => this.#kept(e.time, this.eventsConfig["eventsExpiration"]) &&
         (!q.get("dateFrom") || e.time >= Number(q.get("dateFrom"))) && (!q.get("dateTo") || e.time <= Number(q.get("dateTo"))) &&
         (!q.get("type") || e.type === q.get("type")) && (!q.get("user") || e.userId === q.get("user")) &&
         (!q.get("client") || e.clientId === q.get("client")));
       return ok(page(r, q));
     }
     if (p === "/admin-events" && method === "GET") {
-      const r = this.adminEvents.filter((e) =>
+      const r = this.adminEvents.filter((e) => this.#kept(e.time, this.realm.attributes["adminEventsExpiration"]) &&
         (!q.get("dateFrom") || e.time >= Number(q.get("dateFrom"))) && (!q.get("dateTo") || e.time <= Number(q.get("dateTo"))) &&
         (!q.get("resourcePath") || e.resourcePath === q.get("resourcePath")));
       return ok(page(r, q));

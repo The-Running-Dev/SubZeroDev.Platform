@@ -6,7 +6,9 @@
  *  2. Hold: disable the realm. Members cannot sign in or refresh while it is held. Public ingress must
  *     also stay closed until step 9 (runbook).
  *  3. Check the record is complete from the replay window's start to the end of the old service.
- *  4. Plan, then apply the plan's removals. Each one reads first and does nothing if already done.
+ *  4. Plan, then apply the plan's removals. Each one reads first and does nothing if already done. A
+ *     temporary lock's release target is written to the restore log before the account is disabled, so
+ *     a run interrupted after the disable leaves the state before it on record for the retry.
  *  5. End every session: realm `notBefore` = now, and log every session out. This covers session
  *     rollback only. It does not remove a credential, a recovery-code set or an account the restore
  *     brought back; only the recorded removals in step 4 do that.
@@ -88,9 +90,11 @@ async function getUser(kc: Keycloak, realm: string, id: string): Promise<User | 
 }
 
 /** Brings every user the plan names to the planned state. With `write` false, only reports what it
- *  would change. Reads before every write, so a second run is all no-ops. */
+ *  would change. Reads before every write, so a second run is all no-ops. With `write` true, a new
+ *  temporary-lock marker is handed to `persistMarker` and awaited before the account is touched. */
 export async function ensurePlan(kc: Keycloak, realm: string, intents: readonly Intent[], nowMs: number, write: boolean,
-  priorMarkers: ReadonlyMap<string, TempLockMarker>): Promise<{ results: OpResult[]; markers: TempLockMarker[] }> {
+  priorMarkers: ReadonlyMap<string, TempLockMarker>,
+  persistMarker: (m: TempLockMarker) => Promise<void> = async () => {}): Promise<{ results: OpResult[]; markers: TempLockMarker[] }> {
   const results: OpResult[] = [];
   const markers: TempLockMarker[] = [];
   const done = write ? "applied" : "would-apply";
@@ -140,7 +144,9 @@ export async function ensurePlan(kc: Keycloak, realm: string, intents: readonly 
       // On a rerun the account is already disabled by the first run, so its state now is not its state
       // before the lock; the first run's marker holds that.
       const releaseTo = set?.enabled ?? prior?.releaseTo ?? user.enabled;
-      markers.push({ userId, untilMs: lock.untilMs, releaseTo });
+      const marker = { userId, untilMs: lock.untilMs, releaseTo };
+      if (write && (prior?.releaseTo !== releaseTo || prior.untilMs !== lock.untilMs)) await persistMarker(marker);
+      markers.push(marker);
       target = false;
     } else {
       if (lock) results.push({ op: "temp-lock", userId, result: "no-op", detail: "the lock has ended" });
@@ -179,10 +185,12 @@ export async function lockoutCensus(kc: Keycloak, realm: string, affected: Reado
   return { replayAffected, preExisting };
 }
 
+/** This restore's release targets, earliest first: a `locking` entry, written before an account was
+ *  disabled, holds the state before any run changed it. */
 function markersOf(log: readonly RestoreLogEntry[], restoreId: string): Map<string, TempLockMarker> {
   const m = new Map<string, TempLockMarker>();
   for (const e of log) {
-    if (e.restoreId !== restoreId || e.phase !== "applied") continue;
+    if (e.restoreId !== restoreId || (e.phase !== "locking" && e.phase !== "applied")) continue;
     for (const t of (e.detail["tempLocks"] as TempLockMarker[] | undefined) ?? []) if (!m.has(t.userId)) m.set(t.userId, t);
   }
   return m;
@@ -226,7 +234,7 @@ export async function restore(input: RestoreInput): Promise<RestoreReport> {
     nowMs, maxFailureWaitSeconds: r0.maxFailureWaitSeconds ?? 900, restoreClientIds: input.restoreClientIds });
   for (const f of p.findings) if (f.severity === "blocking") blocking.push(`event ${f.eventId} (${f.code}): ${f.text}`);
   const prior = markersOf(log, restoreId);
-  const applied = await ensurePlan(kc, realm, p.intents, nowMs, true, prior);
+  const applied = await ensurePlan(kc, realm, p.intents, nowMs, true, prior, (m) => entry("locking", { tempLocks: [m] }));
 
   // 5. Session reset.
   const notBefore = Math.floor(input.now() / 1000);

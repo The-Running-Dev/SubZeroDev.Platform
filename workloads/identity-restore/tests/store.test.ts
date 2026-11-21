@@ -85,7 +85,9 @@ describe.skipIf(!ADMIN_URL && !process.env["CI"])("record store grants (PostgreS
     expect((await res.eventsFrom("realm-1", 0)).map((e) => e.id)).toEqual(["e1", "e2", "e3"]);
     expect((await res.windows()).length).toBe(2);
     await res.appendRestoreLog({ restoreId: "r1", phase: "held", atMs: 1, detail: { a: 1 } });
-    expect(await res.restoreLog()).toEqual([{ restoreId: "r1", phase: "held", atMs: 1, detail: { a: 1 } }]);
+    await res.appendRestoreLog({ restoreId: "r1", phase: "locking", atMs: 2, detail: { tempLocks: [] } });
+    expect(await res.restoreLog()).toEqual([{ restoreId: "r1", phase: "held", atMs: 1, detail: { a: 1 } },
+      { restoreId: "r1", phase: "locking", atMs: 2, detail: { tempLocks: [] } }]);
   });
 
   it.each([
