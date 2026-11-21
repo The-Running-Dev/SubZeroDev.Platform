@@ -720,3 +720,25 @@ job's setup. **Rehearsing against a real proxy in CI**, which would test the pro
 this repository's code, and which S12 does on the live host.
 Reversibility: cheap. Nothing checks that the gate's `needs` list stays complete: a new proof job added
 outside it would not be covered by `g3-composition`.
+
+### 2026-11-22 — Identity slice 1: the member identity provider is a Keycloak workload, its realm kept as code and checked
+
+Context: G3 needs a real issuer for members. ADR-009 keeps any substrate a deployment choice and
+never a Platform package. The G1 spike chose Keycloak 26.8.1. It found that the spike's two custom
+flows let a username-only visitor reach a set-up page, and it proved the fixA flow shape that stops
+this. A hand-configured realm can drift back to the unsafe shape without anyone noticing.
+Chosen: `workloads/identity-provider` runs Keycloak 26.8.1 (pinned by digest) on its own
+PostgreSQL. The realm is `realm/members.json`, applied by `cli.ts configure` through the admin API.
+The browser flow is built by API calls rather than by realm import, because an import that carries
+flows drops the built-in ones. `configure` ends with `check` and fails if any problem remains.
+`check` covers the flow shape and its binding, browser-flow overrides on every client in the realm
+(OD-12 F1), which clients get the game audience, an ES256-only published key set, a username-only
+user profile, and the required actions. Signing keys are created once and never replaced by
+`configure`. A drifted flow is refused rather than rebuilt in place. First-credential enrolment is
+still open (D3/D5), so the suite enrols members through a test-only client that `check` flags.
+Rejected: **realm import as the only mechanism**, which cannot express the flow without drift and
+replaces keys on re-import. **Rebuilding the flow when it drifts**, which leaves members facing a
+half-built flow during the rebuild. **An enrolment path in the realm now**, which would settle D3/D5
+by default.
+Reversibility: cheap for the workload. The issuer, audience and key pinning reach the edge only as
+configuration.

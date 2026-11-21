@@ -678,6 +678,51 @@ jobs:
           GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
         run: npm test
 
+  # Identity slice 1: the member realm on a real Keycloak 26.8.1, configured from
+  # workloads/identity-provider/realm/members.json, and a passkey sign-in through game-cli that ends
+  # in an ES256 token for the game audience. The admin password is generated for this run only. With
+  # CI set, the suite fails rather than skips when Keycloak is not reachable.
+  identity-provider:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Generate the run's test-only admin password
+        run: echo "KC_BOOTSTRAP_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+
+      - name: Start Keycloak and its database
+        working-directory: workloads/identity-provider
+        run: docker compose -p identity-provider up -d --wait --wait-timeout 240
+
+      - name: Install the workload's dependencies
+        working-directory: workloads/identity-provider
+        run: npm ci
+
+      # verification: true
+      - name: Typecheck
+        working-directory: workloads/identity-provider
+        run: npm run typecheck
+
+      # The README's own command, run here so a documented command that stops working fails CI.
+      - name: Configure the member realm
+        working-directory: workloads/identity-provider
+        run: npm run cli -- configure
+
+      # verification: true
+      - name: Test
+        working-directory: workloads/identity-provider
+        run: npm test
+
+      - name: Keycloak log on failure
+        if: ${{ failure() }}
+        working-directory: workloads/identity-provider
+        run: docker compose -p identity-provider logs keycloak | tail -200
+
   # G3 S11.1: the one check that stands for "every G3 proof, from a fresh clone". Each job it waits on
   # starts from its own `actions/checkout`, and between them they run everything G3 and G2 prove:
   #   build                  the edge's and Platform's .NET suites (G3 S1-S10 on the .NET side), the
@@ -692,7 +737,7 @@ jobs:
   # This is CI evidence. It is not the live deployment's smoke check and does not stand in for it.
   g3-composition:
     runs-on: ubuntu-latest
-    needs: [build, game-service, game-service-isolation, adventures-proof]
+    needs: [build, game-service, game-service-isolation, adventures-proof, identity-provider]
     if: ${{ always() }}
 
     steps:

@@ -1,0 +1,105 @@
+{
+  "$comment": [
+    "The member realm, kept as code. `npm run cli -- configure` creates the realm from `realm` when it is absent and reconciles `realm` and `clients` onto it when it is present; it builds `browserFlow` through the admin API and binds it as the realm's browser flow. The flow is not part of the import payload: a realm import that carries authenticationFlows skips Keycloak's built-in flows and then also needs every authenticator config, which is what made the spike's realm file brittle.",
+    "${NAME} placeholders are filled from the environment of the configure run, with the defaults in `values`. Every default is a TEST-ONLY value: the game audience, the token lifetimes (D9 is open), the brute-force numbers (D3 is open) and the CLI redirect. A production deployment supplies its own values and is a separate approval.",
+    "Signing keys: one ecdsa-generated P-256 provider and nothing that publishes another algorithm (the edge pins ES256). Keys are created with the realm and never replaced by configure; rotation is its own procedure. `check` fails when the published key set is anything other than ES256 EC keys."
+  ],
+  "values": {
+    "GAME_AUDIENCE": "https://game.identity-provider.test/",
+    "GAME_CLI_REDIRECT": "http://127.0.0.1/callback",
+    "ACCESS_TOKEN_LIFESPAN": "300"
+  },
+  "realm": {
+    "realm": "members",
+    "displayName": "Members",
+    "enabled": true,
+    "sslRequired": "external",
+    "registrationAllowed": false,
+    "loginWithEmailAllowed": false,
+    "duplicateEmailsAllowed": false,
+    "resetPasswordAllowed": false,
+    "rememberMe": false,
+    "editUsernameAllowed": false,
+    "defaultSignatureAlgorithm": "ES256",
+    "accessTokenLifespan": "${ACCESS_TOKEN_LIFESPAN}",
+    "ssoSessionIdleTimeout": 7200,
+    "revokeRefreshToken": true,
+    "refreshTokenMaxReuse": 0,
+    "bruteForceProtected": true,
+    "permanentLockout": false,
+    "failureFactor": 5,
+    "waitIncrementSeconds": 900,
+    "maxFailureWaitSeconds": 900,
+    "maxDeltaTimeSeconds": 900,
+    "webAuthnPolicyPasswordlessRpEntityName": "Members",
+    "webAuthnPolicyPasswordlessSignatureAlgorithms": ["ES256"],
+    "webAuthnPolicyPasswordlessAttestationConveyancePreference": "none",
+    "webAuthnPolicyPasswordlessRequireResidentKey": "Yes",
+    "webAuthnPolicyPasswordlessUserVerificationRequirement": "required",
+    "components": {
+      "org.keycloak.keys.KeyProvider": [
+        { "name": "es256", "providerId": "ecdsa-generated", "subComponents": {},
+          "config": { "priority": ["200"], "ecdsaEllipticCurveKey": ["P-256"], "active": ["true"], "enabled": ["true"] } },
+        { "name": "hmac-internal", "providerId": "hmac-generated", "subComponents": {},
+          "config": { "priority": ["100"], "algorithm": ["HS512"], "active": ["true"], "enabled": ["true"] } },
+        { "name": "aes-internal", "providerId": "aes-generated", "subComponents": {},
+          "config": { "priority": ["100"], "active": ["true"], "enabled": ["true"] } }
+      ]
+    }
+  },
+  "userProfile": {
+    "$comment": "A member account holds a username and nothing else a member can see or edit: no name, no email (no email claim reaches any token). Keycloak will not delete the email attribute, so it stays, optional and admin-only. check fails on any other attribute, on any required attribute but username, and on an unmanaged-attribute policy.",
+    "attributes": ["username", "email"],
+    "memberEditable": ["username"],
+    "required": ["username"]
+  },
+  "requiredActions": ["webauthn-register-passwordless", "CONFIGURE_RECOVERY_AUTHN_CODES"],
+  "browserFlow": {
+    "alias": "members-browser",
+    "description": "Username, then a passkey or a recovery code (fixA). A username with no usable credential is refused; no set-up page is reachable before authentication.",
+    "nodes": [
+      { "provider": "auth-username-form", "requirement": "REQUIRED" },
+      { "sub": "members-browser-credential", "requirement": "REQUIRED", "children": [
+        { "provider": "webauthn-authenticator-passwordless", "requirement": "ALTERNATIVE" },
+        { "provider": "auth-recovery-authn-code-form", "requirement": "ALTERNATIVE" }
+      ] }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "game-cli",
+      "name": "Game CLI",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "redirectUris": ["${GAME_CLI_REDIRECT}"],
+      "webOrigins": [],
+      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "${GAME_CLI_REDIRECT}" },
+      "authenticationFlowBindingOverrides": {},
+      "defaultClientScopes": ["basic"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [
+        {
+          "name": "game-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "${GAME_AUDIENCE}",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}
