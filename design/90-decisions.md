@@ -781,3 +781,38 @@ Rejected: **Keycloak's account console**, which is a second client with its own 
 check. **Leaving Keycloak's default actions enabled and checking only that ours are on**, which
 leaves a password path one request away.
 Reversibility: cheap. Enabling another action is one line in the definition.
+
+### 2026-11-22 — Identity slice 4: the realm stores the events a restore needs, a least-privilege client reads them, and backups carry a verifiable sidecar
+
+Context: the identity-restore work (R1-a, PR #381, open and not merged) restores the member realm from
+a database dump and replays stored Keycloak events from the dump's start. It needs three things from
+the live realm: stored user and admin events of named types for long enough, a client it can read
+them with, and dumps whose start time it can trust. The realm as built in slices 1 to 3 had none
+of these.
+Chosen: `realm/members.json` gains an `events` section, and `configure` and `check` cover it. The
+section turns on user events, admin events and admin-event representations, for an explicit and
+complete list of types, which includes the ten PR #381 requires. It also sets both expiries,
+including the admin-event expiry, which is the realm attribute `adminEventsExpiration`. A
+confidential client, `identity-recorder`, has only a service account, with `view-events` and
+`view-realm`. `check` fails on extra or missing service-account roles. `backup` runs `pg_dump -Fc`
+and writes `<dump>.meta.json` as `{startedAtMs, finishedAtMs, sha256, bytes}`, with `startedAtMs`
+read before the dump begins. It refuses paths in the repository, never overwrites, and leaves
+nothing behind on failure. `tests/events.test.ts` and `tests/backup.test.ts` prove all of this
+in CI, including a `pg_restore` round trip into a scratch database.
+The boundary with PR #381: this workload has its own `backup`, written to the sidecar format
+PR #381's `verifiedMeta` reads. No code from that branch is copied or imported here.
+`tests/restore-boundary.test.ts` runs PR #381's `runCycle` and `verifiedMeta` from a checkout of
+that branch, in a child process, only when `IDENTITY_RESTORE_DIR` is set. It is not in CI, so main
+does not depend on an unmerged branch. It shows a covered recorder window that holds a member's
+sign-in. A hand-run negative control, with one required type removed, shows a gap.
+Test-only: both 30-day expiries, which are `values` defaults. Retention of events and of dumps is
+not decided.
+Not settled here: R1 (how the realm is restored), D6 and OD-16 remain G1 production gates. Building
+these pieces does not waive any of them, and no test here restores the live realm, replays events,
+or shows complete-loss recovery. Dump file mode 0600 is not enforced on Windows.
+Rejected: **calling PR #381's `backup`** from this workload, which would make main depend on an
+unmerged branch. **An empty `enabledEventTypes`**, which stores every type in Keycloak but lets a
+later edit narrow the list without the recorder noticing. **Giving the recorder `view-users`**,
+which it does not need to read events.
+Reversibility: cheap. The events section, the client and `backup` can each be removed on their own.
+The events already stored expire on their own.

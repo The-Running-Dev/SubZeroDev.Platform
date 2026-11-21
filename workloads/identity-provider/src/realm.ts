@@ -18,7 +18,21 @@ export interface ClientDefinition {
   protocolMappers?: Mapper[];
   defaultClientScopes?: string[];
   optionalClientScopes?: string[];
+  /** For a service-account client: the client roles its account holds, by client, and nothing more. */
+  serviceAccountRoles?: Record<string, string[]>;
   [field: string]: unknown;
+}
+
+/** What Keycloak stores about sign-ins and admin changes; the lists are complete sets, not minimums. */
+export interface EventsDefinition {
+  eventsEnabled: boolean;
+  eventsExpiration: number;
+  eventsListeners: string[];
+  enabledEventTypes: string[];
+  adminEventsEnabled: boolean;
+  adminEventsDetailsEnabled: boolean;
+  /** Seconds. Keycloak keeps it as the realm attribute of the same name, not in /events/config. */
+  adminEventsExpiration: number;
 }
 
 export interface ProfileDefinition {
@@ -34,6 +48,7 @@ export interface RealmDefinition {
   realm: Record<string, unknown> & { realm: string };
   userProfile: ProfileDefinition;
   requiredActions: string[];
+  events: EventsDefinition;
   browserFlow: { alias: string; description: string; nodes: FlowNode[] };
   clients: ClientDefinition[];
   /** The game audience the edge accepts; only clients whose mappers name it may receive it. */
@@ -141,7 +156,8 @@ export async function publishedKeys(baseUrl: string, realm: string): Promise<Jwk
  * Every way the realm differs from the definition in what matters for sign-in safety: the browser
  * flow's shape and binding, any client overriding the browser flow (OD-12 F1: every client in the
  * realm, not only those defined here), who receives the game audience, the published key set, and
- * the required actions enrolment depends on. An empty list is a pass.
+ * the required actions enrolment depends on, the stored-event settings the identity-restore recorder
+ * relies on, and what each service account may do. An empty list is a pass.
  */
 export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<string[]> {
   const realm = def.realm.realm;
@@ -193,6 +209,70 @@ export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<st
   // Any enabled action is reachable by a signed-in member through kc_action (UPDATE_PASSWORD adds a
   // password credential), so the definition's list is the whole set, not a minimum.
   for (const a of actions) if (a.enabled && !def.requiredActions.includes(a.alias)) problems.push(`required action ${a.alias} is enabled but not in the definition`);
+
+  problems.push(...eventProblems(await eventsOf(kc, realm), def.events));
+  for (const c of def.clients) {
+    const found = clients.find((x) => x.clientId === c.clientId);
+    if (c.serviceAccountRoles && found) problems.push(...(await serviceAccountProblems(kc, realm, found, c.serviceAccountRoles)));
+  }
+  return problems;
+}
+
+interface EventsConfig {
+  eventsEnabled?: boolean;
+  eventsExpiration?: number | null;
+  eventsListeners?: string[];
+  enabledEventTypes?: string[];
+  adminEventsEnabled?: boolean;
+  adminEventsDetailsEnabled?: boolean;
+}
+type StoredEvents = EventsConfig & { adminEventsExpiration: string | undefined };
+
+async function eventsOf(kc: KeycloakAdmin, realm: string): Promise<StoredEvents> {
+  const config = await kc.get<EventsConfig>(`/realms/${enc(realm)}/events/config`);
+  const rep = await kc.get<{ attributes?: Record<string, string> }>(`/realms/${enc(realm)}`);
+  return { ...config, adminEventsExpiration: rep.attributes?.["adminEventsExpiration"] };
+}
+const sorted = (a: readonly string[] = []) => [...a].sort().join(", ");
+
+/** Every way the stored-event settings differ from the definition. */
+function eventProblems(have: StoredEvents, want: EventsDefinition): string[] {
+  const problems: string[] = [];
+  for (const k of ["eventsEnabled", "adminEventsEnabled", "adminEventsDetailsEnabled"] as const) {
+    if (have[k] !== want[k]) problems.push(`events: ${k} is ${String(have[k])}, not ${String(want[k])}`);
+  }
+  if (have.eventsExpiration !== want.eventsExpiration) problems.push(`events: eventsExpiration is ${String(have.eventsExpiration)}, not ${want.eventsExpiration}`);
+  if (have.adminEventsExpiration !== String(want.adminEventsExpiration)) problems.push(`events: adminEventsExpiration is ${String(have.adminEventsExpiration)}, not ${want.adminEventsExpiration}`);
+  const types = have.enabledEventTypes ?? [];
+  // An empty list makes Keycloak store every type; the definition always names its types.
+  if (types.length === 0) problems.push("events: enabledEventTypes is empty");
+  for (const t of want.enabledEventTypes) if (types.length && !types.includes(t)) problems.push(`events: ${t} is not stored`);
+  for (const t of types) if (!want.enabledEventTypes.includes(t)) problems.push(`events: ${t} is stored but not in the definition`);
+  if (sorted(have.eventsListeners) !== sorted(want.eventsListeners)) problems.push(`events: listeners are [${sorted(have.eventsListeners)}], not [${sorted(want.eventsListeners)}]`);
+  return problems;
+}
+
+interface Role { id: string; name: string }
+async function clientUuid(kc: KeycloakAdmin, realm: string, clientId: string): Promise<string> {
+  const found = (await kc.get<Client[]>(`/realms/${enc(realm)}/clients?clientId=${enc(clientId)}`)).find((c) => c.clientId === clientId);
+  if (!found) throw new Error(`client ${clientId} does not exist in realm ${realm}`);
+  return found.id;
+}
+
+/** A service account's effective roles of each named client must be exactly the definition's, and its
+ *  client must have exactly those in scope (the client's fullScopeAllowed is false). */
+async function serviceAccountProblems(kc: KeycloakAdmin, realm: string, client: Client, want: Record<string, string[]>): Promise<string[]> {
+  const account = await kc.raw("GET", `/realms/${enc(realm)}/clients/${client.id}/service-account-user`);
+  if (account.status !== 200) return [`client ${client.clientId} has no service account`];
+  const user = (JSON.parse(account.body) as { id: string }).id;
+  const problems: string[] = [];
+  for (const [owner, roles] of Object.entries(want)) {
+    const ownerId = await clientUuid(kc, realm, owner);
+    const held = (await kc.get<Role[]>(`/realms/${enc(realm)}/users/${user}/role-mappings/clients/${ownerId}/composite`)).map((r) => r.name);
+    if (sorted(held) !== sorted(roles)) problems.push(`client ${client.clientId} service account holds ${owner} roles [${sorted(held)}], not [${sorted(roles)}]`);
+    const scoped = (await kc.get<Role[]>(`/realms/${enc(realm)}/clients/${client.id}/scope-mappings/clients/${ownerId}`)).map((r) => r.name);
+    if (sorted(scoped) !== sorted(roles)) problems.push(`client ${client.clientId} has ${owner} roles [${sorted(scoped)}] in scope, not [${sorted(roles)}]`);
+  }
   return problems;
 }
 
@@ -230,12 +310,15 @@ async function ensureFlow(kc: KeycloakAdmin, def: RealmDefinition): Promise<stri
 
 async function reconcileClient(kc: KeycloakAdmin, realm: string, want: ClientDefinition, scopeIds: Map<string, string>): Promise<string> {
   const base = `/realms/${enc(realm)}/clients`;
+  const { serviceAccountRoles, ...rep } = want;
   const found = (await kc.get<Client[]>(`${base}?clientId=${enc(want.clientId)}`))[0];
   if (!found) {
-    await kc.call("POST", base, want);
+    await kc.call("POST", base, rep);
+    const created = (await kc.get<Client[]>(`${base}?clientId=${enc(want.clientId)}`))[0]!;
+    if (serviceAccountRoles) await grantServiceAccount(kc, realm, created, serviceAccountRoles);
     return `created client ${want.clientId}`;
   }
-  const { protocolMappers = [], defaultClientScopes = [], optionalClientScopes = [], ...fields } = want;
+  const { protocolMappers = [], defaultClientScopes = [], optionalClientScopes = [], ...fields } = rep;
   await kc.call("PUT", `${base}/${found.id}`, { ...fields, id: found.id });
   // A client PUT does not update mappers or client scopes; reconcile them by name.
   const mappers = await kc.get<(Mapper & { id: string })[]>(`${base}/${found.id}/protocol-mappers/models`);
@@ -256,7 +339,35 @@ async function reconcileClient(kc: KeycloakAdmin, realm: string, want: ClientDef
     }
     for (const s of have) if (!names.includes(s.name)) await kc.call("DELETE", `${base}/${found.id}/${kind}/${s.id}`);
   }
+  if (serviceAccountRoles) await grantServiceAccount(kc, realm, found, serviceAccountRoles);
   return `reconciled client ${want.clientId}`;
+}
+
+/** Grants a service account exactly the listed client roles and puts exactly those in its client's
+ *  scope, removing any other direct grant or scope mapping of the same clients' roles. */
+async function grantServiceAccount(kc: KeycloakAdmin, realm: string, client: Client, want: Record<string, string[]>): Promise<void> {
+  const user = (await kc.get<{ id: string }>(`/realms/${enc(realm)}/clients/${client.id}/service-account-user`)).id;
+  for (const [owner, names] of Object.entries(want)) {
+    const ownerId = await clientUuid(kc, realm, owner);
+    const roles = await Promise.all(names.map((n) => kc.get<Role>(`/realms/${enc(realm)}/clients/${ownerId}/roles/${enc(n)}`)));
+    for (const path of [`/realms/${enc(realm)}/users/${user}/role-mappings/clients/${ownerId}`, `/realms/${enc(realm)}/clients/${client.id}/scope-mappings/clients/${ownerId}`]) {
+      const have = await kc.get<Role[]>(path);
+      const extra = have.filter((r) => !names.includes(r.name));
+      const missing = roles.filter((r) => !have.some((h) => h.id === r.id));
+      if (extra.length) await kc.call("DELETE", path, extra);
+      if (missing.length) await kc.call("POST", path, missing);
+    }
+  }
+}
+
+/** Makes the stored-event settings match the definition. */
+async function configureEvents(kc: KeycloakAdmin, realm: string, want: EventsDefinition): Promise<string[]> {
+  if (eventProblems(await eventsOf(kc, realm), want).length === 0) return [];
+  const { adminEventsExpiration, ...config } = want;
+  await kc.call("PUT", `/realms/${enc(realm)}/events/config`, config);
+  const rep = await kc.get<{ attributes?: Record<string, string> }>(`/realms/${enc(realm)}`);
+  await kc.call("PUT", `/realms/${enc(realm)}`, { realm, attributes: { ...rep.attributes, adminEventsExpiration: String(adminEventsExpiration) } });
+  return ["reconciled the stored-event settings"];
 }
 
 /** Makes the Keycloak match the definition, then checks it. Answers what it did; throws on any remaining problem. */
@@ -303,6 +414,7 @@ export async function configure(kc: KeycloakAdmin, def: RealmDefinition): Promis
     await kc.call("PUT", `/realms/${enc(realm)}`, { realm, browserFlow: def.browserFlow.alias });
     done.push(`bound ${def.browserFlow.alias} as the browser flow`);
   }
+  done.push(...(await configureEvents(kc, realm, def.events)));
   const scopes = await kc.get<{ id: string; name: string }[]>(`/realms/${enc(realm)}/client-scopes`);
   const scopeIds = new Map(scopes.map((s) => [s.name, s.id]));
   for (const c of def.clients) done.push(await reconcileClient(kc, realm, c, scopeIds));

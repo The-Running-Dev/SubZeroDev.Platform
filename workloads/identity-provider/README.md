@@ -10,10 +10,10 @@ What this workload owns:
   only. It runs on HTTP at `http://localhost:8180`. A production deployment is a separate approval.
 - `realm/members.json`: the member realm as code. It holds the realm settings, the signing keys
   (ES256 only), a username-only user profile, the passkey and recovery-code required actions, the
-  browser flow, and the clients.
+  browser flow, the stored-event settings, and the clients.
 - `src/cli.ts`: `configure` makes a Keycloak match the definition, then checks it. `check`
   reports every difference that matters for sign-in safety. `jwks` prints the published key set
-  for pinning at the edge.
+  for pinning at the edge. `backup` dumps the member database.
 
 ## Sign-in
 
@@ -36,7 +36,9 @@ correction from the G1 recovery spike.
 - any client in the realm overrides the browser flow;
 - a client the definition does not name receives the game audience;
 - a published key is anything other than EC P-256 ES256;
-- a required action is enabled that the definition does not list.
+- a required action is enabled that the definition does not list;
+- the stored-event settings differ from the definition (see *Security events*);
+- a service account holds roles other than the ones the definition grants it.
 
 ## Account actions
 
@@ -61,7 +63,7 @@ refused and ends the session. An access token already issued stays valid at the 
 expires, because the edge validates tokens locally against the pinned key set and does not ask
 Keycloak. The access-token lifetime is D9, which is open.
 
-The realm has two clients:
+The realm has three clients:
 
 - `game-cli` is the native game client. It is public, uses PKCE S256, and its redirect is the
   loopback `http://127.0.0.1/callback`, which matches on any port. Its access tokens carry the game
@@ -69,6 +71,51 @@ The realm has two clients:
 - `adventures` is the Adventures site. It is confidential and also uses PKCE S256. Its tokens carry
   the adventures audience and never the game one, so the edge refuses them. Keycloak generates its
   secret, which is never in the definition; whoever deploys the site reads it through the admin API.
+- `identity-recorder` reads the realm's stored events (see *Security events*). It is confidential,
+  has only a service account, and signs no member in.
+
+## Security events
+
+The realm stores user events and admin events, with admin-event representations, for an explicit
+list of types: sign-ins, code exchanges, refreshes, logouts, revocations, credential changes and
+removals, account deletion, lockouts, and their errors. The list is the complete set: `check` fails
+on a defined type that is not stored and on a stored type that is not defined. Both expiries are
+30 days, a test-only value; retention is not decided. The admin-event expiry is a realm attribute,
+`adminEventsExpiration`, because Keycloak's `/events/config` does not carry it.
+
+These are the settings the identity-restore recorder (PR #381, not merged) requires before it
+calls a window of events complete. `identity-recorder` is the client it would run as. Its service
+account holds `view-events` and `view-realm` and nothing else, and its token carries no scopes.
+It can read events, admin events, the event settings and the realm. It is refused users,
+credentials, clients and any change to the event settings.
+
+Its own token request is a `CLIENT_LOGIN` event. The recorder uses that event to prove event
+storage was on and had committed past the end of each window.
+
+## Backup
+
+```powershell
+npm run cli -- backup --out D:\backups\members.dump
+```
+
+This runs `pg_dump --format=custom` in the compose `db` container and writes the dump. Beside it,
+it writes `<dump>.meta.json` with `startedAtMs`, `finishedAtMs`, `sha256` and `bytes`. That sidecar is
+the format the identity-restore workload's `verifiedMeta` reads. `startedAtMs` is read before the
+dump starts, because a restore replays events from that time. It prints only the path, the size and
+the hash.
+
+The dump is a secret: it holds the realm's private signing keys, client secrets and every member's
+credentials. So `backup`:
+
+- refuses a path inside the repository;
+- never overwrites a dump or a sidecar;
+- deletes the partial file and writes no sidecar when the dump command fails or writes nothing;
+- creates both files with mode 0600. Windows ignores that mode, so on Windows the directory's own
+  permissions are the only protection.
+
+`IDP_COMPOSE_PROJECT` names the compose project (default `identity-provider`). Any other dump
+command goes after `--`: `backup --out FILE -- pg_dump ...`. A dump is not a restore plan; restoring
+the member realm is R1, which is open.
 
 ## Run it
 
@@ -143,6 +190,35 @@ flow has drifted, `configure` refuses.
 - logout and revocation end the session, and a reused refresh token is refused and ends the
   session.
 
+`tests/events.test.ts` proves the security events:
+
+- the realm stores user and admin events for the defined types, with representations, at the
+  defined expiries;
+- `check` fails when a defined type stops being stored, and when the admin-event expiry drifts;
+- `identity-recorder` reads events, admin events, the event settings and the realm, and is refused
+  users, credentials, clients and a change to the event settings;
+- a passkey sign-in records `LOGIN` and `CODE_TO_TOKEN`, a credential deletion records
+  `REMOVE_CREDENTIAL`, and enrolment records one `UPDATE_CREDENTIAL` per credential;
+- the admin event for a created member carries its representation, and that representation holds no
+  credential.
+
+`tests/backup.test.ts` proves `backup`:
+
+- a path in the repository is refused, an existing dump or sidecar is never overwritten, and a
+  failed, empty or missing dump command leaves no file behind (these run without Keycloak);
+- a dump of the compose database starts with `PGDMP` and matches its sidecar's hash and size;
+- the dump restores, through `pg_restore`, into a scratch database that holds the member, the
+  member's credentials and the realm's signing keys. The scratch database is dropped afterwards.
+
+`tests/restore-boundary.test.ts` runs only when `IDENTITY_RESTORE_DIR` points at a checkout of the
+PR #381 branch, for example a detached `git worktree` outside the repository. It is not in CI, so
+this workload never depends on an unmerged branch. It starts PR #381's recorder and dump check in a
+child process (`tests/support/restore-boundary.ts`); no code from that branch is copied here. It
+proves that, on this realm, a recorder window after its bootstrap is covered with its canary found
+and holds the member's sign-in, and that `verifiedMeta` accepts a dump from `backup`. With
+`REMOVE_CREDENTIAL` removed from the stored types, the same window is a gap. That was checked by
+hand and is not a test.
+
 `workloads/game-service/tests/keycloak-through-edge.test.ts` takes it further. A member's real
 game-cli token crosses the edge into game-service, and the same member's adventures token is
 refused at the edge. It gets its tokens from `tests/support/mint.ts`, a test-only command:
@@ -180,6 +256,11 @@ Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the suite skips locally. Under CI (`CI` se
 - **Deleting the last credential.** Keycloak lets a member delete their only credential. The member
   then has no way to sign in. `tests/account.test.ts` pins this as Keycloak's behaviour. It is
   recorded, not accepted; it belongs to the open recovery decisions (D3/D5).
+- **Event retention.** The 30-day expiries are test values. How long events and backups are kept is
+  not decided.
+- **Restoring the realm** is R1. `backup` writes a dump the restore can verify; nothing here
+  restores the live realm, replays events, or shows complete-loss recovery.
+- **Backup file modes on Windows.** Mode 0600 is not enforced there.
 - An unknown username answers "Invalid username.", while a known username with no credential gets
   a generic error page. The two answers differ, so they reveal whether a username exists. This is
   Keycloak's behaviour and is recorded, not accepted.
