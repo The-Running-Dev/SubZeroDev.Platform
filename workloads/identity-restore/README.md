@@ -124,8 +124,14 @@ Keycloak's behaviour, it was observed there, not assumed:
   client with `view-realm` reads from `GET /admin/realms/{realm}`. An empty, `0` or absent value means
   no expiry. This was checked after G1, on 2026-11-21, in a disposable 26.8.1. The recorder checks a
   window against both the user-event and the admin-event expiry. If the attribute is not a whole
-  number of seconds, the window is a gap. Keycloak's actual deletion of expired admin events was not
-  observed; the fakes model it.
+  number of seconds, the window is a gap.
+- Keycloak deletes expired admin events by age, at its `ClearExpiredAdminEvents` sweep. The expiry is
+  not stamped on an event when it is written, so a new or shorter expiry also deletes older events.
+  This was observed on 2026-11-21 in a disposable 26.8.1, with the sweep run every 15 s instead of
+  the default 900 s. Admin events written before `adminEventsExpiration` was set to 60, and admin
+  events written after, were both deleted by the first sweep after they were 60 s old (about 70 s
+  after they were written). That matches the recorder's horizon, which is the poll time minus the
+  expiry.
 
 ## Residual exposures
 
