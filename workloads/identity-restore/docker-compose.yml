@@ -1,0 +1,18 @@
+# Provisions a PostgreSQL server for this workload's store tests, and nothing else. In production the
+# record store is a separate PostgreSQL instance on a different host from Keycloak and its database;
+# where that host lives is not settled here.
+services:
+  record:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: identity_record
+      POSTGRES_PASSWORD: identity_record
+      POSTGRES_DB: identity_record
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity_record -d identity_record"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

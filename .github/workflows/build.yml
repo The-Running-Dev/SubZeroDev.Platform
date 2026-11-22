@@ -696,6 +696,48 @@ jobs:
           GAME_EDGE_DLL: ${{ github.workspace }}/workloads/game-edge/SubZeroDev.Platform.GameEdge/bin/Release/net10.0/SubZeroDev.Platform.GameEdge.dll
         run: npm test
 
+  # The Keycloak restore procedure (R1-a): record, coverage, replay planner, restore and release, against
+  # fakes, plus the record store's grants against a real PostgreSQL 17. Not a G3 proof, so not in
+  # `g3-composition`'s `needs`. The restore proof against a live Keycloak (G1) is not run here.
+  identity-restore:
+    runs-on: ubuntu-latest
+
+    services:
+      record:
+        image: postgres:17
+        env:
+          POSTGRES_USER: identity_record
+          POSTGRES_PASSWORD: identity_record
+          POSTGRES_DB: identity_record
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U identity_record -d identity_record"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        working-directory: workloads/identity-restore
+        run: npm ci
+
+      # verification: true
+      - name: Typecheck
+        working-directory: workloads/identity-restore
+        run: npm run typecheck
+
+      # verification: true
+      - name: Test
+        working-directory: workloads/identity-restore
+        env:
+          RECORD_TEST_DATABASE_URL: postgres://identity_record:identity_record@127.0.0.1:5433/identity_record
+        run: npm test
+
   # Identity slice 1: the member realm on a real Keycloak 26.8.1, configured from
   # workloads/identity-provider/realm/members.json, and a passkey sign-in through game-cli that ends
   # in an ES256 token for the game audience. The admin password is generated for this run only. With

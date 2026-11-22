@@ -721,6 +721,36 @@ this repository's code, and which S12 does on the live host.
 Reversibility: cheap. Nothing checks that the gate's `needs` list stays complete: a new proof job added
 outside it would not be covered by `g3-composition`.
 
+### 2026-11-21 — R1-a: Keycloak's security events are recorded off-host in PostgreSQL through `pg`, and a restore replays them onto a held realm
+
+Context: the owner selected R1-a for Keycloak restores: a durable record of security events kept off
+Keycloak's server, a replay of the removals and disables a restore would roll back, and a session reset.
+The G1 spike used a local file written by the test, which is not a production record: it lives beside
+the thing it must survive, it has no write discipline, and nothing tells a missing stretch from a quiet
+one. The implementation (`workloads/identity-restore`) needs a store a restore of Keycloak's database
+cannot roll back, that a compromised recorder can append to but not rewrite, and that records which
+stretches of time it holds.
+Chosen: a schema on a PostgreSQL server that is not Keycloak's, reached with `pg` 8.23 (node-postgres, MIT,
+pure JavaScript; the optional native binding is not installed; 13 runtime packages beside `pg`, the
+`pg-*` and `postgres-*` family plus `pgpass`, `split2` and `xtend`). Three roles: the
+recorder may only INSERT events and windows (column-level, so the server's clock sets `polled_at`) and
+read windows; the restore may read and append to its log; the owner keeps the rest. Each poll writes a
+window, `covered` or `gap`, and a window is covered only when the event configuration was safe, the
+recorder's own canary login after the window was found, and no event arrived late into an earlier
+window. Coverage of a restore's replay window is computed from these rows and any hole blocks reopening.
+Rejected: **the spike's local file**, for the reasons above. **A log shipper such as Vector into object
+storage**, which moves events but records nothing about which stretches were seen, so gap detection
+would be rebuilt beside it. **S3 Object Lock or MinIO in compliance mode**, which gives stronger
+immutability than grants but needs an object store the platform does not run and makes the restore's
+time-range reads a listing exercise; reconsider it if a compromised recorder becomes the threat that
+matters. **A Keycloak event-listener SPI**, which would see events in-process but runs a Java extension
+inside the identity server, is rolled back with nothing on failure of its outbound write unless it is
+built with its own queue, and must be rebuilt for every Keycloak upgrade. **An ORM or query builder**,
+for four tables.
+Reversibility: moderate. The store is behind two interfaces (`RecorderStore`, `RestoreStore`); a second
+backend is a new class, but records already written stay in PostgreSQL until the owner migrates or
+retires them. Where the record server runs, its backup frequency and retention are not decided here.
+
 ### 2026-11-22 — Identity slice 1: the member identity provider is a Keycloak workload, its realm kept as code and checked
 
 Context: G3 needs a real issuer for members. ADR-009 keeps any substrate a deployment choice and
