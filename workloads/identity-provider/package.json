@@ -1,0 +1,21 @@
+{
+  "name": "@subzerodev/identity-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The member identity provider as a workload: Keycloak 26.8.1 with its own PostgreSQL, the realm kept as code, and the passkey and recovery-code sign-in flow.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "node src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.4"
+  }
+}

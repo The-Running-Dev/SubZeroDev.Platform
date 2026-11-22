@@ -256,6 +256,25 @@ runs the previously vendored release's adapter and engine against the candidate'
 until that fixture is re-pinned for a new engine upgrade. The pre-upgrade fixture stays pinned for
 #353's revision-drift and migration coverage.
 
+## Run the Keycloak-through-edge proof
+
+A member signs in to the real member realm with a passkey, and that token crosses the edge into
+this workload (identity slice 2). The edge pins the realm's issuer, its published ES256 key set and
+the game audience, the same settings it takes for the test issuer. The same member's `adventures`
+token is refused at the edge, and the workload sees nothing of it.
+
+Bring up and configure the identity provider first, as
+[`workloads/identity-provider/README.md`](../identity-provider/README.md) describes, then, from
+`workloads/game-service`, with the edge built and the store provisioned:
+
+```bash
+npx vitest run tests/keycloak-through-edge.test.ts
+```
+
+The tokens come from `workloads/identity-provider/tests/support/mint.ts`, run as a child process.
+Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the proof skips locally; under CI it fails instead. The
+software authenticator proves the server side of the ceremony only, not real browsers or devices.
+
 ## Regenerate and publish the contract package
 
 Nothing in this repository authors, edits or regenerates the contract (S3.15) — the row set, the
