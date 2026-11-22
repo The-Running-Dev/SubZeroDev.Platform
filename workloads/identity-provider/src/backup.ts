@@ -2,8 +2,8 @@
  * A backup of the member database: `pg_dump -Fc` of Keycloak's PostgreSQL, and beside it
  * `<dump>.meta.json` holding `startedAtMs`, `finishedAtMs`, `sha256` and `bytes`.
  *
- * The sidecar is the format the identity-restore workload reads (`BackupMeta` and `verifiedMeta` on
- * the PR #381 branch, which is not merged). Its restore replays recorded events from `startedAtMs`,
+ * The sidecar is the format the identity-restore workload reads (`BackupMeta` and `verifiedMeta` in
+ * `workloads/identity-restore/src`). Its restore replays recorded events from `startedAtMs`,
  * so `startedAtMs` is read before the dump command starts and can never be later than the snapshot
  * pg_dump takes. Host and database clocks are assumed to agree within the restore's margin.
  *

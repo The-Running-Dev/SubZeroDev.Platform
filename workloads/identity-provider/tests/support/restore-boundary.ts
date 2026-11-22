@@ -1,26 +1,24 @@
 /**
- * TEST-ONLY. Runs the identity-restore recorder and dump check from a checkout of the PR #381 branch
- * (not merged) against this workload's realm, as a separate process. Nothing from that branch is
- * copied into this workload; it is imported from IDENTITY_RESTORE_DIR at run time only.
+ * TEST-ONLY. Runs the identity-restore workload's recorder and dump check (workloads/identity-restore)
+ * against this workload's realm, as a separate process. Nothing from that workload is copied here;
+ * its source is imported at run time only, so this workload has no build or package dependency on it.
  *
  * Protocol, one JSON line each way:
  *   stdout {"step":"bootstrapped","window":...}   after the first cycle
  *   stdin  any line                                the parent has signed a member in
  *   stdout {"step":"done","bootstrap":...,"window":...,"inserted":[...],"meta":...}
  *
- * Environment: IDENTITY_RESTORE_DIR, RB_BASE_URL, RB_REALM, RB_SECRET (the recorder client's secret),
+ * Environment: RB_BASE_URL, RB_REALM, RB_SECRET (the recorder client's secret),
  * RB_DUMP (a dump written by this workload's `backup`), RB_SETTLE_MS.
  */
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
-import { join } from "node:path";
 
 const need = (k: string): string => {
   const v = process.env[k];
   if (!v) throw new Error(`${k} is not set`);
   return v;
 };
-const src = (file: string) => pathToFileURL(join(need("IDENTITY_RESTORE_DIR"), "workloads", "identity-restore", "src", file)).href;
+const src = (file: string) => new URL(`../../../identity-restore/src/${file}`, import.meta.url).href;
 
 interface Window { fromMs: number; throughMs: number; status: string; reason: string | null; lateCount: number; canaryId: string | null; canaryMs: number | null }
 interface Stored { kind: "user" | "admin"; id: string; timeMs: number; body: Record<string, unknown> }

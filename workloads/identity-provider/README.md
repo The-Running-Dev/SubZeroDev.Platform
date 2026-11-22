@@ -83,7 +83,7 @@ on a defined type that is not stored and on a stored type that is not defined. B
 30 days, a test-only value; retention is not decided. The admin-event expiry is a realm attribute,
 `adminEventsExpiration`, because Keycloak's `/events/config` does not carry it.
 
-These are the settings the identity-restore recorder (PR #381, not merged) requires before it
+These are the settings the identity-restore recorder (`workloads/identity-restore`) requires before it
 calls a window of events complete. `identity-recorder` is the client it would run as. Its service
 account holds `view-events` and `view-realm` and nothing else, and its token carries no scopes.
 It can read events, admin events, the event settings and the realm. It is refused users,
@@ -210,11 +210,10 @@ flow has drifted, `configure` refuses.
 - the dump restores, through `pg_restore`, into a scratch database that holds the member, the
   member's credentials and the realm's signing keys. The scratch database is dropped afterwards.
 
-`tests/restore-boundary.test.ts` runs only when `IDENTITY_RESTORE_DIR` points at a checkout of the
-PR #381 branch, for example a detached `git worktree` outside the repository. It is not in CI, so
-this workload never depends on an unmerged branch. It starts PR #381's recorder and dump check in a
-child process (`tests/support/restore-boundary.ts`); no code from that branch is copied here. It
-proves that, on this realm, a recorder window after its bootstrap is covered with its canary found
+`tests/restore-boundary.test.ts` starts identity-restore's recorder and dump check in a child
+process (`tests/support/restore-boundary.ts`), importing them from `workloads/identity-restore` at
+run time; no code from that workload is copied here, and this workload's package does not depend
+on it. It runs with the other suites, in CI too. It proves that, on this realm, a recorder window after its bootstrap is covered with its canary found
 and holds the member's sign-in, and that `verifiedMeta` accepts a dump from `backup`. With
 `REMOVE_CREDENTIAL` removed from the stored types, the same window is a gap. That was checked by
 hand and is not a test.

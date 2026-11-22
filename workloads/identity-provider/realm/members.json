@@ -60,7 +60,7 @@
     "required": ["username"]
   },
   "events": {
-    "$comment": "Keycloak stores these events so the identity-restore recorder (workloads/identity-restore, PR #381, not merged) can copy them off-host. The list is the complete set, compared exactly by check: the recorder's own required types, plus the error, token and logout types an investigation needs. Admin events are stored with their representations. The 30-day expiries are TEST-ONLY: how long security events are kept is not decided. The admin-event expiry is not part of /events/config; it is the realm attribute adminEventsExpiration, in seconds.",
+    "$comment": "Keycloak stores these events so the identity-restore recorder (workloads/identity-restore) can copy them off-host. The list is the complete set, compared exactly by check: the recorder's own required types, plus the error, token and logout types an investigation needs. Admin events are stored with their representations. The 30-day expiries are TEST-ONLY: how long security events are kept is not decided. The admin-event expiry is not part of /events/config; it is the realm attribute adminEventsExpiration, in seconds.",
     "eventsEnabled": true,
     "eventsExpiration": "${EVENTS_EXPIRATION}",
     "eventsListeners": ["jboss-logging"],
