@@ -295,11 +295,9 @@ Adventures' sign-out is its own, and it passes through.
 
 ## Unresolved
 
-- **The live game-service hostname.** Not yet chosen. It is a deployment value and the smoke
-  check's target, not a declaration above.
-- **Owner question: the game-service client at Adventures' issuer.** Which client registration
-  obtains tokens for game-service, and so the audience the edge accepts. Adventures' own client is
-  confidential and keeps its tokens server-side, so it does not serve a game-service caller.
+Nothing. The live hostname and the game-service client were answered on 2026-11-22
+([`90-decisions.md`](90-decisions.md), the S14 entry). Both are deployment values, not declarations
+above.
 
 Each deployment's `TrustedProxies` holds the existing reverse proxy's address. Rotating the issuer's keys is an operator step: the new key is pinned before the
 issuer signs with it.

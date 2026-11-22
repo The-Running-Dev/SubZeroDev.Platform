@@ -292,8 +292,9 @@ per-address limits key on that. Cutover changes the proxy's route for Adventures
 edge, with no downtime. Rollback restores the direct route.
 
 game-service runs live on the same VPS, behind its own edge under its own hostname, and signs
-players in through Adventures' OIDC issuer *(Owner ruling, question 7)*. The hostname is not yet
-chosen.
+players in through Adventures' OIDC issuer *(Owner ruling, question 7)*. That issuer is the
+Keycloak `members` realm, its tokens come from the realm's `game-cli` client, and the hostname is
+`game-api.subzerodev.com` *(Owner ruling, 2026-11-22)*.
 
 ### Who can reach the listener, and who can assert a principal
 
@@ -354,8 +355,8 @@ Adventures' end-to-end proofs of guest session, OIDC sign-in and cross-origin wr
 pinned Adventures revision, pointed at the same test issuer's discovery document. **Fact:**
 Adventures' OIDC client is generic, so a test issuer is a configuration change
 (`server/src/identity/oidc.ts`). It is also a confidential client that keeps its tokens
-server-side, so it obtains no token a game-service caller could present. Which client registration
-does is an open Owner question.
+server-side, so it obtains no token a game-service caller could present. The `members` realm's
+public `game-cli` client does *(Owner ruling, 2026-11-22)*.
 
 ## Failure modes
 
@@ -474,8 +475,6 @@ Owner questions 1–9 were answered on 2026-11-02; each answer is logged in
 8. **Abuse limits** — 60 per 60 seconds, per principal else per address, one instance, in process.
 9. **Adopting Identity** — yes.
 
-Still open:
-
-- **The live game-service hostname.** Not yet chosen.
-- **The game-service client at Adventures' issuer.** Which client registration obtains tokens for
-  game-service, and so the audience the edge accepts.
+The two left open after them were answered on 2026-11-22 (Owner ruling, [`90-decisions.md`](90-decisions.md),
+the S14 entry): the hostname is `game-api.subzerodev.com`, and game-service's tokens come from the
+Keycloak `members` realm's `game-cli` client.

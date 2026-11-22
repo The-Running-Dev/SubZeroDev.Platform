@@ -12,12 +12,9 @@ belongs in `docs/docs/adr/`.
 
 ## Open
 
-The owner answered Open questions 1–9 on 2026-11-02 (entries below). Still open, and settled by no
-entry below:
-
-- The live game-service hostname.
-- Which client registration at Adventures' OIDC issuer obtains tokens for game-service, and so the
-  audience the edge accepts.
+The owner answered Open questions 1–9 on 2026-11-02 (entries below). The two left after them, the
+live game-service hostname and the client registration that obtains its tokens, were answered on
+2026-11-22 (the S14 entry). None remains open.
 
 ---
 
@@ -861,3 +858,28 @@ Rejected: **keeping the `IDENTITY_RESTORE_DIR` gate**, which leaves the only pro
 workloads agree outside CI. **A package dependency on identity-restore**, which this test does not
 need.
 Reversibility: cheap. Restore the gate in the two test files.
+
+### 2026-11-22 — S14: game-service is served at `game-api.subzerodev.com`, and its tokens come from the `members` realm's `game-cli` client
+
+Context: S14 waited on two decisions: the live hostname, and the client registration that obtains
+game-service tokens, which sets the audience the edge accepts. The ruling on question 7 says
+players sign in "through Adventures' OIDC issuer" but not which issuer that is. Adventures' API
+signs players in through a generic OIDC issuer set in its own deployment. The Keycloak `members`
+realm (`workloads/identity-provider`) is not deployed anywhere live.
+Chosen (owner ruling): the hostname is `game-api.subzerodev.com`. The issuer is the Keycloak
+`members` realm, and the client is its existing public `game-cli` client, so the live edge pins
+that realm's keys and accepts the game audience. Identity slice 2 proved this path through the
+`Terminate` edge in CI. The owner also authorised S14's live deployment.
+Rejected: **`game-service.subzerodev.com`** and **`game-engine.subzerodev.com`**. **The issuer
+Adventures signs in with today**, which needs a new client registered there. **A new dedicated
+client** and **one client per caller (CLI and MCP)**, each a new registration with its own
+audience for the edge to accept. **Adventures' confidential `adventures` client**, which keeps
+its tokens server-side and is refused by the edge.
+Not settled here: with the realm as the live issuer, going live puts the realm into production.
+R1, D6 and OD-16 remain G1 production gates, and neither this ruling nor the deployment
+authorisation waives them. D9 (token lifetimes) and D3/D5 (first-credential enrolment) stay open.
+Until enrolment is decided, no real member can get a first credential. S14.1 and S14.2 no longer
+wait on a decision. They wait on the live identity provider and on a deployment path, which this
+repository does not yet have.
+Reversibility: cheap. The hostname is one DNS record and one proxy route. The issuer and the
+audience are edge settings.
