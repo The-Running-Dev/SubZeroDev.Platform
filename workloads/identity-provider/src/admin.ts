@@ -9,6 +9,8 @@ export interface AdminConnection {
   baseUrl: string;
   username: string;
   password: string;
+  /** How long a 503 from a Keycloak still bootstrapping is retried; default 120 s. */
+  bootstrapWaitMs?: number;
 }
 
 export class AdminError extends Error {
@@ -33,22 +35,35 @@ export class KeycloakAdmin {
     return this.connection.baseUrl.replace(/\/+$/, "");
   }
 
+  /**
+   * The admin token. Keycloak's readiness check can report UP while it is still creating the
+   * bootstrap admin, and then answers 503 ("Bootstrap in progress"), so a 503 is retried, after its
+   * Retry-After or 1 s, until `bootstrapWaitMs` has passed. Any other status fails at once.
+   */
   private async accessToken(): Promise<string> {
     if (this.token && Date.now() - this.token.at < 30_000) return this.token.value;
-    const response = await fetch(`${this.baseUrl}/realms/master/protocol/openid-connect/token`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "password",
-        client_id: "admin-cli",
-        username: this.connection.username,
-        password: this.connection.password,
-      }),
-    });
-    const text = await response.text();
-    if (response.status !== 200) throw new AdminError(response.status, "POST", "master token", text);
-    this.token = { value: (JSON.parse(text) as { access_token: string }).access_token, at: Date.now() };
-    return this.token.value;
+    const deadline = Date.now() + (this.connection.bootstrapWaitMs ?? 120_000);
+    for (;;) {
+      const response = await fetch(`${this.baseUrl}/realms/master/protocol/openid-connect/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "password",
+          client_id: "admin-cli",
+          username: this.connection.username,
+          password: this.connection.password,
+        }),
+      });
+      const text = await response.text();
+      if (response.status === 503 && Date.now() < deadline) {
+        const after = Number(response.headers.get("retry-after"));
+        await new Promise((r) => setTimeout(r, Math.min(Number.isFinite(after) && after > 0 ? after * 1000 : 1000, 5000)));
+        continue;
+      }
+      if (response.status !== 200) throw new AdminError(response.status, "POST", "master token", text);
+      this.token = { value: (JSON.parse(text) as { access_token: string }).access_token, at: Date.now() };
+      return this.token.value;
+    }
   }
 
   /** Any admin call; answers the raw status, body and Location header without throwing. */
