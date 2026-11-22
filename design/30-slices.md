@@ -24,13 +24,9 @@ Adventures, the account surface and the deployment.
 ## Decisions that must be taken before the slice that needs them starts
 
 The contract amendment, the brief's ownership wording and Owner questions 1–9 were settled on
-2026-11-02 ([`90-decisions.md`](90-decisions.md)), and the slices below carry the answers. Two
-remain, and no slice may settle one silently.
-
-| Question | Needed before |
-|---|---|
-| The live game-service hostname | **S14**'s criteria S14.1 and S14.2 |
-| **Owner question:** which client registration at Adventures' OIDC issuer obtains tokens for game-service, and so the audience the edge accepts | **S14**'s criteria S14.1 and S14.2 |
+2026-11-02 ([`90-decisions.md`](90-decisions.md)), and the slices below carry the answers. The two
+left for S14, the live hostname and the client registration, were answered on 2026-11-22. None
+remains.
 
 ---
 
@@ -477,21 +473,24 @@ callers.
 ## S14 — game-service live behind its own edge
 **Status:** queued
 
-Delivers: real players sign in through Adventures' issuer and play game-service sessions live,
-through Platform's edge, on the existing VPS.
+Delivers: real players sign in through the Keycloak `members` realm and play game-service
+sessions live, through Platform's edge, on the existing VPS.
 
 Touches:
 - **Deployment**: a second edge in `Terminate` mode and game-service, on the existing VPS behind the
-  existing reverse proxy, under game-service's own hostname, pinning Adventures' issuer keys
+  existing reverse proxy, at `game-api.subzerodev.com`, pinning the `members` realm's keys and
+  accepting the game audience of its `game-cli` client
 
-Depends on: S11, S13. The hostname and the client registration (*Decisions* above).
+Depends on: S11, S13. The identity provider live, which R1, D6 and OD-16 (G1 production gates) and
+first-credential enrolment (D3/D5) stand in front of. A deployment path for Platform on the VPS.
 
 Acceptance:
-- **S14.1** *(Waits on the hostname and the client registration.)* game-service is served through
-  its own edge under its hostname, behind the existing reverse proxy, which keeps TLS.
-- **S14.2** *(Waits on the hostname and the client registration.)* A live smoke check signs in
-  through Adventures' OIDC issuer, creates a session and acts on it through the edge, and records
-  the deployed edge and game-service revisions.
+- **S14.1** *(Waits on the live identity provider and a deployment path.)* game-service is served
+  through its own edge at `game-api.subzerodev.com`, behind the existing reverse proxy, which keeps
+  TLS.
+- **S14.2** *(Waits on the live identity provider and a deployment path.)* A live smoke check signs
+  in through the `members` realm's `game-cli` client, creates a session and acts on it through the
+  edge, and records the deployed edge and game-service revisions.
 - **S14.3** In the same check, a second principal's request on the first's session id returns
   `404 unknown_session`.
 - **S14.4** A request reaching game-service's listener without passing through the edge returns
