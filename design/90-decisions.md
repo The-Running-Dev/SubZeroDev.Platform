@@ -750,3 +750,99 @@ for four tables.
 Reversibility: moderate. The store is behind two interfaces (`RecorderStore`, `RestoreStore`); a second
 backend is a new class, but records already written stay in PostgreSQL until the owner migrates or
 retires them. Where the record server runs, its backup frequency and retention are not decided here.
+
+### 2026-11-22 — Identity slice 1: the member identity provider is a Keycloak workload, its realm kept as code and checked
+
+Context: G3 needs a real issuer for members. ADR-009 keeps any substrate a deployment choice and
+never a Platform package. The G1 spike chose Keycloak 26.8.1. It found that the spike's two custom
+flows let a username-only visitor reach a set-up page, and it proved the fixA flow shape that stops
+this. A hand-configured realm can drift back to the unsafe shape without anyone noticing.
+Chosen: `workloads/identity-provider` runs Keycloak 26.8.1 (pinned by digest) on its own
+PostgreSQL. The realm is `realm/members.json`, applied by `cli.ts configure` through the admin API.
+The browser flow is built by API calls rather than by realm import, because an import that carries
+flows drops the built-in ones. `configure` ends with `check` and fails if any problem remains.
+`check` covers the flow shape and its binding, browser-flow overrides on every client in the realm
+(OD-12 F1), which clients get the game audience, an ES256-only published key set, a username-only
+user profile, and the required actions. Signing keys are created once and never replaced by
+`configure`. A drifted flow is refused rather than rebuilt in place. First-credential enrolment is
+still open (D3/D5), so the suite enrols members through a test-only client that `check` flags.
+Rejected: **realm import as the only mechanism**, which cannot express the flow without drift and
+replaces keys on re-import. **Rebuilding the flow when it drifts**, which leaves members facing a
+half-built flow during the rebuild. **An enrolment path in the realm now**, which would settle D3/D5
+by default.
+Reversibility: cheap for the workload. The issuer, audience and key pinning reach the edge only as
+configuration.
+
+### 2026-11-22 — Identity slice 2: a real member token crosses the edge, and only the game audience is accepted
+
+Context: slice 1 proved the realm issues a game-audience token. Nothing yet proved that the edge
+accepts it unchanged, or that a token the same realm issues to another client is refused.
+Chosen: `workloads/game-service/tests/keycloak-through-edge.test.ts` runs the real edge in
+Terminate mode in front of the real game-service. It pins the realm's issuer, its published key set
+and the game audience through the same `Platform__Identity__Bearer__game__*` settings the test
+issuer uses. A passkey sign-in through `game-cli` starts and plays a game. The handoff names the
+realm as issuer and the token's `sub` as subject. The same member's token from `adventures`, a new
+confidential client with its own audience, is refused with 401 and the workload sees nothing. The
+tokens come from `identity-provider/tests/support/mint.ts` run as a child process, so the Keycloak
+client code keeps one owner. The `game-service` CI job now brings up and configures the identity
+provider before its suite runs.
+Rejected: **importing the identity-provider helpers into game-service**, which would give two
+workloads one module across incompatible TypeScript settings. **A copy of the helpers**, which
+would drift. **A new CI job with Keycloak, PostgreSQL and the edge**, which repeats the
+game-service job's setup.
+Reversibility: cheap. The edge's configuration is unchanged; only test settings name Keycloak.
+
+### 2026-11-22 — Identity slice 3: members manage their own credentials, and the realm enables only the actions it uses
+
+Context: a signed-in member needs to add and remove passkeys, replace recovery codes and sign out.
+Keycloak offers all of these as application-initiated actions (`kc_action`). Probing showed that
+Keycloak also enables `UPDATE_PASSWORD`, `CONFIGURE_TOTP`, `UPDATE_PROFILE` and others by default,
+and that a signed-in passkey member could use `kc_action=UPDATE_PASSWORD` to add a password
+credential to their account.
+Chosen: `requiredActions` in `realm/members.json` is the complete enabled set:
+`webauthn-register-passwordless`, `CONFIGURE_RECOVERY_AUTHN_CODES` and `delete_credential`.
+`configure` disables every other action and `check` fails on any enabled action that the
+definition does not list. Sign-out is the OIDC logout or revocation endpoint. Refresh tokens rotate
+with no reuse. `tests/account.test.ts` proves each action and the refusals.
+Recorded, not decided: Keycloak lets a member delete their only credential, which leaves them with
+no way in. The test pins that behaviour. Whether to prevent it belongs to the open recovery
+decisions (D3/D5). An access token already issued stays valid at the edge until it expires (D9).
+Rejected: **Keycloak's account console**, which is a second client with its own flows and pages to
+check. **Leaving Keycloak's default actions enabled and checking only that ours are on**, which
+leaves a password path one request away.
+Reversibility: cheap. Enabling another action is one line in the definition.
+
+### 2026-11-22 — Identity slice 4: the realm stores the events a restore needs, a least-privilege client reads them, and backups carry a verifiable sidecar
+
+Context: the identity-restore work (R1-a, PR #381, open and not merged) restores the member realm from
+a database dump and replays stored Keycloak events from the dump's start. It needs three things from
+the live realm: stored user and admin events of named types for long enough, a client it can read
+them with, and dumps whose start time it can trust. The realm as built in slices 1 to 3 had none
+of these.
+Chosen: `realm/members.json` gains an `events` section, and `configure` and `check` cover it. The
+section turns on user events, admin events and admin-event representations, for an explicit and
+complete list of types, which includes the ten PR #381 requires. It also sets both expiries,
+including the admin-event expiry, which is the realm attribute `adminEventsExpiration`. A
+confidential client, `identity-recorder`, has only a service account, with `view-events` and
+`view-realm`. `check` fails on extra or missing service-account roles. `backup` runs `pg_dump -Fc`
+and writes `<dump>.meta.json` as `{startedAtMs, finishedAtMs, sha256, bytes}`, with `startedAtMs`
+read before the dump begins. It refuses paths in the repository, never overwrites, and leaves
+nothing behind on failure. `tests/events.test.ts` and `tests/backup.test.ts` prove all of this
+in CI, including a `pg_restore` round trip into a scratch database.
+The boundary with PR #381: this workload has its own `backup`, written to the sidecar format
+PR #381's `verifiedMeta` reads. No code from that branch is copied or imported here.
+`tests/restore-boundary.test.ts` runs PR #381's `runCycle` and `verifiedMeta` from a checkout of
+that branch, in a child process, only when `IDENTITY_RESTORE_DIR` is set. It is not in CI, so main
+does not depend on an unmerged branch. It shows a covered recorder window that holds a member's
+sign-in. A hand-run negative control, with one required type removed, shows a gap.
+Test-only: both 30-day expiries, which are `values` defaults. Retention of events and of dumps is
+not decided.
+Not settled here: R1 (how the realm is restored), D6 and OD-16 remain G1 production gates. Building
+these pieces does not waive any of them, and no test here restores the live realm, replays events,
+or shows complete-loss recovery. Dump file mode 0600 is not enforced on Windows.
+Rejected: **calling PR #381's `backup`** from this workload, which would make main depend on an
+unmerged branch. **An empty `enabledEventTypes`**, which stores every type in Keycloak but lets a
+later edit narrow the list without the recorder noticing. **Giving the recorder `view-users`**,
+which it does not need to read events.
+Reversibility: cheap. The events section, the client and `backup` can each be removed on their own.
+The events already stored expire on their own.

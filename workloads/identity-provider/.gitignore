@@ -1,0 +1,4 @@
+# A backup holds the realm private keys and every member credential. The backup command refuses
+# to write inside the repository; this is the second guard.
+*.dump
+*.dump.meta.json
