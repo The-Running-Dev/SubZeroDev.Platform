@@ -2,8 +2,8 @@
  * Slice 4 proof: the realm stores the security events a restore needs, and the identity-recorder
  * client can read them and nothing else.
  *
- * The event types and the 30-day expiries are what the identity-restore recorder (PR #381, not
- * merged) checks for. The expiries are test-only values; retention is not decided here.
+ * The event types and the 30-day expiries are what the identity-restore recorder
+ * (`workloads/identity-restore`) checks for. The expiries are test-only values; retention is not decided here.
  *
  * Runs against the Keycloak in docker-compose.yml after `npm run cli -- configure`. Synthetic
  * members only; test secrets only.

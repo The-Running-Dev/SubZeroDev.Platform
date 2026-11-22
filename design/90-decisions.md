@@ -846,3 +846,18 @@ later edit narrow the list without the recorder noticing. **Giving the recorder 
 which it does not need to read events.
 Reversibility: cheap. The events section, the client and `backup` can each be removed on their own.
 The events already stored expire on their own.
+
+### 2026-11-22 — Identity slice 4 follow-up: the restore boundary test runs in CI against the merged identity-restore workload
+
+Context: the slice 4 entry ran `tests/restore-boundary.test.ts` only when `IDENTITY_RESTORE_DIR`
+pointed at a checkout of PR #381, so main would not depend on an unmerged branch. PR #381 is now
+merged as `workloads/identity-restore`.
+Chosen: `tests/support/restore-boundary.ts` imports `recorder.ts`, `keycloak.ts` and `backup.ts`
+from `workloads/identity-restore/src` by a path relative to itself, and the test runs whenever
+Keycloak is up, so the identity-provider CI job runs it. Those files load only node builtins and
+each other at run time, so the job needs no install for identity-restore. Nothing is copied, and
+identity-provider's package does not depend on identity-restore.
+Rejected: **keeping the `IDENTITY_RESTORE_DIR` gate**, which leaves the only proof that the two
+workloads agree outside CI. **A package dependency on identity-restore**, which this test does not
+need.
+Reversibility: cheap. Restore the gate in the two test files.
