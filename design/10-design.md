@@ -279,8 +279,10 @@ G2 invariant 92 holds.
 
 ### The baseline
 
-**Facts.** There is one VPS, which is the stated baseline. An existing reverse proxy terminates TLS
-and routes publicly. Adventures' compose file joins an external proxy network. game-service binds
+**Facts.** There is one VPS, which is the stated baseline. Public routing is a Cloudflare tunnel per
+app, deployed through SubZeroDev.Infra: TLS terminates at Cloudflare, and each app's `cloudflared`
+container forwards over the external `proxy-net` network, which Adventures' compose file joins.
+Platform deploys the same way, one stack per workload (`90-decisions.md`, 2026-11-25). game-service binds
 loopback unless `GAME_SERVICE_HOST` is set.
 
 ### The simplest initial topology
@@ -289,7 +291,8 @@ Reverse proxy → one edge per workload → that workload, with one edge instanc
 behind the existing reverse proxy, which keeps TLS, and Platform owns the edge's deployment *(Owner
 ruling, question 5)*. The edge trusts `X-Forwarded-For` only from the configured proxy address, and
 per-address limits key on that. Cutover changes the proxy's route for Adventures' API host to the
-edge, with no downtime. Rollback restores the direct route.
+edge, with no downtime. Rollback restores the direct route. The proxy is now Adventures' tunnel, so
+cutover and rollback are a change to that tunnel's route in Adventures' `deploy/` root.
 
 game-service runs live on the same VPS, behind its own edge under its own hostname, and signs
 players in through Adventures' OIDC issuer *(Owner ruling, question 7)*. That issuer is the

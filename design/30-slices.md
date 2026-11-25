@@ -431,13 +431,14 @@ Delivers: Adventures' real players reach it through Platform's edge on the exist
 nothing they can notice except that it still works.
 
 Touches:
-- **Deployment**: Platform's, with the edge behind the existing reverse proxy
+- **Deployment**: Platform's `adventures-edge` stack through SubZeroDev.Infra, with the edge behind
+  Adventures' Cloudflare tunnel, which forwards to it at cutover
 
 Depends on: S7, S11.
 
 Acceptance:
 - **S12.1** `adventures-api.subzerodev.com` is served through the edge, deployed from this
-  repository behind the existing reverse proxy, which keeps TLS.
+  repository behind Adventures' tunnel, with TLS at Cloudflare.
 - **S12.2** A live smoke check through the public API records the deployed edge and Adventures
   revisions. It verifies every Adventures API route, sign-in, a guest session and a cross-origin
   write, and that a sign-in made before cutover is still recognised after it.
@@ -477,17 +478,18 @@ Delivers: real players sign in through the Keycloak `members` realm and play gam
 sessions live, through Platform's edge, on the existing VPS.
 
 Touches:
-- **Deployment**: a second edge in `Terminate` mode and game-service, on the existing VPS behind the
-  existing reverse proxy, at `game-api.subzerodev.com`, pinning the `members` realm's keys and
+- **Deployment**: Platform's `game-api` stack through SubZeroDev.Infra: a second edge in `Terminate`
+  mode and game-service, on the existing VPS behind its own Cloudflare tunnel, at
+  `game-api.subzerodev.com`, pinning the `members` realm's keys and
   accepting the game audience of its `game-cli` client
 
 Depends on: S11, S13. The identity provider live, which R1, D6 and OD-16 (G1 production gates) and
-first-credential enrolment (D3/D5) stand in front of. A deployment path for Platform on the VPS.
+first-credential enrolment (D3/D5) stand in front of. The deployment path decided on 2026-11-25
+(through SubZeroDev.Infra, one stack per workload), built.
 
 Acceptance:
 - **S14.1** *(Waits on the live identity provider and a deployment path.)* game-service is served
-  through its own edge at `game-api.subzerodev.com`, behind the existing reverse proxy, which keeps
-  TLS.
+  through its own edge at `game-api.subzerodev.com`, behind its tunnel, with TLS at Cloudflare.
 - **S14.2** *(Waits on the live identity provider and a deployment path.)* A live smoke check signs
   in through the `members` realm's `game-cli` client, creates a session and acts on it through the
   edge, and records the deployed edge and game-service revisions.
