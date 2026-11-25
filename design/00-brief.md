@@ -118,8 +118,9 @@ first, live at `adventures.subzerodev.com` (#340). Ben is the operator.
 - Operator documentation explains deployment, issuer and limit configuration, verification and
   rollback. Cutover and rollback can be rehearsed in a reproducible setup.
 - game-service is deployed live behind the edge on the same VPS, under its own hostname, and
-  signs players in through Adventures' OIDC issuer. *(Ruled 2026-11-02.)* The hostname is not yet
-  chosen.
+  signs players in through Adventures' OIDC issuer. *(Ruled 2026-11-02.)* The hostname is
+  `game-api.subzerodev.com`, the issuer is the Keycloak `members` realm and tokens come from its
+  `game-cli` client. *(Ruled 2026-11-22.)*
 
 **Regression evidence:**
 
