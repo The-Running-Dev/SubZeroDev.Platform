@@ -32,8 +32,9 @@ variable "dispatch_token" {
 }
 
 variable "health_route" {
-  description = "Hostname label under subzerodev.com for the edge's own health check. Not decided yet, so it has no default; set it in the var-file."
+  description = "Hostname label under subzerodev.com for the edge's own health check (owner ruling, 2026-11-26)."
   type        = string
+  default     = "adventures-edge"
 }
 
 variable "initial_image" {

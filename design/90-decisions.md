@@ -961,3 +961,17 @@ refuses an overlap, so a clash fails the first deploy loudly.
 Reversibility: cheap. It is one setting and one network here, and one compose file and one route in
 Adventures. Detaching means dropping Adventures' `compose.edge.yaml` and applying, before this
 stack's network can be removed.
+
+### 2026-11-26 — `adventures-edge`'s health hostname is `adventures-edge.subzerodev.com`
+
+Context: the 2026-11-25 deployment path gives the `adventures-edge` stack a hostname of its own, which
+Infra's deploy polls for `/health/deployed`. Players keep reaching Adventures at
+`adventures-api.subzerodev.com`; this hostname carries only the edge's health checks. The name was
+proposed and left unsettled there and in the 2026-11-26 trusted-proxy entry.
+Chosen (owner ruling): `health_route` is `adventures-edge`, now the variable's default, so the stack's
+health hostname is `adventures-edge.subzerodev.com`.
+Rejected: **`adventures-edge-health`**, which says in the name that it is health-only, at the cost of a
+name that differs from the stack, the service and the Portainer stack it checks.
+Not settled here: `game-api`'s `TrustedProxies`. The G1 gates in front of S14 are unchanged.
+Reversibility: cheap. Changing the label is one variable and one apply; the old route and DNS record
+are replaced.
