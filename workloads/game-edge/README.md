@@ -44,6 +44,7 @@ file is Platform's own and is not documented here.
 | `GameEdge:TrustedProxies` | list of IP addresses | no | empty (nobody is trusted) | Addresses of reverse proxies in front of the edge. When the connecting address is listed, that proxy's `X-Forwarded-For`, `-Proto` and `-Host` reach the workload; otherwise the edge's own values from the connection do. Each entry must parse as an IP address (`GameEdge:TrustedProxies:<i>`). |
 | `GameEdge:AbuseLimits:PermitCount` | integer | no | `60` | At least 1. Requests one caller may make in a window. When the `AbuseLimits` section is present, both fields are required. |
 | `GameEdge:AbuseLimits:Window` | `TimeSpan` | no | `00:01:00` | At least one second. A caller is the account when one is established and its client address otherwise: the connection's, or the last `X-Forwarded-For` entry when the connection is a listed trusted proxy. The request after the budget is a `429` with `Retry-After` and is never forwarded. Counted per edge instance, in memory, reset on restart. |
+| `GameEdge:Revision` | string | no | none | Absent, or a full commit hash (40 lowercase hex characters). The commit this build came from, reported by `/health/deployed`. The container image sets it from the `REVISION` build argument. |
 
 **Invalid configuration fails startup**, not the first request. The host throws
 `InvalidOperationException` before it listens:
@@ -56,6 +57,7 @@ file is Platform's own and is not documented here.
 | A `TrustedProxies` entry that is not an IP address | `Configuration section 'GameEdge:TrustedProxies' is invalid: 'GameEdge:TrustedProxies:<i>' must be an IP address.` |
 | An `AbuseLimits` field missing, malformed or out of range | `Configuration section 'GameEdge:AbuseLimits' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:AbuseLimits:PermitCount' is required and must be a whole number of at least one.`) |
 | Any streamed-route rule | `Configuration section 'GameEdge:StreamingRoutes' is invalid: ` followed by one sentence per breach, each naming its full key (for example `'GameEdge:StreamingRoutes:0:PathPrefix' must begin with '/'.`) |
+| `Revision` present but not a full commit hash | `Configuration section 'GameEdge' is invalid: Revision must be a full commit hash: 40 lowercase hex characters.` |
 
 The streamed-route check collects every breach, so one start reports them all. The same keys
 work as environment variables with `__` for `:`, for instance
@@ -65,8 +67,8 @@ work as environment variables with `__` for `:`, for instance
 ## What crosses the edge
 
 The route is a catch-all (`/{**catchAll}`) for every method and path. Platform's own probe
-middleware answers `/health/live` and `/health/ready` before it, so those two paths never
-reach the workload.
+middleware answers `/health/live` and `/health/ready` before it, and the edge answers
+`/health/deployed` itself, so those three paths never reach the workload.
 
 The edge copies **none** of a caller's headers wholesale. Only the names below cross, and which of
 them do depends on `GameEdge:CredentialMode`. The same rules apply on the buffered path and on a
@@ -113,6 +115,7 @@ MCP-specific.
 |---|---|---|
 | `GET /health/live` | The edge process is up. | Never. Platform rejects a liveness check that declares an external dependency. |
 | `GET /health/ready` | The workload is reachable and ready. | Yes: one `GET /readyz` on the workload per check. |
+| `GET /health/deployed` | The edge knows the commit it was built from, and the workload is ready. `200` with `{"revision","status":"Healthy"}`, otherwise `503` with the same shape and a `null` revision when none is set. `Cache-Control: no-store`. A deploy waits for it to report the deployed commit. | Yes: the same workload probe as readiness, and nothing else. It does not include the edge's own Identity readiness, so it can be `200` while `/health/ready` is not. |
 
 The readiness check is named `game-workload`, `Required`, and is unhealthy unless `/readyz`
 answers a 2xx within `ReadinessTimeout`. Any other status, a refused connection, or a timeout is
@@ -288,6 +291,25 @@ Tests (no workload needed; each starts its own fake one):
 ```bash
 dotnet test workloads/game-edge/SubZeroDev.Platform.GameEdge.Tests
 ```
+
+## The container image
+
+`workloads/game-edge/Dockerfile`, built from the repository root, stage `runtime`:
+
+```bash
+docker build -f workloads/game-edge/Dockerfile --target runtime --build-arg REVISION=$(git rev-parse HEAD) -t game-edge .
+```
+
+It runs as `app` (UID 1654) on port 8080, from `/app`, and works on a read-only root filesystem with a
+tmpfs at `/tmp`. `REVISION` becomes `GameEdge__Revision`; an image built without it answers
+`/health/deployed` with `503` and a `null` revision. CI builds it as `ghcr.io/the-running-dev/platform-game-edge`
+(`.github/workflows/container.yml`), one image for both modes.
+
+In `Terminate`, the handoff private key can be passed as `GAME_EDGE_HANDOFF_SIGNING_KEY_PEM_B64`, the base64 of
+its PEM (SubZeroDev.Infra's `tools/New-SigningKey.ps1` makes it). The entrypoint writes it to
+`GameEdge:Handoff:SigningKeyPath`, readable by the edge's user only, and removes it from the edge's environment
+before starting. Put that path on a tmpfs so the key never reaches a layer or a volume. The value stays in the
+container's configuration, so anyone who can run `docker inspect` on the host can read it.
 
 ## Putting a workload behind it
 

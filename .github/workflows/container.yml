@@ -1,0 +1,128 @@
+name: Container
+
+# Builds, smoke-tests and publishes Platform's two images to GHCR through the shared container
+# workflow, then deploys them through the Infra repository's deploy workflow. Pull requests build and
+# smoke-test both images and push nothing.
+#
+#   platform-game-edge     the edge (workloads/game-edge), one image for both edge stacks
+#   platform-game-service  game-service (workloads/game-service)
+#
+# Two stacks deploy from this repository, each behind its own switch (repository variables that
+# deploy/<root> writes, so neither deploys before its stack exists):
+#
+#   adventures-edge  DEPLOY_ADVENTURES_EDGE_ENABLED  the edge in PassThrough mode, in front of Adventures
+#   game-api         DEPLOY_GAME_API_ENABLED         the edge in Terminate mode and game-service
+#
+# The Portainer credentials live only in the Infra repository. This repository holds
+# INFRA_DISPATCH_TOKEN (production environment), which can start that workflow and nothing else. Each
+# deploy waits for the stack's /health/deployed to report this commit.
+#
+# The checks to require are `edge / Result` and `service / Result`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  edge:
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: The-Running-Dev/GitHub-ActionTemplates/.github/workflows/container.yml@v1
+    with:
+      image-name: platform-game-edge
+      dockerfile: workloads/game-edge/Dockerfile
+      context: .
+      # The Dockerfile's last stage, named explicitly so that adding a stage after it
+      # cannot silently change what gets published.
+      target: runtime
+      # Baked in as GameEdge__Revision, which /health/deployed reports.
+      build-args: |
+        REVISION=${{ github.sha }}
+      tags: sha latest
+      # The smallest valid PassThrough configuration. Nothing listens on the workload address, so
+      # the smoke test checks liveness; readiness needs the workload and is the deploy's check.
+      smoke-env: |
+        GameEdge__WorkloadBaseAddress=http://127.0.0.1:9
+        GameEdge__CredentialMode=PassThrough
+      smoke-port: "8080"
+      smoke-path: /health/live
+      # The restrictions the deployment stacks apply, so the smoke test exercises what runs.
+      smoke-options: |
+        --read-only
+        --tmpfs=/tmp:uid=1654,gid=1654,mode=0700
+        --cap-drop=ALL
+        --security-opt=no-new-privileges:true
+
+  service:
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: The-Running-Dev/GitHub-ActionTemplates/.github/workflows/container.yml@v1
+    with:
+      image-name: platform-game-service
+      dockerfile: workloads/game-service/Dockerfile
+      context: workloads/game-service
+      target: runtime
+      tags: sha latest
+      # In-memory storage, so no database is needed. game-service refuses to start without a
+      # handoff verification key; this is the public half of a throwaway P-256 key whose private
+      # half was discarded, so it verifies nothing.
+      smoke-env: |
+        GAME_SERVICE_HANDOFF_ISSUER=https://smoke.invalid/edge
+        GAME_SERVICE_HANDOFF_AUDIENCE=game-service-smoke
+        GAME_SERVICE_HANDOFF_KEYS_DIR=/run/game-service/handoff-keys
+        GAME_SERVICE_HANDOFF_KEY_ID=smoke
+        GAME_SERVICE_HANDOFF_VERIFICATION_KEY_PEM_B64=LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFMmJlZ0hwTytFWStvemlWaktlMjhFRWZ0UmYxTAorWUk5cGR3dTJwSlZYWWRoRnZQY3ZSSFZTQUtSSU9hdlhEN29VQncwRy85Rk1zMVAwQ1JiOTRNMU9nPT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+      smoke-port: "8080"
+      smoke-path: /readyz
+      smoke-options: |
+        --read-only
+        --tmpfs=/tmp:uid=1000,gid=1000,mode=0700
+        --tmpfs=/run/game-service:uid=1000,gid=1000,mode=0700
+        --cap-drop=ALL
+        --security-opt=no-new-privileges:true
+
+  deploy-adventures-edge:
+    name: Deploy adventures-edge
+    needs: edge
+    if: github.event_name == 'push' && vars.DEPLOY_ADVENTURES_EDGE_ENABLED == 'true' && needs.edge.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: The-Running-Dev/GitHub-ActionTemplates/actions/infra-deploy@c71f9720badd37b94b96da0c77633acc3a113647 # v2.2.0
+        with:
+          app: adventures-edge
+          digest: ${{ needs.edge.outputs.digest }}
+          token: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+
+  deploy-game-api:
+    name: Deploy game-api
+    needs: [edge, service]
+    if: github.event_name == 'push' && vars.DEPLOY_GAME_API_ENABLED == 'true' && needs.edge.outputs.pushed == 'true' && needs.service.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      # Both images come from this commit and deploy in one redeploy. `images` is on ActionTemplates
+      # main (#56) but in no release yet; repin to the release that carries it.
+      - uses: The-Running-Dev/GitHub-ActionTemplates/actions/infra-deploy@cf47b023fd893168e83901128ebf5cbd33e77971 # main, after v2.3.0
+        with:
+          app: game-api
+          images: |
+            ghcr.io/the-running-dev/platform-game-edge@${{ needs.edge.outputs.digest }}
+            ghcr.io/the-running-dev/platform-game-service@${{ needs.service.outputs.digest }}
+          token: ${{ secrets.INFRA_DISPATCH_TOKEN }}

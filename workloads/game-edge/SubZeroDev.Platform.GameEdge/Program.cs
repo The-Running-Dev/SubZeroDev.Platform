@@ -47,6 +47,11 @@ if (options is null
         + "and ForwardTimeout and ReadinessTimeout must both be positive.");
 }
 
+if (DeployedRevision.Validate(options) is { } revisionError)
+{
+    throw new InvalidOperationException("Configuration section 'GameEdge' is invalid: " + revisionError);
+}
+
 if (StreamingRoutes.Validate(options) is { Count: > 0 } streamingErrors)
 {
     throw new InvalidOperationException(
@@ -101,6 +106,7 @@ var app = builder.Build();
 
 // Ordinary application code, registered the way any application registers a route — there is no
 // AddGameEdge.
+app.MapGameEdgeDeployment();
 app.MapGameWorkloadForwarding();
 
 app.Run();

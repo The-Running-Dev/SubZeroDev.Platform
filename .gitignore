@@ -44,3 +44,9 @@ graphify-out/
 .DS_Store
 Thumbs.db
 *.log
+
+# OpenTofu deploy roots (deploy/<root>/): per-machine backend config, provider cache and
+# private var-files. The lock file is committed.
+deploy/*/.terraform/
+deploy/*/backend.hcl
+deploy/*/*.tfvars.json
