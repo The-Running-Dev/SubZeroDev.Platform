@@ -6,7 +6,8 @@ Platform's edge in `PassThrough` mode in front of Adventures, as its own stack o
 - the Portainer Git stack `adventures-edge` (`compose.yaml` and `compose.tunnel.yaml`), on `proxy-net` beside
   Adventures, reaching it at `http://adventures-api:8787`. The stack also creates `adventures-edge-ingress`,
   the network Adventures' tunnel connector reaches the edge on (see "Trusted proxy");
-- a Cloudflare tunnel and DNS record for the edge's **own** health hostname, which the deploy checks;
+- a Cloudflare tunnel and DNS record for the edge's **own** health hostname, `adventures-edge.subzerodev.com`,
+  which the deploy checks. Players never use it;
 - the repository variable `DEPLOY_ADVENTURES_EDGE_ENABLED`, which turns on the `deploy-adventures-edge` job;
 - the repository's GitHub `production` environment and its `INFRA_DISPATCH_TOKEN`, which both deploy jobs use.
   This root owns them, so apply it before `deploy/game-api`.
@@ -18,11 +19,6 @@ made in the Adventures repository; pointing it back is the rollback (`workloads/
 
 Run everything through `./deploy/tofu.ps1 adventures-edge <command>`: it loads credentials from your
 User-scope environment and the stack's values from a private var-file outside the repository.
-
-## Not decided
-
-- **The health hostname.** `health_route` has no default; the label you set becomes
-  `<label>.subzerodev.com`. Proposed: `adventures-edge`.
 
 ## Trusted proxy
 
@@ -55,10 +51,11 @@ detach Adventures (its `deploy/README.md`, "Platform's edge").
 
 ```json
 {
-  "health_route": "<label under subzerodev.com>",
   "initial_image": "ghcr.io/the-running-dev/platform-game-edge@sha256:<64 hex>"
 }
 ```
+
+`health_route` defaults to `adventures-edge` (the 2026-11-26 ruling); set it here only to override that.
 
 `initial_image` is used only when the stack is created; deploys own the image afterwards. Take it from a
 `main` run of `.github/workflows/container.yml` (the `edge` job's digest). Until the switch exists, that run
@@ -75,7 +72,7 @@ Actions write on SubZeroDev.Infra only). `GITHUB_TOKEN` falls back to `gh auth t
    that tag exists.
 2. `./deploy/tofu.ps1 adventures-edge plan`. Expect the stack, the tunnel and its DNS record, the
    `production` environment, `INFRA_DISPATCH_TOKEN` and `DEPLOY_ADVENTURES_EDGE_ENABLED` to be created.
-3. `./deploy/tofu.ps1 adventures-edge apply`. Then `GET https://<health hostname>/health/deployed` answers
+3. `./deploy/tofu.ps1 adventures-edge apply`. Then `GET https://adventures-edge.subzerodev.com/health/deployed` answers
    `200` with the commit of `initial_image`, `docker network inspect adventures-edge-ingress` shows the
    subnet above, and a second `plan` shows no changes.
 
