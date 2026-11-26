@@ -297,6 +297,21 @@ run twice over an unchanged row set and an unchanged engine version produces a b
 (`workloads/game-service/vendor/README.md`); there is no copy of the contract here for this
 repository's CI to regenerate or compare against.
 
+## The container image
+
+`workloads/game-service/Dockerfile`, built from this directory, stage `runtime`:
+
+```bash
+docker build --target runtime -t game-service workloads/game-service
+```
+
+It runs as `node` (UID 1000) on port 8080 (`GAME_SERVICE_PORT`), with readiness at `/readyz`. It works on a
+read-only root filesystem with tmpfs mounts at `/tmp` (the TypeScript loader's cache) and at the handoff
+keys directory. A stack passes the edge's handoff verification key as `GAME_SERVICE_HANDOFF_VERIFICATION_KEY_PEM_B64`,
+the base64 of the public key PEM, with `GAME_SERVICE_HANDOFF_KEY_ID`; the entrypoint writes it to
+`$GAME_SERVICE_HANDOFF_KEYS_DIR/<key id>.pem` before the service starts. CI builds it as
+`ghcr.io/the-running-dev/platform-game-service` (`.github/workflows/container.yml`); `deploy/game-api` runs it.
+
 ## Handover notes
 
 One fact the next effort (G2) inherits rather than discovers:

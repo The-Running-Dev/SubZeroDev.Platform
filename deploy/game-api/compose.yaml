@@ -1,0 +1,84 @@
+# game-api: Platform's edge in Terminate mode in front of game-service, served at
+# game-api.subzerodev.com. Each deploy pins both images, built from one commit, and redeploys only
+# this file; Postgres and the tunnel connector live in compose.platform.yaml, which creates the two
+# networks joined here. Nothing is published on the host.
+#
+# The edge authenticates each player's bearer token against the issuer's pinned keys (the Keycloak
+# `members` realm, client `game-cli`) and signs a short-lived handoff assertion for game-service, which
+# verifies it with the matching public key. Both keys arrive as base64 stack values and are written to
+# tmpfs files by the images' entrypoints; see deploy/game-api/README.md.
+name: game-api
+
+services:
+  game-edge:
+    image: ${GAME_EDGE_IMAGE:?Set GAME_EDGE_IMAGE}
+    restart: unless-stopped
+    environment:
+      GameEdge__WorkloadBaseAddress: http://game-service:8080
+      GameEdge__CredentialMode: Terminate
+      Platform__CompositionProfile: AuthenticatedTransport
+      GameEdge__Handoff__Issuer: ${GAME_API_HANDOFF_ISSUER:?Set GAME_API_HANDOFF_ISSUER}
+      GameEdge__Handoff__Audience: ${GAME_API_HANDOFF_AUDIENCE:?Set GAME_API_HANDOFF_AUDIENCE}
+      GameEdge__Handoff__KeyId: ${GAME_API_HANDOFF_KEY_ID:?Set GAME_API_HANDOFF_KEY_ID}
+      GameEdge__Handoff__Lifetime: ${GAME_API_HANDOFF_LIFETIME:-00:00:30}
+      GameEdge__Handoff__SigningKeyPath: /run/game-edge/handoff-signing.pem
+      # Decoded to SigningKeyPath by the entrypoint, then removed from the process environment.
+      GAME_EDGE_HANDOFF_SIGNING_KEY_PEM_B64: ${GAME_API_SIGNING_KEY_PEM_B64:?Set GAME_API_SIGNING_KEY_PEM_B64}
+      # The issuer, pinned: the edge fetches nothing from it (no Discovery). Rotating an issuer key means
+      # adding it here and redeploying before the realm signs with it (workloads/game-edge/README.md).
+      Platform__Identity__Bearer__members__Issuer: ${GAME_API_TOKEN_ISSUER:?Set GAME_API_TOKEN_ISSUER}
+      Platform__Identity__Bearer__members__SigningKeys: ${GAME_API_TOKEN_JWKS:?Set GAME_API_TOKEN_JWKS}
+      Platform__Identity__Bearer__members__Audiences__0: ${GAME_API_TOKEN_AUDIENCE:?Set GAME_API_TOKEN_AUDIENCE}
+      Platform__Identity__Bearer__members__Algorithms__0: ES256
+      # GameEdge__TrustedProxies is deliberately unset (nobody is trusted): which address to trust under
+      # the tunnel is not decided. Until it is, an anonymous caller is counted by the connector's address,
+      # so every anonymous caller shares one GameEdge:AbuseLimits budget.
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1654,gid=1654,mode=0700
+      - /run/game-edge:uid=1654,gid=1654,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    networks:
+      - game-api-ingress
+      - default
+    depends_on:
+      - game-service
+
+  game-service:
+    image: ${GAME_SERVICE_IMAGE:?Set GAME_SERVICE_IMAGE}
+    restart: unless-stopped
+    environment:
+      GAME_SERVICE_STORAGE: durable
+      # Migrates on start. Postgres is in the platform stack, so a cold host may restart this once or
+      # twice before the database answers.
+      GAME_SERVICE_DB_CONNECTION_STRING: postgres://game_service:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@game-api-postgres:5432/game_service
+      GAME_SERVICE_HANDOFF_ISSUER: ${GAME_API_HANDOFF_ISSUER}
+      GAME_SERVICE_HANDOFF_AUDIENCE: ${GAME_API_HANDOFF_AUDIENCE}
+      GAME_SERVICE_HANDOFF_KEYS_DIR: /run/game-service/handoff-keys
+      GAME_SERVICE_HANDOFF_KEY_ID: ${GAME_API_HANDOFF_KEY_ID}
+      # Decoded to <keys dir>/<key id>.pem by the entrypoint, then removed from the process environment.
+      GAME_SERVICE_HANDOFF_VERIFICATION_KEY_PEM_B64: ${GAME_API_VERIFICATION_KEY_PEM_B64:?Set GAME_API_VERIFICATION_KEY_PEM_B64}
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
+      - /run/game-service:uid=1000,gid=1000,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    networks:
+      - default
+      - game-api-data
+
+networks:
+  # Created by compose.platform.yaml (game-api-platform). External, so this stack fails fast when the
+  # platform stack is missing rather than creating networks of its own that reach nothing.
+  game-api-ingress:
+    external: true
+  game-api-data:
+    external: true

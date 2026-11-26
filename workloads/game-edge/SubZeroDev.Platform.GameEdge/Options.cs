@@ -42,6 +42,12 @@ public sealed record GameEdgeOptions
     /// <summary>How many requests one caller may make in a window before the edge answers <c>429</c>. The
     /// default is 60 requests in 60 seconds, so an edge started without the setting is limited.</summary>
     public AbuseLimitOptions AbuseLimits { get; init; } = new(60, TimeSpan.FromSeconds(60));
+
+    /// <summary>The commit this edge was built from, as 40 lowercase hex characters, which
+    /// <c>/health/deployed</c> reports. A container image sets it from its build; absent, the
+    /// endpoint reports no revision and answers <c>503</c>, so a deploy that waits for a revision
+    /// never mistakes an unlabelled edge for the one it rolled out.</summary>
+    public string? Revision { get; init; }
 }
 
 /// <summary>The abuse limiter's budget, counted per caller and per edge instance.</summary>

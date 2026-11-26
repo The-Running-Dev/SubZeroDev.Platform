@@ -1,0 +1,9 @@
+# Build contexts here are the repository root (game-edge) and workloads/game-service. Keep local
+# build output, dependencies and history out of both.
+**/bin/
+**/obj/
+**/node_modules/
+**/artifacts/
+.git/
+.claude/
+graphify-out/

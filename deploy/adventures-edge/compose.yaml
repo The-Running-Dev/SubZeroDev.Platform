@@ -1,0 +1,36 @@
+# Platform's edge in front of Adventures, in PassThrough mode: Adventures keeps authenticating its own
+# cookie, and the edge forwards to `adventures-api:8787` over `proxy-net`, where the Adventures stack
+# already runs it. Nothing is published on the host. The image is pinned by digest by each deploy
+# (deploy/adventures-edge, OpenTofu; container.yml). Layer compose.tunnel.yaml over this file.
+#
+# This stack serves only its own health hostname until Adventures' tunnel route for
+# adventures-api.subzerodev.com is pointed at `adventures-edge:8080`; that flip lives in the
+# Adventures repository, and pointing it back is the rollback (workloads/game-edge/README.md).
+name: adventures-edge
+
+services:
+  adventures-edge:
+    image: ${ADVENTURES_EDGE_IMAGE:?Set ADVENTURES_EDGE_IMAGE}
+    restart: unless-stopped
+    environment:
+      GameEdge__WorkloadBaseAddress: http://adventures-api:8787
+      GameEdge__CredentialMode: PassThrough
+      # GameEdge__TrustedProxies is deliberately unset (nobody is trusted): which address to trust under
+      # the tunnel is not decided. Until it is, every caller arrives from the connector's address and
+      # shares one GameEdge:AbuseLimits budget.
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1654,gid=1654,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    networks:
+      - proxy-net
+
+networks:
+  # Created outside every stack (`docker network create proxy-net`); external, so Compose fails fast
+  # rather than starting an edge that cannot reach Adventures.
+  proxy-net:
+    external: true
