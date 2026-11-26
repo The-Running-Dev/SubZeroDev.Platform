@@ -4,7 +4,7 @@
 # (deploy/adventures-edge, OpenTofu; container.yml). Layer compose.tunnel.yaml over this file.
 #
 # This stack serves only its own health hostname until Adventures' tunnel route for
-# adventures-api.subzerodev.com is pointed at `adventures-edge:8080`; that flip lives in the
+# adventures-api.subzerodev.com is pointed at `adventures-edge-ingress:8080`; that flip lives in the
 # Adventures repository, and pointing it back is the rollback (workloads/game-edge/README.md).
 name: adventures-edge
 
@@ -15,9 +15,11 @@ services:
     environment:
       GameEdge__WorkloadBaseAddress: http://adventures-api:8787
       GameEdge__CredentialMode: PassThrough
-      # GameEdge__TrustedProxies is deliberately unset (nobody is trusted): which address to trust under
-      # the tunnel is not decided. Until it is, every caller arrives from the connector's address and
-      # shares one GameEdge:AbuseLimits budget.
+      # Adventures' tunnel connector, at its fixed address on adventures-edge-ingress (below). Cloudflare
+      # appends the visitor's address to X-Forwarded-For, so each player has an AbuseLimits budget of
+      # their own. Any other peer, this stack's own health connector included, is counted under the
+      # address it connects from.
+      GameEdge__TrustedProxies__0: 10.213.80.10
     read_only: true
     tmpfs:
       - /tmp:uid=1654,gid=1654,mode=0700
@@ -27,10 +29,26 @@ services:
       driver: json-file
       options: { max-size: 10m, max-file: "3" }
     networks:
-      - proxy-net
+      proxy-net: {}
+      adventures-edge-ingress:
+        # The name Adventures' connector routes players to. It resolves on this network only, so the
+        # connector always arrives from its trusted address; `adventures-edge` resolves on proxy-net too,
+        # where the connector's address is not fixed.
+        aliases: [adventures-edge-ingress]
 
 networks:
   # Created outside every stack (`docker network create proxy-net`); external, so Compose fails fast
   # rather than starting an edge that cannot reach Adventures.
   proxy-net:
     external: true
+  # Adventures' tunnel connector <-> the edge, and nothing else. This stack creates it; Adventures'
+  # compose.edge.yaml joins it as external at 10.213.80.10, outside `ip_range`, so Docker never hands
+  # the trusted address to another container. Docker refuses to create it if the subnet overlaps a
+  # network already on the host. While Adventures' connector is attached, Compose cannot remove it:
+  # detach Adventures first (its deploy/README.md, "Platform's edge").
+  adventures-edge-ingress:
+    name: adventures-edge-ingress
+    ipam:
+      config:
+        - subnet: 10.213.80.0/28
+          ip_range: 10.213.80.0/29

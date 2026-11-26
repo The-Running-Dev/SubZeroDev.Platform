@@ -18,8 +18,9 @@ Run everything through `./deploy/tofu.ps1 game-api <command>`.
 ## Not live yet
 
 The issuer is the Keycloak `members` realm with the public `game-cli` client. That realm is not live, and the
-G1 gates still stand in front of S14; nothing here passes them. `GameEdge:TrustedProxies` is unset, so
-anonymous callers share one `AbuseLimits` budget behind the tunnel (see `deploy/adventures-edge/README.md`).
+G1 gates still stand in front of S14; nothing here passes them. `GameEdge:TrustedProxies` is unset here, so
+every request reaches the edge from the tunnel connector's address. Anonymous callers therefore share one
+`AbuseLimits` budget. The ruling of 2026-11-26 covers `adventures-edge` only.
 
 ## Keys
 
