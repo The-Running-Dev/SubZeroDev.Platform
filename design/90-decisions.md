@@ -883,3 +883,49 @@ wait on a decision. They wait on the live identity provider and on a deployment 
 repository does not yet have.
 Reversibility: cheap. The hostname is one DNS record and one proxy route. The issuer and the
 audience are edge settings.
+
+### 2026-11-25 — Deployment path: Platform deploys through SubZeroDev.Infra, one stack per workload
+
+Context: S12 and S14 need a way to put Platform's workloads on the VPS, and this repository has
+none: no images, no deploy workflow, no stack. The other SubZeroDev apps (SubZeroDev.com, the
+Blog, Adventures and the Dashboard) deploy through SubZeroDev.Infra. Each has a `deploy/` OpenTofu
+root that calls Infra's `modules/app`, which creates a Cloudflare tunnel with a DNS record per
+route, a Portainer Git stack and the repository's GitHub deploy settings. A push to main builds the
+image with `container.yml@v1`, and Infra's `deploy.yml` validates the digest and revision, pins the
+image in the stack and waits until the health path reports that revision. Public routing on the
+VPS has moved to that pattern since the 2026-11-02 cutover ruling: Adventures' API host is served
+through Adventures' own tunnel, its Nginx Proxy Manager host is gone, and TLS terminates at
+Cloudflare. Infra's module allows one call per repository, and its deploy pins one image per app.
+Chosen (owner rulings):
+- Platform deploys the way the other apps do, through SubZeroDev.Infra's `modules/app` and
+  `deploy.yml`.
+- One stack per workload, each with its own `deploy/` root here. `adventures-edge` (S12) is the
+  edge in front of Adventures' API. `game-api` (S14) is the `Terminate` edge and game-service, with
+  game-service's Postgres in the module's long-lived platform stack so that deploys never restart
+  it.
+- A push to main deploys, behind one repository variable per stack, so S12 can be live while S14
+  stays off.
+- Infra's deploy pins several images per app against one revision, so the `game-api` deploy
+  verifies both game-edge and game-service.
+- Adventures keeps `adventures-api.subzerodev.com`. Cutover changes the route in Adventures' tunnel
+  to Platform's edge on `proxy-net`, and rollback changes it back. This is the 2026-11-02 ruling
+  with Adventures' tunnel as the existing proxy. The `adventures-edge` stack has a hostname of its
+  own only for its deploy health check.
+- The changes this needs in SubZeroDev.Infra (a per-stack switch, several images per app) and in
+  SubZeroDev.Adventures (the route) are made as pull requests there.
+Rejected: **one stack for both workloads**, which redeploys S14 with every S12 change. **One
+shared switch**, under which S14's deploy runs and fails while only S12 is applied. **Pinning only
+the edge, with game-service on `:latest`** (the precedent of Adventures' frontend): the deploy never
+verifies game-service's revision, and a later push can move `:latest` past the pinned edge.
+**Platform taking the hostname** with its own tunnel and the DNS record moved out of Adventures'
+state, which makes rollback two applies in two repositories. **A webhook redeploy from this
+repository**, the pattern Infra replaced.
+Not settled here: the name of the `adventures-edge` health hostname (proposed:
+`adventures-edge.subzerodev.com`). The edge's `TrustedProxies` under a tunnel, where the peer is a
+`cloudflared` container and the client address arrives in `CF-Connecting-IP` and
+`X-Forwarded-For`. The edge's health path must report its build revision for Infra's deploy to wait
+on it, which Platform's probes do not do yet. Nothing here deploys the Keycloak realm or waives R1,
+D6, OD-16, D3/D5 or D9, and S14 still waits on them. Recording this applies nothing live: each
+root's first apply and the Adventures route change are operator steps.
+Reversibility: moderate. The roots and images are additive. The Infra module changes are new minor
+versions that existing callers do not see. The cutover is one route in Adventures' root.
