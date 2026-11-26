@@ -929,3 +929,35 @@ D6, OD-16, D3/D5 or D9, and S14 still waits on them. Recording this applies noth
 root's first apply and the Adventures route change are operator steps.
 Reversibility: moderate. The roots and images are additive. The Infra module changes are new minor
 versions that existing callers do not see. The cutover is one route in Adventures' root.
+
+### 2026-11-26 — `adventures-edge` trusts Adventures' tunnel connector, at a fixed address on a network of its own
+
+Context: the 2026-11-25 deployment path left `TrustedProxies` under a tunnel unsettled. Behind
+Adventures' tunnel every request reaches the edge from the `cloudflared` container. With
+`TrustedProxies` empty, every anonymous player is counted under that one address and shares a
+single `AbuseLimits` budget (60 requests a minute by default). The deploy's `/readyz` polling
+shares it too. `TrustedProxies` takes exact addresses, and a container's address on `proxy-net` is
+assigned when it starts. `proxy-net` was created outside every stack, so whether it can carry a
+fixed address is not known from here.
+Chosen (owner ruling):
+- The edge trusts Adventures' tunnel connector, and counts the address Cloudflare appends last to
+  `X-Forwarded-For`. That is the entry the edge already reads from a trusted proxy (2026-11-03).
+- The connector reaches the edge on `adventures-edge-ingress`, a network the `adventures-edge`
+  stack creates with subnet `10.213.80.0/28` and dynamic addresses limited to `10.213.80.0/29`.
+  Adventures' `cloudflared` joins it at `10.213.80.10`, which is
+  `GameEdge:TrustedProxies:0`. This is the `game-api-ingress` pattern.
+- Adventures' route targets `adventures-edge-ingress:8080`, an alias on that network only. The
+  service name `adventures-edge` would also resolve on `proxy-net`, where the connector would
+  arrive from an address the edge does not trust.
+- `proxy-net` is unchanged.
+Rejected: **a fixed address on `proxy-net`**. It works only if `proxy-net` was created with
+`--subnet`; otherwise `proxy-net` has to be recreated, which disconnects every stack on it.
+**Leaving `TrustedProxies` empty** and raising the budget: one player can still exhaust it for
+everyone.
+Not settled here: `game-api`'s `TrustedProxies`, which stays empty; its connector is already alone
+on `game-api-ingress`, but that network has no fixed subnet. The `adventures-edge` health
+hostname. Nothing is applied. The subnet must not overlap a network already on the VPS; Docker
+refuses an overlap, so a clash fails the first deploy loudly.
+Reversibility: cheap. It is one setting and one network here, and one compose file and one route in
+Adventures. Detaching means dropping Adventures' `compose.edge.yaml` and applying, before this
+stack's network can be removed.

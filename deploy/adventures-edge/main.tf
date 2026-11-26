@@ -69,7 +69,7 @@ module "app" {
 
   # Only the edge's own hostname, for the deploy's health check. Players keep reaching Adventures at
   # adventures-api.subzerodev.com, whose route belongs to the Adventures stack; pointing that route at
-  # adventures-edge:8080 is the cutover, done in the Adventures repository.
+  # adventures-edge-ingress:8080 is the cutover, done in the Adventures repository.
   routes      = { (var.health_route) = "http://adventures-edge:8080" }
   health_path = "/health/deployed" # reports the commit once the edge reaches Adventures
 
