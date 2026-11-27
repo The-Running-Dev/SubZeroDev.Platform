@@ -128,9 +128,9 @@ remove it.
   on (`IDP_COMPOSE_PROJECT`, default `identity-provider`), so it does not reach this stack from the
   operator's machine. Production backups, their retention and restore (R1) are not built.
 - **The Access gate** (SubZeroDev.Infra PR #6) would replace the session route with a gated admin host.
-- **The Resend domain.** `id-mail.subzerodev.com` is added in Resend (Ireland, sending only) and is not
-  verified. Its DNS records (DKIM, and the return path that carries SPF) are in SubZeroDev.Infra's
-  `mail-dns` root (The-Running-Dev/SubZeroDev.Infra#14), not applied. Resend restricts a key only to a
-  verified domain, so the API key is created after that apply and verification. Until then Keycloak
-  cannot send the invite and reset links.
+- **The Resend domain** is ready. `id-mail.subzerodev.com` is verified in Resend (Ireland, sending
+  only); its DNS records (DKIM, and the return path that carries SPF) are applied from SubZeroDev.Infra's
+  `mail-dns` root (The-Running-Dev/SubZeroDev.Infra#14). The API key ("Platform identity SMTP", sending
+  access, restricted to `id-mail.subzerodev.com`) is in `$HOME\.subzerodev\resend-id-mail-smtp.key` on
+  the operator's machine; pass it as `IDP_SMTP_PASSWORD`.
 - **Event retention** and **D3** (the brute-force numbers) are as in `workloads/identity-provider`.
