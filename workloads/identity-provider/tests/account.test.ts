@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { check } from "../src/realm.ts";
 import { Authenticator } from "./support/authenticator.ts";
-import { credentials, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./support/members.ts";
+import { credentials, describeWalk, enrol, environment, removeMembers, walk } from "./support/members.ts";
 import type { Environment, Member } from "./support/members.ts";
 
 const e = environment();
@@ -37,15 +37,10 @@ describe.skipIf(!e)("member account actions (slice 3)", () => {
   let session: Member;
 
   beforeAll(async () => {
-    await installBootstrapClient(env);
-    try {
-      keys = await enrol(env, `${PREFIX}-keys`);
-      codes = await enrol(env, `${PREFIX}-codes`);
-      other = await enrol(env, `${PREFIX}-other`);
-      session = await enrol(env, `${PREFIX}-session`);
-    } finally {
-      await removeBootstrapClient(env);
-    }
+    keys = await enrol(env, `${PREFIX}-keys`);
+    codes = await enrol(env, `${PREFIX}-codes`);
+    other = await enrol(env, `${PREFIX}-other`);
+    session = await enrol(env, `${PREFIX}-session`);
   });
 
   afterAll(async () => {
@@ -171,13 +166,7 @@ describe.skipIf(!e)("member account actions (slice 3)", () => {
   // Keycloak's behaviour, pinned so that a change is noticed. Recorded, not accepted: whether a
   // member may remove their last way in belongs to the open recovery decisions (D3/D5).
   it("RECORDED: Keycloak lets a member delete their only credential, which leaves no way to sign in", async () => {
-    await installBootstrapClient(env);
-    let solo: Member;
-    try {
-      solo = await enrol(env, `${PREFIX}-solo`, { passkey: true });
-    } finally {
-      await removeBootstrapClient(env);
-    }
+    const solo = await enrol(env, `${PREFIX}-solo`, { passkey: true });
     const [only] = await credentials(env, solo.id);
     const w = await walk(env, "game-cli", solo.username, { passkey: solo.passkey, extra: { kc_action: `delete_credential:${only!.id}` }, deletion: "accept" });
     expect(w.tokens, describeWalk(w)).toBeDefined();

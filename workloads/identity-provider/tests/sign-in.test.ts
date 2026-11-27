@@ -8,29 +8,34 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { check, publishedKeys } from "../src/realm.ts";
 import { Authenticator } from "./support/authenticator.ts";
-import { ADVENTURES_CALLBACK, BOOTSTRAP_CLIENT, clientSecret, credentials, decode, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./support/members.ts";
+import { ADVENTURES_CALLBACK, clientSecret, credentials, decode, describeWalk, enrol, environment, installOverrideClient, removeClient, removeMembers, walk } from "./support/members.ts";
 import type { Environment, Member } from "./support/members.ts";
 
 const e = environment();
 const PREFIX = `t1-${Date.now().toString(36)}`;
+const OVERRIDE = `${PREFIX}-override`;
 
 describe.skipIf(!e)("member sign-in (slice 1)", () => {
   const env = e as Environment;
   let member: Member;
 
   beforeAll(async () => {
-    await installBootstrapClient(env);
     member = await enrol(env, `${PREFIX}-m`);
   });
 
   afterAll(async () => {
     await removeMembers(env, PREFIX);
-    await removeBootstrapClient(env);
+    await removeClient(env, OVERRIDE);
   });
 
-  it("check names the test-only bootstrap client while it exists", async () => {
-    const problems = await check(env.kc, env.def);
-    expect(problems.some((p) => p.includes(BOOTSTRAP_CLIENT))).toBe(true);
+  it("check passes on the configured realm, and names a client that overrides the browser flow", async () => {
+    expect(await check(env.kc, env.def)).toEqual([]);
+    await installOverrideClient(env, OVERRIDE);
+    try {
+      expect((await check(env.kc, env.def)).some((p) => p.includes(OVERRIDE))).toBe(true);
+    } finally {
+      await removeClient(env, OVERRIDE);
+    }
   });
 
   it("enrolment leaves the member with a passkey and a recovery set, and no password", async () => {
@@ -106,11 +111,5 @@ describe.skipIf(!e)("member sign-in (slice 1)", () => {
   it("an unknown username gets no token", async () => {
     const w = await walk(env, "game-cli", `${PREFIX}-nobody`, { passkey: new Authenticator(env.base) });
     expect(w.tokens, describeWalk(w)).toBeUndefined();
-  });
-
-  it("check passes once the bootstrap client is gone", async () => {
-    await removeBootstrapClient(env);
-    expect(await check(env.kc, env.def)).toEqual([]);
-    await installBootstrapClient(env);
   });
 });

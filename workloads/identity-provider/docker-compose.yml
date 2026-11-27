@@ -1,5 +1,6 @@
-# The member identity provider: Keycloak 26.8.1 on its own PostgreSQL, nothing else. Keycloak is a
-# deployment choice, not a Platform package (ADR-009); this file is the workload's whole runtime.
+# The member identity provider: Keycloak 26.8.1 on its own PostgreSQL, and a mail catcher for the
+# invite and reset links. Keycloak is a deployment choice, not a Platform package (ADR-009); this
+# file is the workload's whole runtime.
 #
 # Local and CI only. Every published port binds to 127.0.0.1, the database credentials are test
 # values, and the bootstrap admin password has no default: the reader supplies one
@@ -26,6 +27,18 @@ services:
       timeout: 2s
       retries: 30
 
+  # Catches the mail Keycloak sends (the realm's test-only SMTP default is mail:1025) and serves it on
+  # http://localhost:8025 for the tests to read. Production mail goes through Resend instead.
+  mail:
+    image: axllent/mailpit:v1.27.0@sha256:fb84cfb1c3a33007cfdee8ba5a77b8c6c894de5b1a368372ddc5c965cf5c0b6d
+    ports:
+      - "127.0.0.1:8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
     command:
@@ -45,6 +58,8 @@ services:
       - "127.0.0.1:9180:9000"
     depends_on:
       db:
+        condition: service_healthy
+      mail:
         condition: service_healthy
     mem_limit: 1536m
     healthcheck:

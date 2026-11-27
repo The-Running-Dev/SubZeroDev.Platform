@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { backup, composeDumpCommand } from "../src/backup.ts";
-import { clientSecret, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./support/members.ts";
+import { clientSecret, describeWalk, enrol, environment, removeMembers, walk } from "./support/members.ts";
 import type { Environment, Member } from "./support/members.ts";
 
 const e = environment();
@@ -31,12 +31,7 @@ describe.skipIf(!e)("identity-restore's recorder and dump check against this rea
   let member: Member;
 
   beforeAll(async () => {
-    await installBootstrapClient(env);
-    try {
-      member = await enrol(env, `${PREFIX}-m`);
-    } finally {
-      await removeBootstrapClient(env);
-    }
+    member = await enrol(env, `${PREFIX}-m`);
   });
 
   afterAll(async () => {

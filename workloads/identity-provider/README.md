@@ -6,14 +6,17 @@ through the generic bearer path; nothing in Platform knows it is Keycloak.
 
 What this workload owns:
 
-- `docker-compose.yml`: Keycloak (pinned by digest) on its own PostgreSQL 17, for local and CI use
-  only. It runs on HTTP at `http://localhost:8180`. A production deployment is a separate approval.
+- `docker-compose.yml`: Keycloak (pinned by digest) on its own PostgreSQL 17, with a mail catcher
+  (mailpit) that receives every message Keycloak sends. It is for local and CI use only, on HTTP at
+  `http://localhost:8180`; the caught mail is at `http://localhost:8025`. A production deployment is a
+  separate approval.
 - `realm/members.json`: the member realm as code. It holds the realm settings, the signing keys
   (ES256 only), a username-only user profile, the passkey and recovery-code required actions, the
-  browser flow, the stored-event settings, and the clients.
+  browser flow, the stored-event settings, the session lifetimes, the mail server, and the clients.
 - `src/cli.ts`: `configure` makes a Keycloak match the definition, then checks it. `check`
-  reports every difference that matters for sign-in safety. `jwks` prints the published key set
-  for pinning at the edge. `backup` dumps the member database.
+  reports every difference that matters for sign-in safety. `invite` and `reset` enrol a member and
+  start one again (see *Enrolment and reset*). `jwks` prints the published key set for pinning at the
+  edge. `backup` dumps the member database.
 
 ## Sign-in
 
@@ -36,9 +39,47 @@ correction from the G1 recovery spike.
 - any client in the realm overrides the browser flow;
 - a client the definition does not name receives the game audience;
 - a published key is anything other than EC P-256 ES256;
+- a realm setting in the definition has another value: the session lifetimes, the passkey policy,
+  brute-force detection, and the mail server (the mail password is never compared, because Keycloak
+  never returns it);
 - a required action is enabled that the definition does not list;
 - the stored-event settings differ from the definition (see *Security events*);
 - a service account holds roles other than the ones the definition grants it.
+
+## Enrolment and reset
+
+Enrolment is by invitation only (decided 2026-11-27). The owner creates the account and Keycloak
+emails it a link:
+
+```powershell
+npm run cli -- invite USERNAME --email ADDRESS
+```
+
+The address is admin-only: no member can see or change it, and no token carries it. The link opens
+on "Perform the following action(s)", registers a passkey, then shows the recovery codes, and ends on
+"Your account has been updated." The account holds no credential until the member follows the link,
+and the link works once. It lasts Keycloak's default for links an administrator sends (12 hours); that
+lifetime is not decided. `invite` refuses a username that exists. When the link cannot be sent, it
+removes the account it made, so the invite can be repeated.
+
+When a member has lost their passkeys and their recovery codes, the owner resets them:
+
+```powershell
+npm run cli -- reset USERNAME
+```
+
+`reset` removes every credential, ends every session, and revokes every client's grant, which ends
+the offline sessions too. It then sends a new link to the address on the account. The account is
+kept, so the member keeps their subject: the `sub` the edge and game-service know them by.
+
+Neither command is reachable from sign-in. The browser flow still refuses a username with no
+credential.
+
+Keycloak sends the mail through the realm's mail server. In compose and CI that is the mail catcher.
+In production it is Resend over SMTP, from a verified `subzerodev.com` domain; the Resend API key is
+`IDP_SMTP_PASSWORD` and is never in the definition. `configure` refuses when the definition asks for
+SMTP authentication and no password is set, because every run writes the mail settings, and a run
+without the password would erase it.
 
 ## Account actions
 
@@ -152,7 +193,16 @@ These variables set the connection:
 | `KC_BOOTSTRAP_ADMIN_PASSWORD` | required |
 
 To override any `${NAME}` in `realm/members.json`, set `IDP_NAME`, for example
-`IDP_GAME_AUDIENCE`. Every default in `values` is test-only.
+`IDP_GAME_AUDIENCE`. Every default in `values` is test-only, including these:
+
+- `IDP_WEBAUTHN_RP_ID` is `localhost`. In production it is exactly `id.subzerodev.com`.
+- `IDP_SMTP_HOST`, `IDP_SMTP_PORT`, `IDP_SMTP_FROM`, `IDP_SMTP_SSL`, `IDP_SMTP_STARTTLS`,
+  `IDP_SMTP_AUTH`, `IDP_SMTP_USER` and `IDP_SMTP_PASSWORD` point at the compose mail catcher, with no
+  authentication. In production they point at Resend.
+
+The session lifetimes are not placeholders. They are D9 (decided 2026-11-27): a 5-minute access
+token, a 2-hour idle and 10-hour maximum SSO session, and a 30-day idle offline session with no
+maximum. Only `game-cli` can ask for an offline session (`offline_access` is its optional scope).
 
 `configure` is idempotent. It creates the realm when the realm is absent. When the realm exists,
 `configure` reconciles its settings, user profile, required actions, clients, mappers and client
@@ -172,8 +222,19 @@ flow has drifted, `configure` refuses.
 - a passkey the member does not hold is refused;
 - a username with no credential, and an unknown username, get no token;
 - a username with no credential is never shown a set-up page;
-- `check` reports the test-only bootstrap client while that client exists, and passes once it is
-  removed.
+- `check` passes on the configured realm, and names a client that overrides the browser flow.
+
+`tests/enrolment.test.ts` proves enrolment and the reset:
+
+- an invited member follows the emailed link to a passkey and recovery codes, signs in, and the
+  token's `sub` is the account's id;
+- a link that has been followed registers nothing the second time;
+- `invite` refuses an existing username, a malformed username and a malformed address;
+- `reset` keeps the account and its id and removes both credentials. The member's refresh token,
+  offline token, old passkey and old recovery codes are then refused, and the new link enrols the
+  member again under the same `sub`;
+- `reset` refuses a member that does not exist;
+- `check` names a drifted SSO lifetime and a drifted mail host, and `configure` puts both back.
 
 `tests/account.test.ts` proves the account actions:
 
@@ -233,34 +294,26 @@ node tests/support/mint.ts remove t2-example
 The tests use a software WebAuthn authenticator (`tests/support/authenticator.ts`). It proves the
 server side of the ceremony. It says nothing about real browsers or real authenticators.
 
-**Test-only enrolment.** Enrolment is decided (2026-11-27: the owner creates the account and
-Keycloak emails a link to register a passkey and recovery codes) but not built, so the realm has no
-enrolment path of its own yet. The tests enrol synthetic members through
-`test-only-enrol`, which works like this:
-
-1. The client uses Keycloak's built-in password flow.
-2. The member is created with a throwaway password and the two required actions.
-3. The member completes the required actions.
-4. The password is deleted.
-
-`check` flags this client, and the suite removes it. It is not an enrolment design.
+The suites enrol their synthetic members the way the owner does: `invite`, then the link, which they
+read from the mail catcher's API (`IDP_MAIL_API`, default `http://localhost:8025`). No member ever
+holds a password. A member with only one credential, which `invite` never makes, gets the same kind of
+link asking for that one action.
 
 Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the suite skips locally. Under CI (`CI` set) it fails instead.
 
 ## Open, and not settled here
 
-- **Decided on 2026-11-27, not yet applied** (`design/90-decisions.md`): invite-only enrolment by
-  email link, sent through Resend; recovery codes, then an owner reset that keeps the account; D9
-  lifetimes of a 5-minute access token, a 2-hour idle and 10-hour maximum SSO session, and a 30-day
-  idle offline session for `game-cli`; an `operators` realm of its own; the host
-  `id.subzerodev.com`, which is also the passkey relying-party ID. The realm here does not carry
-  these yet.
+- **Decided on 2026-11-27, not yet built** (`design/90-decisions.md`): the `operators` realm and the
+  deployment at `id.subzerodev.com`. The members realm here carries the other rulings: enrolment by
+  invitation, the owner reset, the D9 lifetimes, and the relying-party ID as a setting. Nothing is
+  applied to a live Keycloak, and the Resend domain is not set up.
+- **The enrolment link's lifetime** is Keycloak's default (12 hours). It is not decided.
 - **D3:** the brute-force numbers are test values.
 - **R1 and D6:** production gates under G1. They do not block building and are not waived by it.
 - **Deleting the last credential.** Keycloak lets a member delete their only credential. The member
   then has no way to sign in. `tests/account.test.ts` pins this as Keycloak's behaviour. It is
-  recorded, not accepted. The owner reset is a way back; whether the deletion should be allowed is
-  still open.
+  recorded, not accepted. The owner reset (`reset`) is the way back; whether the deletion should be
+  allowed is still open.
 - **Event retention.** The 30-day expiries are test values. How long events and backups are kept is
   not decided.
 - **Restoring the realm** is R1. `backup` writes a dump the restore can verify; nothing here
