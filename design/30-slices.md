@@ -483,8 +483,9 @@ Touches:
   `game-api.subzerodev.com`, pinning the `members` realm's keys and
   accepting the game audience of its `game-cli` client
 
-Depends on: S11, S13. The identity provider live, which R1, D6 and OD-16 (G1 production gates) and
-first-credential enrolment (D3/D5) stand in front of. The deployment path decided on 2026-11-25
+Depends on: S11, S13. The identity provider live at `id.subzerodev.com`, which R1 and D6 (G1
+production gates) stand in front of, with the invite-only enrolment decided on 2026-11-27 built.
+The deployment path decided on 2026-11-25
 (through SubZeroDev.Infra, one stack per workload), built.
 
 Acceptance:

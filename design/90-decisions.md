@@ -975,3 +975,63 @@ name that differs from the stack, the service and the Portainer stack it checks.
 Not settled here: `game-api`'s `TrustedProxies`. The G1 gates in front of S14 are unchanged.
 Reversibility: cheap. Changing the label is one variable and one apply; the old route and DNS record
 are replaced.
+
+### 2026-11-27 — Identity owner rulings: invite-only email enrolment, recovery codes then owner reset, token lifetimes, an operators realm, `id.subzerodev.com`, and OD-16 retired
+
+Context: the 27 Nov Keycloak Supabase-exit handoff asks the owner to settle enrolment, recovery,
+token lifetimes and whether operators use a separate realm, then to authorise the identity
+workload's deployment with a stable issuer hostname and passkey relying-party ID before anyone
+enrols. D3/D5 (first-credential enrolment and recovery), D9 (token lifetimes) and the G1 production
+gates R1, D6 and OD-16 stood in front of S14. No SubZeroDev repository has an email sender. A
+passkey is bound to its relying-party ID for good, so changing that ID later means every account
+re-enrols. OD-16 first appears in #382 (2026-11-22) as a G1 production gate and is defined nowhere:
+not in this repository, Notes, the other SubZeroDev repositories or any GitHub issue.
+Chosen (owner rulings):
+- **Enrolment (D3/D5) is invite-only, by email link.** Sign-up stays off. The owner creates each
+  account, with an email only an administrator can set, and Keycloak's execute-actions email sends
+  a short-lived link to register a passkey and recovery codes. Email stays off as a sign-in factor.
+- **The realm's email goes out through Resend**, over plain SMTP from a verified `subzerodev.com`
+  sending domain whose SPF and DKIM records live in SubZeroDev.Infra's Cloudflare OpenTofu. This is
+  Keycloak's sender only. Platform's Notifications tier stays Undecided.
+- **Recovery (D3/D5) is recovery codes, then an owner reset.** Recovery codes are the member's own
+  way back. Failing that, the owner resets the account and sends a new link; the account, and so
+  its subject and progress, stays the same. There is no email-based self-service reset.
+- **Token lifetimes (D9), written into the realm rather than left to Keycloak's defaults:** access
+  token 5 minutes; browser SSO session 2 hours idle and 10 hours maximum; `game-cli` keeps
+  `offline_access`, with an offline session of 30 days idle. Refresh tokens keep rotating with no
+  reuse. Five minutes is the longest a signed-out or reset account's access token stays usable at
+  an edge, which validates locally and never asks Keycloak.
+- **Operators sign in on a realm of their own,** `operators`, on the `members` pattern: invite-only,
+  passkey plus recovery codes, no GitHub login. The Dashboard's portfolio moves to that realm's
+  issuer and subject in the operator migration (handoff step 6).
+- **The identity workload is authorised to deploy** to the VPS through SubZeroDev.Infra, as its own
+  stack under the 2026-11-25 deployment path. The host is `id.subzerodev.com`, so the issuers are
+  `https://id.subzerodev.com/realms/members` and `https://id.subzerodev.com/realms/operators`. Both
+  realms' passkey relying-party ID is `id.subzerodev.com` exactly.
+- **OD-16 is retired as unrecorded.** It never had a definition. Anything real it stood for gets its
+  own written decision when someone names it.
+Rejected: for enrolment, **a link the owner delivers by hand** from a private mail catcher on the
+VPS, more manual work and a sensitive component to guard, and **open passkey sign-up**, which is
+not invite-only. For the sender, **Postmark**, whose free allowance is small; **Amazon SES**, which
+needs an AWS account and a sandbox exit; and **Gmail SMTP**, which sends from a personal address
+rather than `subzerodev.com`. For recovery, **a self-service email reset**, under which whoever
+controls the inbox can take the account, and **no recovery**, which loses the member's progress.
+For lifetimes, **15-minute access tokens**, a third of the refresh traffic for up to 15 minutes of
+access after sign-out or reset, and **no offline access for the CLI**, which signs the player in
+again at least every 10 hours. For operators, **an `operators` realm that brokers GitHub**, which
+puts a GitHub OAuth app secret in Keycloak and makes operator sign-in depend on GitHub, and
+**operators as a role in `members`**, which puts operator and player accounts under one realm's
+settings, lockouts and restores. For the relying party, **`subzerodev.com`**, which would let the
+host move without re-enrolment but lets any `subzerodev.com` subdomain, third-party-hosted ones such
+as GitHub Pages included, ask for these passkeys; and **not deploying yet**. For OD-16, **keeping it
+open until its source turns up**, which blocks production on a gate no one can state.
+Not settled here: R1 (how the realm is restored) and D6 (how members a restore replay leaves without
+credentials are recovered) remain the G1 production gates. The owner reset above is a way back for
+an account, but this ruling does not say it is D6's answer. Whether a member may delete their only
+credential is still open. The brute-force numbers (D3) and event and backup retention are still test
+values. Recording this applies nothing live: the realm settings, the `operators` realm, the SMTP
+configuration, a `deploy/identity-provider` root, the Infra DNS records and the Resend domain are
+later changes, and each one's first apply is an operator step.
+Reversibility: cheap for the lifetimes, the sender and OD-16, which are configuration or a label.
+Expensive for the relying-party ID and the issuer host: once anyone has enrolled, changing either
+means every account re-enrols and every edge re-pins.

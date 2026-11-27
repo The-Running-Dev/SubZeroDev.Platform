@@ -61,7 +61,7 @@ Sign-out is the OIDC logout endpoint with the refresh token, or token revocation
 session at Keycloak, and its refresh token is then refused. Refresh tokens rotate: a reused one is
 refused and ends the session. An access token already issued stays valid at the edge until it
 expires, because the edge validates tokens locally against the pinned key set and does not ask
-Keycloak. The access-token lifetime is D9, which is open.
+Keycloak. D9 (decided 2026-11-27) sets the access-token lifetime to 5 minutes.
 
 The realm has three clients:
 
@@ -233,8 +233,9 @@ node tests/support/mint.ts remove t2-example
 The tests use a software WebAuthn authenticator (`tests/support/authenticator.ts`). It proves the
 server side of the ceremony. It says nothing about real browsers or real authenticators.
 
-**Test-only enrolment.** How a member gets a first credential is an open decision (D3/D5), so the
-realm has no enrolment path of its own. The tests enrol synthetic members through
+**Test-only enrolment.** Enrolment is decided (2026-11-27: the owner creates the account and
+Keycloak emails a link to register a passkey and recovery codes) but not built, so the realm has no
+enrolment path of its own yet. The tests enrol synthetic members through
 `test-only-enrol`, which works like this:
 
 1. The client uses Keycloak's built-in password flow.
@@ -248,13 +249,18 @@ Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the suite skips locally. Under CI (`CI` se
 
 ## Open, and not settled here
 
-- **D9:** token lifetimes. The 300 s access token is a test value.
-- **D3/D5:** the brute-force numbers and first-credential enrolment.
-- **R1, D6 and OD-16:** production gates under G1. They do not block building and are not waived by
-  it.
+- **Decided on 2026-11-27, not yet applied** (`design/90-decisions.md`): invite-only enrolment by
+  email link, sent through Resend; recovery codes, then an owner reset that keeps the account; D9
+  lifetimes of a 5-minute access token, a 2-hour idle and 10-hour maximum SSO session, and a 30-day
+  idle offline session for `game-cli`; an `operators` realm of its own; the host
+  `id.subzerodev.com`, which is also the passkey relying-party ID. The realm here does not carry
+  these yet.
+- **D3:** the brute-force numbers are test values.
+- **R1 and D6:** production gates under G1. They do not block building and are not waived by it.
 - **Deleting the last credential.** Keycloak lets a member delete their only credential. The member
   then has no way to sign in. `tests/account.test.ts` pins this as Keycloak's behaviour. It is
-  recorded, not accepted; it belongs to the open recovery decisions (D3/D5).
+  recorded, not accepted. The owner reset is a way back; whether the deletion should be allowed is
+  still open.
 - **Event retention.** The 30-day expiries are test values. How long events and backups are kept is
   not decided.
 - **Restoring the realm** is R1. `backup` writes a dump the restore can verify; nothing here
