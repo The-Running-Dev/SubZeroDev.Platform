@@ -1,5 +1,6 @@
 /**
- * Members and sign-ins against a running Keycloak configured from realm/members.json.
+ * Accounts and sign-ins against a running Keycloak configured from realm/<name>.json (the members
+ * realm unless a suite asks for another).
  *
  * Tests enrol their synthetic members the way the owner does (decided 2026-11-27): `invite` creates
  * the account and Keycloak emails it an action link, which the test reads from the compose mail
@@ -10,7 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { KeycloakAdmin } from "../../src/admin.ts";
 import { invite } from "../../src/members.ts";
 import { loadDefinition } from "../../src/realm.ts";
-import type { RealmDefinition } from "../../src/realm.ts";
+import type { RealmDefinition, RealmName } from "../../src/realm.ts";
 import { Authenticator } from "./authenticator.ts";
 import { UserAgent, authenticateAction, credentialOptions, feedback, formById, hiddenFields, pageId, scriptField } from "./user-agent.ts";
 import type { Answer } from "./user-agent.ts";
@@ -32,7 +33,7 @@ export interface Environment {
  * The Keycloak under test, or undefined when none is configured. Locally the suite skips without
  * one; under CI (CI=true) a missing Keycloak is a failure, never a skip.
  */
-export function environment(env: NodeJS.ProcessEnv = process.env): Environment | undefined {
+export function environment(env: NodeJS.ProcessEnv = process.env, name: RealmName = "members"): Environment | undefined {
   const password = env["KC_BOOTSTRAP_ADMIN_PASSWORD"];
   if (!password) {
     if (env["CI"]) throw new Error("CI run without KC_BOOTSTRAP_ADMIN_PASSWORD: the identity-provider proof cannot be skipped in CI");
@@ -40,7 +41,7 @@ export function environment(env: NodeJS.ProcessEnv = process.env): Environment |
   }
   const base = (env["KC_BASE_URL"] ?? "http://localhost:8180").replace(/\/+$/, "");
   const kc = new KeycloakAdmin({ baseUrl: base, username: env["KC_BOOTSTRAP_ADMIN_USERNAME"] ?? "bootstrap-admin", password });
-  const def = loadDefinition(env);
+  const def = loadDefinition(env, name);
   return { kc, def, base, realm: def.realm.realm, issuer: `${base}/realms/${def.realm.realm}` };
 }
 

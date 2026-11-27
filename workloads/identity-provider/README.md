@@ -1,6 +1,6 @@
 # identity-provider
 
-The member identity provider: Keycloak 26.8.1, run as a **workload** beside the edge and
+The identity provider for members and operators: Keycloak 26.8.1, run as a **workload** beside the edge and
 game-service. It is not a Platform package (ADR-009). Platform validates the tokens it issues
 through the generic bearer path; nothing in Platform knows it is Keycloak.
 
@@ -13,10 +13,13 @@ What this workload owns:
 - `realm/members.json`: the member realm as code. It holds the realm settings, the signing keys
   (ES256 only), a username-only user profile, the passkey and recovery-code required actions, the
   browser flow, the stored-event settings, the session lifetimes, the mail server, and the clients.
-- `src/cli.ts`: `configure` makes a Keycloak match the definition, then checks it. `check`
-  reports every difference that matters for sign-in safety. `invite` and `reset` enrol a member and
-  start one again (see *Enrolment and reset*). `jwks` prints the published key set for pinning at the
-  edge. `backup` dumps the member database.
+- `realm/operators.json`: the operators realm as code (see *The operators realm*). It follows
+  `members.json` in everything but its one client, `dashboard`.
+- `src/cli.ts`: `configure` makes a Keycloak match the definitions, then checks them. `check`
+  reports every difference that matters for sign-in safety. Both take every realm, or one with
+  `--realm NAME`. `invite` and `reset` enrol a member and start one again (see *Enrolment and
+  reset*). `jwks` prints the published key set for pinning at the edge. These three act on `members`
+  unless `--realm operators` is given. `backup` dumps the database, which holds both realms.
 
 ## Sign-in
 
@@ -44,7 +47,8 @@ correction from the G1 recovery spike.
   never returns it);
 - a required action is enabled that the definition does not list;
 - the stored-event settings differ from the definition (see *Security events*);
-- a service account holds roles other than the ones the definition grants it.
+- a service account holds roles other than the ones the definition grants it;
+- the realm brokers any identity provider, such as GitHub.
 
 ## Enrolment and reset
 
@@ -192,13 +196,16 @@ These variables set the connection:
 | `KC_BOOTSTRAP_ADMIN_USERNAME` | `bootstrap-admin` |
 | `KC_BOOTSTRAP_ADMIN_PASSWORD` | required |
 
-To override any `${NAME}` in `realm/members.json`, set `IDP_NAME`, for example
-`IDP_GAME_AUDIENCE`. Every default in `values` is test-only, including these:
+To override any `${NAME}` in `realm/members.json` or `realm/operators.json`, set `IDP_NAME`, for
+example `IDP_GAME_AUDIENCE`. The realms share the names they have in common, so one setting covers
+both. Every default in `values` is test-only, including these:
 
 - `IDP_WEBAUTHN_RP_ID` is `localhost`. In production it is exactly `id.subzerodev.com`.
 - `IDP_SMTP_HOST`, `IDP_SMTP_PORT`, `IDP_SMTP_FROM`, `IDP_SMTP_SSL`, `IDP_SMTP_STARTTLS`,
   `IDP_SMTP_AUTH`, `IDP_SMTP_USER` and `IDP_SMTP_PASSWORD` point at the compose mail catcher, with no
   authentication. In production they point at Resend.
+- `IDP_DASHBOARD_REDIRECT` is `http://localhost:4400/auth/callback`. In production it is
+  `https://dashboard.subzerodev.com/auth/callback`.
 
 The session lifetimes are not placeholders. They are D9 (decided 2026-11-27): a 5-minute access
 token, a 2-hour idle and 10-hour maximum SSO session, and a 30-day idle offline session with no
@@ -208,6 +215,26 @@ maximum. Only `game-cli` can ask for an offline session (`offline_access` is its
 `configure` reconciles its settings, user profile, required actions, clients, mappers and client
 scopes. It never replaces signing keys. It never rebuilds a live browser flow in place: when the
 flow has drifted, `configure` refuses.
+
+## The operators realm
+
+The people who run the platform sign in on a realm of their own, `operators` (decided 2026-11-27),
+so no operator account is a member account and no member token is accepted by an operator tool. It
+has the members realm's settings: invite-only enrolment, a passkey or a recovery code and nothing
+else, the D9 access-token and SSO lifetimes, the same events and the same signing-key policy. Its
+browser flow is `operators-browser`, of the same shape as `members-browser`. It brokers no identity
+provider: there is no GitHub sign-in, and `check` fails on any.
+
+Its one client is `dashboard`: confidential, standard flow only, PKCE S256, no offline session, and
+no game audience. Keycloak generates its secret; the secret is never in the definition and is read
+through the admin API by whoever deploys the Dashboard. The Dashboard moves to this issuer in the
+Supabase-exit sequence's step 6; until then nothing signs in here.
+
+```powershell
+npm run cli -- invite USERNAME --email ADDRESS --realm operators
+```
+
+`reset USERNAME --realm operators` starts an operator again, as for a member.
 
 ## Tests
 
@@ -299,14 +326,27 @@ read from the mail catcher's API (`IDP_MAIL_API`, default `http://localhost:8025
 holds a password. A member with only one credential, which `invite` never makes, gets the same kind of
 link asking for that one action.
 
+`tests/operators.test.ts` proves the operators realm:
+
+- `check` passes, and names a brokered GitHub provider and a drifted access-token lifetime, which
+  `configure` puts back;
+- an invited operator signs in to `dashboard` with a passkey. The ES256 token's `kid` is in the
+  operators key set and not the members one, its `iss` is the operators issuer, its `sub` is the
+  account's id, and it carries no game audience. The ID token carries no address;
+- a recovery code signs the operator in once; a foreign passkey and a wrong client secret are refused;
+- `dashboard` cannot ask for an offline session (`invalid_scope`);
+- nothing crosses between the realms: neither holds the other's accounts or clients, a member cannot
+  sign in to `dashboard`, and an operator's passkey does not sign in to `game-cli`.
+
 Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the suite skips locally. Under CI (`CI` set) it fails instead.
 
 ## Open, and not settled here
 
-- **Decided on 2026-11-27, not yet built** (`design/90-decisions.md`): the `operators` realm and the
-  deployment at `id.subzerodev.com`. The members realm here carries the other rulings: enrolment by
-  invitation, the owner reset, the D9 lifetimes, and the relying-party ID as a setting. Nothing is
-  applied to a live Keycloak, and the Resend domain is not set up.
+- **Decided on 2026-11-27, not yet built** (`design/90-decisions.md`): the deployment at
+  `id.subzerodev.com`. The realms here carry the other rulings: enrolment by invitation, the owner
+  reset, the D9 lifetimes, the relying-party ID as a setting, and the `operators` realm. Nothing is
+  applied to a live Keycloak, the Resend domain is not set up, and the Dashboard still signs in
+  through Supabase.
 - **The enrolment link's lifetime** is Keycloak's default (12 hours). It is not decided.
 - **D3:** the brute-force numbers are test values.
 - **R1 and D6:** production gates under G1. They do not block building and are not waived by it.

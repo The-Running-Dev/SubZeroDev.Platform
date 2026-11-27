@@ -738,10 +738,11 @@ jobs:
           RECORD_TEST_DATABASE_URL: postgres://identity_record:identity_record@127.0.0.1:5433/identity_record
         run: npm test
 
-  # Identity slice 1: the member realm on a real Keycloak 26.8.1, configured from
-  # workloads/identity-provider/realm/members.json, and a passkey sign-in through game-cli that ends
-  # in an ES256 token for the game audience. The admin password is generated for this run only. With
-  # CI set, the suite fails rather than skips when Keycloak is not reachable.
+  # Identity: the members and operators realms on a real Keycloak 26.8.1, configured from
+  # workloads/identity-provider/realm/members.json and operators.json, a passkey sign-in through
+  # game-cli that ends in an ES256 token for the game audience, and one through the operators realm's
+  # dashboard client. The admin password is generated for this run only. With CI set, the suite fails
+  # rather than skips when Keycloak is not reachable.
   identity-provider:
     runs-on: ubuntu-latest
 
@@ -772,7 +773,7 @@ jobs:
         run: npm run typecheck
 
       # The README's own command, run here so a documented command that stops working fails CI.
-      - name: Configure the member realm
+      - name: Configure the realms
         working-directory: workloads/identity-provider
         run: npm run cli -- configure
 

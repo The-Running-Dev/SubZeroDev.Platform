@@ -1,6 +1,8 @@
 /**
- * Enrolment and the owner reset (decided 2026-11-27). Both are operator commands through the admin
- * API; neither is reachable from the sign-in flow, which still refuses a username with no credential.
+ * Enrolment and the owner reset (decided 2026-11-27), for either realm: a member of `members` and an
+ * operator of `operators` are enrolled and reset the same way. Both are operator commands through the
+ * admin API; neither is reachable from the sign-in flow, which still refuses a username with no
+ * credential.
  *
  * `invite` creates the account with the address the link goes to, and has Keycloak email that
  * address an action link. The link registers a passkey and then recovery codes; the account holds no
@@ -38,7 +40,7 @@ export async function invite(kc: KeycloakAdmin, def: RealmDefinition, username: 
   const realm = def.realm.realm;
   if (!USERNAME.test(username)) throw new Error(`username ${JSON.stringify(username)} must be 2-63 lowercase letters, digits, '.', '_' or '-'`);
   if (!EMAIL.test(email)) throw new Error(`${JSON.stringify(email)} is not an email address`);
-  if (await findMember(kc, realm, username)) throw new Error(`member ${username} already exists; \`reset\` sends a new link to an existing member`);
+  if (await findMember(kc, realm, username)) throw new Error(`${username} already exists in realm ${realm}; \`reset\` sends a new link to an existing account`);
   const created = await kc.call("POST", `/realms/${enc(realm)}/users`, { username, email, enabled: true });
   const id = KeycloakAdmin.createdId(created.location);
   try {
@@ -58,8 +60,8 @@ export async function invite(kc: KeycloakAdmin, def: RealmDefinition, username: 
 export async function reset(kc: KeycloakAdmin, def: RealmDefinition, username: string): Promise<{ id: string; credentials: number; clients: string[] }> {
   const realm = def.realm.realm;
   const user = await findMember(kc, realm, username);
-  if (!user) throw new Error(`member ${username} does not exist`);
-  if (!user.email) throw new Error(`member ${username} has no address to send the link to`);
+  if (!user) throw new Error(`${username} does not exist in realm ${realm}`);
+  if (!user.email) throw new Error(`${username} in realm ${realm} has no address to send the link to`);
   const base = `/realms/${enc(realm)}/users/${user.id}`;
   const credentials = await kc.get<{ id: string }[]>(`${base}/credentials`);
   for (const c of credentials) await kc.call("DELETE", `${base}/credentials/${c.id}`);
