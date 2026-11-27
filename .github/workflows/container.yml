@@ -101,7 +101,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: The-Running-Dev/GitHub-ActionTemplates/actions/infra-deploy@c71f9720badd37b94b96da0c77633acc3a113647 # v2.2.0
+      # A run read that answers 404 just after dispatch is retried (ActionTemplates #59), which is on
+      # main but in no release yet; repin to the release that carries it.
+      - uses: The-Running-Dev/GitHub-ActionTemplates/actions/infra-deploy@6902aa7e6232397efd62782cdf6d3d3c1ca939a6 # main, after v2.4.0
         with:
           app: adventures-edge
           digest: ${{ needs.edge.outputs.digest }}
@@ -117,9 +119,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Both images come from this commit and deploy in one redeploy. `images` is on ActionTemplates
-      # main (#56) but in no release yet; repin to the release that carries it.
-      - uses: The-Running-Dev/GitHub-ActionTemplates/actions/infra-deploy@cf47b023fd893168e83901128ebf5cbd33e77971 # main, after v2.3.0
+      # Both images come from this commit and deploy in one redeploy (`images`, ActionTemplates v2.4.0).
+      # Pinned with the edge deploy, for the same 404 retry; repin both to the release that carries it.
+      - uses: The-Running-Dev/GitHub-ActionTemplates/actions/infra-deploy@6902aa7e6232397efd62782cdf6d3d3c1ca939a6 # main, after v2.4.0
         with:
           app: game-api
           images: |
