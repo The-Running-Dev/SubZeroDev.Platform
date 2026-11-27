@@ -5,8 +5,8 @@ Two packed npm tarballs, declared as `file:` dependencies in
 
 | Tarball | Built from |
 |---|---|
-| `subzerodev-service-contract-0.9.0.tgz` | `SubZeroDev.ServiceContract`, `npm pack` of `main` at `d53d8a7` ([ServiceContract #19](https://github.com/The-Running-Dev/SubZeroDev.ServiceContract/pull/19)); sha256 `8f4d4b588a14b3f2f6e3f5fd542d391cc62d4c06894db643d02dfaf159a914d0` |
-| `the-running-dev-game-engine-0.14.0.tgz` | `SubZeroDev.GameEngine`, the published `0.14.0` release, tag `v0.14.0`, commit `b7f9925f260959ec02fa874555a45482eb63ab49` (byte-identical to the GitHub Packages archive, whose release run `41686904892` recorded the same digest, and to the copy vendored in `SubZeroDev.ServiceContract`); sha256 `43aa787484ce6ed0418775577cd964831a203e3b2504f26a3dd2df5c87eb90f4` |
+| `subzerodev-service-contract-0.10.0.tgz` | `SubZeroDev.ServiceContract`, `npm pack` of `main` at `4c8785a` ([ServiceContract #20](https://github.com/The-Running-Dev/SubZeroDev.ServiceContract/pull/20)); sha256 `9bb5c14331a5e87ed24c56a8538a0272b3bf521448618cfe725776863727be87` |
+| `the-running-dev-game-engine-0.15.0.tgz` | `SubZeroDev.GameEngine`, the published `0.15.0` release, tag `v0.15.0`, commit `b7517d8d8efb836422085fa1b5bb12057ffa4c04` (byte-identical to the GitHub Packages archive, whose release run `45878037211` recorded the same digest, and to the copy vendored in `SubZeroDev.ServiceContract`); sha256 `e3da18ddcfa84e1f9aa3b210904fa787636a62c85935b5c8f179aac84ea34d70` |
 
 **Neither package is published to a public registry yet.** The `@subzerodev` npm organisation is
 still unreserved — [Platform issue #81](https://github.com/The-Running-Dev/SubZeroDev.Platform/issues/81)
@@ -30,18 +30,20 @@ Both tarballs are replaced wholesale on a version bump — never edited in place
 schedule.** `compose()` asserts the loaded contract's recorded `engineVersion` against
 `ENGINE_VERSION`, resolved from whichever engine package is actually installed
 (`20-contract.md`, "the artifact cannot claim a version the resolved engine does not have").
-`SubZeroDev.ServiceContract` generates its `0.9.0` contract against the engine's `0.14.0`
-release, so this repository's own engine pin moves to the same `0.14.0` in the same commit —
+`SubZeroDev.ServiceContract` generates its `0.10.0` contract against the engine's `0.15.0`
+release, so this repository's own engine pin moves to the same `0.15.0` in the same commit —
 otherwise every startup fails `EngineVersionMismatch` before the listener ever binds.
 
-**At `0.14.0` neither the session store nor the host ports change**, so `src/store.ts` and the
+**At `0.15.0` neither the session store nor the host ports change**, so `src/store.ts` and the
 migrations are untouched. The contract moves only because its recorded `engineVersion` does: the RPC
-contract is byte-identical to `0.8.0`'s apart from that field, and the content contract also carries
-structure-hash churn in definition names with identical bodies. What `0.14.0` adds (`unexpected_params`
-and `unknown_target` action refusals, the capture and record-sink types at the package root, and
-`createReplayContext`) sits on the kinds and the host ports this workload does not implement. The
-`0.12.0` host-port changes (`revision`, `initialization`, profile `kindData`) landed in #353 and are
-recorded in `design/90-decisions.md`.
+contract is byte-identical to `0.9.0`'s apart from that field. What `0.15.0` adds — published
+attachments (the engine's S141): `PortableManifest.attachments`, story-graph `includes`,
+`digestManifestResolution` at the package root and the `reserved_version_identifier` reason code — sits
+on content composition, which this workload does not perform. Its only trace here is that reason's
+string, the one key the golden transcript's `get-strings` catalog gains. `0.14.0` likewise touched
+only kinds and host ports this workload does not implement. The `0.12.0` host-port changes
+(`revision`, `initialization`, profile `kindData`) landed in #353 and are recorded in
+`design/90-decisions.md`.
 
 **The engine tarball is a published release, not a candidate.** The contract tarball is still
 unpublished (above). Its digest is not reproducible across checkouts: the content contract's
