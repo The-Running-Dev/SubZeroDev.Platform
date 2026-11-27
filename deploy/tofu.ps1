@@ -3,7 +3,8 @@
 .SYNOPSIS
   Runs OpenTofu for one of Platform's deploy roots with credentials taken from your environment.
 .DESCRIPTION
-  The first argument names the root: adventures-edge or game-api. The rest go to tofu.
+  The first argument names the root: adventures-edge, game-api or identity-provider. The rest go to
+  tofu.
 
   Reads User-scope environment variables, never prints them, and sets them for this process only:
   CLOUDFLARE_API_TOKEN, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, TF_VAR_state_passphrase,
@@ -17,10 +18,11 @@
 .EXAMPLE
   ./deploy/tofu.ps1 adventures-edge plan
   ./deploy/tofu.ps1 game-api apply
+  ./deploy/tofu.ps1 identity-provider output -raw admin_password
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('adventures-edge', 'game-api')][string]$Root,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('adventures-edge', 'game-api', 'identity-provider')][string]$Root,
   [Parameter(ValueFromRemainingArguments)][string[]]$TofuArguments
 )
 $ErrorActionPreference = 'Stop'

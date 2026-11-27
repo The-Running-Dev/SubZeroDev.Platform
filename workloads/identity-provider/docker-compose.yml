@@ -4,7 +4,7 @@
 #
 # Local and CI only. Every published port binds to 127.0.0.1, the database credentials are test
 # values, and the bootstrap admin password has no default: the reader supplies one
-# (`KC_BOOTSTRAP_ADMIN_PASSWORD`), generated per run. Production deployment is a separate approval.
+# (`KC_BOOTSTRAP_ADMIN_PASSWORD`), generated per run. The deployment at id.subzerodev.com is deploy/identity-provider.
 #
 # The image is pinned by digest. Keycloak runs in production `start` mode (not `start-dev`) so the
 # proof exercises the same configuration path a deployment would; plain HTTP is enabled only
