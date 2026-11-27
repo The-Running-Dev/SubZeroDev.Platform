@@ -8,8 +8,8 @@ What this workload owns:
 
 - `docker-compose.yml`: Keycloak (pinned by digest) on its own PostgreSQL 17, with a mail catcher
   (mailpit) that receives every message Keycloak sends. It is for local and CI use only, on HTTP at
-  `http://localhost:8180`; the caught mail is at `http://localhost:8025`. A production deployment is a
-  separate approval.
+  `http://localhost:8180`; the caught mail is at `http://localhost:8025`. The deployment at
+  `id.subzerodev.com` is [`deploy/identity-provider`](../../deploy/identity-provider/README.md).
 - `realm/members.json`: the member realm as code. It holds the realm settings, the signing keys
   (ES256 only), a username-only user profile, the passkey and recovery-code required actions, the
   browser flow, the stored-event settings, the session lifetimes, the mail server, and the clients.
@@ -342,11 +342,12 @@ Without `KC_BOOTSTRAP_ADMIN_PASSWORD` the suite skips locally. Under CI (`CI` se
 
 ## Open, and not settled here
 
-- **Decided on 2026-11-27, not yet built** (`design/90-decisions.md`): the deployment at
-  `id.subzerodev.com`. The realms here carry the other rulings: enrolment by invitation, the owner
-  reset, the D9 lifetimes, the relying-party ID as a setting, and the `operators` realm. Nothing is
-  applied to a live Keycloak, the Resend domain is not set up, and the Dashboard still signs in
-  through Supabase.
+- **Decided on 2026-11-27, built but not applied** (`design/90-decisions.md`): the deployment at
+  `id.subzerodev.com` is [`deploy/identity-provider`](../../deploy/identity-provider/README.md), whose
+  first apply is an operator step. The realms here carry the other rulings: enrolment by invitation,
+  the owner reset, the D9 lifetimes, the relying-party ID as a setting, and the `operators` realm.
+  Nothing is applied to a live Keycloak, the Resend domain is not set up, and the Dashboard still
+  signs in through Supabase.
 - **The enrolment link's lifetime** is Keycloak's default (12 hours). It is not decided.
 - **D3:** the brute-force numbers are test values.
 - **R1 and D6:** production gates under G1. They do not block building and are not waived by it.

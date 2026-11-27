@@ -1,0 +1,164 @@
+# The identity provider at id.subzerodev.com (decided 2026-11-27): Keycloak on its own PostgreSQL,
+# behind a filtering proxy, as its own stack on the VPS (deploy/identity-provider, OpenTofu). Every
+# image is third-party and pinned by digest here, so no deploy changes it; a new version is a change
+# to this file. Nothing is published on the host. Layer compose.tunnel.yaml over this file.
+#
+# The public hostname reaches only the proxy, which serves /realms/members/, /realms/operators/ and
+# /resources/ and answers 404 to everything else: the master realm and the admin console and API are
+# not public. The operator reaches the admin side through a route added only for the session
+# (README.md, "Admin sessions"), until the Cloudflare Access gate exists.
+#
+# The realms themselves are not configured here: `npm run cli -- configure` in
+# workloads/identity-provider does that, through the admin route.
+name: identity-provider
+
+services:
+  db:
+    image: postgres:17.12@sha256:97fb53376be3e4fb1a8a61421daa69dcc3bf2fa39bda3259f5245f9a455af1a9
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: keycloak
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    networks:
+      - db
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
+    restart: unless-stopped
+    command:
+      - start
+      - --hostname=https://id.subzerodev.com
+      - --http-enabled=true
+      # Only the proxy, at its fixed address on `front` (below), may set X-Forwarded-*. It passes the
+      # visitor's address from CF-Connecting-IP, so brute-force detection and the stored events see
+      # the visitor, not the tunnel.
+      - --proxy-headers=xforwarded
+      - --proxy-trusted-addresses=10.213.81.10
+      - --health-enabled=true
+      - --db=postgres
+    environment:
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      # Creates the master realm's temporary admin on the first start only; the operator's CLI signs in
+      # with it (README.md, "Admin sessions"). OpenTofu generates the password.
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Set KC_BOOTSTRAP_ADMIN_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 1536m
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    networks:
+      # `front` also carries Keycloak's outbound mail (Resend) and the session-only admin route.
+      - front
+      - db
+
+  # The public face of id.subzerodev.com: the paths Keycloak's reverse-proxy guide says to expose, and
+  # nothing else. The configuration travels in the environment because a Portainer Git stack cannot
+  # bind-mount a file from the repository; the container writes it to its own tmpfs and starts nginx.
+  proxy:
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: ['printf "%s" "$$PROXY_CONF" > /tmp/nginx.conf && exec nginx -c /tmp/nginx.conf -g "daemon off;"']
+    environment:
+      PROXY_CONF: |
+        worker_processes 1;
+        pid /tmp/nginx.pid;
+        error_log /dev/stderr warn;
+        events { worker_connections 512; }
+        http {
+          access_log off;
+          server_tokens off;
+          client_body_temp_path /tmp/client_body;
+          proxy_temp_path /tmp/proxy;
+          fastcgi_temp_path /tmp/fastcgi;
+          uwsgi_temp_path /tmp/uwsgi;
+          scgi_temp_path /tmp/scgi;
+          client_max_body_size 1m;
+          large_client_header_buffers 4 16k;
+          proxy_buffer_size 16k;
+          proxy_buffers 8 16k;
+
+          # A path (not the query) that names a parent directory, carries a path parameter, or encodes
+          # a dot, a slash or a backslash is refused before matching, so no spelling of an admin path
+          # can reach Keycloak through an allowed prefix.
+          map $$request_uri $$unsafe_path {
+            default 0;
+            "~*^[^?]*(\.\.|;|%2e|%2f|%5c|\\\\)" 1;
+          }
+
+          # Docker's resolver, so a restarted Keycloak is found at its new address.
+          resolver 127.0.0.11 valid=10s ipv6=off;
+
+          server {
+            listen 8080;
+            set $$keycloak http://keycloak:8080;
+
+            proxy_set_header Host $$host;
+            proxy_set_header X-Forwarded-For $$http_cf_connecting_ip;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Host $$host;
+            proxy_set_header X-Forwarded-Port 443;
+
+            if ($$unsafe_path) { return 404; }
+
+            location ^~ /realms/members/ { proxy_pass $$keycloak; }
+            location ^~ /realms/operators/ { proxy_pass $$keycloak; }
+            location ^~ /resources/ { proxy_pass $$keycloak; }
+            location / { return 404; }
+          }
+        }
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+    networks:
+      front:
+        ipv4_address: 10.213.81.10
+
+volumes:
+  postgres:
+
+networks:
+  # The tunnel connector, the proxy and Keycloak. Dynamic addresses are limited to 10.213.81.0/29, so
+  # Docker never hands the proxy's trusted address to another container. Docker refuses to create it if
+  # the subnet overlaps a network already on the host (README.md, "First apply").
+  front:
+    ipam:
+      config:
+        - subnet: 10.213.81.0/28
+          ip_range: 10.213.81.0/29
+  # Keycloak and its database, with no way out.
+  db:
+    internal: true
