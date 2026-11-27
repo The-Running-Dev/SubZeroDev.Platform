@@ -1,7 +1,8 @@
 /**
- * The member realm as code: load `realm/members.json`, fill its placeholders, make a Keycloak match
- * it (`configure`), and report every way a Keycloak differs from it (`check`). `configure` ends by
- * running `check` and fails when any problem remains, so a configured realm is a checked realm.
+ * The realms as code: load `realm/<name>.json` (`members` for players, `operators` for the people who
+ * run the platform), fill its placeholders, make a Keycloak match it (`configure`), and report every
+ * way a Keycloak differs from it (`check`). `configure` ends by running `check` and fails when any
+ * problem remains, so a configured realm is a checked realm.
  */
 import { readFileSync } from "node:fs";
 
@@ -51,23 +52,33 @@ export interface RealmDefinition {
   events: EventsDefinition;
   browserFlow: { alias: string; description: string; nodes: FlowNode[] };
   clients: ClientDefinition[];
-  /** The game audience the edge accepts; only clients whose mappers name it may receive it. */
-  gameAudience: string;
+  /**
+   * The game audience the edge accepts; only clients whose mappers name it may receive it. Only the
+   * members realm has one: no operators client is a game client.
+   */
+  gameAudience?: string;
 }
 
-const DEFINITION = new URL("../realm/members.json", import.meta.url);
+/** Every realm this workload owns, in the order `configure` and `check` take them. */
+export const REALMS = ["members", "operators"] as const;
+export type RealmName = (typeof REALMS)[number];
+export const isRealmName = (name: string): name is RealmName => (REALMS as readonly string[]).includes(name);
+
 const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
 const WHOLE_PLACEHOLDER = /^\$\{([A-Z0-9_]+)\}$/;
 
 /**
- * Reads the definition and fills `${NAME}` from `IDP_NAME` in `env`, else from the file's `values`
- * (all test-only defaults). A string that is exactly one numeric placeholder becomes a number.
+ * Reads `realm/<name>.json` and fills `${NAME}` from `IDP_NAME` in `env`, else from the file's
+ * `values` (all test-only defaults). A string that is exactly one numeric placeholder becomes a
+ * number. The realms share their placeholder names where they share a value (the relying-party ID,
+ * the mail server, the event expiries), so one setting covers both.
  */
-export function loadDefinition(env: NodeJS.ProcessEnv = process.env): RealmDefinition {
-  const file = JSON.parse(readFileSync(DEFINITION, "utf8")) as Record<string, unknown> & { values: Record<string, string> };
-  const value = (name: string): string => {
-    const v = env[`IDP_${name}`] ?? file.values[name];
-    if (v === undefined) throw new Error(`realm/members.json uses \${${name}} but neither IDP_${name} nor values.${name} is set`);
+export function loadDefinition(env: NodeJS.ProcessEnv = process.env, name: RealmName = "members"): RealmDefinition {
+  const source = `realm/${name}.json`;
+  const file = JSON.parse(readFileSync(new URL(`../${source}`, import.meta.url), "utf8")) as Record<string, unknown> & { values: Record<string, string> };
+  const value = (key: string): string => {
+    const v = env[`IDP_${key}`] ?? file.values[key];
+    if (v === undefined) throw new Error(`${source} uses \${${key}} but neither IDP_${key} nor values.${key} is set`);
     return v;
   };
   const fill = (node: unknown): unknown => {
@@ -90,7 +101,8 @@ export function loadDefinition(env: NodeJS.ProcessEnv = process.env): RealmDefin
   // Keycloak keeps the mail settings as strings; a filled port is a number until it is put back.
   const smtp = filled.realm["smtpServer"] as Record<string, unknown> | undefined;
   if (smtp) filled.realm["smtpServer"] = Object.fromEntries(Object.entries(smtp).map(([k, v]) => [k, String(v)]));
-  return { ...filled, gameAudience: value("GAME_AUDIENCE") };
+  if (filled.realm.realm !== name) throw new Error(`${source} defines realm ${filled.realm.realm}, not ${name}`);
+  return "GAME_AUDIENCE" in file.values ? { ...filled, gameAudience: value("GAME_AUDIENCE") } : filled;
 }
 
 /** Realm keys `check` does not compare value by value: the name, the keys (checked as published) and mail (below). */
@@ -184,9 +196,9 @@ export async function publishedKeys(baseUrl: string, realm: string): Promise<Jwk
  * flow's shape and binding, any client overriding the browser flow (OD-12 F1: every client in the
  * realm, not only those defined here), who receives the game audience, the published key set, and
  * the required actions enrolment depends on, the stored-event settings the identity-restore recorder
- * relies on, what each service account may do, and the realm's own settings (D9's session lifetimes,
- * the lockout numbers, the passkey policy and its relying-party ID, and the mail server the invite and
- * reset links go through). An empty list is a pass.
+ * relies on, what each service account may do, any brokered identity provider (there must be none),
+ * and the realm's own settings (D9's session lifetimes, the lockout numbers, the passkey policy and its
+ * relying-party ID, and the mail server the invite and reset links go through). An empty list is a pass.
  */
 export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<string[]> {
   const realm = def.realm.realm;
@@ -207,7 +219,7 @@ export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<st
   }
 
   const clients = await kc.get<Client[]>(`/realms/${enc(realm)}/clients`);
-  const namesGame = (mappers: Mapper[] | undefined) =>
+  const namesGame = (mappers: Mapper[] | undefined) => def.gameAudience !== undefined &&
     (mappers ?? []).some((m) => m.protocolMapper === "oidc-audience-mapper" && m.config["included.custom.audience"] === def.gameAudience);
   const gameClients = new Set(def.clients.filter((c) => namesGame(c.protocolMappers)).map((c) => c.clientId));
   for (const c of clients) {
@@ -221,6 +233,12 @@ export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<st
     if (!audience && gameClients.has(c.clientId)) problems.push(`game client ${c.clientId} has no game-audience mapper`);
   }
   for (const c of def.clients) if (!clients.some((x) => x.clientId === c.clientId)) problems.push(`client ${c.clientId} does not exist`);
+
+  // Neither realm signs anyone in through another provider: an account is enrolled by invitation and
+  // holds only a passkey and recovery codes, so a brokered provider (GitHub, say) is a second door.
+  for (const p of await kc.get<{ alias: string; providerId: string }[]>(`/realms/${enc(realm)}/identity-provider/instances`)) {
+    problems.push(`realm brokers identity provider ${p.alias} (${p.providerId})`);
+  }
 
   const keys = await publishedKeys(kc.baseUrl, realm);
   if (keys.length === 0) problems.push("the realm publishes no signing keys");

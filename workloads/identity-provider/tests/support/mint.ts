@@ -48,6 +48,7 @@ async function main(command: string | undefined, prefix: string | undefined): Pr
   });
   if (!adventures.tokens) throw new Error(`adventures sign-in failed: ${describeWalk(adventures)}`);
 
+  if (e.def.gameAudience === undefined) throw new Error("the members realm defines no game audience");
   const subject = JSON.parse(Buffer.from(game.tokens.access_token.split(".")[1]!, "base64url").toString()).sub as string;
   const minted: Minted = {
     issuer: e.issuer,
