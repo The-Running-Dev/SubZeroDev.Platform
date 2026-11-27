@@ -73,10 +73,10 @@ The production values, which differ from the test defaults in `workloads/identit
 |---|---|
 | `IDP_WEBAUTHN_RP_ID` | `id.subzerodev.com` |
 | `IDP_DASHBOARD_REDIRECT` | `https://dashboard.subzerodev.com/auth/callback` |
-| `IDP_SMTP_HOST`, `IDP_SMTP_PORT`, `IDP_SMTP_SSL`, `IDP_SMTP_STARTTLS` | Resend's SMTP endpoint |
-| `IDP_SMTP_AUTH`, `IDP_SMTP_USER` | `true`, and Resend's SMTP user |
-| `IDP_SMTP_PASSWORD` | the Resend API key |
-| `IDP_SMTP_FROM` | an address on the verified `subzerodev.com` domain |
+| `IDP_SMTP_HOST`, `IDP_SMTP_PORT`, `IDP_SMTP_SSL`, `IDP_SMTP_STARTTLS` | `smtp.resend.com`, `465`, `true`, `false` |
+| `IDP_SMTP_AUTH`, `IDP_SMTP_USER` | `true`, `resend` |
+| `IDP_SMTP_PASSWORD` | a Resend API key with sending access, restricted to `id-mail.subzerodev.com` |
+| `IDP_SMTP_FROM` | an address at `id-mail.subzerodev.com`, Resend's sending domain for this provider |
 | `IDP_GAME_AUDIENCE` | the value of `GAME_API_TOKEN_AUDIENCE` in `deploy/game-api`'s var-file |
 
 `IDP_GAME_CLI_REDIRECT` keeps its loopback default. `IDP_ADVENTURES_AUDIENCE` and
@@ -128,6 +128,9 @@ remove it.
   on (`IDP_COMPOSE_PROJECT`, default `identity-provider`), so it does not reach this stack from the
   operator's machine. Production backups, their retention and restore (R1) are not built.
 - **The Access gate** (SubZeroDev.Infra PR #6) would replace the session route with a gated admin host.
-- **The Resend domain.** Its DNS records (SPF, DKIM) belong in SubZeroDev.Infra and are not set up, so
-  Keycloak cannot send the invite and reset links until they are.
+- **The Resend domain.** `id-mail.subzerodev.com` is added in Resend (Ireland, sending only) and is not
+  verified. Its DNS records (DKIM, and the return path that carries SPF) are in SubZeroDev.Infra's
+  `mail-dns` root (The-Running-Dev/SubZeroDev.Infra#14), not applied. Resend restricts a key only to a
+  verified domain, so the API key is created after that apply and verification. Until then Keycloak
+  cannot send the invite and reset links.
 - **Event retention** and **D3** (the brute-force numbers) are as in `workloads/identity-provider`.
