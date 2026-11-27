@@ -87,7 +87,34 @@ export function loadDefinition(env: NodeJS.ProcessEnv = process.env): RealmDefin
   };
   const { values: _values, ...rest } = file;
   const filled = fill(rest) as Omit<RealmDefinition, "gameAudience">;
+  // Keycloak keeps the mail settings as strings; a filled port is a number until it is put back.
+  const smtp = filled.realm["smtpServer"] as Record<string, unknown> | undefined;
+  if (smtp) filled.realm["smtpServer"] = Object.fromEntries(Object.entries(smtp).map(([k, v]) => [k, String(v)]));
   return { ...filled, gameAudience: value("GAME_AUDIENCE") };
+}
+
+/** Realm keys `check` does not compare value by value: the name, the keys (checked as published) and mail (below). */
+const UNCOMPARED = new Set(["realm", "components", "smtpServer"]);
+/** Mail settings `check` compares. The password is never compared: Keycloak answers it masked. */
+const SMTP_COMPARED = ["host", "port", "from", "fromDisplayName", "ssl", "starttls", "auth", "user"] as const;
+
+/** Every way the realm's own settings differ from the definition: lifetimes, lockout, passkey policy, mail. */
+function settingProblems(have: Record<string, unknown>, want: Record<string, unknown>): string[] {
+  const problems: string[] = [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  for (const [k, v] of Object.entries(want)) {
+    if (UNCOMPARED.has(k)) continue;
+    if (!same(have[k], v)) problems.push(`realm setting ${k} is ${JSON.stringify(have[k] ?? null)}, not ${JSON.stringify(v)}`);
+  }
+  const wantSmtp = want["smtpServer"] as Record<string, string> | undefined;
+  if (wantSmtp) {
+    const haveSmtp = (have["smtpServer"] ?? {}) as Record<string, string>;
+    for (const k of SMTP_COMPARED) {
+      // Keycloak drops an empty mail setting rather than storing "".
+      if ((haveSmtp[k] ?? "") !== (wantSmtp[k] ?? "")) problems.push(`mail setting ${k} is ${JSON.stringify(haveSmtp[k] ?? "")}, not ${JSON.stringify(wantSmtp[k] ?? "")}`);
+    }
+  }
+  return problems;
 }
 
 // ---------------------------------------------------------------- reading a realm
@@ -157,15 +184,18 @@ export async function publishedKeys(baseUrl: string, realm: string): Promise<Jwk
  * flow's shape and binding, any client overriding the browser flow (OD-12 F1: every client in the
  * realm, not only those defined here), who receives the game audience, the published key set, and
  * the required actions enrolment depends on, the stored-event settings the identity-restore recorder
- * relies on, and what each service account may do. An empty list is a pass.
+ * relies on, what each service account may do, and the realm's own settings (D9's session lifetimes,
+ * the lockout numbers, the passkey policy and its relying-party ID, and the mail server the invite and
+ * reset links go through). An empty list is a pass.
  */
 export async function check(kc: KeycloakAdmin, def: RealmDefinition): Promise<string[]> {
   const realm = def.realm.realm;
   const problems: string[] = [];
   const info = await kc.raw("GET", `/realms/${enc(realm)}`);
   if (info.status === 404) return [`realm ${realm} does not exist`];
-  const rep = JSON.parse(info.body) as { browserFlow?: string };
+  const rep = JSON.parse(info.body) as Record<string, unknown> & { browserFlow?: string };
 
+  problems.push(...settingProblems(rep, def.realm));
   if (rep.browserFlow !== def.browserFlow.alias) problems.push(`realm browser flow is ${rep.browserFlow}, not ${def.browserFlow.alias}`);
   const flows = await flowsOf(kc, realm);
   const flow = flows.find((f) => f.alias === def.browserFlow.alias);
@@ -373,6 +403,9 @@ async function configureEvents(kc: KeycloakAdmin, realm: string, want: EventsDef
 /** Makes the Keycloak match the definition, then checks it. Answers what it did; throws on any remaining problem. */
 export async function configure(kc: KeycloakAdmin, def: RealmDefinition): Promise<string[]> {
   const realm = def.realm.realm;
+  const smtp = def.realm["smtpServer"] as Record<string, string> | undefined;
+  // Every configure run writes the mail settings, so a run without the key would erase it.
+  if (smtp?.["auth"] === "true" && !smtp["password"]) throw new Error("the mail server needs a password (smtpServer.auth is true): set IDP_SMTP_PASSWORD");
   const done: string[] = [];
   const existing = await kc.raw("GET", `/realms/${enc(realm)}`);
   if (existing.status === 404) {

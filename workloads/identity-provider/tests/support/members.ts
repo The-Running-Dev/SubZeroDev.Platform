@@ -1,16 +1,14 @@
 /**
  * Members and sign-ins against a running Keycloak configured from realm/members.json.
  *
- * First-credential enrolment is an open owner decision (D3/D5), so the realm has no self-service
- * enrolment path. Tests enrol their synthetic members through a TEST-ONLY bootstrap client whose
- * browser flow is Keycloak's built-in password flow: the member is created with a throwaway
- * password and the passkey and recovery-code required actions, completes them, and the password
- * is then deleted. `check` reports that client as a problem for as long as it exists, which the
- * suite asserts, and the suite removes it afterwards. None of this is a production enrolment path.
+ * Tests enrol their synthetic members the way the owner does (decided 2026-11-27): `invite` creates
+ * the account and Keycloak emails it an action link, which the test reads from the compose mail
+ * catcher and follows to register a passkey and recovery codes. No member ever holds a password.
  */
 import { createHash, randomBytes } from "node:crypto";
 
 import { KeycloakAdmin } from "../../src/admin.ts";
+import { invite } from "../../src/members.ts";
 import { loadDefinition } from "../../src/realm.ts";
 import type { RealmDefinition } from "../../src/realm.ts";
 import { Authenticator } from "./authenticator.ts";
@@ -19,7 +17,6 @@ import type { Answer } from "./user-agent.ts";
 
 /** Loopback redirect a native client listens on; any port matches the port-less registration. */
 export const CALLBACK = "http://127.0.0.1:53682/callback";
-export const BOOTSTRAP_CLIENT = "test-only-enrol";
 /** The adventures site's callback on the loopback; matches its port-less registration. */
 export const ADVENTURES_CALLBACK = "http://127.0.0.1:53682/adventures/callback";
 
@@ -147,6 +144,8 @@ export interface Walk {
   options?: string[];
   /** The answer the walk stopped on. */
   last?: Answer;
+  /** An enrolment link ended on Keycloak's "Your account has been updated." */
+  enrolled?: boolean;
 }
 
 /** Completes the page the walk is on if it is a required-action page; undefined if it is not one. */
@@ -255,72 +254,104 @@ const users = (e: Environment): string => `/realms/${e.realm}/users`;
 export interface Credential { id: string; type: string; userLabel?: string }
 export const credentials = (e: Environment, userId: string): Promise<Credential[]> => e.kc.get<Credential[]>(`${users(e)}/${userId}/credentials`);
 
-/** Installs the test-only bootstrap client: game-cli's shape, with the built-in password flow as its browser override. */
-export async function installBootstrapClient(e: Environment): Promise<void> {
-  const flows = await e.kc.get<{ id: string; alias: string }[]>(`/realms/${e.realm}/authentication/flows`);
-  const browser = flows.find((f) => f.alias === "browser");
-  if (!browser) throw new Error("the realm has no built-in browser flow to bootstrap enrolment with");
-  const existing = await e.kc.get<{ id: string }[]>(`/realms/${e.realm}/clients?clientId=${BOOTSTRAP_CLIENT}`);
-  const body = {
-    clientId: BOOTSTRAP_CLIENT,
-    name: "TEST ONLY: enrols synthetic members; never present outside a test run",
-    protocol: "openid-connect",
-    publicClient: true,
-    standardFlowEnabled: true,
-    directAccessGrantsEnabled: false,
-    implicitFlowEnabled: false,
-    serviceAccountsEnabled: false,
-    redirectUris: ["http://127.0.0.1/callback"],
-    attributes: { "pkce.code.challenge.method": "S256" },
-    authenticationFlowBindingOverrides: { browser: browser.id },
-    defaultClientScopes: ["basic"],
-  };
-  if (existing[0]) await e.kc.call("PUT", `/realms/${e.realm}/clients/${existing[0].id}`, { ...body, id: existing[0].id });
-  else await e.kc.call("POST", `/realms/${e.realm}/clients`, body);
+// ---------------------------------------------------------------- enrolment links
+
+/** The compose mail catcher's API (mailpit). */
+const mailApi = (env: NodeJS.ProcessEnv = process.env): string => (env["IDP_MAIL_API"] ?? "http://localhost:8025").replace(/\/+$/, "");
+
+/** The address a synthetic member's links go to: the catcher accepts any, and nothing leaves it. */
+export const addressOf = (username: string): string => `${username}@identity-provider.test`;
+
+/**
+ * The action link in the newest message to this address. Every message to the address is then
+ * deleted, so the next call answers only a link sent after this one.
+ */
+export async function takeLink(address: string): Promise<string> {
+  const api = mailApi();
+  for (let i = 0; i < 50; i++) {
+    const found = (await (await fetch(`${api}/api/v1/search?query=${encodeURIComponent(`to:"${address}"`)}`)).json()) as { messages: { ID: string }[] };
+    if (found.messages.length) {
+      const text = ((await (await fetch(`${api}/api/v1/message/${found.messages[0]!.ID}`)).json()) as { Text: string }).Text;
+      await fetch(`${api}/api/v1/messages`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ IDs: found.messages.map((m) => m.ID) }) });
+      const link = text.match(/https?:\/\/\S*\/login-actions\/action-token\?\S+/)?.[0];
+      if (!link) throw new Error(`the message to ${address} holds no action link`);
+      return link;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`no message reached ${address}`);
 }
 
-export async function removeBootstrapClient(e: Environment): Promise<void> {
-  for (const c of await e.kc.get<{ id: string }[]>(`/realms/${e.realm}/clients?clientId=${BOOTSTRAP_CLIENT}`))
-    await e.kc.call("DELETE", `/realms/${e.realm}/clients/${c.id}`);
+/** Follows an enrolment link: proceeds, registers the passkey with this authenticator, and records the codes shown. */
+export async function followLink(e: Environment, link: string, register?: Authenticator): Promise<Walk> {
+  const a = new UserAgent(e.base);
+  let r = await a.open(link);
+  const w: Walk = { trail: [], status: "", agent: a };
+  let proceeded = false;
+  for (let i = 0; i < 8 && r.status === 200; i++) {
+    w.trail.push(`${pageId(r)}${feedback(r) ? ` "${feedback(r)}"` : ""}`);
+    const next = await requiredAction(a, r, register ? { register } : {}, w);
+    if (next) {
+      r = next;
+      continue;
+    }
+    // The link opens on "Perform the following action(s)", whose only way on is a link to the same token.
+    const proceed = r.body.match(/href="([^"]*\/login-actions\/action-token\?[^"]*)"/)?.[1];
+    if (pageId(r) === "login-info" && proceed && !proceeded) {
+      proceeded = true;
+      r = await a.open(new URL(proceed.replaceAll("&amp;", "&"), e.base).toString());
+      continue;
+    }
+    break;
+  }
+  w.status = outcome(e, r);
+  w.last = r;
+  w.enrolled = r.status === 200 && /Your account has been updated/.test(r.body);
+  return w;
 }
 
 /**
- * A synthetic member holding the credentials asked for, enrolled through the bootstrap client and
- * left with no password. Needs installBootstrapClient first.
+ * A synthetic member holding the credentials asked for. With both, the member is made by `invite`
+ * exactly as the owner makes one. A single-credential member, which `invite` never makes, gets the
+ * same link asking for only that action. With neither, the account is created and nothing is sent.
  */
 export async function enrol(e: Environment, prefix: string, want: { passkey?: boolean; codes?: boolean } = { passkey: true, codes: true }): Promise<Member> {
   const username = `${prefix}-${randomBytes(4).toString("hex")}`;
-  const password = randomBytes(16).toString("hex");
-  const requiredActions = [...(want.passkey ? ["webauthn-register-passwordless"] : []), ...(want.codes ? ["CONFIGURE_RECOVERY_AUTHN_CODES"] : [])];
-  const created = await e.kc.call("POST", users(e), {
-    username,
-    enabled: true,
-    requiredActions,
-    credentials: [{ type: "password", value: password, temporary: false }],
-  });
-  const id = KeycloakAdmin.createdId(created.location);
+  const email = addressOf(username);
   const passkey = new Authenticator(e.base);
-  let codes: string[] = [];
-  if (requiredActions.length) {
-    const a = new UserAgent(e.base);
-    const { url, verifier } = authorizeUrl(e, BOOTSTRAP_CLIENT);
-    const login = await a.open(url);
-    let r = await a.submit(authenticateAction(login)!, { username, password, credentialId: "" });
-    const w: Walk = { trail: [], status: "", agent: a };
-    for (let i = 0; i < 4 && r.status === 200; i++) {
-      const next = await requiredAction(a, r, { register: passkey }, w);
-      if (!next) break;
-      r = next;
-    }
-    const code = codeOf(r);
-    if (!code) throw new Error(`enrolling ${username} stopped at ${outcome(e, r)}`);
-    const t = await exchange(e, BOOTSTRAP_CLIENT, code, verifier);
-    if (t.status !== 200) throw new Error(`enrolling ${username}: token ${t.status} ${t.body}`);
-    codes = w.codes ?? [];
+  const actions = [...(want.passkey ? ["webauthn-register-passwordless"] : []), ...(want.codes ? ["CONFIGURE_RECOVERY_AUTHN_CODES"] : [])];
+  let id: string;
+  if (actions.length === 2) id = await invite(e.kc, e.def, username, email);
+  else {
+    id = KeycloakAdmin.createdId((await e.kc.call("POST", users(e), { username, email, enabled: true })).location);
+    if (!actions.length) return { id, username, passkey, codes: [] };
+    await e.kc.call("PUT", `${users(e)}/${id}/execute-actions-email`, actions);
   }
-  for (const c of await credentials(e, id)) if (c.type === "password") await e.kc.call("DELETE", `${users(e)}/${id}/credentials/${c.id}`);
-  await e.kc.call("POST", `${users(e)}/${id}/logout`);
-  return { id, username, passkey, codes };
+  const w = await followLink(e, await takeLink(email), passkey);
+  if (!w.enrolled) throw new Error(`enrolling ${username} stopped at ${describeWalk(w)}`);
+  return { id, username, passkey, codes: w.codes ?? [] };
+}
+
+/** Installs a client that overrides the browser flow with Keycloak's built-in password flow; `check` must refuse it. */
+export async function installOverrideClient(e: Environment, clientId: string): Promise<void> {
+  const flows = await e.kc.get<{ id: string; alias: string }[]>(`/realms/${e.realm}/authentication/flows`);
+  const browser = flows.find((f) => f.alias === "browser");
+  if (!browser) throw new Error("the realm has no built-in browser flow");
+  await e.kc.call("POST", `/realms/${e.realm}/clients`, {
+    clientId,
+    name: "TEST ONLY: a browser-flow override check must refuse",
+    protocol: "openid-connect",
+    publicClient: true,
+    standardFlowEnabled: true,
+    redirectUris: ["http://127.0.0.1/callback"],
+    attributes: { "pkce.code.challenge.method": "S256" },
+    authenticationFlowBindingOverrides: { browser: browser.id },
+  });
+}
+
+export async function removeClient(e: Environment, clientId: string): Promise<void> {
+  for (const c of await e.kc.get<{ id: string }[]>(`/realms/${e.realm}/clients?clientId=${encodeURIComponent(clientId)}`))
+    await e.kc.call("DELETE", `/realms/${e.realm}/clients/${c.id}`);
 }
 
 export async function removeMembers(e: Environment, prefix: string): Promise<void> {

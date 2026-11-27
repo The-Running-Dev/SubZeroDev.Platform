@@ -4,6 +4,12 @@
  *   node src/cli.ts configure   make Keycloak match realm/members.json, then check it
  *   node src/cli.ts check       report every difference that matters for sign-in safety (exit 1 on any)
  *   node src/cli.ts jwks        print the realm's published key set, for pinning at the edge
+ *   node src/cli.ts invite USERNAME --email ADDRESS
+ *                               create a member and email them a link that registers a passkey and
+ *                               recovery codes
+ *   node src/cli.ts reset USERNAME
+ *                               remove every credential and session of a member and email a new
+ *                               link; the account and its subject are kept
  *   node src/cli.ts backup --out FILE [-- COMMAND...]
  *                               dump the member database to FILE, outside the repository, with
  *                               FILE.meta.json beside it; prints only the path, size and sha256
@@ -17,6 +23,7 @@ import { pathToFileURL } from "node:url";
 
 import { KeycloakAdmin } from "./admin.ts";
 import { backup, composeDumpCommand, metaPath } from "./backup.ts";
+import { invite, reset } from "./members.ts";
 import { check, configure, loadDefinition, publishedKeys } from "./realm.ts";
 
 export function adminFromEnv(env: NodeJS.ProcessEnv = process.env): KeycloakAdmin {
@@ -62,8 +69,30 @@ async function main(command: string | undefined, args: readonly string[]): Promi
     case "jwks":
       console.log(JSON.stringify({ keys: await publishedKeys(kc.baseUrl, def.realm.realm) }));
       return 0;
+    case "invite": {
+      const at = args.indexOf("--email");
+      const [username] = args;
+      const email = at >= 0 ? args[at + 1] : undefined;
+      if (!username || username.startsWith("--") || !email) {
+        console.error("usage: node src/cli.ts invite USERNAME --email ADDRESS");
+        return 2;
+      }
+      const id = await invite(kc, def, username, email);
+      console.log(`invited ${username} (${id}); the enrolment link has been emailed`);
+      return 0;
+    }
+    case "reset": {
+      const [username] = args;
+      if (!username) {
+        console.error("usage: node src/cli.ts reset USERNAME");
+        return 2;
+      }
+      const done = await reset(kc, def, username);
+      console.log(`reset ${username} (${done.id}): removed ${done.credentials} credential(s), ended every session${done.clients.length ? ` and the offline tokens of ${done.clients.join(", ")}` : ""}; a new enrolment link has been emailed`);
+      return 0;
+    }
     default:
-      console.error("usage: node src/cli.ts configure | check | jwks | backup --out FILE");
+      console.error("usage: node src/cli.ts configure | check | jwks | invite USERNAME --email ADDRESS | reset USERNAME | backup --out FILE");
       return 2;
   }
 }

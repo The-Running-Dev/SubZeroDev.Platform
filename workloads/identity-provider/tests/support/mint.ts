@@ -8,13 +8,14 @@
  *
  * game-service's edge proof runs this rather than importing these helpers, so that the Keycloak
  * client code has one owner (this workload) and game-service owns only the edge composition. The
- * test-only bootstrap client is installed for the enrolment and removed before the tokens are
- * printed. Same environment as the CLI: KC_BOOTSTRAP_ADMIN_PASSWORD is required.
+ * member is enrolled by `invite` and its emailed link, read from the compose mail catcher
+ * (IDP_MAIL_API, default http://localhost:8025). Same environment as the CLI:
+ * KC_BOOTSTRAP_ADMIN_PASSWORD is required.
  */
 import { pathToFileURL } from "node:url";
 
 import { publishedKeys } from "../../src/realm.ts";
-import { ADVENTURES_CALLBACK, clientSecret, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./members.ts";
+import { ADVENTURES_CALLBACK, clientSecret, describeWalk, enrol, environment, removeMembers, walk } from "./members.ts";
 
 export interface Minted {
   issuer: string;
@@ -38,13 +39,7 @@ async function main(command: string | undefined, prefix: string | undefined): Pr
   }
   if (command !== "mint") throw new Error("usage: node tests/support/mint.ts mint|remove <prefix>");
 
-  await installBootstrapClient(e);
-  let member;
-  try {
-    member = await enrol(e, prefix);
-  } finally {
-    await removeBootstrapClient(e);
-  }
+  const member = await enrol(e, prefix);
   const game = await walk(e, "game-cli", member.username, { passkey: member.passkey });
   if (!game.tokens) throw new Error(`game-cli sign-in failed: ${describeWalk(game)}`);
   const adventures = await walk(e, "adventures", member.username, {

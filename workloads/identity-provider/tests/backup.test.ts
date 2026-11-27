@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { backup, composeDb, composeDumpCommand, insideRepository, metaPath } from "../src/backup.ts";
 import type { BackupMeta } from "../src/backup.ts";
-import { enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers } from "./support/members.ts";
+import { enrol, environment, removeMembers } from "./support/members.ts";
 import type { Environment, Member } from "./support/members.ts";
 
 const e = environment();
@@ -73,12 +73,7 @@ describe.skipIf(!e)("backup of the compose member database (slice 4)", () => {
 
   beforeAll(async () => {
     container = composeDb();
-    await installBootstrapClient(env);
-    try {
-      member = await enrol(env, `${PREFIX}-m`);
-    } finally {
-      await removeBootstrapClient(env);
-    }
+    member = await enrol(env, `${PREFIX}-m`);
     before = Date.now();
     meta = await backup(out, composeDumpCommand(container));
   });

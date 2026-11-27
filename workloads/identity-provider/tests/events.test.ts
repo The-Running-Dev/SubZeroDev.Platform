@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { check } from "../src/realm.ts";
-import { clientSecret, credentials, describeWalk, enrol, environment, installBootstrapClient, removeBootstrapClient, removeMembers, walk } from "./support/members.ts";
+import { clientSecret, credentials, describeWalk, enrol, environment, removeMembers, walk } from "./support/members.ts";
 import type { Environment, Member } from "./support/members.ts";
 
 const e = environment();
@@ -42,12 +42,7 @@ describe.skipIf(!e)("security events and the recorder client (slice 4)", () => {
   let member: Member;
 
   beforeAll(async () => {
-    await installBootstrapClient(env);
-    try {
-      member = await enrol(env, `${PREFIX}-ev`);
-    } finally {
-      await removeBootstrapClient(env);
-    }
+    member = await enrol(env, `${PREFIX}-ev`);
   });
 
   afterAll(async () => {
@@ -135,7 +130,7 @@ describe.skipIf(!e)("security events and the recorder client (slice 4)", () => {
     expect(created?.representation).toBeDefined();
     const rep = JSON.parse(created!.representation!) as Record<string, unknown>;
     expect(rep["username"]).toBe(member.username);
-    // enrol() creates the member with a throwaway password; Keycloak strips it from the stored event.
+    // invite() creates the member with an address and no credential; the stored representation carries none.
     expect(rep).not.toHaveProperty("credentials");
     expect(created!.representation).not.toMatch(/"(credentials|value|secretData|password)"/i);
   });
