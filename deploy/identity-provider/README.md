@@ -76,8 +76,8 @@ The production values, which differ from the test defaults in `workloads/identit
 | `IDP_SMTP_HOST`, `IDP_SMTP_PORT`, `IDP_SMTP_SSL`, `IDP_SMTP_STARTTLS` | `smtp.resend.com`, `465`, `true`, `false` |
 | `IDP_SMTP_AUTH`, `IDP_SMTP_USER` | `true`, `resend` |
 | `IDP_SMTP_PASSWORD` | a Resend API key with sending access, restricted to `id-mail.subzerodev.com` |
-| `IDP_SMTP_FROM` | an address at `id-mail.subzerodev.com`, Resend's sending domain for this provider |
-| `IDP_GAME_AUDIENCE` | the value of `GAME_API_TOKEN_AUDIENCE` in `deploy/game-api`'s var-file |
+| `IDP_SMTP_FROM` | `no-reply@id-mail.subzerodev.com` |
+| `IDP_GAME_AUDIENCE` | `https://game-api.subzerodev.com/`, which `GAME_API_TOKEN_AUDIENCE` in `deploy/game-api`'s var-file must equal |
 
 `IDP_GAME_CLI_REDIRECT` keeps its loopback default. `IDP_ADVENTURES_AUDIENCE` and
 `IDP_ADVENTURES_REDIRECT` are chosen when Adventures moves to this issuer; until then their test defaults
@@ -115,6 +115,23 @@ The first apply is an operator step.
    `https://id.subzerodev.com/realms/members/.well-known/openid-configuration` answers `200` with the
    issuer `https://id.subzerodev.com/realms/members`, and the same holds for `operators`. Close the
    session.
+
+The first apply was done on 2026-11-28. Two things it showed:
+
+- **Portainer answers `EOF` on a stack create or redeploy.** Compose waits for the health checks, which
+  takes longer than the roughly 100 seconds Cloudflare allows the proxied API. Portainer still finishes,
+  about 70 seconds later. After an `EOF` on an update, wait and run `plan`; it is clean once the redeploy
+  is done. After an `EOF` on the create, the stack exists but is not in state: import it with
+  `tofu import module.app.portainer_stack.this 3-<stack id>-standalone-repository`, then check that
+  `plan` shows an update in place, not a replacement. The import leaves `additional_files` empty, which
+  forces a replacement; set it in state to `["deploy/identity-provider/compose.tunnel.yaml"]`.
+- **Replacing `random_password.bootstrap_admin` changes only the stack's environment.** Keycloak reads
+  the bootstrap variables on its first boot only, so the stored password stays the old one. To rotate
+  it, apply the replacement, then set the new value from `tofu output -raw admin_password` through the
+  admin API (`PUT /admin/realms/master/users/<id>/reset-password`) in an admin session.
+
+Plan output can show the stack's environment values, which are secrets, because the refresh reads them
+back from Portainer. Keep it out of logs and notes.
 
 State is in R2 at `apps/subzerodev-platform-identity-provider.tfstate`, encrypted with
 `TF_VAR_state_passphrase`.
